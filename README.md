@@ -1,36 +1,107 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# FreshLoop AI 🍃
+> **Yield Management & Recipe Rescue Platform for Independent Fresh Grocers**
 
-## Getting Started
+FreshLoop AI helps independent fresh grocers eliminate inventory shrinkage and maximize gross margins by cross-matching short-dated produce, dairy, bakery, and pantry stock into high-margin prepared deli foods.
 
-First, run the development server:
+---
 
+## 🛠️ Technical Stack
+- **Framework & Frontend**: Next.js 15 (App Router), TypeScript, Tailwind CSS v4, Lucide React icons
+- **Database & ORM**: Supabase / PostgreSQL with Prisma ORM
+- **AI Engine**: Google Gemini 1.5 Flash via `@google/generative-ai` SDK
+
+---
+
+## ✨ Key Features & Capabilities
+
+### 1. Vendor Invoice OCR (`/api/invoice-ocr`)
+- Accepts image uploads of vendor delivery receipts and packing slips.
+- Calls **Gemini 1.5 Flash Vision** with structured JSON output mode to extract vendor name, invoice date, line items, unit costs, and total amount across Produce, Dairy, Bakery, and Pantry departments.
+- Supports auto-importing scanned line items directly into floor inventory.
+
+### 2. Ambient Voice Floor Logger (`/api/voice-logger`)
+- Hands-free floor logging via mic button or spoken text.
+- Uses **Gemini 1.5 Flash Audio parsing** to extract spoken transfers (e.g., *"Logged 10 lbs bruised apples and 4L heavy cream"*).
+- Returns structured JSON containing items, quantities, condition, allergen warnings, and target action (`KITCHEN_RESCUE`, `MARKDOWN`, or `DISCARD`).
+
+### 3. Inventory & Human Pull Trigger Dashboard (`/dashboard`)
+- Interactive glassmorphic UI displaying fresh inventory items across all departments.
+- Filter by status: `FRESH`, `WARNING`, `PULL_RESCUE`, `MARKDOWN`.
+- **2-day, 3-day, and 4-day Human Pull Slider Controls** for store managers to adjust pull sensitivity thresholds in real-time.
+
+### 4. Recipe Fusion Engine (`/api/recipe-fusion`)
+- Cross-matches short-dated items across Produce + Dairy + Bakery + Pantry.
+- Generates high-margin prepared foods (e.g., roasted tomato panzanellas, spiced apple dessert parfaits, creamy roasted soups) with target retail prices, batch food costs, chef prep instructions, and gross margin estimates (up to 80%+).
+
+---
+
+## 🚀 Getting Started
+
+### 1. Clone & Install Dependencies
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+cd freshloop-ai
+npm install
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### 2. Environment Variables Setup
+Copy `.env.example` to `.env.local`:
+```bash
+cp .env.example .env.local
+```
+Set your Google Gemini API Key:
+```env
+GEMINI_API_KEY=your_gemini_api_key_here
+DATABASE_URL="postgresql://postgres:password@localhost:5432/freshloop"
+DIRECT_URL="postgresql://postgres:password@localhost:5432/freshloop"
+```
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### 3. Database Setup & Migration
+Apply the PostgreSQL migration script:
+```bash
+npx prisma migrate dev --name init
+# Or execute prisma/migrations/20261005000000_init/migration.sql directly in Supabase SQL Editor
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+### 4. Run Development Server
+```bash
+npm run dev
+```
+Open [http://localhost:3000](http://localhost:3000) in your browser.
 
-## Learn More
+---
 
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## 📁 Directory Structure
+```
+freshloop-ai/
+├── app/
+│   ├── api/
+│   │   ├── invoice-ocr/route.ts      # Gemini 1.5 Flash Vision Vendor OCR
+│   │   ├── voice-logger/route.ts     # Ambient Voice Floor Logger API
+│   │   ├── recipe-fusion/route.ts    # Cross-Department Recipe Fusion Engine
+│   │   └── inventory/route.ts        # Inventory Management API
+│   ├── dashboard/page.tsx            # Main Store Manager Yield Hub
+│   ├── recipes/page.tsx              # Prepared Foods Recipe Fusion Page
+│   ├── globals.css
+│   ├── layout.tsx
+│   └── page.tsx
+├── components/
+│   ├── Navbar.tsx                    # Header with live AI trigger buttons
+│   ├── StatsOverview.tsx             # Metric cards (Yield at Risk, Margin, Pulls)
+│   ├── PullSliderControl.tsx         # 2-day, 3-day, 4-day human pull slider
+│   ├── InventoryTable.tsx            # Interactive floor inventory table
+│   ├── DepartmentBadge.tsx           # Produce, Dairy, Bakery, Pantry badges
+│   ├── InvoiceUploadModal.tsx        # Vendor invoice OCR modal
+│   ├── VoiceRecorderModal.tsx        # Hands-free mic voice floor logger modal
+│   └── RecipeFusionCard.tsx          # High-margin recipe suggestion card
+├── lib/
+│   ├── gemini.ts                     # Gemini 1.5 Flash API calls (Vision, Audio, Fusion)
+│   ├── db.ts                         # Database & fallback store adapter
+│   ├── mockData.ts                   # Initial grocery store dataset
+│   └── types.ts                      # TypeScript definitions
+├── prisma/
+│   ├── schema.prisma                 # Database schema
+│   └── migrations/                   # SQL migration scripts
+├── .env.example
+├── .env.local
+└── README.md
+```

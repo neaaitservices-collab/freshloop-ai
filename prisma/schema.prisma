@@ -1,0 +1,118 @@
+// Prisma Schema for FreshLoop AI - Yield Management & Recipe Rescue
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum Department {
+  PRODUCE
+  DAIRY
+  BAKERY
+  PANTRY
+}
+
+enum InventoryStatus {
+  FRESH
+  WARNING
+  PULL_RESCUE
+  MARKDOWN
+  DISCARDED
+}
+
+enum TargetAction {
+  KITCHEN_RESCUE
+  MARKDOWN
+  DISCARD
+}
+
+enum RecipeStatus {
+  PROPOSED
+  IN_KITCHEN
+  COMPLETED
+}
+
+model VendorInvoice {
+  id                  String            @id @default(uuid())
+  vendorName          String
+  invoiceNumber       String?
+  invoiceDate         DateTime
+  totalAmount         Float
+  departmentBreakdown Json              // { PRODUCE: float, DAIRY: float, BAKERY: float, PANTRY: float }
+  status              String            @default("PROCESSED") // PROCESSED, PENDING, FAILED
+  rawOcrJson          Json?
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+  lineItems           InvoiceLineItem[]
+
+  @@map("vendor_invoices")
+}
+
+model InvoiceLineItem {
+  id              String        @id @default(uuid())
+  invoiceId       String
+  invoice         VendorInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  name            String
+  department      Department
+  quantity        Float
+  unit            String        // lbs, kg, cases, crates, liters, units
+  unitCost        Float
+  totalCost       Float
+  inventoryItemId String?
+  createdAt       DateTime      @default(now())
+
+  @@map("invoice_line_items")
+}
+
+model InventoryItem {
+  id                String          @id @default(uuid())
+  name              String
+  department        Department
+  quantity          Float
+  unit              String          // lbs, kg, cases, liters, units, packs
+  receivedCost      Float           // cost per unit
+  receivedDate      DateTime
+  expirationDate    DateTime
+  condition         String          // Pristine, Slightly Blemished, Bruised, Overripe, Near Expiry
+  status            InventoryStatus @default(FRESH)
+  pullThresholdDays Int             @default(3) // 2, 3, or 4 days threshold trigger
+  location          String          @default("Main Storage") // Aisle 1, Walk-in Cooler, Bakery Display, etc.
+  notes             String?
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  @@map("inventory_items")
+}
+
+model VoiceLog {
+  id               String       @id @default(uuid())
+  transcript       String
+  audioDurationSec Float?
+  parsedData       Json         // items array with quantities, condition, warnings
+  targetAction     TargetAction @default(KITCHEN_RESCUE)
+  processedAt      DateTime     @default(now())
+
+  @@map("voice_logs")
+}
+
+model RecipeFusion {
+  id                String       @id @default(uuid())
+  recipeName        String
+  category          String       // Soup, Salad/Panzanella, Parfait/Dessert, Prepared Hot Meal, Bakery
+  ingredientsUsed   Json         // Array of { name, quantity, unit, department, estimatedValue }
+  estimatedYield    String       // e.g. "16 Portions (12 oz)"
+  estimatedCost     Float
+  targetRetailPrice Float
+  grossMarginPct    Float
+  instructions      String       @db.Text
+  status            RecipeStatus @default(PROPOSED)
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  @@map("recipe_fusions")
+}
