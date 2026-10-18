@@ -14,7 +14,11 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "FreshLoop AI • Yield Management & Recipe Rescue",
-  description: "Cross-department yield management, invoice OCR, voice floor logging, and recipe rescue for independent grocers",
+  description: "Cross-department yield management, invoice OCR, voice floor logging, and recipe rescue for independent grocers.",
+  openGraph: {
+    title: "FreshLoop AI • Yield Management & Recipe Rescue",
+    description: "Cross-department yield management, invoice OCR, voice floor logging, and recipe rescue for independent grocers.",
+  },
 };
 
 export const viewport = {

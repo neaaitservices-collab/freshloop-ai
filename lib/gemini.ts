@@ -1,4 +1,4 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleGenAI } from '@google/genai';
 import { InvoiceOcrResult, VoiceLoggerResult, RecipeFusionResult, InventoryItem } from './types';
 
 function getApiKey(): string | null {
@@ -9,10 +9,10 @@ function getApiKey(): string | null {
   return apiKey.trim();
 }
 
-function getGenAI(): GoogleGenerativeAI | null {
+function getGenAI(): GoogleGenAI | null {
   const apiKey = getApiKey();
   if (!apiKey) return null;
-  return new GoogleGenerativeAI(apiKey);
+  return new GoogleGenAI({ apiKey });
 }
 
 /**
@@ -21,7 +21,7 @@ function getGenAI(): GoogleGenerativeAI | null {
 async function generateContentWithFallback(
   promptText: string,
   inlinePart?: { data: string; mimeType: string },
-  preferredModels: string[] = ['gemini-3.8-flash', 'gemini-2.5-flash', 'gemini-1.5-flash', 'gemini-2.0-flash']
+  preferredModels: string[] = ['gemini-2.5-flash', 'gemini-1.5-flash', 'gemini-2.0-flash']
 ): Promise<{ text: string; modelUsed: string }> {
   const apiKey = getApiKey();
   if (!apiKey) {
@@ -32,12 +32,44 @@ async function generateContentWithFallback(
 
   for (const modelName of preferredModels) {
     try {
+      // Method 1: New @google/genai SDK
+      const genAI = getGenAI();
+      if (genAI) {
+        try {
+          const contents: any[] = [];
+          if (inlinePart) {
+            contents.push({
+              inlineData: {
+                data: inlinePart.data,
+                mimeType: inlinePart.mimeType,
+              }
+            });
+          }
+          contents.push(promptText);
+
+          const response = await genAI.models.generateContent({
+            model: modelName,
+            contents,
+            config: {
+              responseMimeType: 'application/json'
+            }
+          });
+
+          const text = response.text;
+          if (text) {
+            return { text, modelUsed: modelName };
+          }
+        } catch (e: any) {
+          console.warn(`SDK attempt failed for ${modelName}:`, e.message);
+        }
+      }
+
       const parts: any[] = [{ text: promptText }];
       if (inlinePart) {
         parts.push({ inlineData: inlinePart });
       }
 
-      // Method 1: Direct REST call with query key (Works for AQ. keys & AIzaSy keys on Google AI Studio)
+      // Method 2: Direct REST call with query key (Works for AQ. keys & AIzaSy keys on Google AI Studio)
       try {
         const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
         const response = await fetch(url, {
@@ -60,32 +92,6 @@ async function generateContentWithFallback(
         }
       } catch (e: any) {
         console.warn(`REST query key attempt failed for ${modelName}:`, e.message);
-      }
-
-      // Method 2: Standard SDK call
-      const genAI = getGenAI();
-      if (genAI) {
-        try {
-          const model = genAI.getGenerativeModel({
-            model: modelName,
-            generationConfig: {
-              responseMimeType: 'application/json'
-            }
-          });
-
-          const contents: any[] = [promptText];
-          if (inlinePart) {
-            contents.push({ inlineData: inlinePart });
-          }
-
-          const result = await model.generateContent(contents);
-          const text = result.response.text();
-          if (text) {
-            return { text, modelUsed: modelName };
-          }
-        } catch (e: any) {
-          console.warn(`SDK attempt failed for ${modelName}:`, e.message);
-        }
       }
 
       // Method 3: Authorization Bearer header for OAuth tokens

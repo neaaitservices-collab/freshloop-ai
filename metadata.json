@@ -1,0 +1,7 @@
+{
+  "name": "FreshLoop AI",
+  "description": "Cross-department yield management, invoice OCR, voice floor logging, and recipe rescue for independent grocers.",
+  "capabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

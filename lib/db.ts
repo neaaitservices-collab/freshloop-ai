@@ -2,12 +2,27 @@ import { PrismaClient } from '@prisma/client';
 import { INITIAL_INVENTORY_ITEMS, INITIAL_FUSION_RECIPES } from './mockData';
 import { InventoryItem, RecipeFusionResult, InvoiceOcrResult, VoiceLoggerResult } from './types';
 
-// Global Prisma instance for Next.js hot reload prevention
-const globalForPrisma = global as unknown as { prisma: PrismaClient };
+// Global Prisma instance for Next.js hot reload prevention with fallback mock
+const globalForPrisma = global as unknown as { prisma: any };
 
-export const prisma = globalForPrisma.prisma || new PrismaClient();
+let prismaInstance: any;
+try {
+  prismaInstance = globalForPrisma.prisma || new PrismaClient();
+  if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prismaInstance;
+} catch {
+  console.warn('[AI Studio] Database not connected — using mock');
+  const noOp = {
+    findMany: async () => [],
+    findFirst: async () => null,
+    findUnique: async () => null,
+    create: async (d: any) => d?.data ?? {},
+    update: async (d: any) => d?.data ?? {},
+    delete: async () => ({})
+  };
+  prismaInstance = new Proxy({}, { get: () => noOp });
+}
 
-if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma;
+export const prisma = prismaInstance;
 
 // In-Memory store fallback when database is not configured
 let inMemoryInventory: InventoryItem[] = [...INITIAL_INVENTORY_ITEMS];
