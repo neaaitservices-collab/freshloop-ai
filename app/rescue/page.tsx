@@ -134,14 +134,23 @@ export default function FloorRescuePage() {
             </p>
           </div>
 
-          <div className="grid grid-cols-2 sm:flex sm:items-center gap-2 sm:gap-3 w-full sm:w-auto">
+          <div className="grid grid-cols-3 sm:flex sm:items-center gap-2 sm:gap-3 w-full sm:w-auto">
+            {/* Back to Inventory Link */}
+            <Link
+              href="/dashboard"
+              className="px-3 sm:px-4 py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-zinc-300 text-xs font-bold transition-all shadow-md flex items-center justify-center gap-1.5 active:scale-95 min-h-[44px]"
+            >
+              <ArrowRight className="w-4 h-4 rotate-180" />
+              <span>Inventory</span>
+            </Link>
+
             {/* Direct Voice Transfer Trigger */}
             <button
               onClick={() => setIsVoiceModalOpen(true)}
               className="px-3 sm:px-4 py-2.5 rounded-xl bg-teal-500 hover:bg-teal-400 text-zinc-950 text-xs font-bold transition-all shadow-lg shadow-teal-500/20 flex items-center justify-center gap-2 active:scale-95 min-h-[44px]"
             >
               <Mic className="w-4 h-4 fill-zinc-950" />
-              <span>Voice Transfer</span>
+              <span>Voice</span>
             </button>
 
             {/* Link to AI Recipe Fusion */}
@@ -150,7 +159,7 @@ export default function FloorRescuePage() {
               className="px-3 sm:px-4 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-zinc-950 text-xs font-bold transition-all shadow-lg shadow-emerald-500/20 flex items-center justify-center gap-1.5 active:scale-95 min-h-[44px]"
             >
               <Sparkles className="w-4 h-4 fill-zinc-950" />
-              <span>Go to Recipe Fusion</span>
+              <span>Recipes</span>
             </button>
           </div>
         </div>

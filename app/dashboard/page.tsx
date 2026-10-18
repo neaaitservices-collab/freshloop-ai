@@ -122,8 +122,8 @@ export default function DashboardPage() {
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
               <span className="text-[10px] sm:text-xs font-bold text-emerald-400 uppercase tracking-widest">Live Floor Operations</span>
             </div>
-            <h1 className="text-xl sm:text-3xl font-extrabold text-white tracking-tight">
-              Store Manager Yield & Rescue Hub
+            <h1 className="text-2xl sm:text-3xl md:text-4xl font-black tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-white via-emerald-100 to-emerald-400 drop-shadow-sm">
+              Store Manager &amp; Rescue Hub
             </h1>
             <p className="text-xs sm:text-sm text-zinc-400 mt-1 max-w-2xl leading-relaxed">
               Cross-matching Produce, Dairy, Bakery, and Pantry short-dated stock to eliminate shrinkage and boost prepared deli margins.
@@ -201,13 +201,101 @@ export default function DashboardPage() {
           currentPullDays={currentPullDays}
         />
 
-        {/* Fresh Inventory & Case Lot Pricing Table */}
+        {/* Fresh Inventory & Case Lot Pricing Table with full modal columns */}
         <InventoryTable
           items={items}
           currentPullDays={currentPullDays}
           onUpdateStatus={handleUpdateStatus}
           onTriggerFusionForItems={() => router.push('/recipes')}
         />
+
+        {/* Prepared Foods & Deli Label Rescue Columns */}
+        {recipes.length > 0 && (
+          <div className="space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-2xl bg-gradient-to-r from-emerald-950/60 to-zinc-900 border border-emerald-900/40">
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                  <ChefHat className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-extrabold text-white flex items-center gap-2">
+                    Prepared Deli Recipes &amp; Label Queue
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                      {recipes.length} Active
+                    </span>
+                  </h3>
+                  <p className="text-xs text-zinc-400">
+                    High-margin deli items ready for the floor. Print grab-and-go labels directly.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <Link
+                  href="/recipes"
+                  className="px-3.5 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-zinc-300 text-xs font-bold transition-all flex items-center gap-1.5 active:scale-95"
+                >
+                  <span>View All Recipes</span>
+                  <ArrowRight className="w-3.5 h-3.5 text-zinc-400" />
+                </Link>
+              </div>
+            </div>
+
+            {/* Recipe Columns Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {recipes.slice(0, 3).map((recipe) => (
+                <div
+                  key={recipe.id}
+                  className="p-4 rounded-2xl bg-zinc-900/80 border border-zinc-800 hover:border-emerald-500/40 transition-all space-y-3 shadow-lg flex flex-col justify-between"
+                >
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-400 border border-emerald-500/30">
+                        {recipe.category}
+                      </span>
+                      <span className="text-[10px] font-mono text-zinc-500">
+                        PLU: 9402-DELI
+                      </span>
+                    </div>
+
+                    <h4 className="text-sm font-extrabold text-white leading-snug">
+                      {recipe.recipeName}
+                    </h4>
+
+                    {/* Pricing & Yield metrics in 2 mini columns */}
+                    <div className="grid grid-cols-2 gap-2 p-2.5 rounded-xl bg-zinc-950 border border-zinc-800 text-xs">
+                      <div>
+                        <span className="text-[10px] text-zinc-500 block">Portion Yield</span>
+                        <strong className="text-white text-xs truncate block">{recipe.estimatedYield}</strong>
+                      </div>
+                      <div className="text-right">
+                        <span className="text-[10px] text-zinc-500 block">Retail Price</span>
+                        <strong className="text-emerald-400 text-sm font-black">${recipe.targetRetailPrice.toFixed(2)}</strong>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between text-[11px] text-zinc-400 px-1">
+                      <span>Batch Cost: <strong className="text-zinc-200">${recipe.estimatedCost.toFixed(2)}</strong></span>
+                      <span className="text-emerald-400 font-bold">{recipe.grossMarginPct}% Margin</span>
+                    </div>
+
+                    <div className="text-[10px] text-zinc-400 truncate">
+                      <strong>Ingredients:</strong> {recipe.ingredientsUsed.map((i) => i.name).join(', ')}
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={() => setSelectedDeliRecipe(recipe)}
+                    className="w-full py-2 px-3 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 text-xs font-bold flex items-center justify-center gap-1.5 active:scale-95 transition-all"
+                  >
+                    <Printer className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>Print Deli Sticker</span>
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </main>
 
       {/* AI Modals */}
