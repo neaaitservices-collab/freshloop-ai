@@ -457,7 +457,7 @@ function getMockRecipeFusion(): RecipeFusionResult[] {
       estimatedYield: '16 Individual Dessert Tubs (10 oz)',
       estimatedCost: 38.10,
       targetRetailPrice: 6.99,
-      grossMarginPct: 65.9,
+      grossMarginPct: 65.9, 
       instructions: [
         'Peel, core, and dice bruised Honeycrisp apples.',
         'Sauté apples with brown sugar, butter, and cinnamon until tender.',
