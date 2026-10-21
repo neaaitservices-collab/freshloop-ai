@@ -11,6 +11,14 @@
 // tables the live Next.js app still references (VendorInvoice, InvoiceLineItem,
 // InventoryItem, VoiceLog, RecipeFusion + existing enums).
 // =============================================================================
+// ============================================================================
+// FreshLoop AI — Enterprise Relational Database Schema (Phase 1)
+// Architecture Rules:
+//   1. Immutable Ledger: NO static "Current Stock" columns on Product.
+//      Stock is strictly computed by summing Qty_Change in InventoryTransaction.
+//   2. Mandatory Locations: Every InventoryTransaction records From_Location
+//      and To_Location (e.g. Retail_Floor, Kitchen_Prep, Waste_Bin).
+// ============================================================================
 
 generator client {
   provider = "prisma-client-js"
@@ -23,13 +31,47 @@ datasource db {
 }
 
 // ─── Shared / legacy enums (values unchanged — safe for current app code) ────
+// ─── Core Master Plan Enums ──────────────────────────────────────────────────
+
+enum TransactionType {
+  Receive
+  Sale
+  Rescue
+  Waste
+  POS_Sale
+}
+
+enum InventoryLocation {
+  External_Vendor
+  Main_Storage
+  Retail_Floor
+  Kitchen_Prep
+  Deli_Grab_N_Go
+  Customer_Out
+  Waste_Bin
+}
 
 enum Department {
   PRODUCE
   DAIRY
   BAKERY
   PANTRY
+  DELI_KITCHEN
 }
+
+enum UnitType {
+  KG
+  LBS
+  LITER
+  ML
+  UNIT
+  BUNCH
+  LOAF
+  TUB
+  CASE
+}
+
+// ─── Legacy / Bridge Enums (Preserved for Existing App Components) ───────────
 
 enum InventoryStatus {
   FRESH
@@ -190,6 +232,160 @@ model Bundle {
   updatedAt   DateTime @updatedAt
 
   items BundleItem[]
+enum Role {
+  ADMIN
+  STORE_MANAGER
+  RECEIVING_CLERK
+  FLOOR_STAFF
+  DELI_CHEF
+}
+
+/// Coworker account. Role decides which parts of the store they can open.
+model User {
+  id        String   @id @default(uuid())
+  name      String
+  email     String   @unique
+  position  String
+  role      Role     @default(FLOOR_STAFF)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([role])
+  @@map("staff_users")
+}
+
+// ─── Phase 1 Core Models (Master Development Plan) ───────────────────────────
+
+/// Master catalog of raw supermarket items and kitchen-manufactured products.
+/// RULE: Never store a static stock count here. Always query InventoryTransaction.
+model Product {
+  id              String     @id @default(uuid())
+  barcode         String?    @unique
+  name            String
+  department      Department
+  targetMargin    Float      @default(0.40) // e.g. 0.40 for 40% target margin
+  unitType        UnitType   @default(UNIT)
+  casePackSize    Float?     @default(1)
+  parCases        Int        @default(2) // Alert when on-hand cases fall below this
+  yieldPct        Float?     @default(100) // Usable culinary yield % (e.g. 75% for Hass Avocados)
+  shelfLifeDays   Int        @default(7)
+  supplier        String?
+  origin          String?
+  standardCost    Float?     // Baseline reference cost before moving average is established
+  retailPrice     Float?     // Active shelf retail price
+  isManufactured  Boolean    @default(false) // true if produced via a Kitchen Recipe
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  // Ledger & Relational Links
+  transactions    InventoryTransaction[]
+  producedRecipes Recipe[]               @relation("OutputProduct")
+  usedInBOMs      RecipeBOM[]            @relation("IngredientProduct")
+  bundleItems     BundleItem[]
+  posMappings     POSMapping[]
+
+  @@index([department])
+  @@index([name])
+  @@map("products")
+}
+
+/// Immutable Double-Entry Inventory Ledger.
+/// Current stock at any location = SUM(qtyChange) where toLocation = X minus fromLocation = X,
+/// or signed qtyChange scoped by location/transaction conventions.
+model InventoryTransaction {
+  id              String            @id @default(uuid())
+  timestamp       DateTime          @default(now())
+  productId       String            @map("Product_ID")
+  product         Product           @relation(fields: [productId], references: [id], onDelete: Restrict)
+  staffId         String            @map("Staff_ID")
+  qtyChange       Float             @map("Qty_Change") // Signed quantity delta (+ for inflow/receipt, - for outflow/waste/sale)
+  transactionType TransactionType   @map("Transaction_Type")
+  fromLocation    InventoryLocation @map("From_Location")
+  toLocation      InventoryLocation @map("To_Location")
+  unitCostAtTime  Float             @map("Unit_Cost_At_Time")
+  referenceId     String?           @map("Reference_ID") // Invoice #, Recipe Batch ID, POS Receipt ID, or VoiceLog ID
+  expirationDate  DateTime?         // Used by Human Pull Slider (2, 3, 4 days sensitivity)
+  notes           String?
+
+  @@index([productId, timestamp])
+  @@index([transactionType, timestamp])
+  @@index([fromLocation, toLocation])
+  @@index([referenceId])
+  @@index([expirationDate])
+  @@map("Inventory_Transactions")
+}
+
+/// Global store configuration for KPI traffic lights and volumetric scrap calculations.
+model StoreSetting {
+  id                        String   @id @default(uuid())
+  storeName                 String   @default("FreshLoop Independent Market")
+  targetWastePct            Float    @default(2.5) @map("Target_Waste_Pct") // e.g. 2.5% max acceptable waste
+  scrapBucketVolumeL        Float    @default(20.0) @map("Scrap_Bucket_Volume_L") // Standard 20L kitchen scrap bucket
+  estimatedWeightPerLiterKg Float    @default(0.65) @map("Estimated_Weight_Per_Liter_kg") // Organic trim density ~0.65 kg/L
+  defaultScrapCostPerKg     Float    @default(3.50) // Blended cost per kg for volumetric kitchen scraps
+  pullSensitivityDays       Int      @default(3) // 2, 3, or 4 days human expiration pull threshold
+  costGuardrailVariancePct  Float    @default(20.0) // OCR Cost Guardrail alert threshold (>20% variance)
+  updatedAt                 DateTime @updatedAt
+
+  @@map("store_settings")
+}
+
+/// Kitchen Rescue manufacturing definition producing a value-added Product.
+model Recipe {
+  id                String      @id @default(uuid())
+  name              String
+  category          String      // Soup, Salad / Panzanella, Parfait / Dessert, Prepared Hot Meal, Bakery
+  outputProductId   String
+  outputProduct     Product     @relation("OutputProduct", fields: [outputProductId], references: [id], onDelete: Restrict)
+  batchYieldQty     Float       // Quantity of outputProduct produced per batch (e.g. 20 portions)
+  targetRetailPrice Float
+  prepTimeMinutes   Int         @default(25)
+  instructions      String      @db.Text
+  chefTips          String?     @db.Text
+  allergens         String[]    @default([])
+  restrictedToRole  String      @default("KITCHEN_STAFF") // RBAC enforcement
+  isActive          Boolean     @default(true)
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+
+  bomItems          RecipeBOM[]
+
+  @@index([outputProductId])
+  @@map("recipes")
+}
+
+/// Bill of Materials (BOM) linking raw ingredient Products to a Recipe.
+model RecipeBOM {
+  id                  String   @id @default(uuid())
+  recipeId            String
+  recipe              Recipe   @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+  ingredientProductId String
+  ingredientProduct   Product  @relation("IngredientProduct", fields: [ingredientProductId], references: [id], onDelete: Restrict)
+  requiredQty         Float    // Standard BOM quantity required per batch
+  unit                UnitType
+  allowVariance       Boolean  @default(true) // Allows cooks to toggle real weight used in Phase 5
+  notes               String?
+
+  @@unique([recipeId, ingredientProductId])
+  @@index([recipeId])
+  @@index([ingredientProductId])
+  @@map("recipe_boms")
+}
+
+/// Virtual Kitting Bundle for POS ("Explodes" into component Products on sale).
+model Bundle {
+  id          String       @id @default(uuid())
+  name        String
+  bundleSku   String       @unique
+  description String?
+  bundlePrice Float
+  discountPct Float?
+  isActive    Boolean      @default(true)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  items       BundleItem[]
+  posMappings POSMapping[]
 
   @@map("bundles")
 }
@@ -203,6 +399,17 @@ model BundleItem {
   quantityPerBundle Float // units of product deducted per one bundle sale
 
   @@unique([bundleId, productId])
+/// Component line item inside a Virtual Kitting Bundle.
+model BundleItem {
+  id        String  @id @default(uuid())
+  bundleId  String
+  bundle    Bundle  @relation(fields: [bundleId], references: [id], onDelete: Cascade)
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+  quantity  Float   // Quantity of Product deducted when 1 Bundle is sold
+
+  @@unique([bundleId, productId])
+  @@index([bundleId])
   @@index([productId])
   @@map("bundle_items")
 }
@@ -225,20 +432,38 @@ model POSMapping {
 // =============================================================================
 // LEGACY / BRIDGE — tables the live app still uses (do not drop/rename columns)
 // =============================================================================
+/// Links internal FreshLoop Product or Bundle IDs with external POS terminal SKUs/PLUs.
+model POSMapping {
+  id          String   @id @default(uuid())
+  externalSku String   @unique // External POS SKU / PLU code
+  posSystem   String   @default("SQUARE_POS") // e.g. SQUARE_POS, TOAST, LIGHTSPEED, NCR
+  productId   String?
+  product     Product? @relation(fields: [productId], references: [id], onDelete: Cascade)
+  bundleId    String?
+  bundle      Bundle?  @relation(fields: [bundleId], references: [id], onDelete: Cascade)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([productId])
+  @@index([bundleId])
+  @@map("pos_mappings")
+}
+
+// ─── Legacy / Supporting Models (Preserved for Existing App Compatibility) ───
 
 /// LEGACY/BRIDGE: vendor invoice OCR intake (app invoice-ocr flow).
 model VendorInvoice {
-  id                  String            @id @default(uuid())
+  id                  String   @id @default(uuid())
   vendorName          String
   invoiceNumber       String?
   invoiceDate         DateTime
   totalAmount         Float
-  departmentBreakdown Json // { PRODUCE: float, DAIRY: float, BAKERY: float, PANTRY: float }
-  status              String            @default("PROCESSED") // PROCESSED, PENDING, FAILED
+  departmentBreakdown Json
+  status              String   @default("PROCESSED")
   rawOcrJson          Json?
-  createdAt           DateTime          @default(now())
-  updatedAt           DateTime          @updatedAt
-  lineItems           InvoiceLineItem[]
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
 
   @@map("vendor_invoices")
 }
@@ -277,12 +502,24 @@ model InventoryItem {
   unit              String // lbs, kg, cases, liters, units, packs
   receivedCost      Float // cost per unit (typically per case in current app)
   receivedDate      DateTime // Item aging: filter receivedDate <= now() - N days
+  unit              String
+  receivedCost      Float
+  receivedDate      DateTime
   expirationDate    DateTime
-  condition         String // Pristine, Slightly Blemished, Bruised, Overripe, Near Expiry
+  condition         String
   status            InventoryStatus @default(FRESH)
-  pullThresholdDays Int             @default(3) // 2, 3, or 4 days threshold trigger
+  pullThresholdDays Int             @default(3)
   location          String          @default("Main Storage")
   notes             String?
+  casePackSize      Float?
+  subUnit           String?
+  batchCode         String?
+  supplier          String?
+  origin            String?
+  barcode           String?
+  yieldPct          Float?
+  margin40Price     Float?
+  actualMarginPct   Float?
   createdAt         DateTime        @default(now())
   updatedAt         DateTime        @updatedAt
 
@@ -308,6 +545,9 @@ model InventoryItem {
   @@index([expirationDate])
   @@index([receivedDate])
   @@index([productId])
+  @@index([status])
+  @@index([department])
+  @@index([expirationDate])
   @@map("inventory_items")
 }
 
@@ -317,6 +557,7 @@ model VoiceLog {
   transcript       String
   audioDurationSec Float?
   parsedData       Json // items array with quantities, condition, warnings
+  parsedData       Json
   targetAction     TargetAction @default(KITCHEN_RESCUE)
   processedAt      DateTime     @default(now())
 
@@ -328,14 +569,17 @@ model VoiceLog {
 model RecipeFusion {
   id                String       @id @default(uuid())
   recipeName        String
-  category          String // Soup, Salad/Panzanella, Parfait/Dessert, Prepared Hot Meal, Bakery
-  ingredientsUsed   Json // LEGACY: Array of { name, quantity, unit, department, estimatedValue }
-  estimatedYield    String // LEGACY: e.g. "16 Portions (12 oz)" — kept for UI/back-compat
+  category          String
+  ingredientsUsed   Json
+  estimatedYield    String
   estimatedCost     Float
   targetRetailPrice Float
   grossMarginPct    Float
   instructions      String       @db.Text
   status            RecipeStatus @default(PROPOSED)
+  prepTimeMinutes   Int?
+  chefTips          String?      @db.Text
+  allergens         String[]     @default([])
   createdAt         DateTime     @default(now())
   updatedAt         DateTime     @updatedAt
 

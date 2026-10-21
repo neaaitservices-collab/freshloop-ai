@@ -1,69 +1,65 @@
-# FRESHLOOP AI: MASTER DEVELOPMENT PLAN
-**System Context:** You are an Expert Full-Stack Enterprise Architect. You are building "FreshLoop AI", a yield management, recipe rescue, and dynamic inventory platform for independent grocers.
+# FRESHLOOP AI: PLAN MAESTRO DE DESARROLLO Y ARQUITECTURA
 
-## 0. TECH STACK & GLOBAL RULES (STRICT COMPLIANCE REQUIRED)
-*   **Framework:** Next.js 15 (App Router), React 19, Tailwind CSS v4, Lucide React.
-*   **Database:** PostgreSQL (via Supabase), Prisma ORM.
-*   **AI SDK:** `@google/generative-ai` (Gemini 1.5 Flash Vision, Audio, Text).
-*   **RULE 1 (The Ledger):** NEVER create static "Current Stock" columns. All inventory levels MUST be calculated dynamically via `SUM` aggregations of an `Inventory_Transactions` ledger.
-*   **RULE 2 (Location Tracking):** All transactions must strictly enforce `From_Location` and `To_Location` (e.g., `Retail_Floor`, `Kitchen_Prep`, `Waste_Bin`).
-*   **RULE 3 (Async AI Confirmation):** No AI parsing (voice or image) can write directly to the database. All AI endpoints must return structured JSON to the frontend to trigger a high-contrast `[CONFIRM] / [EDIT]` UI modal.
-*   **RULE 4 (Phased Execution):** You must complete this project phase-by-phase. DO NOT move to the next phase until the human explicitly says "Phase [X] Approved."
+## Contexto del Sistema
+Eres un Arquitecto de Software Full-Stack Enterprise. Estás construyendo "FreshLoop AI", una plataforma de gestión de rendimiento, rescate de recetas e inventario dinámico para supermercados independientes.
 
----
-
-## PHASE 1: DATABASE SCHEMA (Prisma)
-**Goal:** Establish the normalized single-source-of-truth.
-**Tasks:**
-1. Generate `schema.prisma` with the following models:
-   - `Product`: ID, Barcode, Name, Department, TargetMargin.
-   - `InventoryTransaction`: ID, Timestamp, Product_ID, Qty_Change, Transaction_Type (Receive, Sale, Rescue, Waste, POS_Sale), From_Location, To_Location, Unit_Cost_At_Time, Reference_ID.
-   - `StoreSetting`: ID, Target_Waste_Pct, Scrap_Bucket_Volume_L, Estimated_Weight_Per_Liter_kg.
-   - `Recipe` & `RecipeBOM`: Defines output products and raw ingredient requirements.
-   - `Bundle` & `BundleItem`: For POS Virtual Kitting.
-   - `POSMapping`: Links `Product_ID` to external POS SKUs.
-2. Generate seed data (`seed.ts`) to populate initial items, settings, and recipes.
-**Stop and wait for human approval.**
+## Reglas de Cumplimiento Estricto (Global Rules)
+1. **Tecnologías Core:** Next.js 15 (App Router), React 19, Tailwind CSS v4, Prisma ORM, Supabase (PostgreSQL), `@google/generative-ai` (Gemini 1.5 Flash).
+2. **Regla del Ledger Inmutable:** NUNCA crees columnas estáticas de "Stock Actual". El inventario siempre se calcula dinámicamente sumando la columna `Qty_Change` de la tabla `Inventory_Transactions`.
+3. **Ubicación Obligatoria:** Todas las transacciones deben registrar `From_Location` y `To_Location` (ej. `Retail_Floor`, `Kitchen_Prep`, `Waste_Bin`).
+4. **Bucle de Confirmación de IA (Async Confirmation):** Ningún modelo de IA (voz o visión) escribe directamente en la base de datos. Deben devolver un JSON estructurado para mostrar un modal UI de confirmación `[CONFIRMAR] / [EDITAR]`.
+5. **Control de Acceso (RBAC):** Las ejecuciones de recetas (BOM) están restringidas exclusivamente al rol de personal de cocina.
+6. **Ejecución por Fases:** Debes ejecutar este proyecto fase por fase. NO pases a la siguiente fase hasta que el usuario lo autorice explícitamente.
 
 ---
 
-## PHASE 2: CORE LEDGER & INVENTORY SERVICES
-**Goal:** Build the backend utilities that execute complex inventory math.
-**Tasks:**
-1. Create `lib/inventory.ts`.
-2. Write `getCurrentStock(productId, location)`: Aggregates ledger transactions.
-3. Write `getMovingAverageCost(productId)`: Calculates the current real-time cost based on historical receiving logs.
-4. Write `executeBundleSale(bundleId)`: The "Virtual Kitting Explode" function that reads `BundleItem` and deducts raw components from the ledger.
-5. Write `calculateRealTimeWastePct()`: Implements the logic: `(Total Known Discard Value + Total Volumetric Scrap Value) / Gross Food Sales`.
-**Stop and wait for human approval.**
+## FASE 1: ESQUEMA DE BASE DE DATOS Y SEEDING (Prisma)
+- **Objetivo:** Crear el modelo de datos relacional normalizado en `schema.prisma`.
+- **Modelos:**
+  - `Product`: ID, Barcode, Name, Department, TargetMargin, UnitType.
+  - `InventoryTransaction`: ID, Timestamp, Product_ID, Staff_ID, Qty_Change, Transaction_Type (Receive, Sale, Rescue, Waste, POS_Sale), From_Location, To_Location, Unit_Cost_At_Time, Reference_ID.
+  - `StoreSetting`: ID, Target_Waste_Pct, Scrap_Bucket_Volume_L, Estimated_Weight_Per_Liter_kg.
+  - `Recipe` y `RecipeBOM`: Define el producto resultante y sus ingredientes crudos.
+  - `Bundle` y `BundleItem`: Para Virtual Kitting en el POS.
+  - `POSMapping`: Vincula IDs internos con SKUs externos del POS.
+- **Entregables:** `schema.prisma` y `prisma/seed.ts`.
 
 ---
 
-## PHASE 3: AI ENDPOINTS & PRODUCTION LOGIC
-**Goal:** Implement the Gemini 1.5 Flash integrations and Kitchen Manufacturing.
-**Tasks:**
-1. Create `/api/voice-logger/route.ts`: Parses spoken audio into JSON (Item, Qty, Condition, Action: PULL/DISCARD). Implements fuzzy matching if the spoken item name doesn't perfectly match the DB.
-2. Create `/api/invoice-ocr/route.ts`: Parses receipt images into JSON (Vendor, Line Items, Unit Costs). Implement "Cost Guardrail" logic (flag if cost changes by >20%).
-3. Create `/api/manufacturing/route.ts`: The Universal Rescue Production endpoint. Takes a `Recipe_ID` and `Batch_Output`, deducts from `RecipeBOM`, calculates batch cost using `getMovingAverageCost()`, and adds finished goods to the ledger.
-**Stop and wait for human approval.**
+## FASE 2: SERVICIOS CORE DEL LEDGER E INVENTARIO
+- **Objetivo:** Construir las utilidades del servidor en TypeScript para los cálculos matemáticos del inventario.
+- **Funciones en `lib/inventory.ts`:**
+  - `getCurrentStock(productId, location)`: Suma transacciones del ledger.
+  - `getMovingAverageCost(productId)`: Calcula el costo promedio ponderado basado en logs de recepción.
+  - `executeBundleSale(bundleId)`: Función "Explode" de Virtual Kitting.
+  - `calculateRealTimeWastePct()`: Fórmula `(Valor Descarte + Valor Scraps Volumétricos) / Ventas Brutas`.
+- **Entregable:** `lib/inventory.ts` probado y verificado.
 
 ---
 
-## PHASE 4: FRONTEND UI - DASHBOARD & KPI'S
-**Goal:** Build the Manager's Command Center.
-**Tasks:**
-1. Build `app/dashboard/page.tsx`: Glassmorphic UI with Tailwind CSS.
-2. Build the **Traffic Light Waste KPI Component**: Glows Green if actual waste < `Target_Waste_Pct`, flashes Red if over.
-3. Build the **Human Pull Slider Control**: A slider (2-day, 3-day, 4-day) that adjusts how aggressively the Inventory Agent flags aging stock.
-4. Build the **Sub-Inventory Tables**: View split inventory by `Retail_Floor` and `Kitchen_Prep`.
-**Stop and wait for human approval.**
+## FASE 3: ENDPOINTS DE IA Y MANUFACTURA
+- **Objetivo:** Integrar SDK de Gemini 1.5 Flash y motor de producción de cocina.
+- **Rutas API:**
+  - `/api/voice-logger/route.ts`: Procesa audio a JSON (Item, Cantidad, Acción) con búsqueda difusa (fuzzy matching) si el nombre no coincide exactamente.
+  - `/api/invoice-ocr/route.ts`: Procesa imágenes de facturas a JSON (Proveedor, Ítems, Costo). Incluye Cost Guardrail (alerta si el costo varía >20%).
+  - `/api/manufacturing/route.ts`: Descuenta `RecipeBOM` de `Kitchen_Prep`, calcula costo de lote y añade producto final al ledger.
+- **Entregables:** Rutas API en `/app/api/`.
 
 ---
 
-## PHASE 5: FRONTEND UI - STAFF WORKFLOWS & SAFEGUARDS
-**Goal:** Build the frictionless floor tools.
-**Tasks:**
-1. Build `VoiceLoggerModal.tsx`: Includes the **Async Confirmation Loop** (forces user to click "Confirm" after AI parses speech).
-2. Build `RecipeProductionModal.tsx`: Includes the **Variance Toggle** (allows cooks to edit exact raw ingredient weights deducted if reality differs from the perfect BOM).
-3. Build `VolumetricScrapForm.tsx`: A 1-click form to log "X Buckets of Scraps." Connects to the backend to multiply by Bucket Weight and Blended Average Cost.
-**Stop and wait for human approval.**
+## FASE 4: DASHBOARD DE CONTROL Y KPIS (Frontend)
+- **Objetivo:** Construir el centro de mando del gerente.
+- **Componentes UI:**
+  - `app/dashboard/page.tsx`: Dashboard neumórfico/glassmorphic.
+  - **Semáforo KPI de Merma:** Verde si Merma Actual < `Target_Waste_Pct`, Rojo parpadeante si lo supera.
+  - **Slider de Retiro Humano:** Controles para 2, 3 y 4 días de sensibilidad de expiración.
+  - **Tablas de Sub-Inventarios:** Vista separada para `Retail_Floor` y `Kitchen_Prep`.
+
+---
+
+## FASE 5: FLUJOS DE TRABAJO EN PISO Y SALVAGUARDAS
+- **Objetivo:** Herramientas de interfaz sin fricción para el personal.
+- **Componentes UI:**
+  - `VoiceLoggerModal.tsx`: Bucle de confirmación asíncrono tras el parseo de voz.
+  - `RecipeProductionModal.tsx`: Toggle de varianza (permite a cocineros ajustar el peso real usado si difiere del BOM).
+  - `VolumetricScrapForm.tsx`: Registro en 1 clic de "X Cubetas de 20L".

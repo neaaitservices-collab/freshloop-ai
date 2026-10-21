@@ -1,24 +1,155 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { InventoryLocation, TransactionType } from '@prisma/client';
 import { getInventoryItems, updateInventoryItem } from '@/lib/db';
+import {
+  prisma,
+  calculateRealTimeWastePct,
+} from '@/lib/inventory';
 
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const status = searchParams.get('status') || 'ALL';
-    const pullDays = searchParams.get('pullDays');
+    const pullDaysParam = searchParams.get('pullDays');
+    const scrapBucketsParam = searchParams.get('scrapBuckets');
 
+    const pullDays = pullDaysParam ? parseInt(pullDaysParam, 10) : 3;
+    const additionalScrapBuckets = scrapBucketsParam
+      ? parseFloat(scrapBucketsParam)
+      : 0;
+
+    // 1. Existing compatible items list
     const items = await getInventoryItems({
       status,
-      pullThresholdDays: pullDays ? parseInt(pullDays, 10) : undefined
+      pullThresholdDays: pullDays,
     });
+
+    // 2. Attempt live Phase 2 Ledger & Waste KPI aggregation from Prisma
+    let liveLedger = null;
+    try {
+      const products = await prisma.product.findMany({
+        orderBy: { name: 'asc' },
+      });
+
+      if (products.length > 0) {
+        const [wasteKpi, retailSums, kitchenSums, inflows, expirations] = await Promise.all([
+          calculateRealTimeWastePct({
+            additionalScrapBuckets,
+          }),
+          prisma.inventoryTransaction.groupBy({
+            by: ['productId'],
+            where: {
+              OR: [
+                { toLocation: InventoryLocation.Retail_Floor, qtyChange: { gt: 0 } },
+                { fromLocation: InventoryLocation.Retail_Floor, qtyChange: { lt: 0 } },
+              ],
+            },
+            _sum: { qtyChange: true },
+          }),
+          prisma.inventoryTransaction.groupBy({
+            by: ['productId'],
+            where: {
+              OR: [
+                { toLocation: InventoryLocation.Kitchen_Prep, qtyChange: { gt: 0 } },
+                { fromLocation: InventoryLocation.Kitchen_Prep, qtyChange: { lt: 0 } },
+              ],
+            },
+            _sum: { qtyChange: true },
+          }),
+          prisma.inventoryTransaction.findMany({
+            where: { qtyChange: { gt: 0 }, unitCostAtTime: { gte: 0 } },
+            select: { productId: true, qtyChange: true, unitCostAtTime: true, transactionType: true },
+          }),
+          prisma.$queryRaw<Array<{ productId: string; expirationDate: Date }>>`
+            SELECT DISTINCT ON ("Product_ID")
+              "Product_ID" AS "productId",
+              "expirationDate"
+            FROM "Inventory_Transactions"
+            WHERE "expirationDate" IS NOT NULL
+            ORDER BY "Product_ID", "timestamp" DESC
+          `,
+        ]);
+
+        const sumByProduct = (rows: Array<{ productId: string; _sum: { qtyChange: number | null } }>) =>
+          new Map(rows.map((row) => [row.productId, row._sum.qtyChange ?? 0]));
+        const retailById = sumByProduct(retailSums);
+        const kitchenById = sumByProduct(kitchenSums);
+        const expirationById = new Map(expirations.map((row) => [row.productId, row.expirationDate]));
+        const receiveCost = new Map<string, { cost: number; qty: number }>();
+        const inflowCost = new Map<string, { cost: number; qty: number }>();
+        for (const row of inflows) {
+          const target = row.transactionType === TransactionType.Receive ? receiveCost : inflowCost;
+          const bucket = target.get(row.productId) ?? { cost: 0, qty: 0 };
+          bucket.cost += row.qtyChange * row.unitCostAtTime;
+          bucket.qty += row.qtyChange;
+          target.set(row.productId, bucket);
+        }
+        const movingAverage = (productId: string, standardCost: number | null) => {
+          const received = receiveCost.get(productId);
+          const source = received && received.qty > 0 ? received : inflowCost.get(productId);
+          if (source && source.qty > 0) return Number((source.cost / source.qty).toFixed(4));
+          return Number((standardCost ?? 0).toFixed(4));
+        };
+
+        const now = new Date();
+        const subInventoryRows = products.map((prod) => {
+          const retailStock = Number((retailById.get(prod.id) ?? 0).toFixed(4));
+          const kitchenStock = Number((kitchenById.get(prod.id) ?? 0).toFixed(4));
+          const movingAvgCost = movingAverage(prod.id, prod.standardCost);
+          const latestExpiration = expirationById.get(prod.id);
+          const expDate = latestExpiration
+            ? new Date(latestExpiration)
+            : new Date(now.getTime() + prod.shelfLifeDays * 24 * 60 * 60 * 1000);
+          const daysRemaining = Math.max(
+            0,
+            Math.ceil((expDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
+          );
+
+          return {
+            productId: prod.id,
+            barcode: prod.barcode || 'N/A',
+            name: prod.name,
+            department: prod.department,
+            unitType: prod.unitType,
+            retailFloorQty: retailStock,
+            kitchenPrepQty: kitchenStock,
+            movingAvgCost,
+            retailPrice: prod.retailPrice || Number((movingAvgCost / (1 - prod.targetMargin)).toFixed(2)),
+            targetMarginPct: Number((prod.targetMargin * 100).toFixed(0)),
+            yieldPct: prod.yieldPct ?? 100,
+            casePackSize: prod.casePackSize || 1,
+            standardCost: prod.standardCost,
+            daysRemaining,
+            expirationDate: expDate.toISOString().split('T')[0],
+            supplier: prod.supplier || 'Direct Store Vendor',
+            isManufactured: prod.isManufactured,
+            isFlaggedForPull: daysRemaining <= pullDays && retailStock > 0,
+          };
+        });
+
+        liveLedger = {
+          wasteKpi,
+          subInventoryRows,
+        };
+      }
+    } catch {
+      // Fallback handled on client if DB is not yet migrated/seeded
+    }
 
     return NextResponse.json({
       success: true,
       count: items.length,
-      items
+      items,
+      liveLedger,
     });
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  } catch (error: unknown) {
+    return NextResponse.json(
+      {
+        error:
+          error instanceof Error ? error.message : 'Failed to load inventory',
+      },
+      { status: 500 }
+    );
   }
 }
 
@@ -28,16 +159,28 @@ export async function PATCH(req: NextRequest) {
     const { id, updates } = body;
 
     if (!id || !updates) {
-      return NextResponse.json({ error: 'Missing id or updates parameter' }, { status: 400 });
+      return NextResponse.json(
+        { error: 'Missing id or updates parameter' },
+        { status: 400 }
+      );
     }
 
     const updated = await updateInventoryItem(id, updates);
     if (!updated) {
-      return NextResponse.json({ error: 'Inventory item not found' }, { status: 404 });
+      return NextResponse.json(
+        { error: 'Inventory item not found' },
+        { status: 404 }
+      );
     }
 
     return NextResponse.json({ success: true, item: updated });
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  } catch (error: unknown) {
+    return NextResponse.json(
+      {
+        error:
+          error instanceof Error ? error.message : 'Failed to update inventory',
+      },
+      { status: 500 }
+    );
   }
 }
