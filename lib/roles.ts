@@ -43,7 +43,14 @@ export function homeForRole(role: RoleName): string {
 
 export function canVisit(role: RoleName, pathname: string): boolean {
   if (isManager(role)) return true;
-  if (role === 'RECEIVING_CLERK') return pathname === '/receive' || pathname.startsWith('/receive/');
+  if (role === 'RECEIVING_CLERK') {
+    return (
+      pathname === '/receive' ||
+      pathname.startsWith('/receive/') ||
+      pathname === '/inventory' ||
+      pathname.startsWith('/inventory/')
+    );
+  }
   if (role === 'FLOOR_STAFF') return pathname === '/floor' || pathname.startsWith('/floor/');
   if (role === 'DELI_CHEF') return pathname === '/kitchen' || pathname.startsWith('/kitchen/');
   return false;

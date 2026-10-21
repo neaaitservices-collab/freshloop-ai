@@ -4,6 +4,7 @@ import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { AlertTriangle, ArrowRight, ChefHat, Package, Store } from 'lucide-react';
 import { AppShell } from '@/components/shell/AppShell';
+import { AdminStats } from '@/components/admin/AdminStats';
 
 interface TodaySnapshot {
   wastePct: number | null;
@@ -108,12 +109,14 @@ export function TodayHome() {
 
   return (
     <AppShell>
-      <main className="mx-auto w-full max-w-5xl px-3 py-5 pb-28 sm:px-6 sm:py-8">
-        <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-emerald-300">Start here</p>
+      <main className="mx-auto w-full max-w-7xl px-3 py-5 pb-28 sm:px-6 sm:py-8">
+        <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-emerald-300">Store dashboard</p>
         <h1 className="mt-1 text-3xl font-black tracking-tight text-white">Today</h1>
-        <p className="mt-2 max-w-xl text-sm leading-relaxed text-zinc-400">
-          Follow the three steps in order. Voice is always available if you need to log a move from the floor.
+        <p className="mt-2 max-w-2xl text-sm leading-relaxed text-zinc-400">
+          The numbers come from the ledger. The three steps below are the work for the floor.
         </p>
+
+        <AdminStats />
 
         <section
           className={`mt-5 rounded-3xl border p-5 ${
@@ -136,7 +139,7 @@ export function TodayHome() {
 
         <Link
           href="/orders"
-          className="mt-3 flex items-center justify-between gap-3 rounded-3xl border border-amber-500/30 bg-zinc-900 px-5 py-4"
+          className="mt-3 flex items-center justify-between gap-3 rounded-3xl border border-amber-500/30 bg-zinc-900 px-5 py-4 transition hover:-translate-y-0.5 hover:border-amber-300/60"
         >
           <span>
             <span className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-wider text-amber-200">
@@ -164,7 +167,7 @@ export function TodayHome() {
               <li key={step.href}>
                 <Link
                   href={step.href}
-                  className="flex h-full flex-col rounded-3xl border border-zinc-800 bg-zinc-900 p-4 transition hover:border-emerald-500/40"
+                  className="flex h-full flex-col rounded-3xl border border-zinc-800 bg-zinc-900 p-4 transition hover:-translate-y-0.5 hover:border-emerald-400/50"
                 >
                   <span className="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-400 text-sm font-black text-zinc-950">
                     {step.step}

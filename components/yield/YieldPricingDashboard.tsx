@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import Link from 'next/link';
 import { AlertTriangle, LayoutDashboard, RefreshCw, Sheet } from 'lucide-react';
 import {
   calculateYieldQuote,
@@ -300,7 +301,10 @@ export function YieldPricingDashboard({
 
       {movedNotice ? (
         <p className="mb-4 rounded-2xl border border-emerald-500/30 bg-emerald-400/10 px-4 py-3 text-sm font-semibold text-emerald-200">
-          {movedNotice}
+          {movedNotice}{' '}
+          <Link href="/inventory" className="underline decoration-emerald-300/70 underline-offset-2">
+            Open inventory
+          </Link>
         </p>
       ) : null}
 
