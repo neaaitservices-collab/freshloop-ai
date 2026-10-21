@@ -2,8 +2,6 @@
 
 import React, { useState } from 'react';
 import { Pencil, Trash2, UserPlus } from 'lucide-react';
-import { AppShell } from '@/components/shell/AppShell';
-import { PageIntro } from '@/components/shell/PageIntro';
 import { useRole } from '@/components/auth/RoleProvider';
 import { ROLE_LABELS, ROLES, type RoleName, type StaffUser } from '@/lib/roles';
 
@@ -77,38 +75,14 @@ export function UserManagementTable() {
   };
 
   return (
-    <AppShell>
-      <main className="mx-auto w-full max-w-5xl px-3 py-5 pb-28 sm:px-6 sm:py-8">
-        <PageIntro
-          step="Admin"
-          title="Staff"
-          description="Add the people who work the store and give each one a job. Acting as someone limits what the next phases will show."
-        />
+    <section className="mt-10">
+      <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-emerald-300">Controls</p>
+      <h2 className="mt-1 text-2xl font-black tracking-tight text-white">Staff</h2>
+      <p className="mt-1 max-w-2xl text-sm text-zinc-400">
+        Add the people who work the store and give each one a job.
+      </p>
 
-        <section className="mt-5 rounded-3xl border border-zinc-800 bg-zinc-900/80 p-4">
-          <p className="text-[11px] font-bold uppercase tracking-wider text-zinc-500">Acting as</p>
-          <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center">
-            <select
-              aria-label="Acting as"
-              value={activeUser?.id ?? ''}
-              onChange={(event) => setActiveUserId(event.target.value)}
-              className="w-full rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-3 text-sm font-bold text-white sm:max-w-sm"
-            >
-              {users.map((user) => (
-                <option key={user.id} value={user.id}>
-                  {user.name} · {ROLE_LABELS[user.role]}
-                </option>
-              ))}
-            </select>
-            <p className="text-sm text-zinc-400">
-              {activeUser
-                ? `${activeUser.position} · ${activeUser.email}`
-                : loading
-                  ? 'Loading staff…'
-                  : 'No staff yet.'}
-            </p>
-          </div>
-        </section>
+      {loading && users.length === 0 ? <p className="mt-4 text-sm text-zinc-400">Loading staff…</p> : null}
 
         <form
           className="mt-4 grid gap-3 rounded-3xl border border-zinc-800 bg-zinc-900/80 p-4 sm:grid-cols-2"
@@ -228,7 +202,6 @@ export function UserManagementTable() {
             </tbody>
           </table>
         </div>
-      </main>
-    </AppShell>
+    </section>
   );
 }

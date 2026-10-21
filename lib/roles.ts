@@ -42,6 +42,7 @@ export function homeForRole(role: RoleName): string {
 }
 
 export function canVisit(role: RoleName, pathname: string): boolean {
+  if (pathname === '/admin' || pathname.startsWith('/admin/')) return true;
   if (isManager(role)) return true;
   if (role === 'RECEIVING_CLERK') {
     return (

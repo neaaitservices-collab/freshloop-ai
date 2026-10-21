@@ -32,6 +32,10 @@ function dayKey(date: Date): string {
 const CACHE_MS = 20_000;
 let cachedStats: { at: number; value: Promise<StoreStats> } | null = null;
 
+export function invalidateStoreStats(): void {
+  cachedStats = null;
+}
+
 export function getStoreStats(): Promise<StoreStats> {
   const now = Date.now();
   if (cachedStats && now - cachedStats.at < CACHE_MS) return cachedStats.value;
