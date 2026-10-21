@@ -3,12 +3,12 @@
 import React, { useState } from 'react';
 import { InvoiceOcrResult } from '@/lib/types';
 import { DepartmentBadge } from './DepartmentBadge';
-import { FileText, Upload, Sparkles, X, CheckCircle2, ArrowRight, Loader2 } from 'lucide-react';
+import { AlertTriangle, ArrowRight, Camera, CheckCircle2, FileText, ImagePlus, Loader2, Sparkles, Upload, X } from 'lucide-react';
 
 interface InvoiceUploadModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onInvoiceImported: () => void;
+  onInvoiceImported: (result: InvoiceOcrResult) => void;
 }
 
 export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
@@ -20,7 +20,7 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [ocrResult, setOcrResult] = useState<InvoiceOcrResult | null>(null);
-  const [autoImport, setAutoImport] = useState(true);
+  const [scanError, setScanError] = useState<string | null>(null);
 
   if (!isOpen) return null;
 
@@ -28,6 +28,8 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0];
       setSelectedFile(file);
+      setScanError(null);
+      setOcrResult(null);
       const reader = new FileReader();
       reader.onloadend = () => {
         setPreviewUrl(reader.result as string);
@@ -40,50 +42,54 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
     setOcrResult(null);
     setPreviewUrl(null);
     setSelectedFile(null);
-    const fileInput = document.getElementById('invoice-file-input') as HTMLInputElement;
-    if (fileInput) {
-      fileInput.value = '';
+    setScanError(null);
+    for (const id of ['invoice-file-input', 'invoice-camera-input']) {
+      const fileInput = document.getElementById(id) as HTMLInputElement | null;
+      if (fileInput) fileInput.value = '';
     }
   };
 
   const handleScanInvoice = async (useDemo: boolean = false) => {
+    if (!useDemo && !previewUrl) {
+      setScanError('Take a photo of the invoice, or choose one from your photos.');
+      return;
+    }
+
     setLoading(true);
+    setScanError(null);
     try {
-      let imageBase64 = '';
-      let mimeType = 'image/jpeg';
-
-      if (previewUrl && !useDemo) {
-        imageBase64 = previewUrl;
-        mimeType = selectedFile?.type || 'image/jpeg';
-      }
-
       const res = await fetch('/api/invoice-ocr', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          imageBase64,
-          mimeType,
+          imageBase64: useDemo ? '' : previewUrl,
+          mimeType: selectedFile?.type || 'image/jpeg',
           demo: useDemo,
-          autoImport
-        })
+        }),
       });
 
       const json = await res.json();
-      if (json.success && json.data) {
-        setOcrResult(json.data);
-        if (autoImport) {
-          onInvoiceImported();
-        }
+      if (!res.ok || !json.success || !json.data?.lineItems?.length) {
+        setScanError(json.error || 'The invoice could not be read. Try a clearer photo.');
+        return;
       }
+      setOcrResult(json.data as InvoiceOcrResult);
     } catch (err) {
       console.error('Invoice OCR scan error:', err);
+      setScanError('The scan did not reach the server. Check the connection and try again.');
     } finally {
       setLoading(false);
     }
   };
 
+  const handleAddToReceiving = () => {
+    if (!ocrResult) return;
+    onInvoiceImported(ocrResult);
+    onClose();
+  };
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fadeIn">
+    <div className="fixed inset-0 z-[80] flex items-end justify-center p-3 bg-black/80 backdrop-blur-md sm:items-center sm:p-4">
       <div className="relative w-full max-w-3xl bg-zinc-900 border border-zinc-800 rounded-3xl overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-800 bg-zinc-950/60">
@@ -92,8 +98,16 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
               <FileText className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="font-bold text-lg text-white">Vendor Invoice OCR Scanner</h3>
-              <p className="text-xs text-zinc-400">Powered by Gemini 1.5 Flash Vision API</p>
+              <h3 className="font-bold text-lg text-white">
+                {ocrResult?.source === 'sample' ? 'Sample invoice' : ocrResult ? ocrResult.vendorName : 'Scan the invoice'}
+              </h3>
+              <p className="text-xs text-zinc-400">
+                {ocrResult?.source === 'sample'
+                  ? 'These lines are the practice delivery. A photo replaces them.'
+                  : ocrResult
+                    ? `Invoice #${ocrResult.invoiceNumber}`
+                    : 'Take a photo of the vendor invoice.'}
+              </p>
             </div>
           </div>
 
@@ -130,54 +144,78 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
                 <input
                   type="file"
                   accept="image/*"
+                  capture="environment"
+                  onChange={handleFileChange}
+                  className="hidden"
+                  id="invoice-camera-input"
+                />
+                <input
+                  type="file"
+                  accept="image/*"
                   onChange={handleFileChange}
                   className="hidden"
                   id="invoice-file-input"
                 />
 
-                <label
-                  htmlFor="invoice-file-input"
-                  className="cursor-pointer px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-semibold text-xs border border-zinc-700 transition-all"
-                >
-                  {previewUrl ? 'Change Invoice Image' : 'Select Image File'}
-                </label>
+                <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
+                  <label
+                    htmlFor="invoice-camera-input"
+                    className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl bg-emerald-400 px-4 py-3 text-xs font-black text-zinc-950"
+                  >
+                    <Camera className="h-4 w-4" />
+                    {previewUrl ? 'Retake photo' : 'Take photo'}
+                  </label>
+                  <label
+                    htmlFor="invoice-file-input"
+                    className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-zinc-700 bg-zinc-800 px-4 py-3 text-xs font-bold text-zinc-100"
+                  >
+                    <ImagePlus className="h-4 w-4" />
+                    {previewUrl ? 'Choose another photo' : 'Choose photo'}
+                  </label>
+                </div>
               </div>
 
-              {/* Controls */}
-              <div className="flex items-center justify-between p-4 rounded-2xl bg-zinc-950/80 border border-zinc-800/80">
-                <label className="flex items-center gap-2.5 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={autoImport}
-                    onChange={(e) => setAutoImport(e.target.checked)}
-                    className="rounded border-zinc-700 bg-zinc-900 text-emerald-500 focus:ring-emerald-500/40"
-                  />
-                  <span className="font-semibold text-zinc-300 text-xs">
-                    Auto-add extracted line items directly to floor inventory
-                  </span>
-                </label>
+              {scanError ? (
+                <div className="flex items-start gap-2 rounded-2xl border border-amber-500/40 bg-amber-950/50 p-3 text-xs text-amber-100">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-300" />
+                  <p>{scanError}</p>
+                </div>
+              ) : null}
 
+              <div className="flex items-center justify-between gap-3 rounded-2xl border border-zinc-800/80 bg-zinc-950/80 p-4">
+                <p className="text-xs text-zinc-400">
+                  The photo stays here until you add the cases to this delivery.
+                </p>
                 <button
-                  onClick={() => handleScanInvoice(true)}
+                  type="button"
+                  onClick={() => void handleScanInvoice(true)}
                   disabled={loading}
-                  className="text-xs font-semibold text-emerald-400 hover:text-emerald-300 underline"
+                  className="shrink-0 text-xs font-semibold text-emerald-400 underline hover:text-emerald-300"
                 >
-                  Use Demo Wholesale Receipt
+                  Use a sample invoice
                 </button>
               </div>
             </div>
           ) : (
             /* OCR Extraction Results View */
             <div className="space-y-5">
-              {ocrResult.rawSummary && ocrResult.rawSummary.includes('⚠️') && (
-                <div className="p-3.5 rounded-2xl bg-amber-950/60 border border-amber-500/40 text-amber-200 text-xs flex items-center gap-2.5">
-                  <span className="text-base">💡</span>
+              {ocrResult.source === 'sample' ? (
+                <div className="rounded-2xl border border-zinc-700 bg-zinc-950 px-4 py-3 text-xs text-zinc-300">
+                  This list does not change until you photograph a different invoice. Use Take photo, then Read this invoice.
+                </div>
+              ) : null}
+
+              {ocrResult.rawSummary ? (
+                <div className="flex items-start gap-2.5 rounded-2xl border border-amber-500/40 bg-amber-950/60 p-3.5 text-xs text-amber-100">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-300" />
                   <div>
-                    <span className="font-bold text-amber-300">Live AI Key Notice: </span>
-                    <span>{ocrResult.rawSummary}</span>
+                    <span className="font-bold text-amber-200">
+                      {ocrResult.rawSummary.includes('Cost Guardrail') ? 'Cost check: ' : 'Scan note: '}
+                    </span>
+                    <span>{ocrResult.rawSummary.replace(/^⚠️\s*/, '')}</span>
                   </div>
                 </div>
-              )}
+              ) : null}
 
               <div className="flex items-center justify-between p-4 rounded-2xl bg-emerald-950/40 border border-emerald-500/40 text-emerald-300">
                 <div className="flex items-center gap-2.5">
@@ -262,32 +300,31 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
 
           {!ocrResult ? (
             <button
-              onClick={() => handleScanInvoice(false)}
-              disabled={loading}
-              className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-zinc-950 shadow-lg shadow-emerald-500/25 transition-all"
+              type="button"
+              onClick={() => void handleScanInvoice(false)}
+              disabled={loading || !previewUrl}
+              className="flex items-center gap-2 rounded-xl bg-emerald-400 px-5 py-3 text-xs font-black text-zinc-950 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400"
             >
               {loading ? (
                 <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>Analyzing with Gemini 1.5 Flash...</span>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <span>Reading the invoice…</span>
                 </>
               ) : (
                 <>
-                  <Sparkles className="w-4 h-4 fill-zinc-950" />
-                  <span>Run Vision OCR Extraction</span>
+                  <Sparkles className="h-4 w-4" />
+                  <span>Read this invoice</span>
                 </>
               )}
             </button>
           ) : (
             <button
-              onClick={() => {
-                onInvoiceImported();
-                onClose();
-              }}
-              className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold bg-emerald-500 hover:bg-emerald-400 text-zinc-950 shadow-lg shadow-emerald-500/20"
+              type="button"
+              onClick={handleAddToReceiving}
+              className="flex items-center gap-2 rounded-xl bg-emerald-400 px-5 py-3 text-xs font-black text-zinc-950"
             >
-              <span>Done & Close</span>
-              <ArrowRight className="w-4 h-4" />
+              <span>Add {ocrResult.lineItems.length} cases to receiving</span>
+              <ArrowRight className="h-4 w-4" />
             </button>
           )}
         </div>
