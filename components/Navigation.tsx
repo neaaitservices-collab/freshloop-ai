@@ -13,6 +13,7 @@ import {
   PanelLeft,
   Store,
   Users,
+  Warehouse,
 } from 'lucide-react';
 import { useRole } from '@/components/auth/RoleProvider';
 import { ROLE_LABELS, type RoleName } from '@/lib/roles';
@@ -31,6 +32,7 @@ interface NavItem {
 const ITEMS: NavItem[] = [
   { id: 'today', label: 'Today', icon: Home, href: '/dashboard', roles: ['ADMIN', 'STORE_MANAGER'] },
   { id: 'receive', label: 'Receive', icon: Package, href: '/receive', roles: ['ADMIN', 'STORE_MANAGER', 'RECEIVING_CLERK'] },
+  { id: 'inventory', label: 'Inventory', icon: Warehouse, href: '/inventory', roles: ['ADMIN', 'STORE_MANAGER', 'RECEIVING_CLERK'] },
   { id: 'floor', label: 'Floor', icon: Store, href: '/floor', roles: ['ADMIN', 'STORE_MANAGER', 'FLOOR_STAFF'] },
   { id: 'voice', label: 'Voice', icon: Mic, voice: true, roles: ['ADMIN', 'STORE_MANAGER', 'FLOOR_STAFF'] },
   { id: 'kitchen', label: 'Kitchen', icon: ChefHat, href: '/kitchen', roles: ['ADMIN', 'STORE_MANAGER', 'DELI_CHEF'] },
@@ -175,9 +177,9 @@ function NavRow({
   onVoice: () => void;
 }) {
   const Icon = item.icon;
-  const className = `flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-bold ${
+  const className = `flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-bold transition hover:text-white ${
     collapsed ? 'justify-center' : ''
-  } ${active ? 'bg-emerald-400 text-zinc-950' : 'text-zinc-300 hover:bg-zinc-900'}`;
+  } ${active ? 'bg-emerald-400 text-zinc-950 hover:text-zinc-950' : 'text-zinc-300 hover:bg-zinc-900'}`;
   if (item.voice) {
     return (
       <button type="button" onClick={onVoice} className={className} title="Voice">

@@ -82,6 +82,22 @@ export function formatUnits(value: number | null | undefined): string {
   return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(2);
 }
 
+const STOCK_UNIT_LABELS: Record<string, string> = {
+  LBS: 'lbs',
+  KG: 'kg',
+  LITER: 'L',
+  ML: 'ml',
+  UNIT: 'units',
+  BUNCH: 'bunches',
+  LOAF: 'loaves',
+  TUB: 'tubs',
+  CASE: 'cases',
+};
+
+export function stockUnitLabel(unitType: string): string {
+  return STOCK_UNIT_LABELS[unitType] ?? 'units';
+}
+
 export function formatPercent(value: number | null | undefined): string {
   if (value === null || value === undefined || !Number.isFinite(value)) return '0.00';
   return value.toFixed(2);

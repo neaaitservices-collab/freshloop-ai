@@ -4,8 +4,8 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, Printer } from 'lucide-react';
 import { AppShell } from '@/components/shell/AppShell';
 import { PageIntro } from '@/components/shell/PageIntro';
-import { formatCurrency, formatUnits } from '@/lib/yieldPricing';
-import { stockFromPar, stockUnitLabel } from '@/lib/parLevel';
+import { formatCurrency, formatUnits, stockUnitLabel } from '@/lib/yieldPricing';
+import { stockFromPar } from '@/lib/parLevel';
 import type { StockLevel } from '@/lib/stock';
 
 interface LevelsResponse {

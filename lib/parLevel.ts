@@ -1,21 +1,5 @@
 export const DEFAULT_PAR_CASES = 2;
 
-const STOCK_UNIT_LABELS: Record<string, string> = {
-  LBS: 'lbs',
-  KG: 'kg',
-  LITER: 'L',
-  ML: 'ml',
-  UNIT: 'units',
-  BUNCH: 'bunches',
-  LOAF: 'loaves',
-  TUB: 'tubs',
-  CASE: 'cases',
-};
-
-export function stockUnitLabel(unitType: string): string {
-  return STOCK_UNIT_LABELS[unitType] ?? 'units';
-}
-
 export function normalizeParCases(value: number): number {
   if (!Number.isFinite(value)) return DEFAULT_PAR_CASES;
   return Math.max(0, Math.min(999, Math.round(value)));
