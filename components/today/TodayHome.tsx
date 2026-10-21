@@ -1,18 +1,9 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import Link from 'next/link';
-import { AlertTriangle, ArrowRight, ChefHat, Package, Store } from 'lucide-react';
+import { ArrowRight, ChefHat, Package, Store } from 'lucide-react';
 import { AppShell } from '@/components/shell/AppShell';
-import { AdminStats } from '@/components/admin/AdminStats';
-
-interface TodaySnapshot {
-  wastePct: number | null;
-  targetWastePct: number;
-  pulls: number;
-  status: 'ok' | 'high' | 'unknown';
-  lowCount: number | null;
-}
 
 const STEPS = [
   {
@@ -38,75 +29,7 @@ const STEPS = [
   },
 ];
 
-export function TodayHome() {
-  const [snapshot, setSnapshot] = useState<TodaySnapshot>({
-    wastePct: null,
-    targetWastePct: 2.5,
-    pulls: 0,
-    status: 'unknown',
-    lowCount: null,
-  });
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const response = await fetch('/api/inventory?pullDays=3&scrapBuckets=0', { cache: 'no-store' });
-        const json = await response.json();
-        const waste = json.liveLedger?.wasteKpi;
-        const rows = Array.isArray(json.liveLedger?.subInventoryRows)
-          ? json.liveLedger.subInventoryRows
-          : [];
-        const items = Array.isArray(json.items) ? json.items : [];
-        const pullsFromLedger = rows.filter(
-          (row: { retailFloorQty?: number; daysRemaining?: number }) =>
-            (row.retailFloorQty ?? 0) > 0 && (row.daysRemaining ?? 99) <= 3
-        ).length;
-        const pullsFromItems = items.filter(
-          (item: { quantity?: number; daysRemaining?: number }) =>
-            (item.quantity ?? 0) > 0 && (item.daysRemaining ?? 99) <= 3
-        ).length;
-        const pulls = pullsFromLedger || pullsFromItems;
-        if (cancelled) return;
-        const wastePct = typeof waste?.wastePct === 'number' ? waste.wastePct : null;
-        const target = typeof waste?.targetWastePct === 'number' ? waste.targetWastePct : 2.5;
-        setSnapshot((current) => ({
-          ...current,
-          wastePct,
-          targetWastePct: target,
-          pulls,
-          status: wastePct === null ? 'unknown' : wastePct > target ? 'high' : 'ok',
-        }));
-      } catch {
-        if (!cancelled) setSnapshot((current) => ({ ...current, status: 'unknown' }));
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const response = await fetch('/api/inventory/levels', { cache: 'no-store' });
-        const json = await response.json();
-        if (cancelled || typeof json.lowCount !== 'number') return;
-        setSnapshot((current) => ({ ...current, lowCount: json.lowCount }));
-      } catch {
-        if (!cancelled) setSnapshot((current) => ({ ...current, lowCount: null }));
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const wasteLabel =
-    snapshot.wastePct === null ? '—' : `${snapshot.wastePct.toFixed(2)}%`;
-  const healthy = snapshot.status !== 'high';
-
+export function TodayHome({ figures }: { figures: React.ReactNode }) {
   return (
     <AppShell>
       <main className="mx-auto w-full max-w-7xl px-3 py-5 pb-28 sm:px-6 sm:py-8">
@@ -116,49 +39,7 @@ export function TodayHome() {
           The numbers come from the ledger. The three steps below are the work for the floor.
         </p>
 
-        <AdminStats />
-
-        <section
-          className={`mt-5 rounded-3xl border p-5 ${
-            healthy ? 'border-emerald-500/30 bg-emerald-500/10' : 'border-rose-500/40 bg-rose-500/10'
-          }`}
-        >
-          <p className="text-[11px] font-bold uppercase tracking-wider text-zinc-300">Waste right now</p>
-          <div className="mt-1 flex flex-wrap items-end justify-between gap-3">
-            <p className={`font-mono text-4xl font-black ${healthy ? 'text-emerald-300' : 'text-rose-300'}`}>
-              {wasteLabel}
-            </p>
-            <p className="text-sm text-zinc-300">
-              Target {snapshot.targetWastePct.toFixed(1)}%
-              <span className="mt-1 block text-zinc-400">
-                {snapshot.pulls} to pull within 3 days
-              </span>
-            </p>
-          </div>
-        </section>
-
-        <Link
-          href="/orders"
-          className="mt-3 flex items-center justify-between gap-3 rounded-3xl border border-amber-500/30 bg-zinc-900 px-5 py-4 transition hover:-translate-y-0.5 hover:border-amber-300/60"
-        >
-          <span>
-            <span className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-wider text-amber-200">
-              <AlertTriangle className="h-3.5 w-3.5" />
-              Low stock
-            </span>
-            <span className="mt-1 block text-sm text-zinc-300">
-              {snapshot.lowCount === null
-                ? 'Checking on-hand cases…'
-                : snapshot.lowCount === 0
-                  ? 'Nothing is below its alert level.'
-                  : `${snapshot.lowCount} items are below their alert level. Print the supplier order.`}
-            </span>
-          </span>
-          <span className="inline-flex items-center gap-1 text-xs font-black text-amber-200">
-            Orders
-            <ArrowRight className="h-3.5 w-3.5" />
-          </span>
-        </Link>
+        {figures}
 
         <ol className="mt-5 grid gap-3 md:grid-cols-3">
           {STEPS.map((step) => {

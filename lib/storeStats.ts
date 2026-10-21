@@ -29,14 +29,28 @@ function dayKey(date: Date): string {
   return `${year}-${month}-${day}`;
 }
 
-export async function getStoreStats(): Promise<StoreStats> {
+const CACHE_MS = 20_000;
+let cachedStats: { at: number; value: Promise<StoreStats> } | null = null;
+
+export function getStoreStats(): Promise<StoreStats> {
+  const now = Date.now();
+  if (cachedStats && now - cachedStats.at < CACHE_MS) return cachedStats.value;
+  const value = loadStoreStats().catch((error: unknown) => {
+    cachedStats = null;
+    throw error;
+  });
+  cachedStats = { at: now, value };
+  return value;
+}
+
+async function loadStoreStats(): Promise<StoreStats> {
   const now = new Date();
   const horizon = new Date(now.getTime() + 48 * 60 * 60 * 1000);
   const weekStart = new Date(now);
   weekStart.setHours(0, 0, 0, 0);
   weekStart.setDate(weekStart.getDate() - 6);
 
-  const [products, sums, expirations, movements] = await Promise.all([
+  const [products, sums, expirations, movements, setting, sales] = await Promise.all([
     prisma.product.findMany({
       where: { isManufactured: false },
       select: {
@@ -52,11 +66,14 @@ export async function getStoreStats(): Promise<StoreStats> {
       by: ['productId'],
       _sum: { qtyChange: true },
     }),
-    prisma.inventoryTransaction.findMany({
-      where: { expirationDate: { not: null } },
-      orderBy: { timestamp: 'desc' },
-      select: { productId: true, expirationDate: true },
-    }),
+    prisma.$queryRaw<Array<{ productId: string; expirationDate: Date }>>`
+      SELECT DISTINCT ON ("Product_ID")
+        "Product_ID" AS "productId",
+        "expirationDate"
+      FROM "Inventory_Transactions"
+      WHERE "expirationDate" IS NOT NULL
+      ORDER BY "Product_ID", "timestamp" DESC
+    `,
     prisma.inventoryTransaction.findMany({
       where: {
         transactionType: { in: [TransactionType.Rescue, TransactionType.Waste] },
@@ -72,18 +89,35 @@ export async function getStoreStats(): Promise<StoreStats> {
         product: { select: { retailPrice: true } },
       },
     }),
+    prisma.storeSetting.findFirst({
+      select: {
+        targetWastePct: true,
+        scrapBucketVolumeL: true,
+        estimatedWeightPerLiterKg: true,
+        defaultScrapCostPerKg: true,
+      },
+    }),
+    prisma.inventoryTransaction.findMany({
+      where: {
+        transactionType: { in: [TransactionType.Sale, TransactionType.POS_Sale] },
+        qtyChange: { lt: 0 },
+      },
+      select: {
+        qtyChange: true,
+        unitCostAtTime: true,
+        product: { select: { retailPrice: true, targetMargin: true } },
+      },
+    }),
   ]);
 
   const onHandById = new Map(sums.map((row) => [row.productId, row._sum.qtyChange ?? 0]));
-  const expirationById = new Map<string, Date>();
-  for (const row of expirations) {
-    if (!expirationById.has(row.productId) && row.expirationDate) {
-      expirationById.set(row.productId, row.expirationDate);
-    }
-  }
+  const expirationById = new Map(expirations.map((row) => [row.productId, row.expirationDate]));
 
   let inventoryValue = 0;
   let expiringWithin48h = 0;
+  let pulls = 0;
+  let lowCount = 0;
+  const pullHorizon = new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000);
   const alerts = new Map<string, DepartmentAlert>();
   for (const department of Object.keys(DEPARTMENT_LABELS)) {
     alerts.set(department, { department: DEPARTMENT_LABELS[department], low: 0, expiring: 0 });
@@ -99,9 +133,13 @@ export async function getStoreStats(): Promise<StoreStats> {
     if (!bucket || onHand <= 0) continue;
 
     const parUnits = (product.parCases ?? 2) * pack;
-    if (onHand < parUnits) bucket.low += 1;
+    if (onHand < parUnits) {
+      bucket.low += 1;
+      lowCount += 1;
+    }
 
     const expiration = expirationById.get(product.id);
+    if (expiration && expiration.getTime() <= pullHorizon.getTime()) pulls += 1;
     if (expiration && expiration.getTime() <= horizon.getTime()) {
       expiringWithin48h += 1;
       bucket.expiring += 1;
@@ -112,6 +150,12 @@ export async function getStoreStats(): Promise<StoreStats> {
   let discardValue = 0;
   let rescuedUnits = 0;
   let discardedUnits = 0;
+  let totalDiscardValue = 0;
+  let volumetricScrapValue = 0;
+  const costPerBucket =
+    (setting?.scrapBucketVolumeL ?? 20) *
+    (setting?.estimatedWeightPerLiterKg ?? 0.65) *
+    (setting?.defaultScrapCostPerKg ?? 3.5);
   const days = Array.from({ length: 7 }, (_, index) => {
     const date = new Date(weekStart);
     date.setDate(weekStart.getDate() + index);
@@ -136,7 +180,13 @@ export async function getStoreStats(): Promise<StoreStats> {
     const isDiscard =
       movement.transactionType === TransactionType.Waste &&
       !movement.referenceId?.startsWith(VOLUMETRIC_SCRAP_REF_PREFIX) &&
-      !movement.notes?.toLowerCase().includes('volumetric scrap');
+      !movement.notes?.toLowerCase().includes('volumetric scrap') &&
+      !movement.notes?.toLowerCase().includes('cubeta');
+    const isVolumetric =
+      movement.transactionType === TransactionType.Waste && !isDiscard;
+
+    if (isVolumetric) volumetricScrapValue += units * costPerBucket;
+    if (isDiscard) totalDiscardValue += units * movement.unitCostAtTime;
 
     if (isRescue) {
       rescuedValue += amount;
@@ -156,12 +206,26 @@ export async function getStoreStats(): Promise<StoreStats> {
 
   const handled = rescuedValue + discardValue;
   const wasteReductionPct = handled > 0 ? Number(((rescuedValue / handled) * 100).toFixed(1)) : null;
+  let grossSales = 0;
+  for (const sale of sales) {
+    const unitsSold = Math.abs(sale.qtyChange);
+    const retail = sale.product.retailPrice;
+    const margin = Math.min(0.95, Math.max(0.05, sale.product.targetMargin ?? 0.4));
+    const price = typeof retail === 'number' && retail > 0 ? retail : sale.unitCostAtTime / (1 - margin);
+    grossSales += unitsSold * price;
+  }
+  const totalWasteValue = totalDiscardValue + volumetricScrapValue;
+  const wastePct = grossSales > 0 ? Number(((totalWasteValue / grossSales) * 100).toFixed(2)) : 0;
 
   return {
     rescuedValue: money(rescuedValue),
     expiringWithin48h,
     inventoryValue: money(inventoryValue),
     wasteReductionPct,
+    wastePct,
+    targetWastePct: setting?.targetWastePct ?? 2.5,
+    pulls,
+    lowCount,
     rescueVsDiscard: [
       { name: 'Kitchen rescue', units: Number(rescuedUnits.toFixed(2)) },
       { name: 'Discard', units: Number(discardedUnits.toFixed(2)) },
