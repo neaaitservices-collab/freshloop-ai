@@ -1,4 +1,13 @@
 // Prisma Schema for FreshLoop AI - Yield Management & Recipe Rescue
+// Phase 1: Database Schema bridge (additive — preserves existing tables/columns)
+//
+// Bridges current production models to architecture needs from CLAUDE.md /
+// Inventory · Recipe · Price agents:
+//   1. Item Aging        — receivedDate + indexes for "in inventory > N days"
+//   2. Revenue Lost      — originalUnitPrice vs discountedPrice (+ WasteEvent)
+//   3. Recipe Logic      — RecipeIngredient rows + numeric portion yield
+//   4. Agent support     — PosSale, WasteEvent, DailyWasteMetric, PriceAction,
+//                          BundleOffer, SmartAlert, VoiceLogItem
 
 generator client {
   provider = "prisma-client-js"
@@ -9,6 +18,8 @@ datasource db {
   url       = env("DATABASE_URL")
   directUrl = env("DIRECT_URL")
 }
+
+// ─── Existing enums (unchanged values — safe for current app code) ───────────
 
 enum Department {
   PRODUCE
@@ -37,13 +48,60 @@ enum RecipeStatus {
   COMPLETED
 }
 
+// ─── Phase 1 enums (new) ─────────────────────────────────────────────────────
+
+enum WasteReason {
+  EXPIRED
+  DAMAGED
+  SPOILED
+  OVERSTOCK
+  OTHER
+}
+
+enum AlertType {
+  OVERSTOCK
+  EXPIRING_SOON
+  MARKDOWN_SUGGESTED
+  RECIPE_OPPORTUNITY
+  PULL_THRESHOLD
+}
+
+enum AlertStatus {
+  OPEN
+  ACKNOWLEDGED
+  RESOLVED
+  DISMISSED
+}
+
+enum PriceActionType {
+  MARKDOWN
+  BUNDLE
+  RESTORE
+}
+
+enum PriceActionStatus {
+  SUGGESTED
+  APPLIED
+  REJECTED
+  EXPIRED
+}
+
+enum BundleStatus {
+  SUGGESTED
+  ACTIVE
+  EXPIRED
+  CANCELLED
+}
+
+// ─── Existing models (columns preserved; fields/relations added) ─────────────
+
 model VendorInvoice {
   id                  String            @id @default(uuid())
   vendorName          String
   invoiceNumber       String?
   invoiceDate         DateTime
   totalAmount         Float
-  departmentBreakdown Json              // { PRODUCE: float, DAIRY: float, BAKERY: float, PANTRY: float }
+  departmentBreakdown Json // { PRODUCE: float, DAIRY: float, BAKERY: float, PANTRY: float }
   status              String            @default("PROCESSED") // PROCESSED, PENDING, FAILED
   rawOcrJson          Json?
   createdAt           DateTime          @default(now())
@@ -54,18 +112,23 @@ model VendorInvoice {
 }
 
 model InvoiceLineItem {
-  id              String        @id @default(uuid())
+  id              String         @id @default(uuid())
   invoiceId       String
-  invoice         VendorInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  invoice         VendorInvoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
   name            String
   department      Department
   quantity        Float
-  unit            String        // lbs, kg, cases, crates, liters, units
+  unit            String // lbs, kg, cases, crates, liters, units
   unitCost        Float
   totalCost       Float
   inventoryItemId String?
-  createdAt       DateTime      @default(now())
+  inventoryItem   InventoryItem? @relation(fields: [inventoryItemId], references: [id], onDelete: SetNull)
+  // Align with app InvoiceLineItemExtract / case-based intake
+  casePackSize    Float?
+  subUnit         String?
+  createdAt       DateTime       @default(now())
 
+  @@index([inventoryItemId])
   @@map("invoice_line_items")
 }
 
@@ -74,38 +137,95 @@ model InventoryItem {
   name              String
   department        Department
   quantity          Float
-  unit              String          // lbs, kg, cases, liters, units, packs
-  receivedCost      Float           // cost per unit
-  receivedDate      DateTime
+  unit              String // lbs, kg, cases, liters, units, packs
+  receivedCost      Float // cost per unit (typically per case in current app)
+  receivedDate      DateTime // Item Aging: filter receivedDate <= now() - N days
   expirationDate    DateTime
-  condition         String          // Pristine, Slightly Blemished, Bruised, Overripe, Near Expiry
+  condition         String // Pristine, Slightly Blemished, Bruised, Overripe, Near Expiry
   status            InventoryStatus @default(FRESH)
   pullThresholdDays Int             @default(3) // 2, 3, or 4 days threshold trigger
-  location          String          @default("Main Storage") // Aisle 1, Walk-in Cooler, Bakery Display, etc.
+  location          String          @default("Main Storage")
   notes             String?
   createdAt         DateTime        @default(now())
   updatedAt         DateTime        @updatedAt
 
+  // ── Case / unit normalization (already used in lib/types.ts + mockData) ──
+  casePackSize Float?
+  subUnit      String?
+
+  // ── Provenance / identity ──
+  batchCode String?
+  supplier  String?
+  origin    String?
+  barcode   String?
+  yieldPct  Float? // trim & usable yield % (e.g. 94)
+
+  // ── Pricing: potential revenue lost = (originalUnitPrice - discountedPrice) * qty ──
+  originalUnitPrice Float? // shelf / retail before markdown
+  currentUnitPrice  Float? // active retail price
+  discountedPrice   Float? // active markdown price when status = MARKDOWN
+  discountPct       Float?
+  margin40Price     Float? // suggested price at 40% margin
+  actualMarginPct   Float?
+
+  // ── Relations (Phase 1) ──
+  invoiceLineItems  InvoiceLineItem[]
+  recipeIngredients RecipeIngredient[]
+  wasteEvents       WasteEvent[]
+  posSales          PosSale[]
+  priceActions      PriceAction[]
+  alerts            SmartAlert[]
+  voiceLogItems     VoiceLogItem[]
+
+  @@index([status])
+  @@index([department])
+  @@index([expirationDate])
+  @@index([receivedDate]) // Item Aging queries
+  @@index([supplier])
+  @@index([status, expirationDate])
   @@map("inventory_items")
 }
 
 model VoiceLog {
-  id               String       @id @default(uuid())
+  id               String         @id @default(uuid())
   transcript       String
   audioDurationSec Float?
-  parsedData       Json         // items array with quantities, condition, warnings
-  targetAction     TargetAction @default(KITCHEN_RESCUE)
-  processedAt      DateTime     @default(now())
+  parsedData       Json // items array with quantities, condition, warnings (kept for OCR/AI audit)
+  targetAction     TargetAction   @default(KITCHEN_RESCUE)
+  processedAt      DateTime       @default(now())
+  items            VoiceLogItem[]
 
   @@map("voice_logs")
+}
+
+/// Normalized rows from a voice floor log (parsedData JSON remains the audit blob).
+model VoiceLogItem {
+  id              String         @id @default(uuid())
+  voiceLogId      String
+  voiceLog        VoiceLog       @relation(fields: [voiceLogId], references: [id], onDelete: Cascade)
+  inventoryItemId String?
+  inventoryItem   InventoryItem? @relation(fields: [inventoryItemId], references: [id], onDelete: SetNull)
+  name            String
+  department      Department
+  quantity        Float
+  unit            String
+  casePackSize    Float?
+  subUnit         String?
+  condition       String?
+  allergenWarnings String[]      @default([])
+  createdAt       DateTime       @default(now())
+
+  @@index([voiceLogId])
+  @@index([inventoryItemId])
+  @@map("voice_log_items")
 }
 
 model RecipeFusion {
   id                String       @id @default(uuid())
   recipeName        String
-  category          String       // Soup, Salad/Panzanella, Parfait/Dessert, Prepared Hot Meal, Bakery
-  ingredientsUsed   Json         // Array of { name, quantity, unit, department, estimatedValue }
-  estimatedYield    String       // e.g. "16 Portions (12 oz)"
+  category          String // Soup, Salad/Panzanella, Parfait/Dessert, Prepared Hot Meal, Bakery
+  ingredientsUsed   Json // LEGACY: Array of { name, quantity, unit, department, estimatedValue }
+  estimatedYield    String // LEGACY: e.g. "16 Portions (12 oz)" — kept for UI/back-compat
   estimatedCost     Float
   targetRetailPrice Float
   grossMarginPct    Float
@@ -114,5 +234,167 @@ model RecipeFusion {
   createdAt         DateTime     @default(now())
   updatedAt         DateTime     @updatedAt
 
+  // ── Structured yield (Recipe Agent) ──
+  yieldPortions      Float? // e.g. 20
+  portionSize        String? // e.g. "12 oz"
+  portionUnit        String? // e.g. "deli tub"
+  costSavingsVsNew   Float? // cost of using rescued stock vs buying new
+  prepTimeMinutes    Int?
+  chefTips           String?     @db.Text
+  allergens          String[]    @default([])
+
+  ingredients RecipeIngredient[]
+
+  @@index([status])
+  @@index([category])
   @@map("recipe_fusions")
+}
+
+/// Consumed ingredients for a fusion batch — replaces reliance on ingredientsUsed JSON alone.
+model RecipeIngredient {
+  id              String         @id @default(uuid())
+  recipeFusionId  String
+  recipeFusion    RecipeFusion   @relation(fields: [recipeFusionId], references: [id], onDelete: Cascade)
+  inventoryItemId String?
+  inventoryItem   InventoryItem? @relation(fields: [inventoryItemId], references: [id], onDelete: SetNull)
+  name            String
+  department      Department
+  quantity        Float
+  unit            String
+  estimatedCost   Float          @default(0)
+  estimatedValue  Float? // rescued inventory value
+  createdAt       DateTime       @default(now())
+
+  @@index([recipeFusionId])
+  @@index([inventoryItemId])
+  @@map("recipe_ingredients")
+}
+
+// ─── Phase 1 new models: Inventory / Price / Analytics agents ────────────────
+
+/// POS / sales sync for demand + overstock detection.
+model PosSale {
+  id              String         @id @default(uuid())
+  inventoryItemId String?
+  inventoryItem   InventoryItem? @relation(fields: [inventoryItemId], references: [id], onDelete: SetNull)
+  sku             String?
+  itemName        String
+  department      Department?
+  quantitySold    Float
+  unit            String
+  unitPrice       Float
+  totalRevenue    Float
+  soldAt          DateTime
+  source          String         @default("POS")
+  createdAt       DateTime       @default(now())
+
+  @@index([soldAt])
+  @@index([inventoryItemId])
+  @@index([department, soldAt])
+  @@map("pos_sales")
+}
+
+/// Per-event waste ledger — Units Wasted + Revenue Lost.
+model WasteEvent {
+  id                String         @id @default(uuid())
+  inventoryItemId   String?
+  inventoryItem     InventoryItem? @relation(fields: [inventoryItemId], references: [id], onDelete: SetNull)
+  itemName          String
+  department        Department
+  quantityWasted    Float
+  unit              String
+  unitCost          Float // COGS basis
+  originalUnitPrice Float? // retail that could have been realized
+  recoveredRevenue  Float          @default(0) // any salvage / staff-sale recovery
+  revenueLost       Float // (originalUnitPrice * qty) - recoveredRevenue
+  costLost          Float // unitCost * qty
+  reason            WasteReason    @default(EXPIRED)
+  recordedAt        DateTime       @default(now())
+  notes             String?
+
+  @@index([recordedAt])
+  @@index([department, recordedAt])
+  @@index([inventoryItemId])
+  @@map("waste_events")
+}
+
+/// Daily rollups for trend queries (e.g. "20% more bakery waste on Sundays").
+model DailyWasteMetric {
+  id           String     @id @default(uuid())
+  metricDate   DateTime   @db.Date
+  department   Department
+  unitsWasted  Float      @default(0)
+  revenueLost  Float      @default(0)
+  costLost     Float      @default(0)
+  unitsSold    Float      @default(0)
+  dayOfWeek    Int // 0 = Sunday … 6 = Saturday
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  @@unique([metricDate, department])
+  @@index([dayOfWeek, department])
+  @@map("daily_waste_metrics")
+}
+
+/// Markdown / restore suggestions from the Price Agent.
+model PriceAction {
+  id                  String            @id @default(uuid())
+  inventoryItemId     String
+  inventoryItem       InventoryItem     @relation(fields: [inventoryItemId], references: [id], onDelete: Cascade)
+  actionType          PriceActionType   @default(MARKDOWN)
+  originalPrice       Float
+  suggestedPrice      Float
+  discountPct         Float?
+  predictedExtraUnits Float?
+  status              PriceActionStatus @default(SUGGESTED)
+  rationale           String?
+  createdAt           DateTime          @default(now())
+  appliedAt           DateTime?
+  expiresAt           DateTime?
+
+  @@index([inventoryItemId, status])
+  @@index([status, createdAt])
+  @@map("price_actions")
+}
+
+/// "Buy 2, Get 1 Free"-style overstock bundles.
+model BundleOffer {
+  id                  String       @id @default(uuid())
+  name                String
+  description         String?
+  buyQuantity         Int
+  getQuantity         Int          @default(1)
+  discountPct         Float?
+  status              BundleStatus @default(SUGGESTED)
+  inventoryItemIds    String[] // Phase 1: simple id list; normalize later if needed
+  predictedExtraUnits Float?
+  rationale           String?
+  startsAt            DateTime?
+  endsAt              DateTime?
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
+
+  @@index([status])
+  @@map("bundle_offers")
+}
+
+/// Smart alerts for overstock, pull thresholds, markdown / recipe suggestions.
+model SmartAlert {
+  id              String        @id @default(uuid())
+  inventoryItemId String?
+  inventoryItem   InventoryItem? @relation(fields: [inventoryItemId], references: [id], onDelete: SetNull)
+  alertType       AlertType
+  status          AlertStatus   @default(OPEN)
+  title           String
+  message         String        @db.Text
+  severity        String        @default("MEDIUM") // LOW | MEDIUM | HIGH
+  suggestedAction TargetAction?
+  metadata        Json?
+  createdAt       DateTime      @default(now())
+  resolvedAt      DateTime?
+
+  @@index([status, createdAt])
+  @@index([alertType, status])
+  @@index([inventoryItemId])
+  @@map("smart_alerts")
 }
