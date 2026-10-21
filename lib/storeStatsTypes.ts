@@ -20,6 +20,10 @@ export interface StoreStats {
   expiringWithin48h: number;
   inventoryValue: number;
   wasteReductionPct: number | null;
+  wastePct: number | null;
+  targetWastePct: number;
+  pulls: number;
+  lowCount: number;
   rescueVsDiscard: RescueSlice[];
   revenueDays: RevenueDay[];
   departmentAlerts: DepartmentAlert[];

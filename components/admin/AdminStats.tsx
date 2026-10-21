@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { Clock, DollarSign, Leaf, Percent } from 'lucide-react';
 import { DepartmentAlertsChart } from '@/components/admin/DepartmentAlertsChart';
 import { RevenueRecoveryChart } from '@/components/admin/RevenueRecoveryChart';
@@ -31,41 +31,22 @@ function Metric({
   );
 }
 
-export function AdminStats() {
-  const [stats, setStats] = useState<StoreStats | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const response = await fetch('/api/admin/stats', { cache: 'no-store' });
-        const json = await response.json();
-        if (cancelled) return;
-        if (!response.ok || !json.success) {
-          setError(json.error || 'Statistics could not be read.');
-          return;
-        }
-        setStats(json.stats);
-      } catch {
-        if (!cancelled) setError('Statistics could not be read.');
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  if (error) {
-    return (
-      <p className="mt-5 rounded-2xl border border-orange-500/40 bg-orange-500/10 px-4 py-3 text-sm text-orange-200">
-        {error}
-      </p>
-    );
-  }
-
+export function AdminStats({ stats }: { stats: StoreStats | null }) {
   if (!stats) {
-    return <p className="mt-5 text-sm text-zinc-400">Reading store statistics…</p>;
+    return (
+      <section className="mt-5 space-y-4" aria-busy="true" aria-label="Loading store statistics">
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          {Array.from({ length: 4 }, (_, index) => (
+            <div key={index} className="h-[118px] animate-pulse rounded-3xl border border-zinc-800 bg-zinc-900/70" />
+          ))}
+        </div>
+        <div className="grid gap-3 lg:grid-cols-2">
+          <div className="h-80 animate-pulse rounded-3xl border border-zinc-800 bg-zinc-900/70" />
+          <div className="h-80 animate-pulse rounded-3xl border border-zinc-800 bg-zinc-900/70" />
+          <div className="h-80 animate-pulse rounded-3xl border border-zinc-800 bg-zinc-900/70 lg:col-span-2" />
+        </div>
+      </section>
+    );
   }
 
   return (
