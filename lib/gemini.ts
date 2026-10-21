@@ -39,7 +39,7 @@ function getGenAIClient(apiKey: string): { type: 'genai' | 'generative-ai'; clie
 /**
  * Direct REST API fallback supporting OAuth Bearer tokens (AQ.xxx) & API keys (AIzaSyxxx)
  */
-async function generateContentWithFallback(
+export async function generateContentWithFallback(
   promptText: string,
   inlinePart?: { data: string; mimeType: string },
   preferredModels: string[] = ['gemini-2.5-flash', 'gemini-1.5-flash', 'gemini-2.0-flash']
@@ -49,11 +49,47 @@ async function generateContentWithFallback(
     throw new Error('GEMINI_API_KEY missing or empty');
   }
 
-  let lastError: any = null;
+  const failures: string[] = [];
 
-  for (const modelName of preferredModels) {
+  const remember = (modelName: string, detail: string) => {
+    const safe = detail.replace(apiKey, '[key]').slice(0, 240);
+    failures.push(`${modelName}: ${safe}`);
+  };
+
+  let listedModels: string[] = [];
+  try {
+    const listResponse = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey)}&pageSize=100`
+    );
+    if (listResponse.ok) {
+      const listed = await listResponse.json();
+      listedModels = (listed.models || [])
+        .filter((model: { supportedGenerationMethods?: string[] }) =>
+          model.supportedGenerationMethods?.includes('generateContent')
+        )
+        .map((model: { name?: string }) => String(model.name || '').replace(/^models\//, ''))
+        .filter(Boolean);
+    }
+  } catch {
+    listedModels = [];
+  }
+
+  const ranked = (listedModels.length ? listedModels : preferredModels)
+    .slice()
+    .sort((a, b) => {
+      const score = (name: string) => {
+        if (/flash/.test(name) && !/lite|image|tts|live/.test(name)) return 0;
+        if (/flash/.test(name)) return 1;
+        return 2;
+      };
+      return score(a) - score(b);
+    })
+    .slice(0, 4);
+
+  const modelsToTry = ranked.length ? ranked : preferredModels;
+
+  for (const modelName of modelsToTry) {
     try {
-      // Method 1: SDK attempt (supports @google/genai & @google/generative-ai)
       const sdk = getGenAIClient(apiKey);
       if (sdk) {
         try {
@@ -102,7 +138,7 @@ async function generateContentWithFallback(
             }
           }
         } catch (e: any) {
-          console.warn(`SDK attempt failed for ${modelName}:`, e.message);
+          remember(modelName, e?.message || 'SDK request failed');
         }
       }
 
@@ -110,69 +146,74 @@ async function generateContentWithFallback(
       if (inlinePart) {
         parts.push({ inlineData: inlinePart });
       }
+      const payload = JSON.stringify({
+        contents: [{ parts }],
+        generationConfig: { responseMimeType: 'application/json' },
+      });
 
-      // Method 2: Direct REST call with query key (Works for AQ. keys & AIzaSy keys on Google AI Studio)
-      try {
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
-        const response = await fetch(url, {
-          method: 'POST',
+      const attempts: Array<{ label: string; url: string; headers: Record<string, string> }> = [
+        {
+          label: 'key',
+          url: `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${encodeURIComponent(apiKey)}`,
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [{ parts }],
-            generationConfig: {
-              responseMimeType: 'application/json'
-            }
-          })
+        },
+      ];
+      if (apiKey.startsWith('AQ.')) {
+        attempts.push({
+          label: 'bearer',
+          url: `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent`,
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${apiKey}`,
+          },
         });
-
-        if (response.ok) {
-          const data = await response.json();
-          const responseText = data.candidates?.[0]?.content?.parts?.[0]?.text;
-          if (responseText) {
-            return { text: responseText, modelUsed: modelName };
-          }
-        }
-      } catch (e: any) {
-        console.warn(`REST query key attempt failed for ${modelName}:`, e.message);
       }
 
-      // Method 3: Authorization Bearer header for OAuth tokens
-      if (apiKey.startsWith('AQ.')) {
+      let keyUnauthorized = false;
+      for (const attempt of attempts) {
+        if (attempt.label === 'bearer' && !keyUnauthorized) continue;
         try {
-          const bearerUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent`;
-          const response = await fetch(bearerUrl, {
+          const response = await fetch(attempt.url, {
             method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${apiKey}`
-            },
-            body: JSON.stringify({
-              contents: [{ parts }],
-              generationConfig: {
-                responseMimeType: 'application/json'
-              }
-            })
+            headers: attempt.headers,
+            body: payload,
           });
-
+          const raw = await response.text();
           if (response.ok) {
-            const data = await response.json();
+            const data = JSON.parse(raw);
             const responseText = data.candidates?.[0]?.content?.parts?.[0]?.text;
             if (responseText) {
               return { text: responseText, modelUsed: modelName };
             }
+            remember(modelName, `${attempt.label} returned no text`);
+          } else {
+            if (attempt.label === 'key' && (response.status === 401 || response.status === 403)) {
+              keyUnauthorized = true;
+            }
+            remember(modelName, `${attempt.label} ${response.status} ${raw.slice(0, 180)}`);
           }
         } catch (e: any) {
-          console.warn(`Bearer attempt failed for ${modelName}:`, e.message);
+          remember(modelName, `${attempt.label} ${e?.message || 'request failed'}`);
         }
       }
     } catch (err: any) {
-      lastError = err;
-      console.warn(`Model ${modelName} call failed:`, err.message);
-      continue;
+      remember(modelName, err?.message || 'request failed');
     }
   }
 
-  throw lastError || new Error('All model attempts failed');
+  console.warn('[gemini] tried', modelsToTry.join(', '));
+  console.warn('[gemini] model failures', failures.join(' | '));
+  const keyLines = failures.filter((line) => line.includes(': key '));
+  const rejected =
+    keyLines.length > 0 &&
+    keyLines.every(
+      (line) => line.includes('401') || line.includes('403') || line.includes('API_KEY_INVALID')
+    );
+  throw new Error(
+    rejected
+      ? 'The photo could not be read. The Gemini key on this store was rejected.'
+      : failures[0] || 'The invoice reader could not reach the model.'
+  );
 }
 
 /**

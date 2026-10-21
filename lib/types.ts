@@ -54,6 +54,7 @@ export interface InvoiceOcrResult {
   };
   lineItems: InvoiceLineItemExtract[];
   rawSummary?: string;
+  source?: 'sample' | 'photo';
 }
 
 export interface VoiceParsedItem {
