@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { Department, InventoryLocation, TransactionType } from '@prisma/client';
 import { prisma } from '@/lib/inventory';
+import { invalidateLedgerReads } from '@/lib/ledgerCache';
 import { INITIAL_INVENTORY_ITEMS } from '@/lib/mockData';
 
 // ============================================================================
@@ -512,6 +513,7 @@ export async function POST(req: NextRequest) {
           ];
         })
       );
+      invalidateLedgerReads();
 
       return NextResponse.json({
         success: true,

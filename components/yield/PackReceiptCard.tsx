@@ -34,6 +34,7 @@ export function PackReceiptCard({
   errorMessage,
   stockOnHand,
   stockMatched,
+  alreadyInInventory = false,
   onSave,
 }: {
   log: ReceivingLog;
@@ -45,6 +46,7 @@ export function PackReceiptCard({
   errorMessage: string | null;
   stockOnHand: number | null;
   stockMatched: boolean;
+  alreadyInInventory?: boolean;
   onSave: () => void;
 }) {
   const tone = marginTone(quote.currentMarginPct);
@@ -59,7 +61,7 @@ export function PackReceiptCard({
       : stockOnHand;
 
   return (
-    <aside className="lg:sticky lg:top-24">
+    <aside className="min-w-0">
       <div className="overflow-hidden rounded-3xl border border-emerald-500/25 bg-zinc-900/90 shadow-2xl shadow-black/30">
         <div className="border-b border-zinc-800 px-5 py-4">
           <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-emerald-300/80">
@@ -115,22 +117,25 @@ export function PackReceiptCard({
           </p>
         </div>
 
-        <div className="space-y-2 border-t border-zinc-800 px-5 py-4">
+      </div>
+
+      <div className="fixed inset-x-0 bottom-20 z-30 px-3 md:bottom-4 md:pl-64 md:pr-6">
+        <div className="mx-auto w-full max-w-3xl space-y-2 rounded-2xl border border-zinc-800 bg-zinc-950/95 p-2 shadow-2xl shadow-black/50 backdrop-blur">
           {savedMessage ? (
-            <p className="flex items-center gap-2 text-xs font-bold text-emerald-300">
+            <p className="flex items-center gap-2 px-2 text-xs font-bold text-emerald-300">
               <CheckCircle2 className="h-4 w-4 shrink-0" />
               {savedMessage}
             </p>
           ) : null}
-          {errorMessage ? <p className="text-xs font-bold text-orange-300">{errorMessage}</p> : null}
+          {errorMessage ? <p className="px-2 text-xs font-bold text-orange-300">{errorMessage}</p> : null}
           <button
             type="button"
             onClick={onSave}
-            disabled={saving || quote.totalRetailUnits === null}
-            className="flex w-full items-center justify-center gap-2 rounded-2xl bg-emerald-400 px-4 py-3 text-sm font-black text-zinc-950 transition hover:bg-emerald-300 active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400"
+            disabled={saving || alreadyInInventory || quote.totalRetailUnits === null}
+            className="flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-400 px-4 py-3 text-sm font-black text-zinc-950 transition hover:bg-emerald-300 active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400"
           >
             {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-            Save &amp; Update Inventory
+            {alreadyInInventory ? 'In inventory' : 'Save & Update Inventory'}
           </button>
         </div>
       </div>

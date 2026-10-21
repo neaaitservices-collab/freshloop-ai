@@ -29,7 +29,13 @@ const STEPS = [
   },
 ];
 
-export function TodayHome({ figures }: { figures: React.ReactNode }) {
+export function TodayHome({
+  figures,
+  cases,
+}: {
+  figures: React.ReactNode;
+  cases?: React.ReactNode;
+}) {
   return (
     <AppShell>
       <main className="mx-auto w-full max-w-7xl px-3 py-5 pb-28 sm:px-6 sm:py-8">
@@ -40,6 +46,8 @@ export function TodayHome({ figures }: { figures: React.ReactNode }) {
         </p>
 
         {figures}
+
+        {cases}
 
         <ol className="mt-5 grid gap-3 md:grid-cols-3">
           {STEPS.map((step) => {

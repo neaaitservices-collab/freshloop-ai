@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Department, InventoryLocation, TransactionType } from '@prisma/client';
 import { prisma, getMovingAverageCost } from '@/lib/inventory';
+import { invalidateLedgerReads } from '@/lib/ledgerCache';
 import { INITIAL_INVENTORY_ITEMS } from '@/lib/mockData';
 import { generateContentWithFallback } from '@/lib/gemini';
 
@@ -452,6 +453,7 @@ export async function POST(req: NextRequest) {
           })
         )
       );
+      invalidateLedgerReads();
 
       return NextResponse.json({
         success: true,

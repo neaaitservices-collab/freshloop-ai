@@ -1,5 +1,6 @@
 import { Department, InventoryLocation, TransactionType, UnitType } from '@prisma/client';
 import { getCurrentStock, prisma } from '@/lib/inventory';
+import { invalidateLedgerReads, rememberLedgerRead } from '@/lib/ledgerCache';
 import { DEFAULT_PAR_CASES, normalizeParCases, stockFromPar } from '@/lib/parLevel';
 
 export const PAR_CASES = DEFAULT_PAR_CASES;
@@ -18,6 +19,8 @@ export interface StockLevel {
   orderCases: number;
   orderCost: number;
   low: boolean;
+  retailPrice: number | null;
+  daysRemaining: number;
 }
 
 export interface PostedReceipt {
@@ -78,6 +81,8 @@ export function buildStockLevel(input: {
   unitCost: number | null;
   onHand: number;
   parCases?: number | null;
+  retailPrice?: number | null;
+  daysRemaining?: number | null;
 }): StockLevel {
   const casePackSize = packSizeOf(input.casePackSize);
   const unitCost = input.unitCost && input.unitCost > 0 ? input.unitCost : 0;
@@ -98,45 +103,155 @@ export function buildStockLevel(input: {
     unitCost,
     onHand,
     ...rated,
+    retailPrice:
+      input.retailPrice !== null && input.retailPrice !== undefined && input.retailPrice > 0
+        ? input.retailPrice
+        : null,
+    daysRemaining: Number.isFinite(input.daysRemaining) ? Number(input.daysRemaining) : 7,
   };
 }
 
-export async function getStockLevels(): Promise<StockLevel[]> {
-  const [products, sums] = await Promise.all([
-    prisma.product.findMany({
-      where: { isManufactured: false },
-      orderBy: [{ supplier: 'asc' }, { name: 'asc' }],
-    }),
-    prisma.inventoryTransaction.groupBy({
-      by: ['productId'],
-      _sum: { qtyChange: true },
-    }),
-  ]);
-
-  const onHandById = new Map(sums.map((row) => [row.productId, row._sum.qtyChange ?? 0]));
-
-  return products
-    .map((product) =>
-      buildStockLevel({
-        productId: product.id,
-        name: product.name,
-        supplier: product.supplier,
-        unitType: product.unitType,
-        casePackSize: product.casePackSize,
-        unitCost: product.standardCost,
-        onHand: onHandById.get(product.id) ?? 0,
-        parCases: product.parCases,
-      })
-    )
-    .sort((a, b) => Number(b.low) - Number(a.low) || a.supplier.localeCompare(b.supplier) || a.name.localeCompare(b.name));
+function daysUntil(expiration: Date | string | null, shelfLifeDays: number): number {
+  const fallback = shelfLifeDays > 0 ? shelfLifeDays : 7;
+  if (!expiration) return fallback;
+  const time = expiration instanceof Date ? expiration.getTime() : new Date(expiration).getTime();
+  if (!Number.isFinite(time)) return fallback;
+  return Math.ceil((time - Date.now()) / 86_400_000);
 }
 
-export async function setParCases(productId: string, parCases: number): Promise<StockLevel> {
-  const nextPar = normalizeParCases(parCases);
+const STOCK_CACHE_MS = 60_000;
+const stockCache = new Map<string, { at: number; gen: number; value: Promise<StockLevel[]> }>();
+
+interface StockLevelRow {
+  productId: string;
+  name: string;
+  supplier: string | null;
+  unitType: string;
+  casePackSize: number | null;
+  standardCost: number | null;
+  parCases: number | null;
+  retailPrice: number | null;
+  shelfLifeDays: number | null;
+  expirationDate: Date | null;
+  onHand: number;
+}
+
+async function loadStockLevels(): Promise<StockLevel[]> {
+  const rows = await prisma.$queryRaw<StockLevelRow[]>`
+    SELECT
+      p.id AS "productId",
+      p.name,
+      p.supplier,
+      p."unitType"::text AS "unitType",
+      p."casePackSize",
+      p."standardCost",
+      p."parCases",
+      p."retailPrice",
+      p."shelfLifeDays",
+      (
+        SELECT t2."expirationDate"
+        FROM "Inventory_Transactions" t2
+        WHERE t2."Product_ID" = p.id
+          AND t2."expirationDate" IS NOT NULL
+        ORDER BY t2."timestamp" DESC
+        LIMIT 1
+      ) AS "expirationDate",
+      COALESCE(SUM(t."Qty_Change"), 0)::float8 AS "onHand"
+    FROM products p
+    LEFT JOIN "Inventory_Transactions" t ON t."Product_ID" = p.id
+    WHERE p."isManufactured" = false
+    GROUP BY p.id
+  `;
+
+  return rows
+    .map((row) =>
+      buildStockLevel({
+        productId: row.productId,
+        name: row.name,
+        supplier: row.supplier,
+        unitType: row.unitType,
+        casePackSize: row.casePackSize,
+        unitCost: row.standardCost,
+        onHand: Number(row.onHand) || 0,
+        parCases: row.parCases,
+        retailPrice: row.retailPrice,
+        daysRemaining: daysUntil(row.expirationDate, row.shelfLifeDays ?? 7),
+      })
+    )
+    .sort(
+      (a, b) =>
+        Number(b.low) - Number(a.low) ||
+        a.supplier.localeCompare(b.supplier) ||
+        a.name.localeCompare(b.name)
+    );
+}
+
+export function getStockLevels(): Promise<StockLevel[]> {
+  return rememberLedgerRead(stockCache, 'levels', STOCK_CACHE_MS, loadStockLevels);
+}
+
+async function readStockLevel(productId: string): Promise<StockLevel> {
+  const product = await prisma.product.findUniqueOrThrow({ where: { id: productId } });
+  const onHand = await getCurrentStock(productId);
+  const latest = await prisma.inventoryTransaction.findFirst({
+    where: { productId, expirationDate: { not: null } },
+    orderBy: { timestamp: 'desc' },
+    select: { expirationDate: true },
+  });
+  return buildStockLevel({
+    productId: product.id,
+    name: product.name,
+    supplier: product.supplier,
+    unitType: product.unitType,
+    casePackSize: product.casePackSize,
+    unitCost: product.standardCost,
+    onHand,
+    parCases: product.parCases,
+    retailPrice: product.retailPrice,
+    daysRemaining: daysUntil(latest?.expirationDate ?? null, product.shelfLifeDays),
+  });
+}
+
+export async function setStockCases(productId: string, cases: number, staffId: string): Promise<StockLevel> {
+  if (!Number.isFinite(cases) || cases < 0) {
+    throw new Error('Cases must be zero or greater.');
+  }
+  const product = await prisma.product.findUnique({ where: { id: productId } });
+  if (!product) throw new Error('Item was not found.');
+  const pack = product.casePackSize && product.casePackSize > 0 ? product.casePackSize : 1;
+  const targetUnits = Number((cases * pack).toFixed(4));
+  const onHand = await getCurrentStock(productId);
+  const delta = Number((targetUnits - onHand).toFixed(4));
+  if (Math.abs(delta) >= 0.0001) {
+    const shrink = delta < 0;
+    await prisma.inventoryTransaction.create({
+      data: {
+        productId,
+        staffId: staffId.trim() || 'staff-admin',
+        qtyChange: delta,
+        transactionType: shrink ? TransactionType.Waste : TransactionType.Receive,
+        fromLocation: shrink ? InventoryLocation.Retail_Floor : InventoryLocation.External_Vendor,
+        toLocation: shrink ? InventoryLocation.Waste_Bin : InventoryLocation.Retail_Floor,
+        unitCostAtTime: product.standardCost && product.standardCost > 0 ? product.standardCost : 0,
+        referenceId: `ADJ-${Date.now()}`,
+        notes: shrink ? 'Admin stock override: shrink' : 'Admin stock override: add cases',
+      },
+    });
+  }
+  invalidateLedgerReads();
+  return readStockLevel(productId);
+}
+
+export async function setSupplier(productId: string, supplier: string): Promise<StockLevel> {
+  const nextSupplier = supplier.trim();
+  if (!nextSupplier) {
+    throw new Error('Supplier is required.');
+  }
   const product = await prisma.product.update({
     where: { id: productId },
-    data: { parCases: nextPar },
+    data: { supplier: nextSupplier },
   });
+  invalidateLedgerReads();
   const onHand = await getCurrentStock(productId);
   return buildStockLevel({
     productId: product.id,
@@ -147,6 +262,62 @@ export async function setParCases(productId: string, parCases: number): Promise<
     unitCost: product.standardCost,
     onHand,
     parCases: product.parCases,
+    retailPrice: product.retailPrice,
+  });
+}
+
+export async function updateCase(input: {
+  productId: string;
+  packSize: number;
+  yieldDivisor: number;
+  retailUnit: string;
+  retailPrice: number;
+}): Promise<StockLevel> {
+  if (!(input.packSize > 0) || !(input.yieldDivisor > 0)) {
+    throw new Error('Pack size and yield divisor must be greater than 0.');
+  }
+  const unitsPerCase = input.packSize / input.yieldDivisor;
+  const product = await prisma.product.update({
+    where: { id: input.productId },
+    data: {
+      casePackSize: unitsPerCase,
+      unitType: unitTypeFor(input.retailUnit),
+      retailPrice: input.retailPrice > 0 ? input.retailPrice : null,
+    },
+  });
+  invalidateLedgerReads();
+  const onHand = await getCurrentStock(input.productId);
+  return buildStockLevel({
+    productId: product.id,
+    name: product.name,
+    supplier: product.supplier,
+    unitType: product.unitType,
+    casePackSize: product.casePackSize,
+    unitCost: product.standardCost,
+    onHand,
+    parCases: product.parCases,
+    retailPrice: product.retailPrice,
+  });
+}
+
+export async function setParCases(productId: string, parCases: number): Promise<StockLevel> {
+  const nextPar = normalizeParCases(parCases);
+  const product = await prisma.product.update({
+    where: { id: productId },
+    data: { parCases: nextPar },
+  });
+  invalidateLedgerReads();
+  const onHand = await getCurrentStock(productId);
+  return buildStockLevel({
+    productId: product.id,
+    name: product.name,
+    supplier: product.supplier,
+    unitType: product.unitType,
+    casePackSize: product.casePackSize,
+    unitCost: product.standardCost,
+    onHand,
+    parCases: product.parCases,
+    retailPrice: product.retailPrice,
   });
 }
 
@@ -207,55 +378,62 @@ export async function postReceipt(input: {
     where: { isManufactured: false },
     select: { id: true, name: true, shelfLifeDays: true },
   });
-  let match = matchProduct(input.itemName, products);
-  if (!match) {
-    const created = await prisma.product.create({
+  const match = matchProduct(input.itemName, products);
+  const unitCost = unitsPerCase > 0 ? input.caseCost / unitsPerCase : input.caseCost;
+  const posted = await prisma.$transaction(async (tx) => {
+    let productId = match?.id;
+    if (!productId) {
+      const createdProduct = await tx.product.create({
+        data: {
+          name: input.itemName.trim(),
+          department: departmentFor(input.itemName),
+          unitType: unitTypeFor(input.retailUnit ?? 'units'),
+          casePackSize: unitsPerCase,
+          standardCost: Number(unitCost.toFixed(4)),
+          retailPrice: input.retailPrice > 0 ? input.retailPrice : null,
+          supplier: 'Received at the dock',
+          shelfLifeDays: 7,
+        },
+        select: { id: true },
+      });
+      productId = createdProduct.id;
+    }
+    const product = await tx.product.update({
+      where: { id: productId },
       data: {
-        name: input.itemName.trim(),
-        department: departmentFor(input.itemName),
-        unitType: unitTypeFor(input.retailUnit ?? 'units'),
         casePackSize: unitsPerCase,
-        standardCost: unitsPerCase > 0 ? input.caseCost / unitsPerCase : input.caseCost,
-        retailPrice: input.retailPrice > 0 ? input.retailPrice : null,
-        supplier: 'Received at the dock',
-        shelfLifeDays: 7,
+        unitType: unitTypeFor(input.retailUnit ?? 'units'),
+        standardCost: Number(unitCost.toFixed(4)),
+        ...(input.retailPrice > 0 ? { retailPrice: input.retailPrice } : {}),
       },
       select: { id: true, name: true, shelfLifeDays: true },
     });
-    match = created;
-  }
-
-  const unitCost = unitsPerCase > 0 ? input.caseCost / unitsPerCase : input.caseCost;
-  const shelfDays = match.shelfLifeDays > 0 ? match.shelfLifeDays : 7;
-  const created = await prisma.inventoryTransaction.create({
-    data: {
-      productId: match.id,
-      staffId: 'staff-receiver-01',
-      qtyChange: unitsAdded,
-      transactionType: TransactionType.Receive,
-      fromLocation: InventoryLocation.External_Vendor,
-      toLocation: InventoryLocation.Retail_Floor,
-      unitCostAtTime: Number(unitCost.toFixed(4)),
-      referenceId: `RCV-${Date.now()}`,
-      expirationDate: new Date(Date.now() + shelfDays * 24 * 60 * 60 * 1000),
-      notes: `Received ${input.casesReceived} cases of ${input.itemName}`,
-    },
+    const shelfDays = product.shelfLifeDays > 0 ? product.shelfLifeDays : 7;
+    const created = await tx.inventoryTransaction.create({
+      data: {
+        productId: product.id,
+        staffId: 'staff-receiver-01',
+        qtyChange: unitsAdded,
+        transactionType: TransactionType.Receive,
+        fromLocation: InventoryLocation.External_Vendor,
+        toLocation: InventoryLocation.Retail_Floor,
+        unitCostAtTime: Number(unitCost.toFixed(4)),
+        referenceId: `RCV-${Date.now()}`,
+        expirationDate: new Date(Date.now() + shelfDays * 24 * 60 * 60 * 1000),
+        notes: `Received ${input.casesReceived} cases of ${input.itemName}`,
+      },
+    });
+    return { product, created };
   });
 
-  if (input.retailPrice > 0) {
-    await prisma.product.update({
-      where: { id: match.id },
-      data: { retailPrice: input.retailPrice },
-    });
-  }
-
-  const onHand = await getCurrentStock(match.id);
+  invalidateLedgerReads();
+  const onHand = await getCurrentStock(posted.product.id);
   return {
     posted: true,
-    productId: match.id,
-    productName: match.name,
+    productId: posted.product.id,
+    productName: posted.product.name,
     unitsAdded,
     onHand,
-    transactionId: created.id,
+    transactionId: posted.created.id,
   };
 }

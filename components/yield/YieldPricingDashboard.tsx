@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import { AlertTriangle, LayoutDashboard, RefreshCw, Sheet } from 'lucide-react';
+import { AlertTriangle, FileUp, LayoutDashboard, RefreshCw, Sheet } from 'lucide-react';
 import {
   calculateYieldQuote,
   formatCurrency,
@@ -51,17 +51,28 @@ export function YieldPricingDashboard({
   onOpenCommandCenter,
   embedded = false,
   extraLogs = [],
+  initialLogs,
+  initialSource = 'sample',
+  initialSheetName = 'Receiving_logs',
+  initialWarning = null,
+  onScanNext,
 }: {
   onOpenCommandCenter?: () => void;
   embedded?: boolean;
   extraLogs?: ReceivingLog[];
+  initialLogs?: ReceivingLog[];
+  initialSource?: 'google_sheets' | 'sample';
+  initialSheetName?: string;
+  initialWarning?: string | null;
+  onScanNext?: () => void;
 }) {
-  const [logs, setLogs] = useState<ReceivingLog[]>([]);
-  const [source, setSource] = useState<'google_sheets' | 'sample'>('sample');
-  const [sheetName, setSheetName] = useState('Receiving_logs');
-  const [warning, setWarning] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const seeded = initialLogs !== undefined;
+  const [logs, setLogs] = useState<ReceivingLog[]>(initialLogs ?? []);
+  const [source, setSource] = useState<'google_sheets' | 'sample'>(initialSource);
+  const [sheetName, setSheetName] = useState(initialSheetName);
+  const [warning, setWarning] = useState<string | null>(initialWarning);
+  const [loading, setLoading] = useState(!seeded);
+  const [selectedId, setSelectedId] = useState<string | null>(initialLogs?.[0]?.id ?? null);
 
   const [packSize, setPackSize] = useState('12');
   const [yieldDivisor, setYieldDivisor] = useState('1');
@@ -80,8 +91,8 @@ export function YieldPricingDashboard({
   const stockRequest = useRef(0);
   const postedIdsRef = useRef<Set<string>>(new Set());
 
-  const loadLogs = async () => {
-    setLoading(true);
+  const loadLogs = async (background = false) => {
+    if (!background) setLoading(true);
     try {
       const response = await fetch('/api/receiving-logs', { cache: 'no-store' });
       const json = (await response.json()) as LogsResponse;
@@ -91,9 +102,8 @@ export function YieldPricingDashboard({
       setSheetName(json.sheetName || 'Receiving_logs');
       setWarning(json.warning);
       setSelectedId((current) => {
-        const open = nextLogs.filter((log) => !postedIdsRef.current.has(log.id));
-        if (current && open.some((log) => log.id === current)) return current;
-        return open[0]?.id ?? null;
+        if (current) return current;
+        return nextLogs[0]?.id ?? null;
       });
     } catch {
       setWarning('Receiving logs could not be loaded.');
@@ -107,25 +117,28 @@ export function YieldPricingDashboard({
     const stored = readPostedIds();
     postedIdsRef.current = stored;
     setPostedIds(stored);
-    void loadLogs();
+    void loadLogs(seeded);
   }, []);
 
   const visibleLogs = useMemo(() => {
     const extraIds = new Set(extraLogs.map((log) => log.id));
-    return [...extraLogs, ...logs.filter((log) => !extraIds.has(log.id))].filter(
-      (log) => !postedIds.has(log.id)
-    );
-  }, [extraLogs, logs, postedIds]);
+    return [...extraLogs, ...logs.filter((log) => !extraIds.has(log.id))];
+  }, [extraLogs, logs]);
+
+  const openLogs = useMemo(
+    () => visibleLogs.filter((log) => !postedIds.has(log.id)),
+    [visibleLogs, postedIds]
+  );
 
   const extraKey = extraLogs.map((log) => log.id).join('|');
 
   useEffect(() => {
-    const next = extraLogs.find((log) => !postedIdsRef.current.has(log.id));
+    const next = extraLogs[0];
     if (!next) return;
     setSelectedId(next.id);
   }, [extraKey, extraLogs]);
 
-  const selected = visibleLogs.find((log) => log.id === selectedId) ?? null;
+  const selected = openLogs.find((log) => log.id === selectedId) ?? openLogs[0] ?? null;
 
   useEffect(() => {
     if (!selected) return;
@@ -234,8 +247,9 @@ export function YieldPricingDashboard({
       const remaining = visibleLogs.filter((log) => !nextPosted.has(log.id));
       setSelectedId(remaining[0]?.id ?? null);
       stockRequest.current += 1;
+      setSavedMessage(`${savedName} is in inventory.`);
       setMovedNotice(
-        `${savedName} left receiving and is in inventory. ${formatUnits(Number(json.stock.onHand))} ${retailUnit} on hand.`
+        `${savedName} is in inventory. ${formatUnits(Number(json.stock.onHand))} ${retailUnit} on hand.`
       );
     } catch {
       setErrorMessage('Save failed. Check the connection and try again.');
@@ -291,12 +305,20 @@ export function YieldPricingDashboard({
         <p className="text-sm text-zinc-400">Loading receiving logs…</p>
       ) : null}
 
-      {!loading && visibleLogs.length === 0 ? (
-        <p className="rounded-3xl border border-zinc-800 bg-zinc-900 p-8 text-sm text-zinc-300">
-          {postedIds.size > 0
-            ? 'Every case on this delivery is in inventory.'
-            : `No receiving rows yet. Add Select Item, New Inventory Count, and New Case Cost to the ${sheetName} sheet.`}
-        </p>
+      {!loading && openLogs.length === 0 ? (
+        <div className="flex flex-col items-center rounded-2xl border border-dashed border-slate-700 bg-slate-900/50 px-6 py-16 text-center backdrop-blur-md">
+          <FileUp className="h-14 w-14 text-slate-500" strokeWidth={1.25} />
+          <p className="mt-5 max-w-md text-base font-black tracking-tight text-slate-100">
+            All items processed successfully. Ready for the next delivery.
+          </p>
+          <button
+            type="button"
+            onClick={() => onScanNext?.()}
+            className="mt-6 rounded-2xl bg-[#3E5C78] px-6 py-3.5 text-sm font-black text-slate-50 transition hover:bg-[#4E7090]"
+          >
+            Scan Next Invoice
+          </button>
+        </div>
       ) : null}
 
       {movedNotice ? (
@@ -309,13 +331,37 @@ export function YieldPricingDashboard({
       ) : null}
 
       {selected ? (
-        <div className="grid items-start gap-4 lg:grid-cols-[minmax(240px,280px)_minmax(0,1fr)_minmax(280px,320px)]">
-          <nav className="overflow-hidden rounded-3xl border border-zinc-800 bg-zinc-900/80">
+        <div className="space-y-4 pb-40">
+          <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1 lg:hidden">
+            {openLogs.map((log) => {
+              const active = log.id === selected.id;
+              return (
+                <button
+                  key={log.id}
+                  type="button"
+                  onClick={() => setSelectedId(log.id)}
+                  className={`shrink-0 rounded-2xl border px-3 py-2 text-left ${
+                    active
+                      ? 'border-emerald-400 bg-emerald-400 text-zinc-950'
+                      : 'border-zinc-700 bg-zinc-900 text-zinc-200'
+                  }`}
+                >
+                  <span className="block max-w-[11rem] truncate text-xs font-black">{log.itemName}</span>
+                  <span className={`text-[10px] font-bold ${active ? 'text-zinc-800' : 'text-zinc-500'}`}>
+                    {log.casesReceived} cases · {formatCurrency(log.caseCost)}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="grid items-start gap-4 lg:grid-cols-[220px_minmax(0,1fr)]">
+          <nav className="sticky top-4 hidden max-h-[calc(100dvh-6rem)] overflow-hidden rounded-3xl border border-zinc-800 bg-zinc-900/80 lg:block">
             <p className="border-b border-zinc-800 px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-zinc-500">
               Received items
             </p>
-            <ul className="max-h-[70vh] divide-y divide-zinc-800/80 overflow-y-auto">
-              {visibleLogs.map((log) => {
+            <ul className="max-h-[calc(100dvh-9rem)] divide-y divide-zinc-800/80 overflow-y-auto">
+              {openLogs.map((log) => {
                 const active = log.id === selected.id;
                 return (
                   <li key={log.id}>
@@ -327,8 +373,10 @@ export function YieldPricingDashboard({
                       }`}
                     >
                       <span className="block text-sm font-black leading-snug">{log.itemName}</span>
-                      <span className={`mt-1 flex items-center justify-between text-[11px] ${active ? 'text-zinc-800' : 'text-zinc-500'}`}>
-                        <span>{log.casesReceived} cases</span>
+                      <span className={`mt-1 flex items-center justify-between gap-2 text-[11px] ${active ? 'text-zinc-800' : 'text-zinc-500'}`}>
+                        <span>
+                          {log.casesReceived} cases
+                        </span>
                         <span className="font-mono font-bold">{formatCurrency(log.caseCost)}</span>
                       </span>
                     </button>
@@ -338,7 +386,8 @@ export function YieldPricingDashboard({
             </ul>
           </nav>
 
-          <div className="space-y-5 rounded-3xl border border-zinc-800 bg-zinc-900/80 p-5">
+          <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(260px,300px)]">
+          <div id="yield-editor" className="space-y-5 rounded-3xl border border-zinc-800 bg-zinc-900/80 p-4 sm:p-5">
             <ReceivingDetails log={selected} />
             <div className="border-t border-zinc-800" />
             <YieldBreakdown
@@ -389,8 +438,11 @@ export function YieldPricingDashboard({
             errorMessage={errorMessage}
             stockOnHand={stockOnHand}
             stockMatched={stockMatched}
+            alreadyInInventory={postedIds.has(selected.id)}
             onSave={() => void handleSave()}
           />
+          </div>
+          </div>
         </div>
       ) : null}
     </div>

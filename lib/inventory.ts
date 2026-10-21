@@ -6,6 +6,7 @@ import {
   UnitType,
   InventoryTransaction,
 } from '@prisma/client';
+import { invalidateLedgerReads } from '@/lib/ledgerCache';
 
 // ============================================================================
 // Prisma Singleton Instance (Strict Typed)
@@ -427,6 +428,7 @@ export async function executeBundleSale(
         })
       )
     );
+    invalidateLedgerReads();
 
     // 4. Build execution summary
     const deductions: ExplodedComponentDeduction[] = componentPlans.map((plan, index) => ({
@@ -495,18 +497,6 @@ export async function calculateRealTimeWastePct(
   options?: WasteCalculationOptions
 ): Promise<WasteKpiReport> {
   try {
-    // 1. Load global StoreSetting parameters (or safe enterprise defaults)
-    const storeSetting = await prisma.storeSetting.findFirst();
-
-    const targetWastePct = storeSetting?.targetWastePct ?? 2.5;
-    const scrapBucketVolumeL = storeSetting?.scrapBucketVolumeL ?? 20.0;
-    const estimatedWeightPerLiterKg = storeSetting?.estimatedWeightPerLiterKg ?? 0.65;
-    const defaultScrapCostPerKg = storeSetting?.defaultScrapCostPerKg ?? 3.5;
-
-    // Cost of 1 standard volumetric scrap bucket (e.g. 20L * 0.65 kg/L * $3.50/kg = $45.50)
-    const costPerScrapBucket =
-      scrapBucketVolumeL * estimatedWeightPerLiterKg * defaultScrapCostPerKg;
-
     // Optional date range filter
     const timestampFilter =
       options?.startDate || options?.endDate
@@ -518,19 +508,47 @@ export async function calculateRealTimeWastePct(
           }
         : {};
 
-    // 2. Query all Waste transactions
-    const wasteTransactions = await prisma.inventoryTransaction.findMany({
-      where: {
-        transactionType: TransactionType.Waste,
-        ...timestampFilter,
-      },
-      select: {
-        qtyChange: true,
-        unitCostAtTime: true,
-        referenceId: true,
-        notes: true,
-      },
-    });
+    const [storeSetting, wasteTransactions, salesTransactions] = await Promise.all([
+      prisma.storeSetting.findFirst(),
+      prisma.inventoryTransaction.findMany({
+        where: {
+          transactionType: TransactionType.Waste,
+          ...timestampFilter,
+        },
+        select: {
+          qtyChange: true,
+          unitCostAtTime: true,
+          referenceId: true,
+          notes: true,
+        },
+      }),
+      prisma.inventoryTransaction.findMany({
+        where: {
+          transactionType: {
+            in: [TransactionType.Sale, TransactionType.POS_Sale],
+          },
+          qtyChange: { lt: 0 },
+          ...timestampFilter,
+        },
+        include: {
+          product: {
+            select: {
+              retailPrice: true,
+              targetMargin: true,
+            },
+          },
+        },
+      }),
+    ]);
+
+    const targetWastePct = storeSetting?.targetWastePct ?? 2.5;
+    const scrapBucketVolumeL = storeSetting?.scrapBucketVolumeL ?? 20.0;
+    const estimatedWeightPerLiterKg = storeSetting?.estimatedWeightPerLiterKg ?? 0.65;
+    const defaultScrapCostPerKg = storeSetting?.defaultScrapCostPerKg ?? 3.5;
+
+    // Cost of 1 standard volumetric scrap bucket (e.g. 20L * 0.65 kg/L * $3.50/kg = $45.50)
+    const costPerScrapBucket =
+      scrapBucketVolumeL * estimatedWeightPerLiterKg * defaultScrapCostPerKg;
 
     let totalDiscardValue = 0;
     let volumetricScrapValue = 0;
@@ -557,25 +575,6 @@ export async function calculateRealTimeWastePct(
       volumetricScrapBucketsCount += options.additionalScrapBuckets;
       volumetricScrapValue += options.additionalScrapBuckets * costPerScrapBucket;
     }
-
-    // 3. Query all Sale and POS_Sale transactions to compute Gross Sales Revenue (Ventas Brutas Totales)
-    const salesTransactions = await prisma.inventoryTransaction.findMany({
-      where: {
-        transactionType: {
-          in: [TransactionType.Sale, TransactionType.POS_Sale],
-        },
-        qtyChange: { lt: 0 },
-        ...timestampFilter,
-      },
-      include: {
-        product: {
-          select: {
-            retailPrice: true,
-            targetMargin: true,
-          },
-        },
-      },
-    });
 
     let grossSalesRevenue = 0;
 
