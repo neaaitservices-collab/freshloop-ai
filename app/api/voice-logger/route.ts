@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { GoogleGenerativeAI } from '@google/generative-ai';
 import { Department, InventoryLocation, TransactionType } from '@prisma/client';
+import { generateContentWithFallback, parseModelJson } from '@/lib/gemini';
 import { prisma } from '@/lib/inventory';
 import { invalidateLedgerReads } from '@/lib/ledgerCache';
 import { INITIAL_INVENTORY_ITEMS } from '@/lib/mockData';
@@ -234,29 +234,10 @@ function matchSpokenItemToCatalog(
 }
 
 // ============================================================================
-// Gemini 1.5 Flash Multimodal Voice Parser (`@google/generative-ai`)
+// Multimodal voice parser (shared Gemini transport + deterministic fallback)
 // ============================================================================
 
-async function parseVoiceWithGemini15Flash(
-  audioBase64?: string,
-  mimeType: string = 'audio/webm',
-  spokenText?: string
-): Promise<{
-  transcript: string;
-  items: Array<{
-    item_name: string;
-    quantity: number;
-    unit: string;
-    condition: string;
-    target_action: VoiceTargetAction;
-    department: Department;
-    allergen_warnings: string[];
-  }>;
-  notes: string;
-}> {
-  const apiKey = process.env.GEMINI_API_KEY?.trim();
-
-  const systemPrompt = `You are the FreshLoop AI Voice Floor Logger for an independent supermarket.
+const VOICE_FLOOR_LOGGER_PROMPT = `You are the FreshLoop AI Voice Floor Logger for an independent supermarket.
 Analyze the spoken audio or text transcript from floor/kitchen staff and return ONLY valid JSON with this exact structure:
 {
   "transcript": "verbatim transcript of what was spoken",
@@ -278,76 +259,79 @@ Strict classification rules:
 - target_action MUST be either "PULL_RESCUE" (if edible/usable for kitchen prep such as overripe, bruised, near expiry, day-old) or "DISCARD" (if spoiled, moldy, crushed, contaminated, or unsafe).
 - Always extract numeric quantity > 0.`;
 
-  if (apiKey && !apiKey.startsWith('AQ.')) {
-    try {
-      const genAI = new GoogleGenerativeAI(apiKey);
-      const model = genAI.getGenerativeModel({
-        model: 'gemini-1.5-flash',
-        generationConfig: {
-          responseMimeType: 'application/json',
-          temperature: 0.1,
-        },
-      });
+function mapVoiceParserItems(items: Record<string, unknown>[]) {
+  return items.map((item) => ({
+    item_name: String(item.item_name || item.name || 'Unknown Item'),
+    quantity: Number(item.quantity) > 0 ? Number(item.quantity) : 1,
+    unit: String(item.unit || 'units'),
+    condition: String(item.condition || 'Overripe'),
+    target_action: (item.target_action === 'DISCARD' ? 'DISCARD' : 'PULL_RESCUE') as VoiceTargetAction,
+    department: (['PRODUCE', 'DAIRY', 'BAKERY', 'PANTRY'].includes(String(item.department))
+      ? String(item.department)
+      : 'PRODUCE') as Department,
+    allergen_warnings: Array.isArray(item.allergen_warnings)
+      ? item.allergen_warnings.map(String)
+      : [],
+  }));
+}
 
-      const parts: Array<{ text: string } | { inlineData: { data: string; mimeType: string } }> = [
-        {
-          text:
-            systemPrompt +
-            (spokenText ? `\n\nSpoken Input Transcript: "${spokenText}"` : ''),
-        },
-      ];
+async function parseVoiceWithGemini15Flash(
+  audioBase64?: string,
+  mimeType: string = 'audio/webm',
+  spokenText?: string
+): Promise<{
+  transcript: string;
+  items: Array<{
+    item_name: string;
+    quantity: number;
+    unit: string;
+    condition: string;
+    target_action: VoiceTargetAction;
+    department: Department;
+    allergen_warnings: string[];
+  }>;
+  notes: string;
+}> {
+  const prompt =
+    VOICE_FLOOR_LOGGER_PROMPT +
+    (spokenText ? `\n\nSpoken Input Transcript: "${spokenText}"` : '');
 
-      if (audioBase64) {
-        const cleanBase64 = audioBase64.includes(',')
-          ? audioBase64.split(',')[1]
-          : audioBase64;
-        if (cleanBase64) {
-          parts.push({
-            inlineData: {
-              data: cleanBase64,
-              mimeType: mimeType || 'audio/webm',
-            },
-          });
-        }
-      }
+  const cleanBase64 = audioBase64
+    ? audioBase64.includes(',')
+      ? audioBase64.split(',')[1]
+      : audioBase64
+    : '';
 
-      const result = await model.generateContent(parts);
-      const responseText = result.response.text();
-      const parsed = JSON.parse(responseText);
+  try {
+    const { text } = await generateContentWithFallback(
+      prompt,
+      cleanBase64 ? { data: cleanBase64, mimeType: mimeType || 'audio/webm' } : undefined,
+      ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash']
+    );
 
-      if (parsed && Array.isArray(parsed.items) && parsed.items.length > 0) {
-        return {
-          transcript: parsed.transcript || spokenText || 'Audio log processed',
-          notes:
-            parsed.notes ||
-            'Pending human confirmation before committing to Inventory_Transactions.',
-          items: parsed.items.map((item: Record<string, unknown>) => ({
-            item_name: String(item.item_name || item.name || 'Unknown Item'),
-            quantity: Number(item.quantity) > 0 ? Number(item.quantity) : 1,
-            unit: String(item.unit || 'units'),
-            condition: String(item.condition || 'Overripe'),
-            target_action:
-              item.target_action === 'DISCARD' ? 'DISCARD' : 'PULL_RESCUE',
-            department: (['PRODUCE', 'DAIRY', 'BAKERY', 'PANTRY'].includes(
-              String(item.department)
-            )
-              ? String(item.department)
-              : 'PRODUCE') as Department,
-            allergen_warnings: Array.isArray(item.allergen_warnings)
-              ? item.allergen_warnings.map(String)
-              : [],
-          })),
-        };
-      }
-    } catch (err) {
-      console.warn(
-        '[voice-logger] Gemini 1.5 Flash SDK call fell back to deterministic parser:',
-        err instanceof Error ? err.message : String(err)
-      );
+    const parsed = parseModelJson<{
+      transcript?: string;
+      notes?: string;
+      items?: Record<string, unknown>[];
+    }>(text);
+
+    if (parsed && Array.isArray(parsed.items) && parsed.items.length > 0) {
+      return {
+        transcript: parsed.transcript || spokenText || 'Audio log processed',
+        notes:
+          parsed.notes ||
+          'Pending human confirmation before committing to Inventory_Transactions.',
+        items: mapVoiceParserItems(parsed.items),
+      };
     }
+  } catch (err) {
+    console.warn(
+      '[voice-logger] Gemini parse fell back to deterministic parser:',
+      err instanceof Error ? err.message : String(err)
+    );
   }
 
-  // Deterministic intelligent fallback parser when offline or using OAuth placeholder key
+  // Deterministic intelligent fallback parser when offline or model unavailable
   const rawTranscript =
     spokenText?.trim() || 'Logged 10 lbs bruised apples and 4L heavy cream';
   const lower = rawTranscript.toLowerCase();

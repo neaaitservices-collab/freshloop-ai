@@ -6,12 +6,10 @@ import { usePathname } from 'next/navigation';
 import {
   ChefHat,
   ClipboardList,
-  Home,
   Leaf,
   Mic,
   Package,
   PanelLeft,
-  Store,
   User,
   Users,
   Warehouse,
@@ -31,10 +29,14 @@ interface NavItem {
 }
 
 const ITEMS: NavItem[] = [
-  { id: 'today', label: 'Today', icon: Home, href: '/dashboard', roles: ['ADMIN', 'STORE_MANAGER'] },
   { id: 'receive', label: 'Receive', icon: Package, href: '/receive', roles: ['ADMIN', 'STORE_MANAGER', 'RECEIVING_CLERK'] },
-  { id: 'inventory', label: 'Inventory', icon: Warehouse, href: '/inventory', roles: ['ADMIN', 'STORE_MANAGER', 'RECEIVING_CLERK'] },
-  { id: 'floor', label: 'Floor', icon: Store, href: '/floor', roles: ['ADMIN', 'STORE_MANAGER', 'FLOOR_STAFF'] },
+  {
+    id: 'inventory',
+    label: 'Inventory',
+    icon: Warehouse,
+    href: '/inventory',
+    roles: ['ADMIN', 'STORE_MANAGER', 'RECEIVING_CLERK', 'FLOOR_STAFF'],
+  },
   { id: 'voice', label: 'Voice', icon: Mic, voice: true, roles: ['ADMIN', 'STORE_MANAGER', 'FLOOR_STAFF'] },
   { id: 'kitchen', label: 'Kitchen', icon: ChefHat, href: '/kitchen', roles: ['ADMIN', 'STORE_MANAGER', 'DELI_CHEF'] },
   { id: 'orders', label: 'Orders', icon: ClipboardList, href: '/orders', roles: ['ADMIN', 'STORE_MANAGER'] },
@@ -54,13 +56,23 @@ function displayItem(item: NavItem, role: RoleName | null): NavItem {
   return item;
 }
 
+function brandHref(items: NavItem[], role: RoleName | null): string {
+  if (!role || isManager(role)) return '/admin';
+  return items.find((item) => item.href && item.id !== 'account')?.href ?? '/admin';
+}
+
 function isActive(pathname: string, href: string) {
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 
 function itemsFor(role: RoleName | null): NavItem[] {
-  if (!role) return ITEMS.filter((item) => item.roles.includes('ADMIN'));
-  return ITEMS.filter((item) => item.roles.includes(role));
+  const visible = !role
+    ? ITEMS.filter((item) => item.roles.includes('ADMIN'))
+    : ITEMS.filter((item) => item.roles.includes(role));
+  if (!role || isManager(role)) {
+    return [...visible].sort((a, b) => Number(b.id === 'account') - Number(a.id === 'account'));
+  }
+  return visible;
 }
 
 export function Navigation({ onVoice }: { onVoice: () => void }) {
@@ -77,7 +89,7 @@ export function Navigation({ onVoice }: { onVoice: () => void }) {
         }`}
       >
         <div className={`flex items-center gap-2 px-3 py-4 ${collapsed ? 'justify-center' : ''}`}>
-          <Link href={items.find((item) => item.href)?.href ?? '/dashboard'} className="flex items-center gap-2">
+          <Link href={brandHref(items, activeUser?.role ?? null)} className="flex items-center gap-2">
             <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-emerald-400 text-zinc-950">
               <Leaf className="h-5 w-5" />
             </span>
@@ -129,7 +141,7 @@ export function Navigation({ onVoice }: { onVoice: () => void }) {
       </aside>
 
       <header className="sticky top-0 z-40 flex items-center justify-between gap-3 border-b border-zinc-800 bg-zinc-950/95 px-3 py-3 backdrop-blur-xl md:hidden">
-        <Link href={items.find((item) => item.href)?.href ?? '/dashboard'} className="flex items-center gap-2">
+        <Link href={brandHref(items, activeUser?.role ?? null)} className="flex items-center gap-2">
           <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-400 text-zinc-950">
             <Leaf className="h-4 w-4" />
           </span>
@@ -170,7 +182,7 @@ export function Navigation({ onVoice }: { onVoice: () => void }) {
             }
             return (
               <li key={shown.id} className="flex flex-1">
-                <Link href={shown.href ?? '/dashboard'} className={className}>
+                <Link href={shown.href ?? '/admin'} className={className}>
                   <Icon className="h-5 w-5" />
                   {shown.label}
                 </Link>
@@ -207,7 +219,7 @@ function NavRow({
     );
   }
   return (
-    <Link href={item.href ?? '/dashboard'} className={className} title={item.label}>
+    <Link href={item.href ?? '/admin'} className={className} title={item.label}>
       <Icon className="h-4 w-4 shrink-0" />
       {collapsed ? null : item.label}
     </Link>

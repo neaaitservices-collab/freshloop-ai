@@ -1,6 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { isManager, isRoleName } from '@/lib/roles';
-import { getStockLevels, PAR_CASES, setParCases, setStockCases, setSupplier, updateCase } from '@/lib/stock';
+import {
+  applyRetailMarkdown,
+  getStockLevels,
+  moveRetailStock,
+  PAR_CASES,
+  setParCases,
+  setStockCases,
+  setSupplier,
+  updateCase,
+} from '@/lib/stock';
 
 export const dynamic = 'force-dynamic';
 
@@ -31,6 +40,7 @@ export async function PATCH(req: NextRequest) {
   try {
     const body = (await req.json()) as {
       productId?: string;
+      action?: 'rescue' | 'waste' | 'markdown';
       parCases?: number;
       supplier?: string;
       packSize?: number;
@@ -45,6 +55,23 @@ export async function PATCH(req: NextRequest) {
     if (!productId) {
       return NextResponse.json({ success: false, error: 'productId is required.' }, { status: 400 });
     }
+
+    if (body.action === 'markdown') {
+      const marked = await applyRetailMarkdown(productId, body.staffId ?? '');
+      return NextResponse.json({ success: true, action: 'markdown', level: marked.level });
+    }
+    if (body.action === 'rescue' || body.action === 'waste') {
+      const moved = await moveRetailStock(productId, body.action, body.staffId ?? '');
+      return NextResponse.json({
+        success: true,
+        action: body.action,
+        level: moved.level,
+        units: moved.units,
+        retailFloorQty: moved.level.onHand,
+        kitchenPrepQty: moved.level.kitchenPrepQty,
+      });
+    }
+
     if (body.casesOnHand !== undefined) {
       const role = body.role ?? '';
       if (!isRoleName(role) || !isManager(role)) {
@@ -80,12 +107,19 @@ export async function PATCH(req: NextRequest) {
       });
       return NextResponse.json({ success: true, level });
     }
-    const parCases = Number(body.parCases);
-    if (!Number.isFinite(parCases)) {
-      return NextResponse.json({ success: false, error: 'parCases must be a number.' }, { status: 400 });
+    if (body.parCases !== undefined) {
+      const parCases = Number(body.parCases);
+      if (!Number.isFinite(parCases)) {
+        return NextResponse.json({ success: false, error: 'parCases must be a number.' }, { status: 400 });
+      }
+      const level = await setParCases(productId, parCases);
+      return NextResponse.json({ success: true, level });
     }
-    const level = await setParCases(productId, parCases);
-    return NextResponse.json({ success: true, level });
+
+    return NextResponse.json(
+      { success: false, error: 'Provide parCases, supplier, case fields, casesOnHand, or action (rescue|waste|markdown).' },
+      { status: 400 }
+    );
   } catch (error) {
     return NextResponse.json(
       {

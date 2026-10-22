@@ -120,6 +120,7 @@ model Product {
   origin          String?
   standardCost    Float?     // Baseline reference cost before moving average is established
   retailPrice     Float?     // Active shelf retail price
+  regularRetailPrice Float?  // Pre-markdown shelf price while item is on 30% markdown
   isManufactured  Boolean    @default(false) // true if produced via a Kitchen Recipe
   createdAt       DateTime   @default(now())
   updatedAt       DateTime   @updatedAt

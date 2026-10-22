@@ -3,7 +3,7 @@ import { Department, InventoryLocation, TransactionType } from '@prisma/client';
 import { prisma, getMovingAverageCost } from '@/lib/inventory';
 import { invalidateLedgerReads } from '@/lib/ledgerCache';
 import { INITIAL_INVENTORY_ITEMS } from '@/lib/mockData';
-import { generateContentWithFallback } from '@/lib/gemini';
+import { generateContentWithFallback, parseModelJson } from '@/lib/gemini';
 
 // ============================================================================
 // Types & Interfaces for Phase 3 Invoice OCR + Cost Guardrail (>20% Variance)
@@ -66,6 +66,9 @@ export interface InvoiceOcrApiResponse {
     }>;
     rawSummary: string;
     source: 'sample' | 'photo';
+    requiresManagerApproval?: boolean;
+    flaggedItemsCount?: number;
+    guardrailThresholdPct?: number;
   };
   timestamp: string;
 }
@@ -366,8 +369,7 @@ Analyze this supermarket vendor invoice image and return ONLY valid JSON matchin
     ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash']
   );
 
-  const jsonText = text.replace(/^```json\s*/i, '').replace(/```$/i, '').trim();
-  const parsed = JSON.parse(jsonText);
+  const parsed = parseModelJson<Record<string, unknown>>(text);
   if (!parsed || !Array.isArray(parsed.lineItems) || parsed.lineItems.length === 0) {
     throw new Error('The photo was read, but no invoice lines were found. Try a closer photo of the item table.');
   }
@@ -559,6 +561,9 @@ export async function POST(req: NextRequest) {
             ? `Cost Guardrail Alert: ${flaggedItemsCount} item(s) vary by >${guardrailThresholdPct}% from historical Moving Average Cost and require approval.`
             : extracted.modelNote,
         source: demo || !imageBase64 ? 'sample' : 'photo',
+        requiresManagerApproval: flaggedItemsCount > 0,
+        flaggedItemsCount,
+        guardrailThresholdPct: guardrailThresholdPct,
       },
       timestamp: new Date().toISOString(),
     };

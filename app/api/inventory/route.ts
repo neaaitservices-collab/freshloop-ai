@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { InventoryLocation } from '@prisma/client';
-import { getInventoryItems, updateInventoryItem } from '@/lib/db';
+import { getInventoryItems } from '@/lib/db';
 import {
   prisma,
   calculateRealTimeWastePct,
@@ -200,33 +200,12 @@ export async function GET(req: NextRequest) {
 }
 
 export async function PATCH(req: NextRequest) {
-  try {
-    const body = await req.json();
-    const { id, updates } = body;
-
-    if (!id || !updates) {
-      return NextResponse.json(
-        { error: 'Missing id or updates parameter' },
-        { status: 400 }
-      );
-    }
-
-    const updated = await updateInventoryItem(id, updates);
-    if (!updated) {
-      return NextResponse.json(
-        { error: 'Inventory item not found' },
-        { status: 404 }
-      );
-    }
-
-    return NextResponse.json({ success: true, item: updated });
-  } catch (error: unknown) {
-    return NextResponse.json(
-      {
-        error:
-          error instanceof Error ? error.message : 'Failed to update inventory',
-      },
-      { status: 500 }
-    );
-  }
+  return NextResponse.json(
+    {
+      success: false,
+      error:
+        'Legacy floor status updates are retired. Use POST /api/inventory/move with action rescue, waste, or markdown.',
+    },
+    { status: 410 }
+  );
 }

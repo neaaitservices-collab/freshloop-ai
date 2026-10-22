@@ -1,6 +1,8 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
+import Link from 'next/link';
+import { ArrowRight, ChefHat, Package, Store } from 'lucide-react';
 import { AppShell } from '@/components/shell/AppShell';
 import { PageIntro } from '@/components/shell/PageIntro';
 import { UserManagementTable } from '@/components/UserManagementTable';
@@ -61,7 +63,7 @@ function ProfileForm() {
 
   return (
     <form
-      className="mt-5 grid gap-3 rounded-3xl border border-zinc-800 bg-zinc-900/80 p-4 sm:grid-cols-2"
+      className="grid gap-3 rounded-3xl border border-zinc-800 bg-zinc-900/80 p-4 sm:grid-cols-2"
       onSubmit={(event) => {
         event.preventDefault();
         void save();
@@ -115,7 +117,7 @@ function ProfileForm() {
   );
 }
 
-function SettingsForm({ settings }: { settings: PlatformSettings | null }) {
+export function SettingsForm({ settings }: { settings: PlatformSettings | null }) {
   const [draft, setDraft] = useState<PlatformSettings | null>(settings);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -272,43 +274,107 @@ function SettingsForm({ settings }: { settings: PlatformSettings | null }) {
   );
 }
 
+const STEPS = [
+  {
+    href: '/receive',
+    step: '1',
+    title: 'Receive',
+    text: 'Read the delivery, turn each case into retail units, and set the floor price.',
+    icon: Package,
+  },
+  {
+    href: '/inventory',
+    step: '2',
+    title: 'Inventory & floor',
+    text: 'See everything on hand, pull short-dated stock, and send it to the kitchen before it becomes waste.',
+    icon: Store,
+  },
+  {
+    href: '/kitchen',
+    step: '3',
+    title: 'Kitchen',
+    text: 'Cook rescued product into a prepared item and log scrap buckets.',
+    icon: ChefHat,
+  },
+];
+
+function DaySteps() {
+  return (
+    <>
+      <ol className="mt-5 grid gap-3 md:grid-cols-3">
+        {STEPS.map((step) => {
+          const Icon = step.icon;
+          return (
+            <li key={step.href}>
+              <Link
+                href={step.href}
+                className="flex h-full flex-col rounded-3xl border border-zinc-800 bg-zinc-900 p-4 transition hover:-translate-y-0.5 hover:border-emerald-400/50"
+              >
+                <span className="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-400 text-sm font-black text-zinc-950">
+                  {step.step}
+                </span>
+                <span className="mt-3 flex items-center gap-2 text-lg font-black text-white">
+                  <Icon className="h-5 w-5 text-emerald-300" />
+                  {step.title}
+                </span>
+                <span className="mt-1 flex-1 text-sm leading-relaxed text-zinc-400">{step.text}</span>
+                <span className="mt-4 inline-flex items-center gap-1 text-xs font-black text-emerald-300">
+                  Open
+                  <ArrowRight className="h-3.5 w-3.5" />
+                </span>
+              </Link>
+            </li>
+          );
+        })}
+      </ol>
+      <Link
+        href="/operations"
+        className="mt-5 inline-flex text-sm font-bold text-zinc-400 underline-offset-4 hover:text-white hover:underline"
+      >
+        Open the full ledger
+      </Link>
+    </>
+  );
+}
+
 export function AccountPage({
   settings,
   figures,
   children,
 }: {
-  settings: PlatformSettings | null;
+  settings: React.ReactNode;
   figures?: React.ReactNode;
   children?: React.ReactNode;
 }) {
   const { activeUser, loading } = useRole();
   const manager = activeUser ? isManager(activeUser.role) : false;
+  const showControls = !activeUser || manager;
   const title = !activeUser && loading ? 'Account' : manager ? 'Admin' : 'Profile';
 
   return (
     <AppShell>
       <main className="mx-auto w-full max-w-7xl px-3 py-5 pb-28 sm:px-6 sm:py-8">
         <PageIntro
-          step={title}
+          step={showControls ? 'Store dashboard' : 'Account'}
           title={title}
           description={
-            manager
-              ? 'Your details, then the store statistics, controls, and settings.'
+            showControls
+              ? 'The numbers come from the ledger. The three steps are the day’s work. Your details and the store controls sit below.'
               : 'Your name, email, and position.'
           }
         />
-        <ProfileForm />
-        {manager ? (
+        {showControls ? (
           <>
-            <section className="mt-10">
-              <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-emerald-300">Statistics</p>
-              <h2 className="mt-1 text-2xl font-black tracking-tight text-white">Overview</h2>
-              <p className="mt-1 max-w-2xl text-sm text-zinc-400">
-                The same figures as Today: rescued value, waste, low stock, and the department alerts.
-              </p>
-              {figures}
-            </section>
-            <SettingsForm settings={settings} />
+            {figures}
+            <DaySteps />
+          </>
+        ) : null}
+        <div className={showControls ? 'mt-10' : 'mt-5'}>
+          <ProfileForm />
+        </div>
+        {showControls ? (
+          <>
+            {settings}
             <UserManagementTable />
             {children}
           </>

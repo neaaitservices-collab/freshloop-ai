@@ -172,7 +172,7 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
       const rawItems: EditableVoiceDraftItem[] = Array.isArray(json.items)
         ? json.items.map((it: Record<string, unknown>) => ({
             item_name: String(it.item_name || 'Producto'),
-            product_id: String(it.product_id || 'prod-avocado-hass'),
+            product_id: it.product_id ? String(it.product_id) : '',
             matched_product_name: it.matched_product_name
               ? String(it.matched_product_name)
               : null,
@@ -214,6 +214,12 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
   const handleConfirmAndCommit = async () => {
     setCommitting(true);
     setErrorMsg(null);
+    const missingProduct = draftItems.some((item) => !item.product_id?.trim());
+    if (missingProduct) {
+      setErrorMsg('Select a catalog product for each line before confirming.');
+      setCommitting(false);
+      return;
+    }
     try {
       const res = await fetch('/api/voice-logger', {
         method: 'POST',

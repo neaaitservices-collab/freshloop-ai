@@ -21,6 +21,7 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [ocrResult, setOcrResult] = useState<InvoiceOcrResult | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
+  const [managerApprovedCosts, setManagerApprovedCosts] = useState(false);
 
   if (!isOpen) return null;
 
@@ -28,8 +29,9 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0];
       setSelectedFile(file);
-      setScanError(null);
-      setOcrResult(null);
+    setScanError(null);
+    setOcrResult(null);
+    setManagerApprovedCosts(false);
       const reader = new FileReader();
       reader.onloadend = () => {
         setPreviewUrl(reader.result as string);
@@ -73,7 +75,19 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
         setScanError(json.error || 'The invoice could not be read. Try a clearer photo.');
         return;
       }
-      setOcrResult(json.data as InvoiceOcrResult);
+      setOcrResult({
+        ...(json.data as InvoiceOcrResult),
+        requiresManagerApproval: Boolean(
+          json.requires_manager_approval ?? json.data?.requiresManagerApproval
+        ),
+        flaggedItemsCount: Number(
+          json.flagged_items_count ?? json.data?.flaggedItemsCount ?? 0
+        ),
+        guardrailThresholdPct: Number(
+          json.guardrail_threshold_pct ?? json.data?.guardrailThresholdPct ?? 20
+        ),
+      });
+      setManagerApprovedCosts(false);
     } catch (err) {
       console.error('Invoice OCR scan error:', err);
       setScanError('The scan did not reach the server. Check the connection and try again.');
@@ -82,8 +96,11 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
     }
   };
 
+  const needsCostApproval =
+    Boolean(ocrResult?.requiresManagerApproval) && !managerApprovedCosts;
+
   const handleAddToReceiving = () => {
-    if (!ocrResult) return;
+    if (!ocrResult || needsCostApproval) return;
     onInvoiceImported(ocrResult);
     onClose();
   };
@@ -268,16 +285,47 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
                         <th className="p-2 sm:p-2.5">Dept</th>
                         <th className="p-2 sm:p-2.5">Qty</th>
                         <th className="p-2 sm:p-2.5">Cost</th>
+                        <th className="p-2 sm:p-2.5">Vs avg</th>
                         <th className="p-2 sm:p-2.5 text-right">Total</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-zinc-800 text-zinc-300 text-xs">
                       {ocrResult.lineItems.map((item, idx) => (
-                        <tr key={idx} className="hover:bg-zinc-800/40">
-                          <td className="p-2 sm:p-2.5 font-semibold text-white">{item.name}</td>
+                        <tr
+                          key={idx}
+                          className={
+                            item.requires_approval
+                              ? 'bg-amber-950/30 hover:bg-amber-950/40'
+                              : 'hover:bg-zinc-800/40'
+                          }
+                        >
+                          <td className="p-2 sm:p-2.5 font-semibold text-white">
+                            {item.name}
+                            {item.requires_approval ? (
+                              <p className="mt-1 text-[10px] font-normal text-amber-200/90">
+                                {item.guardrailReason || 'Cost varies from historical average.'}
+                              </p>
+                            ) : null}
+                          </td>
                           <td className="p-2 sm:p-2.5"><DepartmentBadge department={item.department} size="sm" /></td>
                           <td className="p-2 sm:p-2.5 whitespace-nowrap">{item.quantity} {item.unit}</td>
                           <td className="p-2 sm:p-2.5">${item.unitCost.toFixed(2)}</td>
+                          <td className="p-2 sm:p-2.5 whitespace-nowrap">
+                            {item.costVariancePct != null ? (
+                              <span
+                                className={
+                                  item.requires_approval
+                                    ? 'font-bold text-amber-300'
+                                    : 'text-zinc-400'
+                                }
+                              >
+                                {item.costVariancePct > 0 ? '+' : ''}
+                                {item.costVariancePct.toFixed(1)}%
+                              </span>
+                            ) : (
+                              <span className="text-zinc-600">—</span>
+                            )}
+                          </td>
                           <td className="p-2 sm:p-2.5 text-right font-bold text-white">${item.totalCost.toFixed(2)}</td>
                         </tr>
                       ))}
@@ -285,6 +333,23 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
                   </table>
                 </div>
               </div>
+
+              {ocrResult.requiresManagerApproval ? (
+                <label className="flex cursor-pointer items-start gap-3 rounded-2xl border border-amber-500/40 bg-amber-950/40 p-4 text-xs text-amber-100">
+                  <input
+                    type="checkbox"
+                    checked={managerApprovedCosts}
+                    onChange={(e) => setManagerApprovedCosts(e.target.checked)}
+                    className="mt-0.5 h-4 w-4 rounded border-amber-400 text-emerald-500 focus:ring-emerald-500"
+                  />
+                  <span>
+                    <span className="font-bold text-amber-200">Manager approval: </span>
+                    {ocrResult.flaggedItemsCount ?? 0} line(s) exceed ±
+                    {ocrResult.guardrailThresholdPct ?? 20}% vs moving average cost. I confirm
+                    these case costs before adding to receiving.
+                  </span>
+                </label>
+              ) : null}
             </div>
           )}
         </div>
@@ -321,7 +386,13 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
             <button
               type="button"
               onClick={handleAddToReceiving}
-              className="flex items-center gap-2 rounded-xl bg-emerald-400 px-5 py-3 text-xs font-black text-zinc-950"
+              disabled={needsCostApproval}
+              title={
+                needsCostApproval
+                  ? 'Check manager approval for flagged costs first'
+                  : undefined
+              }
+              className="flex items-center gap-2 rounded-xl bg-emerald-400 px-5 py-3 text-xs font-black text-zinc-950 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400"
             >
               <span>Add {ocrResult.lineItems.length} cases to receiving</span>
               <ArrowRight className="h-4 w-4" />

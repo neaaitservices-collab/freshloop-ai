@@ -19,7 +19,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   const pathname = usePathname();
 
   const navLinks = [
-    { href: '/dashboard', label: 'Inventory & Pricing', icon: LayoutDashboard },
+    { href: '/admin', label: 'Dashboard', icon: LayoutDashboard },
     { href: '/rescue', label: 'Floor Rescue', icon: AlertTriangle },
     { href: '/recipes', label: 'Recipe Fusion', icon: UtensilsCrossed },
   ];
@@ -32,7 +32,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           <div className="flex items-center justify-between h-16">
             {/* Brand Logo */}
             <div className="flex items-center gap-2.5">
-              <Link href="/dashboard" className="flex items-center gap-2 group">
+              <Link href="/admin" className="flex items-center gap-2 group">
                 <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-gradient-to-tr from-emerald-600 via-teal-500 to-green-400 flex items-center justify-center shadow-lg shadow-emerald-500/20 group-hover:scale-105 transition-transform duration-300">
                   <Leaf className="w-5 h-5 text-zinc-950 stroke-[2.5]" />
                 </div>
@@ -97,9 +97,9 @@ export const Navbar: React.FC<NavbarProps> = ({
       {/* Mobile Floating Bottom Dock (375x700 screens) */}
       <div className="sm:hidden fixed bottom-0 left-0 right-0 z-40 bg-zinc-950/95 backdrop-blur-xl border-t border-emerald-900/40 px-2 py-1 flex items-center justify-around text-xs shadow-2xl">
         <Link
-          href="/dashboard"
+          href="/admin"
           className={`flex flex-col items-center gap-0.5 py-1 px-2.5 rounded-xl ${
-            pathname === '/dashboard' ? 'text-emerald-400 font-bold' : 'text-zinc-400'
+            pathname === '/admin' ? 'text-emerald-400 font-bold' : 'text-zinc-400'
           }`}
         >
           <LayoutDashboard className="w-5 h-5" />
