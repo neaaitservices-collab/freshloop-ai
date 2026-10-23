@@ -119,8 +119,15 @@ export function CaseBoard({
   );
   const [savingStock, setSavingStock] = useState(false);
   const [stockMessage, setStockMessage] = useState<string | null>(null);
-  const { activeUser } = useRole();
-  const canOverride = activeUser ? isManager(activeUser.role) : false;
+  const { activeUser, loading: roleLoading } = useRole();
+  const [roleReady, setRoleReady] = useState(false);
+  useEffect(() => {
+    setRoleReady(true);
+  }, []);
+  const canOverride =
+    roleReady &&
+    !roleLoading &&
+    Boolean(activeUser && isManager(activeUser.role));
 
   useEffect(() => {
     if (!initialLevels) return;
