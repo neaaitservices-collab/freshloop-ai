@@ -7,7 +7,8 @@ import { AppShell } from '@/components/layout/AppShell';
 import { PageIntro } from '@/components/layout/PageIntro';
 import { UserManagementTable } from '@/components/features/admin/UserManagementTable';
 import { useRole } from '@/components/auth/RoleProvider';
-import { isManager, ROLE_LABELS } from '@/lib/utils/roles';
+import { positionForStaff } from '@/lib/utils/positions';
+import { isManager } from '@/lib/utils/roles';
 import type { PlatformSettings } from '@/lib/domains/stats/platformSettings';
 
 const FIELD =
@@ -17,7 +18,6 @@ function ProfileForm() {
   const { activeUser, loading, refresh } = useRole();
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
-  const [position, setPosition] = useState('');
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -26,7 +26,6 @@ function ProfileForm() {
     if (!activeUser) return;
     setName(activeUser.name);
     setEmail(activeUser.email);
-    setPosition(activeUser.position);
     setMessage(null);
     setError(null);
   }, [activeUser]);
@@ -43,8 +42,6 @@ function ProfileForm() {
         body: JSON.stringify({
           name,
           email,
-          position,
-          role: activeUser.role,
         }),
       });
       const json = await response.json();
@@ -75,7 +72,7 @@ function ProfileForm() {
           {loading && !activeUser
             ? 'Loading your profile…'
             : activeUser
-              ? ROLE_LABELS[activeUser.role]
+              ? positionForStaff(activeUser.position, activeUser.role).access
               : 'No profile is selected.'}
         </p>
       </div>
@@ -93,15 +90,13 @@ function ProfileForm() {
           className={FIELD}
         />
       </label>
-      <label className="text-xs font-bold text-zinc-400 sm:col-span-2">
+      <div className="text-xs font-bold text-zinc-400 sm:col-span-2">
         Position
-        <input
-          required
-          value={position}
-          onChange={(event) => setPosition(event.target.value)}
-          className={FIELD}
-        />
-      </label>
+        <p className="mt-1 text-sm font-bold text-white">{activeUser?.position || '—'}</p>
+        <p className="mt-1 font-medium text-zinc-500">
+          A manager sets this in Staff. That choice is the access on the platform.
+        </p>
+      </div>
       <div className="flex flex-wrap items-center gap-3 sm:col-span-2">
         <button
           type="submit"

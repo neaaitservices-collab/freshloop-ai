@@ -293,6 +293,11 @@ async function seedStaffUsers() {
 }
 
 async function main() {
+  if (process.env.NODE_ENV === "production") {
+    console.warn(
+      "⚠️  Production seed: loads demo staff (@freshloop.test / freshloop) and sample catalog. Skip if this is a live store."
+    );
+  }
   console.log("🌱 Starting FreshLoop AI database seed...");
 
   await seedStaffUsers();

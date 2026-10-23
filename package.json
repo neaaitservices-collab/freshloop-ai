@@ -8,9 +8,13 @@
     "postinstall": "prisma generate",
     "start": "next start",
     "lint": "eslint",
+    "typecheck": "tsc --noEmit",
+    "ci": "npm run lint && npm run typecheck && npm run build",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
-    "db:seed": "prisma db seed"
+    "db:seed": "prisma db seed",
+    "db:push:prod": "prisma migrate deploy",
+    "db:seed:prod": "NODE_ENV=production prisma db seed"
   },
   "prisma": {
     "seed": "node --experimental-strip-types prisma/seed.ts"

@@ -29,9 +29,8 @@ export const prisma: PrismaClient = clientHasCurrentModels(globalForPrisma.prism
       log: process.env.NODE_ENV === 'development' ? ['error', 'warn'] : ['error'],
     });
 
-if (process.env.NODE_ENV !== 'production') {
-  globalForPrisma.prismaClientV2 = prisma;
-}
+// Reuse one client per serverless instance (Vercel / Node).
+globalForPrisma.prismaClientV2 = prisma;
 
 // ============================================================================
 // Custom Domain Error & Strict Interfaces

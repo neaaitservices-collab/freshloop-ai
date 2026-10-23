@@ -18,6 +18,10 @@ function isAuthApi(pathname: string): boolean {
   return pathname.startsWith('/api/auth');
 }
 
+function isPublicApi(pathname: string): boolean {
+  return isAuthApi(pathname) || pathname === '/api/health';
+}
+
 type MiddlewareSession = {
   user?: { id?: string; email?: string | null; role?: string };
 } | null;
@@ -41,7 +45,7 @@ export default auth((req) => {
   const role = roleFromAuth(session) ?? (loggedIn ? ('FLOOR_STAFF' as RoleName) : null);
 
   if (pathname.startsWith('/api/')) {
-    if (isAuthApi(pathname)) {
+    if (isPublicApi(pathname)) {
       return NextResponse.next();
     }
     if (!loggedIn) {

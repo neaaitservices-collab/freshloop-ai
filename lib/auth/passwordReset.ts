@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import { prisma } from '@/lib/domains/inventory/ledger';
 import { hashPassword } from '@/lib/auth/password';
+import { getAuthOrigin } from '@/lib/env/server';
 
 const RESET_PREFIX = 'password-reset:';
 const RESET_TTL_MS = 60 * 60 * 1000;
@@ -67,10 +68,7 @@ export async function resetPasswordWithToken(input: {
 }
 
 export function passwordResetUrl(email: string, token: string): string {
-  const base =
-    process.env.NEXTAUTH_URL ??
-    process.env.AUTH_URL ??
-    'http://localhost:3000';
+  const base = getAuthOrigin();
   const params = new URLSearchParams({
     email,
     token,
