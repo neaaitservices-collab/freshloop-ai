@@ -2,17 +2,17 @@
 
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { stashInvoiceForReceiving } from '@/lib/receivingBridge';
+import { stashInvoiceForReceiving } from '@/lib/domains/receiving/receivingBridge';
 import type { InvoiceOcrResult } from '@/lib/types';
-import { AppShell } from '@/components/shell/AppShell';
-import { PageIntro } from '@/components/shell/PageIntro';
-import { RecipeFusionCard } from '@/components/RecipeFusionCard';
-import { InvoiceUploadModal } from '@/components/InvoiceUploadModal';
-import { VoiceRecorderModal } from '@/components/VoiceRecorderModal';
-import { DeliLabelModal } from '@/components/DeliLabelModal';
-import { KitchenSubInventoryPanel } from '@/components/kitchen/KitchenSubInventoryPanel';
+import { AppShell } from '@/components/layout/AppShell';
+import { PageIntro } from '@/components/layout/PageIntro';
+import { RecipeFusionCard } from '@/components/features/recipes/RecipeFusionCard';
+import { InvoiceUploadModal } from '@/components/features/invoices/InvoiceUploadModal';
+import { VoiceRecorderModal } from '@/components/features/voice/VoiceRecorderModal';
+import { DeliLabelModal } from '@/components/features/recipes/DeliLabelModal';
+import { KitchenSubInventoryPanel } from '@/components/features/kitchen/KitchenSubInventoryPanel';
 import { RecipeFusionResult } from '@/lib/types';
-import { INITIAL_FUSION_RECIPES } from '@/lib/mockData';
+import { INITIAL_FUSION_RECIPES } from '@/lib/legacy/mockData';
 import { Sparkles, UtensilsCrossed, Filter, Search, Loader2, Mic } from 'lucide-react';
 
 export default function RecipesPage() {

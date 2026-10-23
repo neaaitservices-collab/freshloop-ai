@@ -1,7 +1,7 @@
 import { Suspense } from 'react';
-import { AppShell } from '@/components/shell/AppShell';
-import { FloorTransferPage } from '@/components/inventory/FloorTransferPage';
-import { getStockLevels } from '@/lib/stock';
+import { AppShell } from '@/components/layout/AppShell';
+import { FloorTransferPage } from '@/components/features/inventory/FloorTransferPage';
+import { getStockLevels } from '@/lib/domains/inventory/stock';
 
 export const dynamic = 'force-dynamic';
 

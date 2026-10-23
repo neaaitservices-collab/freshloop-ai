@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Role } from '@prisma/client';
-import { prisma } from '@/lib/inventory';
-import { isRoleName, type StaffUser } from '@/lib/roles';
+import { prisma } from '@/lib/domains/inventory/ledger';
+import { isRoleName, type StaffUser } from '@/lib/utils/roles';
 
 export const dynamic = 'force-dynamic';
 

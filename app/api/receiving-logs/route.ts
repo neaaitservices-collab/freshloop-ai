@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { loadReceivingLogs, RECEIVING_SHEET_NAME } from '@/lib/receivingSheet';
-import { postReceipt } from '@/lib/stock';
-import { calculateYieldQuote, resolveTargetMargin, type MarginMode, type RetailUnit, RETAIL_UNITS } from '@/lib/yieldPricing';
+import { loadReceivingLogs, RECEIVING_SHEET_NAME } from '@/lib/domains/receiving/receivingSheet';
+import { postReceipt } from '@/lib/domains/inventory/stock';
+import { calculateYieldQuote, resolveTargetMargin, type MarginMode, type RetailUnit, RETAIL_UNITS } from '@/lib/domains/receiving/yieldPricing';
 
 export const dynamic = 'force-dynamic';
 

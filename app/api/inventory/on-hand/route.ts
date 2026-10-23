@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { lookupOnHand } from '@/lib/stock';
+import { lookupOnHand } from '@/lib/domains/inventory/stock';
 
 export const dynamic = 'force-dynamic';
 

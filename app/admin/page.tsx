@@ -1,10 +1,10 @@
 import { Suspense } from 'react';
-import { AccountPage, SettingsForm } from '@/components/admin/AccountPage';
-import { CaseBoard } from '@/components/inventory/CaseBoard';
-import { DashboardFigures } from '@/components/today/DashboardFigures';
-import { getPlatformSettings } from '@/lib/platformSettings';
-import { getStockLevels } from '@/lib/stock';
-import { getStoreStats } from '@/lib/storeStats';
+import { AccountPage, SettingsForm } from '@/components/features/admin/AccountPage';
+import { CaseBoard } from '@/components/features/inventory/CaseBoard';
+import { DashboardFigures } from '@/components/features/admin/DashboardFigures';
+import { getPlatformSettings } from '@/lib/domains/stats/platformSettings';
+import { getStockLevels } from '@/lib/domains/inventory/stock';
+import { getStoreStats } from '@/lib/domains/stats/storeStats';
 
 export const dynamic = 'force-dynamic';
 

@@ -70,38 +70,11 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 
 ---
 
-## 📁 Directory Structure
-```
-freshloop-ai/
-├── app/
-│   ├── api/
-│   │   ├── invoice-ocr/route.ts      # Gemini 1.5 Flash Vision Vendor OCR
-│   │   ├── voice-logger/route.ts     # Ambient Voice Floor Logger API
-│   │   ├── recipe-fusion/route.ts    # Cross-Department Recipe Fusion Engine
-│   │   └── inventory/route.ts        # Inventory Management API
-│   ├── dashboard/page.tsx            # Main Store Manager Yield Hub
-│   ├── recipes/page.tsx              # Prepared Foods Recipe Fusion Page
-│   ├── globals.css
-│   ├── layout.tsx
-│   └── page.tsx
-├── components/
-│   ├── Navbar.tsx                    # Header with live AI trigger buttons
-│   ├── StatsOverview.tsx             # Metric cards (Yield at Risk, Margin, Pulls)
-│   ├── PullSliderControl.tsx         # 2-day, 3-day, 4-day human pull slider
-│   ├── InventoryTable.tsx            # Interactive floor inventory table
-│   ├── DepartmentBadge.tsx           # Produce, Dairy, Bakery, Pantry badges
-│   ├── InvoiceUploadModal.tsx        # Vendor invoice OCR modal
-│   ├── VoiceRecorderModal.tsx        # Hands-free mic voice floor logger modal
-│   └── RecipeFusionCard.tsx          # High-margin recipe suggestion card
-├── lib/
-│   ├── gemini.ts                     # Gemini 1.5 Flash API calls (Vision, Audio, Fusion)
-│   ├── db.ts                         # Database & fallback store adapter
-│   ├── mockData.ts                   # Initial grocery store dataset
-│   └── types.ts                      # TypeScript definitions
-├── prisma/
-│   ├── schema.prisma                 # Database schema
-│   └── migrations/                   # SQL migration scripts
-├── .env.example
-├── .env.local
-└── README.md
-```
+## Directory structure
+
+See **[docs/PROJECT_STRUCTURE.md](./docs/PROJECT_STRUCTURE.md)** for the current layout:
+
+- `app/` — routes and API handlers only  
+- `components/ui`, `components/layout`, `components/features/*` — UI by domain  
+- `lib/domains/*` — ledger, receiving, stats, AI; `lib/legacy/` for demo APIs  
+- `types/`, `hooks/`, `prisma/`

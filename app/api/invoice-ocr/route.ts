@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Department, InventoryLocation, TransactionType } from '@prisma/client';
-import { prisma, getMovingAverageCost } from '@/lib/inventory';
-import { invalidateInventoryCaches } from '@/lib/inventoryCache';
-import { INITIAL_INVENTORY_ITEMS } from '@/lib/mockData';
-import { generateContentWithFallback, parseModelJson, tryParseModelJson } from '@/lib/gemini';
+import { prisma, getMovingAverageCost } from '@/lib/domains/inventory/ledger';
+import { invalidateInventoryCaches } from '@/lib/domains/inventory/inventoryCache';
+import { INITIAL_INVENTORY_ITEMS } from '@/lib/legacy/mockData';
+import { generateContentWithFallback, parseModelJson, tryParseModelJson } from '@/lib/domains/ai/gemini';
 
 // ============================================================================
 // Types & Interfaces for Phase 3 Invoice OCR + Cost Guardrail (>20% Variance)

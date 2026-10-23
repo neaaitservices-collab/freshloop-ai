@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Department, InventoryLocation, TransactionType } from '@prisma/client';
-import { generateContentWithFallback, parseModelJson } from '@/lib/gemini';
-import { prisma } from '@/lib/inventory';
-import { invalidateInventoryCaches } from '@/lib/inventoryCache';
-import { INITIAL_INVENTORY_ITEMS } from '@/lib/mockData';
+import { generateContentWithFallback, parseModelJson } from '@/lib/domains/ai/gemini';
+import { prisma } from '@/lib/domains/inventory/ledger';
+import { invalidateInventoryCaches } from '@/lib/domains/inventory/inventoryCache';
+import { INITIAL_INVENTORY_ITEMS } from '@/lib/legacy/mockData';
 
 // ============================================================================
 // Types & Interfaces for Phase 3 Voice Logger + Fuzzy Product Matcher

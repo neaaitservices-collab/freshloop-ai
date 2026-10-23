@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { InventoryLocation } from '@prisma/client';
-import { getInventoryItems } from '@/lib/db';
+import { getInventoryItems } from '@/lib/legacy/db';
 import {
   prisma,
   calculateRealTimeWastePct,
-} from '@/lib/inventory';
-import { rememberLedgerRead } from '@/lib/ledgerCache';
+} from '@/lib/domains/inventory/ledger';
+import { rememberLedgerRead } from '@/lib/domains/inventory/ledgerCache';
 
 const INVENTORY_CACHE_MS = 60_000;
 const inventoryReads = new Map<string, { at: number; gen: number; value: Promise<InventoryPayload> }>();

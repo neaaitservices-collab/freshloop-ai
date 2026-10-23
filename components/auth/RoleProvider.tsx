@@ -1,7 +1,7 @@
 'use client';
 
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import type { StaffUser } from '@/lib/roles';
+import type { StaffUser } from '@/lib/utils/roles';
 
 const STORAGE_KEY = 'freshloop-active-user';
 

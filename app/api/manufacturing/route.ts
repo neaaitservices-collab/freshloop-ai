@@ -10,8 +10,8 @@ import {
   getMovingAverageCost,
   getCurrentStock,
   InventoryLedgerError,
-} from '@/lib/inventory';
-import { invalidateInventoryCaches } from '@/lib/inventoryCache';
+} from '@/lib/domains/inventory/ledger';
+import { invalidateInventoryCaches } from '@/lib/domains/inventory/inventoryCache';
 
 // ============================================================================
 // Types & Interfaces for Phase 3 Kitchen Manufacturing Engine

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { applyRetailMarkdown, moveKitchenPrepToWaste, moveRetailStock } from '@/lib/stock';
-import { apiError, apiErrorFromUnknown } from '@/lib/apiError';
+import { applyRetailMarkdown, moveKitchenPrepToWaste, moveRetailStock } from '@/lib/domains/inventory/stock';
+import { apiError, apiErrorFromUnknown } from '@/lib/domains/ai/apiError';
 
 export const dynamic = 'force-dynamic';
 
