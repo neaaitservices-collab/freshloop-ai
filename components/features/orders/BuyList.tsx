@@ -14,7 +14,13 @@ import {
   type PoDraft,
 } from '@/components/features/orders/supplierMail';
 import { PageIntro } from '@/components/layout/PageIntro';
+import { Badge, type BadgeVariant } from '@/components/ui/Badge';
+import { Button } from '@/components/ui/Button';
+import { Card, CardBody, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card';
+import { Input } from '@/components/ui/Input';
+import { Toast } from '@/components/ui/Toast';
 import { formatCurrency, formatUnits, stockUnitLabel } from '@/lib/domains/receiving/yieldPricing';
+import { cn } from '@/lib/utils/cn';
 import { stockFromPar } from '@/lib/domains/inventory/parLevel';
 import type { StockLevel } from '@/lib/domains/inventory/stock';
 
@@ -56,21 +62,12 @@ function statusLabel(row: StockLevel, mark: LineMark | undefined): string {
   return 'In stock';
 }
 
-function statusClass(row: StockLevel, mark: LineMark | undefined): string {
-  if (mark === 'sent') return 'border-emerald-500/40 bg-emerald-400/15 text-emerald-200';
-  if (mark === 'approved') return 'border-emerald-500/30 bg-emerald-400/10 text-emerald-300';
-  if (row.low) return 'border-orange-500/40 bg-orange-500/10 text-orange-200';
-  return 'border-zinc-700 bg-zinc-900 text-zinc-400';
+function statusVariant(row: StockLevel, mark: LineMark | undefined): BadgeVariant {
+  if (mark === 'sent') return 'success';
+  if (mark === 'approved') return 'ocean';
+  if (row.low) return 'warning';
+  return 'neutral';
 }
-
-const secondaryButton =
-  'inline-flex items-center justify-center gap-2 rounded-2xl border border-zinc-700 bg-zinc-900 px-3 py-2 text-xs font-bold text-zinc-200 transition hover:border-emerald-500/40 disabled:cursor-not-allowed disabled:border-zinc-800 disabled:text-zinc-600';
-
-const primaryButton =
-  'inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-400 px-3 py-2 text-xs font-black text-zinc-950 transition hover:bg-emerald-300 disabled:cursor-not-allowed disabled:bg-zinc-800 disabled:text-zinc-500';
-
-const microButton =
-  'inline-flex items-center gap-1 rounded-xl border border-zinc-700 bg-zinc-950 px-2 py-1 text-[11px] font-bold text-zinc-200 transition hover:border-emerald-500/40 disabled:cursor-not-allowed disabled:border-zinc-800 disabled:text-zinc-600';
 
 export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null }) {
   const loading = initialLevels === null;
@@ -92,12 +89,6 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
   useEffect(() => {
     setPrintedAt(new Date().toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }));
   }, []);
-
-  useEffect(() => {
-    if (!toast) return;
-    const timer = window.setTimeout(() => setToast(null), 3600);
-    return () => window.clearTimeout(timer);
-  }, [toast]);
 
   const draftKey = draft ? `${draft.supplier}:${draft.productIds.join(',')}` : '';
 
@@ -405,39 +396,39 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
     const groupSend = approved.length > 0 ? approved : toOrder;
     const groupCost = toOrder.reduce((sum, row) => sum + row.orderCost, 0);
     return (
-      <section key={supplier} className="overflow-hidden rounded-3xl border border-zinc-800 bg-zinc-900/70">
-        <header className="flex flex-col gap-3 border-b border-zinc-800 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+      <Card key={supplier} className="overflow-hidden">
+        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">
-            <h3 className="truncate text-base font-black text-white">{supplier}</h3>
-            <p className="mt-0.5 text-xs text-zinc-400">
+            <CardTitle className="truncate text-base">{supplier}</CardTitle>
+            <CardDescription>
               {toOrder.length > 0
                 ? `${toOrder.length} to order · ${formatCurrency(groupCost)}`
                 : 'Nothing to order'}
-            </p>
+            </CardDescription>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
+            <Button
+              variant="secondary"
+              className="text-xs"
               disabled={toOrder.length === 0 || approved.length === toOrder.length}
               onClick={() => approveRows(toOrder)}
-              className={secondaryButton}
             >
               <Check className="h-3.5 w-3.5" />
               Approve group
-            </button>
-            <button
-              type="button"
+            </Button>
+            <Button
+              variant={approved.length > 0 ? 'success' : 'secondary'}
+              className="text-xs"
               disabled={groupSend.length === 0}
               onClick={() => openDraft(draftForRows(supplier, groupSend))}
-              className={approved.length > 0 ? primaryButton : secondaryButton}
             >
               <Mail className="h-3.5 w-3.5" />
-              Send Group Email
-            </button>
+              Send group email
+            </Button>
           </div>
-        </header>
+        </CardHeader>
         {renderRows(supplier, rows)}
-      </section>
+      </Card>
     );
   };
 
@@ -461,42 +452,37 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
           }
         }
       `}</style>
-      <main className="mx-auto w-full max-w-7xl px-3 py-5 pb-28 sm:px-6 sm:py-8">
+      <main className="mx-auto w-full max-w-7xl bg-slate-950 px-3 py-5 pb-28 sm:px-6 sm:py-8">
         <div className="no-print">
           <PageIntro
             step="Orders"
             title="What to buy"
             description="Search for an item and add it to the order. Change its supplier and the line moves to that supplier's list."
             action={
-              <button type="button" onClick={() => window.print()} disabled={lowCount === 0} className={secondaryButton}>
+              <Button variant="secondary" className="text-xs" disabled={lowCount === 0} onClick={() => window.print()}>
                 <Printer className="h-3.5 w-3.5" />
                 Print order PDF
-              </button>
+              </Button>
             }
           />
 
           {error ? (
-            <p className="mt-4 rounded-2xl border border-orange-500/40 bg-orange-500/10 px-4 py-3 text-sm font-semibold text-orange-200">
+            <p className="mt-4 rounded-xl border border-rose-900/50 bg-rose-950/30 px-4 py-3 text-sm font-semibold text-rose-400">
               {error}
             </p>
           ) : null}
 
-          {toast ? (
-            <p
-              role="status"
-              className="mt-4 rounded-2xl border border-emerald-500/40 bg-emerald-400/15 px-4 py-3 text-sm font-bold text-emerald-100"
-            >
-              {toast}
-            </p>
-          ) : null}
-
-          <section
-            className={`mt-5 flex flex-col gap-3 rounded-3xl border px-4 py-3 sm:flex-row sm:items-center sm:justify-between ${
-              lowCount > 0 ? 'border-orange-500/30 bg-orange-500/10' : 'border-emerald-500/30 bg-emerald-400/10'
-            }`}
+          <Card
+            className={cn(
+              'mt-5',
+              lowCount > 0 ? 'border-amber-800/40 bg-amber-950/20' : 'border-emerald-800/40 bg-emerald-950/15'
+            )}
           >
-            <p className="flex items-start gap-2 text-sm font-semibold text-white">
-              <AlertTriangle className={`mt-0.5 h-4 w-4 shrink-0 ${lowCount > 0 ? 'text-orange-300' : 'text-emerald-300'}`} />
+            <CardBody className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between py-3">
+            <p className="flex items-start gap-2 text-sm font-semibold text-slate-100">
+              <AlertTriangle
+                className={`mt-0.5 h-4 w-4 shrink-0 ${lowCount > 0 ? 'text-amber-400/90' : 'text-emerald-400/90'}`}
+              />
               <span>
                 {loading
                   ? 'Reading the ledger…'
@@ -505,27 +491,28 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
                     : 'Every item is at or above its alert level.'}
               </span>
             </p>
-            <button
-              type="button"
+            <Button
+              variant="success"
+              className="shrink-0 text-xs"
               disabled={lowCount === 0}
               onClick={() =>
                 openDraft(draftForAll(activeOrders.map((group) => ({ supplier: group.supplier, rows: group.open }))))
               }
-              className={`${primaryButton} shrink-0`}
             >
               <Mail className="h-3.5 w-3.5" />
-              Send Bulk Email to All
-            </button>
-          </section>
+              Send bulk email
+            </Button>
+            </CardBody>
+          </Card>
 
           <label className="relative mt-4 block w-full sm:max-w-sm">
             <span className="sr-only">Search orders</span>
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
-            <input
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+            <Input
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder="Search item or supplier"
-              className="w-full rounded-2xl border border-zinc-700 bg-zinc-950 py-2.5 pl-9 pr-3 text-sm text-white outline-none focus:border-emerald-400/70"
+              className="py-2.5 pl-9 text-sm"
             />
           </label>
           {needle ? (
@@ -551,15 +538,15 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
                         saving={savingSupplierId === row.productId}
                         onCommit={(value) => void saveSupplier(row, value)}
                       />
-                      <button
-                        type="button"
+                      <Button
+                        variant={listed ? 'secondary' : 'success'}
+                        className="text-xs"
                         disabled={listed}
                         onClick={() => addToOrder(row.productId)}
-                        className={listed ? secondaryButton : primaryButton}
                       >
                         <Plus className="h-3.5 w-3.5" />
                         {listed ? 'On the order' : 'Add to order'}
-                      </button>
+                      </Button>
                     </li>
                   );
                 })
@@ -572,7 +559,7 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
             ))}
           </datalist>
 
-          <div className="mt-4 grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
+          <div className="mt-4 grid items-start gap-4 lg:grid-cols-[3fr_1fr]">
             <div className="space-y-3">
               {loading ? (
                 <div className="space-y-2 rounded-3xl border border-zinc-800 bg-zinc-900/70 p-3">
@@ -608,44 +595,51 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
             </div>
 
             <aside className="space-y-3 lg:sticky lg:top-4">
-              <section className="rounded-3xl border border-zinc-800 bg-zinc-900/80 p-4">
-                <h2 className="text-sm font-black text-white">Active Purchase Orders</h2>
-                <p className="mt-1 text-xs leading-relaxed text-zinc-400">
-                  {approvedCount > 0
-                    ? `${approvedCount} approved ${approvedCount === 1 ? 'line' : 'lines'} ready to send.`
-                    : 'Approve a supplier group, then send the order.'}
-                </p>
-                {loading ? <p className="mt-3 text-sm text-zinc-500">Reading the ledger…</p> : null}
+              <Card>
+                <CardHeader>
+                  <CardTitle>Active purchase orders</CardTitle>
+                  <CardDescription>
+                    {approvedCount > 0
+                      ? `${approvedCount} approved ${approvedCount === 1 ? 'line' : 'lines'} ready to send.`
+                      : 'Approve a supplier group, then send the order.'}
+                  </CardDescription>
+                </CardHeader>
+                <CardBody className="pt-0">
+                {loading ? <p className="text-sm text-slate-500">Reading the ledger…</p> : null}
                 {!loading && activeOrders.length === 0 ? (
-                  <p className="mt-3 text-sm text-zinc-400">No open supplier orders.</p>
+                  <p className="text-sm text-slate-400">No open supplier orders.</p>
                 ) : null}
-                <ul className="mt-3 space-y-2">
+                <ul className="space-y-2">
                   {activeOrders.map((group) => (
-                    <li key={group.supplier} className="rounded-2xl border border-zinc-800 bg-zinc-950/70 p-3">
+                    <li
+                      key={group.supplier}
+                      className="rounded-xl border border-slate-800/80 bg-slate-950/60 p-3"
+                    >
                       <div className="flex items-start justify-between gap-2">
-                        <p className="text-sm font-bold text-white">{group.supplier}</p>
-                        <p className="font-mono text-sm font-bold text-emerald-300">
+                        <p className="text-sm font-bold text-slate-100">{group.supplier}</p>
+                        <p className="font-mono text-sm font-bold text-emerald-400/90">
                           {formatCurrency(group.approved.length > 0 ? group.approvedCost : group.suggested)}
                         </p>
                       </div>
-                      <p className="mt-0.5 text-[11px] font-bold uppercase tracking-wider text-zinc-500">
+                      <p className="mt-0.5 text-[10px] font-bold uppercase tracking-wider text-slate-500">
                         {group.approved.length > 0
                           ? `${group.approved.length} approved`
                           : `Suggested · ${group.open.length} open`}
                       </p>
-                      <button
-                        type="button"
+                      <Button
+                        variant={group.approved.length > 0 ? 'success' : 'secondary'}
+                        className="mt-2 w-full text-xs"
                         disabled={group.approved.length === 0}
                         onClick={() => openDraft(draftForRows(group.supplier, group.approved))}
-                        className={`${group.approved.length > 0 ? primaryButton : secondaryButton} mt-2 w-full`}
                       >
                         <Mail className="h-3.5 w-3.5" />
-                        Send PO Email
-                      </button>
+                        Send PO email
+                      </Button>
                     </li>
                   ))}
                 </ul>
-              </section>
+                </CardBody>
+              </Card>
               {draft ? (
                 <PoEmailPanel
                   draft={draft}
@@ -719,15 +713,16 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
           </article>
         )}
       </main>
+      <Toast message={toast} onDismiss={() => setToast(null)} variant="success" />
     </>
   );
 }
 
 function StatusBadge({ row, mark }: { row: StockLevel; mark: LineMark | undefined }) {
   return (
-    <span className={`inline-flex shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${statusClass(row, mark)}`}>
+    <Badge variant={statusVariant(row, mark)} className="shrink-0 !normal-case !tracking-normal">
       {statusLabel(row, mark)}
-    </span>
+    </Badge>
   );
 }
 
@@ -826,24 +821,34 @@ function LineActions({
 }) {
   return (
     <div className="flex flex-wrap justify-end gap-1.5">
-      <button type="button" disabled={onOrder} onClick={onAdd} className={onOrder ? microButton : primaryButton}>
+      <Button
+        variant={onOrder ? 'secondary' : 'success'}
+        className="px-2 py-1 text-[11px]"
+        disabled={onOrder}
+        onClick={onAdd}
+      >
         <Plus className="h-3 w-3" />
         {onOrder ? 'On the order' : 'Add to order'}
-      </button>
-      <button type="button" disabled={mark === 'sent' || !onOrder} onClick={onEmail} className={microButton}>
+      </Button>
+      <Button
+        variant="secondary"
+        className="px-2 py-1 text-[11px]"
+        disabled={mark === 'sent' || !onOrder}
+        onClick={onEmail}
+      >
         <Mail className="h-3 w-3" />
-        Send Email
-      </button>
-      <button
-        type="button"
+        Send email
+      </Button>
+      <Button
+        variant={mark === 'approved' || mark === 'sent' ? 'success' : 'secondary'}
+        className="px-2 py-1 text-[11px]"
         aria-pressed={mark === 'approved' || mark === 'sent'}
         disabled={mark === 'sent' || mark === 'approved' || !row.low}
         onClick={onApprove}
-        className={mark === 'approved' || mark === 'sent' ? `${microButton} border-emerald-500/40 text-emerald-200` : microButton}
       >
         <Check className="h-3 w-3" />
         {mark === 'approved' || mark === 'sent' ? 'Approved' : 'Approve'}
-      </button>
+      </Button>
     </div>
   );
 }
