@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { processRecipeFusion } from '@/lib/gemini';
-import { getInventoryItems, saveFusionRecipe, getFusionRecipes } from '@/lib/db';
+import { processRecipeFusion } from '@/lib/domains/ai/gemini';
+import { getInventoryItems, saveFusionRecipe, getFusionRecipes } from '@/lib/legacy/db';
 import { InventoryItem } from '@/lib/types';
 
 export async function GET() {

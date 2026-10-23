@@ -1,7 +1,8 @@
 'use client';
 
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import type { StaffUser } from '@/lib/roles';
+import type { StaffUser } from '@/lib/utils/roles';
+import { syncRoleCookies } from '@/lib/utils/syncRoleCookies';
 
 const STORAGE_KEY = 'freshloop-active-user';
 
@@ -48,12 +49,21 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
     };
   }, [refresh]);
 
-  const setActiveUserId = useCallback((id: string) => {
-    setActiveUserIdState(id);
-    window.localStorage.setItem(STORAGE_KEY, id);
-  }, []);
+  const setActiveUserId = useCallback(
+    (id: string) => {
+      setActiveUserIdState(id);
+      window.localStorage.setItem(STORAGE_KEY, id);
+      const user = users.find((u) => u.id === id);
+      if (user) syncRoleCookies(user.id, user.role);
+    },
+    [users]
+  );
 
   const activeUser = users.find((user) => user.id === activeUserId) ?? null;
+
+  useEffect(() => {
+    if (activeUser) syncRoleCookies(activeUser.id, activeUser.role);
+  }, [activeUser]);
 
   const value = useMemo(
     () => ({ users, activeUser, loading, setActiveUserId, refresh }),

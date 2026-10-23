@@ -1,5 +1,5 @@
-import { ReceiveScreen } from '@/components/receive/ReceiveScreen';
-import { loadReceivingLogs } from '@/lib/receivingSheet';
+import { ReceiveScreen } from '@/components/features/receive/ReceiveScreen';
+import { loadReceivingLogs } from '@/lib/domains/receiving/receivingSheet';
 
 export const dynamic = 'force-dynamic';
 

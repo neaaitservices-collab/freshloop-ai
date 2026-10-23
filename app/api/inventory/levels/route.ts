@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { apiErrorFromUnknown } from '@/lib/apiError';
-import { isManager, isRoleName } from '@/lib/roles';
+import { apiErrorFromUnknown } from '@/lib/domains/ai/apiError';
+import { isManager, isRoleName } from '@/lib/utils/roles';
 import {
   applyRetailMarkdown,
   getStockLevels,
@@ -10,7 +10,7 @@ import {
   setStockCases,
   setSupplier,
   updateCase,
-} from '@/lib/stock';
+} from '@/lib/domains/inventory/stock';
 
 export const dynamic = 'force-dynamic';
 

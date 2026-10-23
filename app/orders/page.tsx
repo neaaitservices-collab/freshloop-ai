@@ -1,7 +1,7 @@
 import { Suspense } from 'react';
-import { BuyList } from '@/components/orders/BuyList';
-import { AppShell } from '@/components/shell/AppShell';
-import { getStockLevels } from '@/lib/stock';
+import { BuyList } from '@/components/features/orders/BuyList';
+import { AppShell } from '@/components/layout/AppShell';
+import { getStockLevels } from '@/lib/domains/inventory/stock';
 
 export const dynamic = 'force-dynamic';
 

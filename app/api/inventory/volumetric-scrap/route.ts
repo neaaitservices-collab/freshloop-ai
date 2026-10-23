@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { logVolumetricScrapBuckets } from '@/lib/stock';
-import { apiError, apiErrorFromUnknown } from '@/lib/apiError';
+import { logVolumetricScrapBuckets } from '@/lib/domains/inventory/stock';
+import { apiError, apiErrorFromUnknown } from '@/lib/domains/ai/apiError';
 
 export const dynamic = 'force-dynamic';
 

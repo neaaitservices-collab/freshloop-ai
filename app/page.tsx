@@ -1,5 +1,4 @@
-import { redirect } from 'next/navigation';
-
+/** Role home redirect is handled in `middleware.ts` (cookie `freshloop-role`). */
 export default function RootPage() {
-  redirect('/admin');
+  return null;
 }

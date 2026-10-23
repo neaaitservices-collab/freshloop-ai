@@ -10,8 +10,8 @@ import {
   getMovingAverageCost,
   getCurrentStock,
   InventoryLedgerError,
-} from '@/lib/inventory';
-import { invalidateInventoryCaches } from '@/lib/inventoryCache';
+} from '@/lib/domains/inventory/ledger';
+import { invalidateInventoryCaches } from '@/lib/domains/inventory/inventoryCache';
 
 // ============================================================================
 // Types & Interfaces for Phase 3 Kitchen Manufacturing Engine
@@ -285,7 +285,7 @@ export async function POST(req: NextRequest) {
         where: { id: recipeId },
         include: {
           outputProduct: true,
-          bomItems: {
+          bomLines: {
             include: {
               ingredientProduct: true,
             },
@@ -301,15 +301,15 @@ export async function POST(req: NextRequest) {
           outputProductName: dbRecipe.outputProduct.name,
           outputUnit: dbRecipe.outputProduct.unitType,
           outputShelfLifeDays: dbRecipe.outputProduct.shelfLifeDays || 3,
-          batchYieldQty: dbRecipe.batchYieldQty,
-          targetRetailPrice: dbRecipe.targetRetailPrice,
-          isActive: dbRecipe.isActive,
-          bomItems: dbRecipe.bomItems.map((bi) => ({
+          batchYieldQty: Number(dbRecipe.yieldPortions ?? 0),
+          targetRetailPrice: Number(dbRecipe.targetRetailPrice ?? 0),
+          isActive: dbRecipe.status !== 'COMPLETED',
+          bomItems: dbRecipe.bomLines.map((bi) => ({
             ingredientProductId: bi.ingredientProductId,
             ingredientName: bi.ingredientProduct.name,
-            requiredQty: bi.requiredQty,
-            unit: bi.unit,
-            allowVariance: bi.allowVariance,
+            requiredQty: Number(bi.quantityRequired ?? 0),
+            unit: (bi.unit as UnitType) ?? ('UNIT' as UnitType),
+            allowVariance: true,
             defaultMacCost: bi.ingredientProduct.standardCost ?? 2.0,
           })),
         };

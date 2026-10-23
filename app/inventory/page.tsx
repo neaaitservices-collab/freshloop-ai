@@ -1,19 +1,19 @@
 import { Suspense } from 'react';
-import { StoredInventory } from '@/components/inventory/StoredInventory';
-import { AppShell } from '@/components/shell/AppShell';
-import { getStockLevels } from '@/lib/stock';
+import { InventoryRoute } from '@/components/features/inventory/InventoryRoute';
+import { AppShell } from '@/components/layout/AppShell';
+import { getStockLevels } from '@/lib/domains/inventory/stock';
 
 export const dynamic = 'force-dynamic';
 
 async function LiveInventory() {
   const levels = await getStockLevels();
-  return <StoredInventory levels={levels} />;
+  return <InventoryRoute levels={levels} />;
 }
 
 export default function InventoryPage() {
   return (
     <AppShell>
-      <Suspense fallback={<StoredInventory levels={null} />}>
+      <Suspense fallback={<InventoryRoute levels={null} />}>
         <LiveInventory />
       </Suspense>
     </AppShell>

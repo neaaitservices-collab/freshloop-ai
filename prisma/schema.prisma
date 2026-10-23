@@ -252,16 +252,18 @@ model POSMapping {
 }
 
 model VendorInvoice {
-  id                  String   @id @default(uuid())
+  id                  String          @id @default(uuid())
   vendorName          String
   invoiceNumber       String?
   invoiceDate         DateTime
   totalAmount         Float
   departmentBreakdown Json
-  status              String   @default("PROCESSED")
+  status              String          @default("PROCESSED")
   rawOcrJson          Json?
-  createdAt           DateTime @default(now())
-  updatedAt           DateTime @updatedAt
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
+
+  invoiceLineItems    InvoiceLineItem[]
 
   @@map("vendor_invoices")
 }
@@ -359,4 +361,24 @@ model RecipeFusion {
   @@index([category])
   @@index([recipeId])
   @@map("recipe_fusions")
+}
+
+/// Lines removed from the receiving board (not stocked): vendor credit or clerk delete.
+model ReceivingDisposition {
+  id            String    @id @default(uuid())
+  externalLogId String    @unique
+  itemName      String
+  casesReceived Float
+  caseCost      Float
+  /// NOT_RECEIVED = pending vendor credit; REMOVED = dropped from list (no credit).
+  reason        String
+  /// PENDING_CREDIT for NOT_RECEIVED; RESOLVED when credited or dismissed.
+  status        String    @default("PENDING_CREDIT")
+  note          String?
+  createdAt     DateTime  @default(now())
+  resolvedAt    DateTime?
+
+  @@index([status])
+  @@index([reason])
+  @@map("receiving_dispositions")
 }

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getPlatformSettings, parsePlatformSettings, savePlatformSettings } from '@/lib/platformSettings';
+import { getPlatformSettings, parsePlatformSettings, savePlatformSettings } from '@/lib/domains/stats/platformSettings';
 
 export const dynamic = 'force-dynamic';
 

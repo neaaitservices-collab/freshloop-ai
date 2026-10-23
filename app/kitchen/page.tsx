@@ -1,22 +1,28 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
-import { stashInvoiceForReceiving } from '@/lib/receivingBridge';
+import React, { Suspense, useState, useEffect } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { stashInvoiceForReceiving } from '@/lib/domains/receiving/receivingBridge';
 import type { InvoiceOcrResult } from '@/lib/types';
-import { AppShell } from '@/components/shell/AppShell';
-import { PageIntro } from '@/components/shell/PageIntro';
-import { RecipeFusionCard } from '@/components/RecipeFusionCard';
-import { InvoiceUploadModal } from '@/components/InvoiceUploadModal';
-import { VoiceRecorderModal } from '@/components/VoiceRecorderModal';
-import { DeliLabelModal } from '@/components/DeliLabelModal';
-import { KitchenSubInventoryPanel } from '@/components/kitchen/KitchenSubInventoryPanel';
+import { AppShell } from '@/components/layout/AppShell';
+import { PageIntro } from '@/components/layout/PageIntro';
+import { RecipeFusionCard } from '@/components/features/recipes/RecipeFusionCard';
+import { InvoiceUploadModal } from '@/components/features/invoices/InvoiceUploadModal';
+import { VoiceRecorderModal } from '@/components/features/voice/VoiceRecorderModal';
+import { DeliLabelModal } from '@/components/features/recipes/DeliLabelModal';
+import { KitchenSubInventoryPanel } from '@/components/features/kitchen/KitchenSubInventoryPanel';
+import { KitchenFloorInbox } from '@/components/features/kitchen/KitchenFloorInbox';
 import { RecipeFusionResult } from '@/lib/types';
-import { INITIAL_FUSION_RECIPES } from '@/lib/mockData';
-import { Sparkles, UtensilsCrossed, Filter, Search, Loader2, Mic } from 'lucide-react';
+import { INITIAL_FUSION_RECIPES } from '@/lib/legacy/mockData';
+import { Sparkles, UtensilsCrossed, Search, Loader2, Mic } from 'lucide-react';
+import { Button } from '@/components/ui/Button';
+import { Card, CardBody } from '@/components/ui/Card';
+import { Input } from '@/components/ui/Input';
 
-export default function RecipesPage() {
+function KitchenPageContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const focusInbox = searchParams.get('inbox') === '1';
   const [recipes, setRecipes] = useState<RecipeFusionResult[]>(INITIAL_FUSION_RECIPES);
   const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -76,16 +82,18 @@ export default function RecipesPage() {
 
   return (
     <AppShell onVoice={() => setIsVoiceModalOpen(true)}>
-    <div className="min-h-screen bg-zinc-950 text-zinc-100 font-sans selection:bg-emerald-500 flex flex-col">
+    <div className="min-h-screen bg-slate-950 text-slate-100 font-sans selection:bg-emerald-500 flex flex-col">
       <main className="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-8 pb-28 sm:pb-8 space-y-4 sm:space-y-6">
         <PageIntro
           step="Step 3 · Kitchen"
           title="Cook what the floor pulled"
           description="Turn short-dated ingredients into a prepared item, then print the deli label. Scrap buckets belong here too."
         />
+        <KitchenFloorInbox focusInbox={focusInbox} />
         <KitchenSubInventoryPanel />
         {/* Header */}
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-gradient-to-r from-emerald-950/70 via-zinc-900 to-zinc-950 border border-emerald-900/40 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-2xl">
+        <Card className="border-emerald-900/40 bg-gradient-to-r from-emerald-950/70 via-slate-900/80 to-slate-950 shadow-2xl">
+          <CardBody className="flex flex-col gap-4 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-6">
           <div>
             <div className="flex items-center gap-2 mb-1">
               <UtensilsCrossed className="w-4 h-4 text-emerald-400" />
@@ -94,42 +102,45 @@ export default function RecipesPage() {
             <h1 className="text-xl sm:text-3xl font-extrabold text-white tracking-tight">
               Prepared Foods Recipe Fusion Hub
             </h1>
-            <p className="text-xs sm:text-sm text-zinc-400 mt-1 max-w-2xl leading-relaxed">
+            <p className="text-xs sm:text-sm text-slate-400 mt-1 max-w-2xl leading-relaxed">
               Transform surplus produce, near-expiry dairy, and day-old bakery loaves into high-margin prepared soups, panzanellas, and parfait desserts.
             </p>
           </div>
 
-          <div className="grid grid-cols-2 sm:flex sm:items-center gap-2 sm:gap-3 w-full sm:w-auto">
-            <button
+          <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:items-center sm:gap-3">
+            <Button
+              variant="primary"
+              className="min-h-[44px] border-teal-700 bg-teal-500 text-slate-950 hover:bg-teal-400 text-xs"
               onClick={() => setIsVoiceModalOpen(true)}
-              className="px-3 sm:px-4 py-2.5 rounded-xl bg-teal-500 hover:bg-teal-400 text-zinc-950 text-xs font-bold transition-all shadow-md flex items-center justify-center gap-1.5 active:scale-95 min-h-[44px]"
             >
-              <Mic className="w-4 h-4 fill-zinc-950" />
-              <span>Voice Transfer</span>
-            </button>
-
-            <button
+              <Mic className="h-4 w-4 fill-slate-950" />
+              Voice Transfer
+            </Button>
+            <Button
+              variant="success"
+              className="min-h-[44px] bg-gradient-to-r from-emerald-500 to-teal-400 text-slate-950 hover:from-emerald-400 hover:to-teal-300 text-xs shadow-lg shadow-emerald-500/25"
               onClick={handleGenerateNewRecipes}
               disabled={loading}
-              className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold bg-gradient-to-r from-emerald-500 to-teal-400 hover:from-emerald-400 hover:to-teal-300 text-zinc-950 shadow-lg shadow-emerald-500/25 transition-all min-h-[44px] active:scale-95"
             >
               {loading ? (
                 <>
-                  <Loader2 className="w-4 h-4 animate-spin text-zinc-950" />
-                  <span>Chef Cooking...</span>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Chef Cooking…
                 </>
               ) : (
                 <>
-                  <Sparkles className="w-4 h-4 fill-zinc-950" />
-                  <span>Synthesize Recipes</span>
+                  <Sparkles className="h-4 w-4 fill-slate-950" />
+                  Synthesize Recipes
                 </>
               )}
-            </button>
+            </Button>
           </div>
-        </div>
+          </CardBody>
+        </Card>
 
         {/* Filters */}
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 p-3 sm:p-4 rounded-2xl bg-zinc-900/60 border border-zinc-800">
+        <Card>
+          <CardBody className="flex flex-col items-stretch justify-between gap-3 p-3 sm:flex-row sm:items-center sm:p-4">
           <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0 no-scrollbar">
             {['ALL', 'Soup', 'Panzanella', 'Parfait', 'Bakery'].map((cat) => (
               <button
@@ -138,7 +149,7 @@ export default function RecipesPage() {
                 className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all ${
                   selectedCategory === cat
                     ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
-                    : 'bg-zinc-800/80 text-zinc-400 hover:text-zinc-200'
+                    : 'bg-slate-800/80 text-slate-400 hover:text-slate-200'
                 }`}
               >
                 {cat === 'ALL' ? 'All Rescue Recipes' : cat}
@@ -147,16 +158,17 @@ export default function RecipesPage() {
           </div>
 
           <div className="relative w-full sm:w-64">
-            <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" />
-            <input
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
+            <Input
               type="text"
               placeholder="Search recipes..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full bg-zinc-950 border border-zinc-800 rounded-xl pl-9 pr-3 py-1.5 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-emerald-500/50"
+              className="pl-9 text-xs focus:border-emerald-500/50"
             />
           </div>
-        </div>
+          </CardBody>
+        </Card>
 
         {/* Recipe Cards Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
@@ -193,5 +205,13 @@ export default function RecipesPage() {
       />
     </div>
     </AppShell>
+  );
+}
+
+export default function RecipesPage() {
+  return (
+    <Suspense fallback={null}>
+      <KitchenPageContent />
+    </Suspense>
   );
 }
