@@ -252,16 +252,18 @@ model POSMapping {
 }
 
 model VendorInvoice {
-  id                  String   @id @default(uuid())
+  id                  String          @id @default(uuid())
   vendorName          String
   invoiceNumber       String?
   invoiceDate         DateTime
   totalAmount         Float
   departmentBreakdown Json
-  status              String   @default("PROCESSED")
+  status              String          @default("PROCESSED")
   rawOcrJson          Json?
-  createdAt           DateTime @default(now())
-  updatedAt           DateTime @updatedAt
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
+
+  invoiceLineItems    InvoiceLineItem[]
 
   @@map("vendor_invoices")
 }
