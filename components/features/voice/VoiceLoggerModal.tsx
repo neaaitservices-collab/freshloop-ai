@@ -1,7 +1,9 @@
 'use client';
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { DepartmentBadge } from '@/components/ui/DepartmentBadge';
+import { useRole } from '@/components/auth/RoleProvider';
+import { notifyInventoryUpdated } from '@/lib/domains/inventory/inventoryMoveClient';
 import { DepartmentType } from '@/lib/types';
 import {
   Mic,
@@ -61,6 +63,14 @@ interface VoiceLoggerModalProps {
   onVoiceConfirmed?: (result: ConfirmedVoiceCommitResult) => void;
 }
 
+function inferDepartmentFromName(name: string): DepartmentType {
+  const lower = name.toLowerCase();
+  if (/cream|milk|yogurt|cheese|butter|egg/.test(lower)) return 'DAIRY';
+  if (/bread|sourdough|boule|loaf|pastry|bun|bakery/.test(lower)) return 'BAKERY';
+  if (/oil|olive|spice|grain|rice|pasta|sauce/.test(lower)) return 'PANTRY';
+  return 'PRODUCE';
+}
+
 const FALLBACK_CATALOG_OPTIONS: Array<{
   id: string;
   name: string;
@@ -83,6 +93,8 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
   onClose,
   onVoiceConfirmed,
 }) => {
+  const { activeUser } = useRole();
+  const [catalogOptions, setCatalogOptions] = useState(FALLBACK_CATALOG_OPTIONS);
   const [isRecording, setIsRecording] = useState(false);
   const [spokenText, setSpokenText] = useState(
     'Retirar 12 unidades de aguacate hass muy maduro para rescate en cocina y descartar 3 lbs de tomates aplastados'
@@ -102,6 +114,45 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    void fetch('/api/inventory/levels', { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((json) => {
+        if (!json.success || !Array.isArray(json.levels)) return;
+        const opts = json.levels.map(
+          (row: { productId: string; name: string; supplier?: string }) => ({
+            id: row.productId,
+            name: row.name,
+            department: inferDepartmentFromName(row.name),
+          })
+        );
+        if (opts.length > 0) setCatalogOptions(opts);
+      })
+      .catch(() => undefined);
+  }, [isOpen]);
+
+  const productOptionsForItem = useMemo(() => {
+    return (item: EditableVoiceDraftItem) => {
+      const map = new Map(catalogOptions.map((o) => [o.id, o]));
+      for (const alt of item.alternatives) {
+        map.set(alt.product_id, {
+          id: alt.product_id,
+          name: alt.product_name,
+          department: alt.department as DepartmentType,
+        });
+      }
+      if (item.product_id && item.matched_product_name) {
+        map.set(item.product_id, {
+          id: item.product_id,
+          name: item.matched_product_name,
+          department: item.department,
+        });
+      }
+      return [...map.values()].sort((a, b) => a.name.localeCompare(b.name));
+    };
+  }, [catalogOptions]);
 
   if (!isOpen) return null;
 
@@ -226,7 +277,8 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           confirmCommit: true,
-          staffId: 'staff-floor-voice-01',
+          staffId: activeUser?.id ?? 'staff-floor-voice',
+          transcript,
           confirmedItems: draftItems.map((item) => ({
             product_id: item.product_id,
             quantity: item.quantity,
@@ -237,29 +289,23 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
       });
 
       const json = await res.json();
-      // Even if DB is offline in local preview, complete confirmation loop cleanly
-      if (!res.ok && json.error && !json.error.includes('prisma')) {
-        console.warn('Ledger commit fallback:', json.error);
+      if (!res.ok || !json.success) {
+        throw new Error(json.error || 'Ledger commit failed.');
+      }
+
+      notifyInventoryUpdated();
+      if (draftItems.some((i) => i.target_action === 'PULL_RESCUE')) {
+        window.dispatchEvent(new CustomEvent('freshloop-kitchen-inbox'));
       }
 
       setStep('COMMITTED');
-      if (onVoiceConfirmed) {
-        onVoiceConfirmed({
-          items: draftItems,
-          transcript,
-          committedAt: new Date().toISOString(),
-        });
-      }
+      onVoiceConfirmed?.({
+        items: draftItems,
+        transcript,
+        committedAt: new Date().toISOString(),
+      });
     } catch (err) {
-      console.warn('Using local state commit fallback:', err);
-      setStep('COMMITTED');
-      if (onVoiceConfirmed) {
-        onVoiceConfirmed({
-          items: draftItems,
-          transcript,
-          committedAt: new Date().toISOString(),
-        });
-      }
+      setErrorMsg(err instanceof Error ? err.message : 'Could not commit to the ledger.');
     } finally {
       setCommitting(false);
     }
@@ -336,7 +382,7 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
                   <button
                     type="button"
                     onClick={isRecording ? stopRecording : startRecording}
-                    className={`relative z-10 w-20 h-20 rounded-full flex items-center justify-center shadow-2xl transition-all cursor-pointer ${
+                    className={`relative z-10 flex h-20 w-20 min-h-12 min-w-12 items-center justify-center rounded-full shadow-2xl transition-all cursor-pointer ${
                       isRecording
                         ? 'bg-rose-500 hover:bg-rose-400 text-white shadow-rose-500/40 scale-105'
                         : 'bg-gradient-to-tr from-teal-500 to-emerald-400 text-zinc-950 shadow-teal-500/30 hover:scale-105'
@@ -506,7 +552,7 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
                           <select
                             value={item.product_id}
                             onChange={(e) => {
-                              const found = FALLBACK_CATALOG_OPTIONS.find(
+                              const found = productOptionsForItem(item).find(
                                 (p) => p.id === e.target.value
                               );
                               updateDraftItem(idx, {
@@ -519,7 +565,7 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
                             }}
                             className="w-full px-2.5 py-2 rounded-xl bg-zinc-900 border border-zinc-700 text-xs text-white"
                           >
-                            {FALLBACK_CATALOG_OPTIONS.map((opt) => (
+                            {productOptionsForItem(item).map((opt) => (
                               <option key={opt.id} value={opt.id}>
                                 {opt.name}
                               </option>

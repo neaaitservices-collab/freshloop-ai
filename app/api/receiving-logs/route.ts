@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { loadReceivingLogs, RECEIVING_SHEET_NAME } from '@/lib/domains/receiving/receivingSheet';
 import { postReceipt } from '@/lib/domains/inventory/stock';
 import { calculateYieldQuote, resolveTargetMargin, type MarginMode, type RetailUnit, RETAIL_UNITS } from '@/lib/domains/receiving/yieldPricing';
+import { authErrorResponse } from '@/lib/auth/http';
+import { requireReceivingStaff } from '@/lib/auth/guardRoute';
+import { requireSessionUser } from '@/lib/auth/session';
 
 export const dynamic = 'force-dynamic';
 
@@ -25,12 +28,20 @@ interface SavedPack {
 const savedPacks: SavedPack[] = [];
 
 export async function GET() {
-  const result = await loadReceivingLogs();
-  return NextResponse.json(result);
+  try {
+    await requireSessionUser();
+    const result = await loadReceivingLogs();
+    return NextResponse.json(result);
+  } catch (error) {
+    const authRes = authErrorResponse(error);
+    if (authRes) return authRes;
+    throw error;
+  }
 }
 
 export async function POST(req: NextRequest) {
   try {
+    const actor = await requireReceivingStaff();
     const body = (await req.json()) as {
       itemName?: string;
       casesReceived?: number;
@@ -136,6 +147,8 @@ export async function POST(req: NextRequest) {
       savedCount: savedPacks.length,
     });
   } catch (error) {
+    const authRes = authErrorResponse(error);
+    if (authRes) return authRes;
     return NextResponse.json(
       {
         success: false,

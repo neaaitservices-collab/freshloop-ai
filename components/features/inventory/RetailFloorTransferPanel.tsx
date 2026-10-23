@@ -2,7 +2,10 @@
 
 import React, { useMemo } from 'react';
 import { Store } from 'lucide-react';
-import { SubInventoryTransferList } from '@/components/features/inventory/SubInventoryTransferList';
+import {
+  SubInventoryTransferList,
+} from '@/components/features/inventory/SubInventoryTransferList';
+import type { PerformInventoryMove } from '@/components/features/inventory/SubInventoryTransferBar';
 import { filterRetailFloorLevels } from '@/lib/domains/inventory/subInventoryView';
 import type { StockLevel } from '@/lib/domains/inventory/stock';
 
@@ -18,6 +21,7 @@ export interface RetailFloorTransferPanelProps {
   onSuccess: (message: string, level: StockLevel) => void;
   onError: (message: string) => void;
   departmentFilter?: (row: StockLevel) => boolean;
+  performMove?: PerformInventoryMove;
 }
 
 export function RetailFloorTransferPanel({
@@ -30,6 +34,7 @@ export function RetailFloorTransferPanel({
   onSuccess,
   onError,
   departmentFilter,
+  performMove,
 }: RetailFloorTransferPanelProps) {
   const rows = useMemo(() => {
     let list = filterRetailFloorLevels(levels);
@@ -59,9 +64,13 @@ export function RetailFloorTransferPanel({
       <div className="flex items-center gap-2 border-b border-slate-800 px-4 py-3">
         <Store className="h-4 w-4 text-emerald-400" />
         <div>
-          <h3 className="text-sm font-black text-white">Retail floor</h3>
+          <h3 className="text-sm font-black text-white">
+            {priorityOnly ? 'Short-Dated Action Queue' : 'Retail floor'}
+          </h3>
           <p className="text-[11px] text-slate-400">
-            Shelf stock — send to kitchen, markdown, or waste (choose qty in {rows[0] ? 'lbs/units' : 'each unit'}).
+            {priorityOnly
+              ? 'Pull window items — swipe on mobile or use the action buttons.'
+              : `Shelf stock — send to kitchen, markdown, or waste (choose qty in ${rows[0] ? 'lbs/units' : 'each unit'}).`}
           </p>
         </div>
         <span className="ml-auto rounded-full border border-emerald-500/30 bg-emerald-950/50 px-2.5 py-0.5 text-[10px] font-bold text-emerald-300">
@@ -74,6 +83,8 @@ export function RetailFloorTransferPanel({
         pullDays={pullDays}
         staffId={staffId}
         compact={compact}
+        actionQueue={priorityOnly}
+        performMove={performMove}
         emptyMessage={
           priorityOnly
             ? 'Nothing flagged on the floor for this pull window.'

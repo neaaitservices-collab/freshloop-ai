@@ -2,6 +2,8 @@
 
 import React, { useState } from 'react';
 import { InvoiceOcrResult } from '@/lib/types';
+import { useRole } from '@/components/auth/RoleProvider';
+import { isManager } from '@/lib/utils/roles';
 import { DepartmentBadge } from '@/components/ui/DepartmentBadge';
 import { AlertTriangle, ArrowRight, Camera, CheckCircle2, FileText, ImagePlus, Loader2, Sparkles, Upload, X } from 'lucide-react';
 
@@ -22,6 +24,8 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
   const [ocrResult, setOcrResult] = useState<InvoiceOcrResult | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
   const [managerApprovedCosts, setManagerApprovedCosts] = useState(false);
+  const { activeUser } = useRole();
+  const managerCanApprove = Boolean(activeUser && isManager(activeUser.role));
 
   if (!isOpen) return null;
 
@@ -96,8 +100,9 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
     }
   };
 
+  const flaggedInvoice = Boolean(ocrResult?.requiresManagerApproval);
   const needsCostApproval =
-    Boolean(ocrResult?.requiresManagerApproval) && !managerApprovedCosts;
+    flaggedInvoice && (!managerCanApprove || !managerApprovedCosts);
 
   const handleAddToReceiving = () => {
     if (!ocrResult || needsCostApproval) return;
@@ -295,7 +300,9 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
                           key={idx}
                           className={
                             item.requires_approval
-                              ? 'bg-amber-950/30 hover:bg-amber-950/40'
+                              ? (item.costVariancePct ?? 0) > 0
+                                ? 'bg-rose-950/25 hover:bg-rose-950/35'
+                                : 'bg-amber-950/30 hover:bg-amber-950/40'
                               : 'hover:bg-zinc-800/40'
                           }
                         >
@@ -315,8 +322,10 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
                               <span
                                 className={
                                   item.requires_approval
-                                    ? 'font-bold text-amber-300'
-                                    : 'text-zinc-400'
+                                    ? (item.costVariancePct ?? 0) > 0
+                                      ? 'font-bold text-rose-400'
+                                      : 'font-bold text-amber-300'
+                                    : 'text-slate-400'
                                 }
                               >
                                 {item.costVariancePct > 0 ? '+' : ''}
@@ -334,21 +343,28 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
                 </div>
               </div>
 
-              {ocrResult.requiresManagerApproval ? (
-                <label className="flex cursor-pointer items-start gap-3 rounded-2xl border border-amber-500/40 bg-amber-950/40 p-4 text-xs text-amber-100">
-                  <input
-                    type="checkbox"
-                    checked={managerApprovedCosts}
-                    onChange={(e) => setManagerApprovedCosts(e.target.checked)}
-                    className="mt-0.5 h-4 w-4 rounded border-amber-400 text-emerald-500 focus:ring-emerald-500"
-                  />
-                  <span>
-                    <span className="font-bold text-amber-200">Manager approval: </span>
-                    {ocrResult.flaggedItemsCount ?? 0} line(s) exceed ±
-                    {ocrResult.guardrailThresholdPct ?? 20}% vs moving average cost. I confirm
-                    these case costs before adding to receiving.
-                  </span>
-                </label>
+              {flaggedInvoice ? (
+                managerCanApprove ? (
+                  <label className="flex min-h-12 cursor-pointer items-start gap-3 rounded-2xl border border-amber-500/40 bg-amber-950/40 p-4 text-xs text-amber-100">
+                    <input
+                      type="checkbox"
+                      checked={managerApprovedCosts}
+                      onChange={(e) => setManagerApprovedCosts(e.target.checked)}
+                      className="mt-1 h-5 w-5 rounded border-amber-400 text-emerald-500 focus:ring-emerald-500"
+                    />
+                    <span>
+                      <span className="font-bold text-amber-200">Manager approval: </span>
+                      {ocrResult.flaggedItemsCount ?? 0} line(s) exceed ±
+                      {ocrResult.guardrailThresholdPct ?? 20}% vs moving average cost. I confirm
+                      these case costs before adding to receiving.
+                    </span>
+                  </label>
+                ) : (
+                  <p className="rounded-2xl border border-rose-900/50 bg-rose-950/30 px-4 py-3 text-xs text-rose-200">
+                    {ocrResult.flaggedItemsCount ?? 0} line(s) exceed the cost guardrail. A store
+                    manager or admin must review this invoice before receiving.
+                  </p>
+                )
               ) : null}
             </div>
           )}
@@ -368,7 +384,7 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
               type="button"
               onClick={() => void handleScanInvoice(false)}
               disabled={loading || !previewUrl}
-              className="flex items-center gap-2 rounded-xl bg-emerald-400 px-5 py-3 text-xs font-black text-zinc-950 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400"
+              className="flex min-h-12 items-center gap-2 rounded-xl bg-emerald-400 px-5 py-3 text-xs font-black text-zinc-950 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400"
             >
               {loading ? (
                 <>
@@ -392,7 +408,7 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
                   ? 'Check manager approval for flagged costs first'
                   : undefined
               }
-              className="flex items-center gap-2 rounded-xl bg-emerald-400 px-5 py-3 text-xs font-black text-zinc-950 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400"
+              className="flex min-h-12 items-center gap-2 rounded-xl bg-emerald-400 px-5 py-3 text-xs font-black text-zinc-950 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400"
             >
               <span>Add {ocrResult.lineItems.length} cases to receiving</span>
               <ArrowRight className="h-4 w-4" />

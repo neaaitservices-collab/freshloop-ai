@@ -3,6 +3,7 @@
 import React, { useMemo } from 'react';
 import { ChefHat } from 'lucide-react';
 import { SubInventoryTransferList } from '@/components/features/inventory/SubInventoryTransferList';
+import type { PerformInventoryMove } from '@/components/features/inventory/SubInventoryTransferBar';
 import { filterKitchenPrepLevels } from '@/lib/domains/inventory/subInventoryView';
 import type { StockLevel } from '@/lib/domains/inventory/stock';
 
@@ -14,6 +15,7 @@ export interface KitchenPrepTransferPanelProps {
   onSuccess: (message: string, level: StockLevel) => void;
   onError: (message: string) => void;
   departmentFilter?: (row: StockLevel) => boolean;
+  performMove?: PerformInventoryMove;
 }
 
 export function KitchenPrepTransferPanel({
@@ -24,6 +26,7 @@ export function KitchenPrepTransferPanel({
   onSuccess,
   onError,
   departmentFilter,
+  performMove,
 }: KitchenPrepTransferPanelProps) {
   const rows = useMemo(() => {
     let list = filterKitchenPrepLevels(levels);
@@ -58,6 +61,7 @@ export function KitchenPrepTransferPanel({
         location="kitchen_prep"
         staffId={staffId}
         compact={compact}
+        performMove={performMove}
         emptyMessage="No kitchen prep stock — rescue from the retail floor first."
         onSuccess={onSuccess}
         onError={onError}

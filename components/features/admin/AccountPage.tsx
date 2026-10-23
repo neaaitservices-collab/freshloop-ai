@@ -11,7 +11,7 @@ import { isManager, ROLE_LABELS } from '@/lib/utils/roles';
 import type { PlatformSettings } from '@/lib/domains/stats/platformSettings';
 
 const FIELD =
-  'mt-1 w-full rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-3 text-sm text-white';
+  'mt-1 w-full min-h-12 rounded-xl border border-slate-700 bg-slate-950 px-3 py-3 text-sm text-slate-100';
 
 function ProfileForm() {
   const { activeUser, loading, refresh } = useRole();

@@ -93,7 +93,7 @@ function itemsFor(role: RoleName | null): NavItem[] {
 
 export function Navigation({ onVoice }: { onVoice: () => void }) {
   const pathname = usePathname();
-  const { users, activeUser, setActiveUserId } = useRole();
+  const { activeUser, signOutUser } = useRole();
   const [collapsed, setCollapsed] = useState(false);
   const items = itemsFor(activeUser?.role ?? null);
   const role = activeUser?.role ?? null;
@@ -128,23 +128,24 @@ export function Navigation({ onVoice }: { onVoice: () => void }) {
           })}
         </nav>
         <div className="space-y-2 border-t border-slate-800 p-2">
-          {collapsed ? null : (
-            <label className="block px-1 text-[10px] font-bold uppercase tracking-wider text-slate-500">
-              Acting as
-              <select
-                aria-label="Acting as"
-                value={activeUser?.id ?? ''}
-                onChange={(event) => setActiveUserId(event.target.value)}
-                className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900/60 px-2 py-2 text-xs font-bold text-slate-100"
+          {collapsed ? null : activeUser ? (
+            <div className="px-1">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                Signed in
+              </p>
+              <p className="mt-1 truncate text-xs font-bold text-slate-100">{activeUser.name}</p>
+              <p className="truncate text-[10px] text-slate-500">
+                {ROLE_LABELS[activeUser.role]}
+              </p>
+              <button
+                type="button"
+                onClick={() => void signOutUser()}
+                className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-900/60 px-2 py-2 text-[11px] font-bold text-slate-300 hover:bg-slate-800"
               >
-                {users.map((user) => (
-                  <option key={user.id} value={user.id}>
-                    {user.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
+                Sign out
+              </button>
+            </div>
+          ) : null}
           <button
             type="button"
             onClick={() => setCollapsed((current) => !current)}
@@ -164,18 +165,16 @@ export function Navigation({ onVoice }: { onVoice: () => void }) {
           </span>
           <span className="text-sm font-black text-slate-100">FreshLoop</span>
         </Link>
-        <select
-          aria-label="Acting as"
-          value={activeUser?.id ?? ''}
-          onChange={(event) => setActiveUserId(event.target.value)}
-          className="max-w-[11rem] rounded-lg border border-slate-700 bg-slate-900/60 px-2 py-2 text-xs font-bold text-slate-100"
-        >
-          {users.map((user) => (
-            <option key={user.id} value={user.id}>
-              {user.name} · {ROLE_LABELS[user.role]}
-            </option>
-          ))}
-        </select>
+        {activeUser ? (
+          <button
+            type="button"
+            onClick={() => void signOutUser()}
+            className="max-w-[11rem] truncate rounded-lg border border-slate-700 bg-slate-900/60 px-2 py-2 text-xs font-bold text-slate-100"
+            title={`${activeUser.name} · ${ROLE_LABELS[activeUser.role]}`}
+          >
+            {activeUser.name}
+          </button>
+        ) : null}
       </header>
 
       <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-slate-800 bg-slate-950/95 px-1 pb-[max(0.35rem,env(safe-area-inset-bottom))] pt-1 backdrop-blur-xl md:hidden">

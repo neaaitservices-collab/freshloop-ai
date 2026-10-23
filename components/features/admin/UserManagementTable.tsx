@@ -13,7 +13,7 @@ const EMPTY_FORM = {
 };
 
 export function UserManagementTable() {
-  const { users, activeUser, loading, setActiveUserId, refresh } = useRole();
+  const { users, activeUser, loading, refresh } = useRole();
   const [form, setForm] = useState(EMPTY_FORM);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -172,13 +172,6 @@ export function UserManagementTable() {
                   <td className="px-4 py-3 font-bold text-emerald-300">{ROLE_LABELS[user.role]}</td>
                   <td className="px-4 py-3">
                     <div className="flex justify-end gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setActiveUserId(user.id)}
-                        className="rounded-lg border border-zinc-700 px-3 py-2 text-xs font-bold text-zinc-200"
-                      >
-                        Act as
-                      </button>
                       <button
                         type="button"
                         aria-label={`Edit ${user.name}`}

@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { apiErrorFromUnknown } from '@/lib/domains/ai/apiError';
-import { isManager, isRoleName } from '@/lib/utils/roles';
+import { authErrorResponse } from '@/lib/auth/http';
+import { requireSessionUser } from '@/lib/auth/session';
+import { isManager } from '@/lib/utils/roles';
 import {
   applyRetailMarkdown,
   getStockLevels,
@@ -39,6 +41,7 @@ export async function GET() {
 
 export async function PATCH(req: NextRequest) {
   try {
+    const actor = await requireSessionUser();
     const body = (await req.json()) as {
       productId?: string;
       action?: 'rescue' | 'waste' | 'markdown';
@@ -59,14 +62,14 @@ export async function PATCH(req: NextRequest) {
     }
 
     if (body.action === 'markdown') {
-      const marked = await applyRetailMarkdown(productId, body.staffId ?? '');
+      const marked = await applyRetailMarkdown(productId, actor.id);
       return NextResponse.json({ success: true, action: 'markdown', level: marked.level });
     }
     if (body.action === 'rescue' || body.action === 'waste') {
       const moved = await moveRetailStock(
         productId,
         body.action,
-        body.staffId ?? '',
+        actor.id,
         body.quantity
       );
       return NextResponse.json({
@@ -80,8 +83,7 @@ export async function PATCH(req: NextRequest) {
     }
 
     if (body.casesOnHand !== undefined) {
-      const role = body.role ?? '';
-      if (!isRoleName(role) || !isManager(role)) {
+      if (!isManager(actor.role)) {
         return NextResponse.json(
           { success: false, error: 'Only an admin or store manager can change stock.' },
           { status: 403 }
@@ -91,7 +93,7 @@ export async function PATCH(req: NextRequest) {
       if (!Number.isFinite(casesOnHand) || casesOnHand < 0) {
         return NextResponse.json({ success: false, error: 'Cases must be zero or greater.' }, { status: 400 });
       }
-      const level = await setStockCases(productId, casesOnHand, body.staffId ?? 'staff-admin');
+      const level = await setStockCases(productId, casesOnHand, actor.id);
       return NextResponse.json({ success: true, level });
     }
     if (typeof body.supplier === 'string') {
@@ -128,6 +130,8 @@ export async function PATCH(req: NextRequest) {
       { status: 400 }
     );
   } catch (error) {
+    const authRes = authErrorResponse(error);
+    if (authRes) return authRes;
     return apiErrorFromUnknown(error, 'The alert level could not be saved.');
   }
 }

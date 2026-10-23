@@ -12,6 +12,7 @@ import {
   subInventoryTabsForRole,
   type SubInventoryTab,
 } from '@/lib/domains/inventory/subInventoryView';
+import type { PerformInventoryMove } from '@/components/features/inventory/SubInventoryTransferBar';
 import type { StockLevel } from '@/lib/domains/inventory/stock';
 
 export interface SubInventoryWorkspaceProps {
@@ -26,6 +27,7 @@ export interface SubInventoryWorkspaceProps {
   showRetailCatalog?: boolean;
   onSuccess: (message: string, level: StockLevel) => void;
   onError: (message: string) => void;
+  performMove?: PerformInventoryMove;
 }
 
 export function SubInventoryWorkspace({
@@ -39,6 +41,7 @@ export function SubInventoryWorkspace({
   showRetailCatalog = true,
   onSuccess,
   onError,
+  performMove,
 }: SubInventoryWorkspaceProps) {
   const { activeUser } = useRole();
   const tabs = useMemo(
@@ -78,7 +81,7 @@ export function SubInventoryWorkspace({
               role="tab"
               aria-selected={safeTab === tab}
               onClick={() => setActiveTab(tab)}
-              className={`flex-1 min-w-[8rem] rounded-xl px-3 py-2.5 text-left text-xs font-bold transition sm:flex-none sm:min-w-[10rem] ${
+              className={`min-h-12 flex-1 min-w-[8rem] rounded-xl px-3 py-3 text-left text-xs font-bold transition sm:flex-none sm:min-w-[10rem] ${
                 safeTab === tab
                   ? tab === 'retail_floor'
                     ? 'bg-emerald-500/20 text-emerald-200 ring-1 ring-emerald-500/40'
@@ -112,6 +115,7 @@ export function SubInventoryWorkspace({
             departmentFilter={departmentFilter}
             onSuccess={onSuccess}
             onError={onError}
+            performMove={performMove}
           />
           {showRetailCatalog && retailPriorityOnly ? (
             <details className="group rounded-2xl border border-slate-800 bg-slate-950/60">
@@ -128,6 +132,7 @@ export function SubInventoryWorkspace({
                 compact
                 onSuccess={onSuccess}
                 onError={onError}
+                performMove={performMove}
               />
             </details>
           ) : null}
@@ -142,6 +147,7 @@ export function SubInventoryWorkspace({
           departmentFilter={departmentFilter}
           onSuccess={onSuccess}
           onError={onError}
+          performMove={performMove}
         />
       ) : null}
     </div>

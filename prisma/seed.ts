@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import bcrypt from "bcryptjs";
 import {
   Department,
   InventoryLocation,
@@ -228,8 +229,73 @@ const PRODUCTS: SeedProduct[] = [
   },
 ];
 
+const DEMO_STAFF_PASSWORD = "freshloop";
+
+const STAFF_SEED = [
+  {
+    id: "staff-admin",
+    name: "Store Admin",
+    email: "admin@freshloop.test",
+    position: "Owner",
+    role: "ADMIN" as const,
+  },
+  {
+    id: "staff-manager",
+    name: "Store Manager",
+    email: "manager@freshloop.test",
+    position: "Store manager",
+    role: "STORE_MANAGER" as const,
+  },
+  {
+    id: "staff-receiving",
+    name: "Receiving Clerk",
+    email: "receiving@freshloop.test",
+    position: "Back door",
+    role: "RECEIVING_CLERK" as const,
+  },
+  {
+    id: "staff-floor",
+    name: "Floor Staff",
+    email: "floor@freshloop.test",
+    position: "Produce floor",
+    role: "FLOOR_STAFF" as const,
+  },
+  {
+    id: "staff-kitchen",
+    name: "Deli Chef",
+    email: "kitchen@freshloop.test",
+    position: "Deli kitchen",
+    role: "DELI_CHEF" as const,
+  },
+];
+
+async function seedStaffUsers() {
+  const passwordHash = await bcrypt.hash(DEMO_STAFF_PASSWORD, 12);
+  for (const staff of STAFF_SEED) {
+    await prisma.user.upsert({
+      where: { email: staff.email },
+      create: {
+        id: staff.id,
+        name: staff.name,
+        email: staff.email,
+        position: staff.position,
+        role: staff.role,
+        passwordHash,
+      },
+      update: {
+        name: staff.name,
+        position: staff.position,
+        role: staff.role,
+        passwordHash,
+      },
+    });
+  }
+}
+
 async function main() {
   console.log("🌱 Starting FreshLoop AI database seed...");
+
+  await seedStaffUsers();
 
   await prisma.pOSMapping.deleteMany();
   await prisma.bundleItem.deleteMany();

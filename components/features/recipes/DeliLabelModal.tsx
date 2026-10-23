@@ -1,132 +1,125 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect } from 'react';
 import { RecipeFusionResult } from '@/lib/types';
-import { Printer, X, Tag, Sparkles, CheckCircle2, QrCode } from 'lucide-react';
+import { Printer, X } from 'lucide-react';
+import { Button } from '@/components/ui/Button';
 
-interface DeliLabelModalProps {
+export interface DeliLabelModalProps {
   isOpen: boolean;
   onClose: () => void;
   recipe: RecipeFusionResult | null;
 }
 
-export const DeliLabelModal: React.FC<DeliLabelModalProps> = ({
-  isOpen,
-  onClose,
-  recipe
-}) => {
+/**
+ * Thermal-style deli tag preview. Only `.deli-label-print-surface` is visible when printing.
+ */
+export function DeliLabelModal({ isOpen, onClose, recipe }: DeliLabelModalProps) {
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [isOpen, onClose]);
+
   if (!isOpen || !recipe) return null;
+
+  const packedDate = new Date().toISOString().split('T')[0];
+  const allergenLine =
+    recipe.allergens && recipe.allergens.length > 0
+      ? recipe.allergens.join(', ')
+      : 'None declared';
 
   const handlePrint = () => {
     window.print();
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-md animate-fadeIn">
-      <div className="bg-zinc-900 border border-zinc-700 rounded-3xl max-w-md w-full p-4 sm:p-6 space-y-4 sm:space-y-6 shadow-2xl relative max-h-[92vh] overflow-y-auto">
-        {/* Close Button */}
-        <button
-          onClick={onClose}
-          className="absolute top-4 right-4 text-zinc-400 hover:text-white p-1 rounded-full bg-zinc-800"
-        >
-          <X className="w-5 h-5" />
-        </button>
+    <div
+      className="deli-label-modal-root fixed inset-0 z-50 flex items-end justify-center bg-black/85 p-0 sm:items-center sm:p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="deli-label-title"
+    >
+      <div className="no-print absolute inset-0" onClick={onClose} aria-hidden />
 
-        {/* Modal Header */}
-        <div className="space-y-1">
-          <div className="flex items-center gap-2">
-            <span className="p-1.5 rounded-lg bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
-              <Printer className="w-4 h-4" />
-            </span>
-            <span className="text-xs font-bold text-emerald-400 uppercase tracking-widest">Deli Label Printer</span>
-          </div>
-          <h2 className="text-lg font-black text-white">Grab-n-Go Price Tag Preview</h2>
-          <p className="text-xs text-zinc-400">
-            High-margin deli sticker for rescued kitchen prep items.
-          </p>
-        </div>
-
-        {/* PHYSICAL DELI LABEL STICKER PREVIEW (Printable Container) */}
-        <div className="bg-white text-zinc-950 p-5 rounded-2xl border-2 border-dashed border-zinc-400 shadow-xl space-y-3 font-sans printable-label">
-          {/* Brand Header */}
-          <div className="flex items-center justify-between border-b-2 border-zinc-950 pb-2">
-            <div className="flex items-center gap-1.5">
-              <Sparkles className="w-4 h-4 text-emerald-600 fill-emerald-600" />
-              <span className="font-black text-xs tracking-tight uppercase">FRESHLOOP KITCHEN RESCUE</span>
-            </div>
-            <span className="text-[10px] font-extrabold px-2 py-0.5 bg-zinc-950 text-white rounded">
-              CHEF SPECIAL
-            </span>
-          </div>
-
-          {/* Recipe Title & Category */}
+      <div className="relative z-10 flex max-h-[94vh] w-full max-w-md flex-col overflow-hidden rounded-t-2xl border border-slate-800 bg-slate-950 shadow-2xl sm:rounded-2xl">
+        <div className="no-print flex items-center justify-between border-b border-slate-800 px-4 py-3">
           <div>
-            <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wide block">
-              {recipe.category} &bull; Prepared Fresh Daily
-            </span>
-            <h3 className="text-base font-extrabold text-zinc-950 leading-tight">
-              {recipe.recipeName}
-            </h3>
-          </div>
-
-          {/* Yield & Target Price Badge */}
-          <div className="flex items-center justify-between bg-zinc-100 p-2.5 rounded-xl border border-zinc-300">
-            <div>
-              <span className="text-[10px] text-zinc-600 block">Portion Yield</span>
-              <span className="text-xs font-bold text-zinc-900">{recipe.estimatedYield}</span>
-            </div>
-            <div className="text-right">
-              <span className="text-[10px] text-zinc-600 block">Retail Price</span>
-              <span className="text-xl font-black text-emerald-700">${recipe.targetRetailPrice.toFixed(2)}</span>
-            </div>
-          </div>
-
-          {/* Rescued Waste Callout */}
-          <div className="p-2 bg-emerald-50 rounded-lg border border-emerald-200 text-[11px] text-emerald-900 font-semibold flex items-center gap-1.5">
-            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 flex-shrink-0" />
-            <span>Rescued Produce & Dairy &bull; {recipe.grossMarginPct}% Deli Margin</span>
-          </div>
-
-          {/* Ingredients & Allergens */}
-          <div className="text-[10px] text-zinc-700 space-y-1">
-            <p>
-              <strong>Ingredients:</strong> {recipe.ingredientsUsed.map(i => i.name).join(', ')}
+            <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
+              Deli label
             </p>
-            {recipe.allergens && recipe.allergens.length > 0 && (
-              <p className="text-rose-700 font-bold">
-                ⚠️ Contains Allergens: {recipe.allergens.join(', ')}
-              </p>
-            )}
+            <h2 id="deli-label-title" className="text-sm font-extrabold text-slate-100">
+              Thermal print preview
+            </h2>
           </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="min-h-11 min-w-11 rounded-xl border border-slate-800 bg-slate-900 p-2 text-slate-400 hover:text-white"
+            aria-label="Close"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
 
-          {/* Simulated Barcode */}
-          <div className="pt-2 border-t border-zinc-200 flex items-center justify-between">
-            <div className="space-y-0.5">
-              <span className="text-[9px] text-zinc-500 block">PLU: 9402-FL-DELI</span>
-              <span className="text-[9px] text-zinc-500 block">Packed: {new Date().toISOString().split('T')[0]}</span>
+        <div className="overflow-y-auto p-4 sm:p-5">
+          <div
+            className="deli-label-print-surface mx-auto w-full max-w-[320px] rounded-sm border-2 border-black bg-white p-4 font-mono text-black shadow-none"
+            data-print-label
+          >
+            <div className="border-b-2 border-black pb-2 text-center">
+              <p className="text-[10px] font-black uppercase tracking-[0.2em]">FreshLoop Deli</p>
+              <p className="text-[9px] font-bold uppercase">Kitchen rescue · grab & go</p>
             </div>
-            <div className="font-mono text-xs tracking-tighter font-extrabold bg-zinc-100 px-2 py-1 rounded">
-              ||| | |||| | ||| | |||
+
+            <h3 className="mt-3 text-base font-black uppercase leading-tight">{recipe.recipeName}</h3>
+            <p className="mt-1 text-[10px] font-bold uppercase text-neutral-700">{recipe.category}</p>
+
+            <div className="mt-4 flex items-end justify-between border-y-2 border-black py-2">
+              <div>
+                <p className="text-[9px] font-bold uppercase">Portion</p>
+                <p className="text-[11px] font-bold leading-snug">{recipe.estimatedYield}</p>
+              </div>
+              <div className="text-right">
+                <p className="text-[9px] font-bold uppercase">Price</p>
+                <p className="text-3xl font-black leading-none">
+                  ${recipe.targetRetailPrice.toFixed(2)}
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-3 space-y-2 text-[10px] leading-snug">
+              <p>
+                <span className="font-black uppercase">Ingredients: </span>
+                {recipe.ingredientsUsed.map((i) => i.name).join(', ')}
+              </p>
+              <p className="border border-black px-2 py-1 font-black uppercase">
+                Contains: {allergenLine}
+              </p>
+              <p className="text-[9px]">
+                Packed {packedDate} · Margin {recipe.grossMarginPct.toFixed(0)}% · PLU FL-DELI
+              </p>
+            </div>
+
+            <div className="mt-3 border-t border-black pt-2 text-center text-[11px] font-black tracking-widest">
+              ||| |||| | ||| |||| |
             </div>
           </div>
         </div>
 
-        {/* Action Buttons */}
-        <div className="flex items-center justify-end gap-3 pt-2">
-          <button
-            onClick={onClose}
-            className="px-4 py-2.5 rounded-xl text-xs font-bold text-zinc-400 hover:text-white"
-          >
+        <div className="no-print flex gap-2 border-t border-slate-800 p-4">
+          <Button type="button" variant="secondary" className="min-h-12 flex-1" onClick={onClose}>
             Close
-          </button>
-          <button
-            onClick={handlePrint}
-            className="px-5 py-2.5 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-zinc-950 text-xs font-extrabold rounded-xl flex items-center gap-2 shadow-lg shadow-emerald-500/20 active:scale-95"
-          >
-            <Printer className="w-4 h-4" /> Print Deli Sticker
-          </button>
+          </Button>
+          <Button type="button" variant="primary" className="min-h-12 flex-1" onClick={handlePrint}>
+            <Printer className="h-4 w-4" />
+            Print tag
+          </Button>
         </div>
       </div>
     </div>
   );
-};
+}

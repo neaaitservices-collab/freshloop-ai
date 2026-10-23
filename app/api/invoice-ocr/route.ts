@@ -4,6 +4,9 @@ import { prisma, getMovingAverageCost } from '@/lib/domains/inventory/ledger';
 import { invalidateInventoryCaches } from '@/lib/domains/inventory/inventoryCache';
 import { INITIAL_INVENTORY_ITEMS } from '@/lib/legacy/mockData';
 import { generateContentWithFallback, parseModelJson, tryParseModelJson } from '@/lib/domains/ai/gemini';
+import { authErrorResponse } from '@/lib/auth/http';
+import { requireReceivingStaff } from '@/lib/auth/guardRoute';
+import { requireSessionUser } from '@/lib/auth/session';
 
 // ============================================================================
 // Types & Interfaces for Phase 3 Invoice OCR + Cost Guardrail (>20% Variance)
@@ -411,6 +414,7 @@ Analyze this supermarket vendor invoice image and return ONLY valid JSON matchin
 
 export async function POST(req: NextRequest) {
   try {
+    await requireSessionUser();
     const body = await req.json();
     const {
       imageBase64,
@@ -441,12 +445,13 @@ export async function POST(req: NextRequest) {
     // explicitly confirmed by the user/manager (`confirmCommit: true`).
     // ------------------------------------------------------------------------
     if (confirmCommit && Array.isArray(confirmedItems) && confirmedItems.length > 0) {
+      const actor = await requireReceivingStaff();
       const createdReceipts = await prisma.$transaction(
         confirmedItems.map((item) =>
           prisma.inventoryTransaction.create({
             data: {
               productId: item.product_id,
-              staffId: staffId || 'staff-receiver-ocr',
+              staffId: actor.id,
               qtyChange: Math.abs(Number(item.quantity) || 1),
               transactionType: TransactionType.Receive,
               fromLocation: InventoryLocation.External_Vendor,
@@ -573,6 +578,8 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(responsePayload);
   } catch (error: unknown) {
+    const authRes = authErrorResponse(error);
+    if (authRes) return authRes;
     console.error('API Error in /api/invoice-ocr:', error);
     return NextResponse.json(
       {

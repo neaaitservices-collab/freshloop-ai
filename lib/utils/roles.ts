@@ -41,25 +41,50 @@ export function homeForRole(role: RoleName): string {
 }
 
 export function canVisit(role: RoleName, pathname: string): boolean {
-  if (pathname === '/admin' || pathname.startsWith('/admin/')) return true;
+  const path = pathname.split('?')[0];
+
+  if (
+    path === '/login' ||
+    path === '/signup' ||
+    path === '/forgot-password' ||
+    path === '/reset-password' ||
+    path.startsWith('/api/auth')
+  ) {
+    return true;
+  }
+
+  if (path === '/admin/users' || path.startsWith('/admin/users/')) {
+    return isManager(role);
+  }
+  if (path === '/admin' || path.startsWith('/admin/')) {
+    return true;
+  }
+
   if (isManager(role)) return true;
-  if (pathname === '/operations' || pathname.startsWith('/operations/')) return false;
+  if (path === '/orders' || path.startsWith('/orders/')) return false;
+  if (path === '/operations' || path.startsWith('/operations/')) return false;
+
+  if (path === '/inventory/floor' || path.startsWith('/inventory/floor/')) {
+    return true;
+  }
+
   if (role === 'RECEIVING_CLERK') {
     return (
-      pathname === '/receive' ||
-      pathname.startsWith('/receive/') ||
-      pathname === '/inventory'
+      path === '/receive' ||
+      path.startsWith('/receive/') ||
+      path === '/inventory' ||
+      path.startsWith('/inventory/')
     );
   }
   if (role === 'FLOOR_STAFF') {
-    return pathname === '/inventory/floor' || pathname.startsWith('/inventory/floor');
+    return path === '/inventory/floor' || path.startsWith('/inventory/floor/');
   }
   if (role === 'DELI_CHEF') {
     return (
-      pathname === '/kitchen' ||
-      pathname.startsWith('/kitchen/') ||
-      pathname === '/inventory' ||
-      pathname.startsWith('/inventory/')
+      path === '/kitchen' ||
+      path.startsWith('/kitchen/') ||
+      path === '/inventory' ||
+      path.startsWith('/inventory/')
     );
   }
   return false;

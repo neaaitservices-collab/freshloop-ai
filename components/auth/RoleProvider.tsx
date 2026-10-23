@@ -1,76 +1,109 @@
 'use client';
 
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from 'react';
+import { SessionProvider, signOut, useSession } from 'next-auth/react';
 import type { StaffUser } from '@/lib/utils/roles';
-import { syncRoleCookies } from '@/lib/utils/syncRoleCookies';
-
-const STORAGE_KEY = 'freshloop-active-user';
+import { isManager, isRoleName } from '@/lib/utils/roles';
 
 interface RoleContextValue {
   users: StaffUser[];
   activeUser: StaffUser | null;
   loading: boolean;
+  /** @deprecated Demo impersonation removed — triggers sign-out. */
   setActiveUserId: (id: string) => void;
   refresh: () => Promise<void>;
+  signOutUser: () => Promise<void>;
 }
 
 const RoleContext = createContext<RoleContextValue | null>(null);
 
-export function RoleProvider({ children }: { children: React.ReactNode }) {
-  const [users, setUsers] = useState<StaffUser[]>([]);
-  const [activeUserId, setActiveUserIdState] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+function mapSessionUser(session: ReturnType<typeof useSession>['data']): StaffUser | null {
+  const user = session?.user;
+  if (!user?.id || !user.email) return null;
+  const role = user.role && isRoleName(user.role) ? user.role : null;
+  if (!role) return null;
+  return {
+    id: user.id,
+    name: user.name ?? '',
+    email: user.email,
+    position: user.position ?? '',
+    role,
+  };
+}
 
-  const refresh = useCallback(async () => {
-    const response = await fetch('/api/users', { cache: 'no-store' });
-    const json = await response.json();
-    const next = Array.isArray(json.users) ? (json.users as StaffUser[]) : [];
-    setUsers(next);
-    setActiveUserIdState((current) => {
-      const stored = current ?? (typeof window !== 'undefined' ? window.localStorage.getItem(STORAGE_KEY) : null);
-      if (stored && next.some((user) => user.id === stored)) return stored;
-      return next.find((user) => user.role === 'ADMIN')?.id ?? next[0]?.id ?? null;
-    });
-  }, []);
+function RoleContextInner({ children }: { children: React.ReactNode }) {
+  const { data: session, status, update } = useSession();
+  const loading = status === 'loading';
+  const activeUser = useMemo(() => mapSessionUser(session), [session]);
+  const [users, setUsers] = useState<StaffUser[]>([]);
+
+  const loadStaffDirectory = useCallback(async () => {
+    if (!activeUser || !isManager(activeUser.role)) {
+      setUsers(activeUser ? [activeUser] : []);
+      return;
+    }
+    try {
+      const response = await fetch('/api/users', { cache: 'no-store' });
+      const json = await response.json();
+      if (json.success && Array.isArray(json.users)) {
+        setUsers(json.users as StaffUser[]);
+      } else {
+        setUsers(activeUser ? [activeUser] : []);
+      }
+    } catch {
+      setUsers(activeUser ? [activeUser] : []);
+    }
+  }, [activeUser]);
 
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        await refresh();
-      } catch {
-        if (!cancelled) setUsers([]);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [refresh]);
+    void loadStaffDirectory();
+  }, [loadStaffDirectory]);
+
+  const refresh = useCallback(async () => {
+    await update();
+    await loadStaffDirectory();
+  }, [update, loadStaffDirectory]);
+
+  const signOutUser = useCallback(async () => {
+    await signOut({ callbackUrl: '/login' });
+  }, []);
 
   const setActiveUserId = useCallback(
     (id: string) => {
-      setActiveUserIdState(id);
-      window.localStorage.setItem(STORAGE_KEY, id);
-      const user = users.find((u) => u.id === id);
-      if (user) syncRoleCookies(user.id, user.role);
+      if (activeUser?.id === id) return;
+      void signOutUser();
     },
-    [users]
+    [activeUser?.id, signOutUser]
   );
 
-  const activeUser = users.find((user) => user.id === activeUserId) ?? null;
-
-  useEffect(() => {
-    if (activeUser) syncRoleCookies(activeUser.id, activeUser.role);
-  }, [activeUser]);
-
   const value = useMemo(
-    () => ({ users, activeUser, loading, setActiveUserId, refresh }),
-    [users, activeUser, loading, setActiveUserId, refresh]
+    () => ({
+      users,
+      activeUser,
+      loading,
+      setActiveUserId,
+      refresh,
+      signOutUser,
+    }),
+    [users, activeUser, loading, setActiveUserId, refresh, signOutUser]
   );
 
   return <RoleContext.Provider value={value}>{children}</RoleContext.Provider>;
+}
+
+export function RoleProvider({ children }: { children: React.ReactNode }) {
+  return (
+    <SessionProvider>
+      <RoleContextInner>{children}</RoleContextInner>
+    </SessionProvider>
+  );
 }
 
 export function useRole(): RoleContextValue {

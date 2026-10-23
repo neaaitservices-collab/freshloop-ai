@@ -13,6 +13,7 @@ import { Input, Select } from '@/components/ui/Input';
 import { Toast } from '@/components/ui/Toast';
 import { Button } from '@/components/ui/Button';
 import type { StockLevel } from '@/lib/domains/inventory/stock';
+import { useOptimisticInventoryLevels } from '@/hooks/use-optimistic-inventory-levels';
 import type { DepartmentType } from '@/lib/types';
 import { formatCurrency } from '@/lib/domains/receiving/yieldPricing';
 
@@ -35,7 +36,8 @@ export function SlateInventory({
 }) {
   const loading = initialLevels === null;
   const router = useRouter();
-  const [levels, setLevels] = useState<StockLevel[]>(() => initialLevels ?? []);
+  const { levels, setLevels, performMove, patchLevelOptimistic } =
+    useOptimisticInventoryLevels(initialLevels);
   const [query, setQuery] = useState('');
   const [department, setDepartment] = useState<string>('ALL');
   const [pullDays, setPullDays] = useState(3);
@@ -43,11 +45,6 @@ export function SlateInventory({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const { activeUser } = useRole();
-
-  useEffect(() => {
-    if (!initialLevels) return;
-    setLevels(initialLevels);
-  }, [initialLevels]);
 
   useEffect(() => {
     const syncFromServer = () => {
@@ -62,7 +59,7 @@ export function SlateInventory({
     };
     window.addEventListener('freshloop-inventory-updated', syncFromServer);
     return () => window.removeEventListener('freshloop-inventory-updated', syncFromServer);
-  }, []);
+  }, [setLevels]);
 
   const departmentFilter = useCallback(
     (row: StockLevel) => {
@@ -197,6 +194,8 @@ export function SlateInventory({
           levels={levels}
           highlightProductId={highlightProductId}
           onLevelsChange={setLevels}
+          patchLevelOptimistic={patchLevelOptimistic}
+          performMove={performMove}
           pullDays={pullDays}
           query={query}
           departmentFilter={departmentFilter}
@@ -233,11 +232,11 @@ export function SlateInventory({
               departmentFilter={departmentFilter}
               retailPriorityOnly={false}
               showRetailCatalog
+              performMove={performMove}
               onSuccess={(message, level) => {
                 setLevels((current) =>
                   current.map((item) => (item.productId === level.productId ? level : item))
                 );
-                window.dispatchEvent(new CustomEvent('freshloop-inventory-updated'));
                 setToast(message);
                 router.refresh();
               }}

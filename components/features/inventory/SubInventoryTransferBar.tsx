@@ -13,6 +13,17 @@ import { formatUnits, stockUnitLabel } from '@/lib/domains/receiving/yieldPricin
 
 export type TransferBarVariant = 'floor' | 'kitchen' | 'both';
 
+export type PerformInventoryMove = (input: {
+  productId: string;
+  action: InventoryMoveAction;
+  quantity?: number;
+  staffId?: string;
+  row: SubInventoryTransferRow;
+}) => Promise<
+  | { success: true; level: StockLevel; message: string }
+  | { success: false; error: string }
+>;
+
 export interface SubInventoryTransferBarProps {
   row: SubInventoryTransferRow;
   staffId?: string;
@@ -22,6 +33,8 @@ export interface SubInventoryTransferBarProps {
   compact?: boolean;
   busy?: boolean;
   onBusyChange?: (busy: boolean) => void;
+  /** Optimistic move (React 19); skips blocking ledger spinner when set. */
+  performMove?: PerformInventoryMove;
   onSuccess?: (payload: { action: InventoryMoveAction; level: StockLevel; message: string }) => void;
   onError?: (message: string) => void;
 }
@@ -99,8 +112,8 @@ function TransferQtyPicker({
           type="button"
           disabled={busy || value <= step}
           onClick={() => onChange(clampTransferQty(value - step, max, step))}
-          className={`flex items-center justify-center rounded-lg border border-slate-700 bg-slate-950 text-slate-200 disabled:opacity-40 ${
-            compact ? 'h-7 w-7' : 'h-8 w-8'
+          className={`flex min-h-12 min-w-12 items-center justify-center rounded-lg border border-slate-700 bg-slate-950 p-3 text-slate-200 disabled:opacity-40 ${
+            compact ? 'min-h-11 min-w-11' : ''
           }`}
           aria-label="Decrease quantity"
         >
@@ -122,8 +135,8 @@ function TransferQtyPicker({
               applyDraft();
             }
           }}
-          className={`rounded-lg border border-slate-600 bg-slate-950 text-center font-mono font-bold text-white focus:border-emerald-500 focus:outline-none ${
-            compact ? 'h-7 w-16 text-xs' : 'h-8 w-20 text-sm'
+          className={`min-h-12 rounded-lg border border-slate-600 bg-slate-950 text-center font-mono font-bold text-white focus:border-emerald-500 focus:outline-none ${
+            compact ? 'h-11 w-16 text-xs' : 'w-20 text-sm'
           }`}
           aria-label={`Quantity in ${unit}`}
         />
@@ -131,8 +144,8 @@ function TransferQtyPicker({
           type="button"
           disabled={busy || value >= max}
           onClick={() => onChange(clampTransferQty(value + step, max, step))}
-          className={`flex items-center justify-center rounded-lg border border-slate-700 bg-slate-950 text-slate-200 disabled:opacity-40 ${
-            compact ? 'h-7 w-7' : 'h-8 w-8'
+          className={`flex min-h-12 min-w-12 items-center justify-center rounded-lg border border-slate-700 bg-slate-950 p-3 text-slate-200 disabled:opacity-40 ${
+            compact ? 'min-h-11 min-w-11' : ''
           }`}
           aria-label="Increase quantity"
         >
@@ -142,8 +155,8 @@ function TransferQtyPicker({
           type="button"
           disabled={busy}
           onClick={() => onChange(max)}
-          className={`rounded-lg border border-slate-700 font-bold text-slate-400 ${
-            compact ? 'px-1.5 py-0.5 text-[9px]' : 'px-2 py-1 text-[10px]'
+          className={`min-h-12 rounded-lg border border-slate-700 px-3 py-2 font-bold text-slate-400 ${
+            compact ? 'text-[10px]' : 'text-[11px]'
           }`}
         >
           All
@@ -161,6 +174,7 @@ export function SubInventoryTransferBar({
   compact = false,
   busy: busyProp,
   onBusyChange,
+  performMove,
   onSuccess,
   onError,
 }: SubInventoryTransferBarProps) {
@@ -193,10 +207,31 @@ export function SubInventoryTransferBar({
   };
 
   const run = async (action: InventoryMoveAction, quantity: number) => {
-    if (!(quantity > 0)) {
+    if (action !== 'markdown' && !(quantity > 0)) {
       onError?.('Enter a quantity greater than zero.');
       return;
     }
+
+    if (performMove) {
+      const outcome = await performMove({
+        productId: row.productId,
+        action,
+        quantity,
+        staffId,
+        row,
+      });
+      if (outcome.success) {
+        onSuccess?.({
+          action,
+          level: outcome.level,
+          message: outcome.message,
+        });
+      } else {
+        onError?.(outcome.error);
+      }
+      return;
+    }
+
     setBusy(true);
     const result = await executeInventoryMove({
       productId: row.productId,
@@ -220,10 +255,10 @@ export function SubInventoryTransferBar({
   const showKitchen = variant === 'kitchen' || variant === 'both';
 
   const btnClass =
-    'inline-flex h-10 min-w-[5.5rem] flex-1 items-center justify-center gap-1.5 rounded-xl px-3 text-xs font-black disabled:cursor-not-allowed disabled:opacity-50 sm:flex-none';
+    'inline-flex min-h-12 min-w-12 flex-1 items-center justify-center gap-1.5 rounded-xl px-3 py-3 text-xs font-black disabled:cursor-not-allowed disabled:opacity-50 sm:flex-none';
 
   const compactBtn =
-    'inline-flex h-8 min-w-0 flex-1 items-center justify-center gap-1 rounded-lg px-2 text-[10px] font-black disabled:cursor-not-allowed disabled:opacity-50';
+    'inline-flex min-h-11 min-w-11 flex-1 items-center justify-center gap-1 rounded-lg p-3 text-[10px] font-black disabled:cursor-not-allowed disabled:opacity-50';
 
   return (
     <div
@@ -309,7 +344,7 @@ export function SubInventoryTransferBar({
         </div>
       ) : null}
 
-      {busy ? (
+      {busy && !performMove ? (
         <span className="flex items-center gap-1 text-[10px] text-slate-500">
           <Loader2 className="h-3 w-3 animate-spin" />
           Updating ledger…

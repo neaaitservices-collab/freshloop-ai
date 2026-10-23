@@ -1,6 +1,15 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import { useRole } from '@/components/auth/RoleProvider';
+import { notifyInventoryUpdated } from '@/lib/domains/inventory/inventoryMoveClient';
+import { resolveManufacturingRecipeId } from '@/lib/domains/manufacturing/fallbackRecipes';
+import type {
+  KitchenRecipeBOMIngredient,
+  KitchenRecipeDefinition,
+  ProductionBatchExecutedSummary,
+} from '@/lib/domains/manufacturing/types';
+import type { RoleName } from '@/lib/utils/roles';
 import {
   ChefHat,
   X,
@@ -14,53 +23,25 @@ import {
   Sparkles,
 } from 'lucide-react';
 
-// ============================================================================
-// Strict Types for Phase 5 Kitchen Recipe Production + Variance Toggle
-// ============================================================================
+export type {
+  KitchenRecipeBOMIngredient,
+  KitchenRecipeDefinition,
+  ProductionBatchExecutedSummary,
+} from '@/lib/domains/manufacturing/types';
 
-export interface KitchenRecipeBOMIngredient {
-  ingredientProductId: string;
-  name: string;
-  standardQtyPerBatch: number;
-  unit: string;
-  movingAvgUnitCost: number;
-  allowVariance: boolean;
-  availableKitchenStock: number;
-}
-
-export interface KitchenRecipeDefinition {
-  recipeId: string;
-  recipeName: string;
-  category: string;
-  outputProductId: string;
-  outputProductName: string;
-  standardBatchYield: number;
-  outputUnit: string;
-  targetRetailPrice: number;
-  prepTimeMinutes: number;
-  bom: KitchenRecipeBOMIngredient[];
-}
-
-export interface ProductionBatchExecutedSummary {
-  recipeId: string;
-  recipeName: string;
-  outputProductId: string;
-  outputProductName: string;
-  batchOutputQty: number;
-  totalBatchCost: number;
-  unitOutputCost: number;
-  ingredientsUsed: Array<{
-    ingredientProductId: string;
-    name: string;
-    actualQtyUsed: number;
-    unit: string;
-  }>;
+function manufacturingRoleForApi(role: RoleName | undefined): string {
+  if (!role) return 'KITCHEN_STAFF';
+  if (role === 'DELI_CHEF') return 'DELI_CHEF';
+  if (role === 'ADMIN' || role === 'STORE_MANAGER') return role;
+  return 'KITCHEN_STAFF';
 }
 
 interface RecipeProductionModalProps {
   isOpen: boolean;
   onClose: () => void;
+  initialRecipeId?: string;
   onBatchProduced?: (summary: ProductionBatchExecutedSummary) => void;
+  onBatchFailed?: (message: string) => void;
 }
 
 const KITCHEN_RECIPES_CATALOG: KitchenRecipeDefinition[] = [
@@ -198,8 +179,16 @@ const KITCHEN_RECIPES_CATALOG: KitchenRecipeDefinition[] = [
 export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
   isOpen,
   onClose,
+  initialRecipeId,
   onBatchProduced,
+  onBatchFailed,
 }) => {
+  const { activeUser } = useRole();
+  const staffRole = manufacturingRoleForApi(activeUser?.role);
+  const [catalog, setCatalog] = useState<KitchenRecipeDefinition[]>(
+    KITCHEN_RECIPES_CATALOG
+  );
+  const [catalogLoading, setCatalogLoading] = useState(false);
   const [selectedRecipeId, setSelectedRecipeId] = useState<string>(
     KITCHEN_RECIPES_CATALOG[0].recipeId
   );
@@ -208,17 +197,51 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
   );
   const [varianceEnabled, setVarianceEnabled] = useState<boolean>(false);
   const [customWeights, setCustomWeights] = useState<Record<string, number>>({});
-  const [staffRole, setStaffRole] = useState<string>('KITCHEN_STAFF');
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [completedBatch, setCompletedBatch] =
     useState<ProductionBatchExecutedSummary | null>(null);
 
+  const loadCatalog = useCallback(async () => {
+    setCatalogLoading(true);
+    try {
+      const res = await fetch('/api/manufacturing', { cache: 'no-store' });
+      const json = await res.json();
+      if (json.success && Array.isArray(json.recipes) && json.recipes.length > 0) {
+        setCatalog(json.recipes as KitchenRecipeDefinition[]);
+      }
+    } catch {
+      /* keep seeded fallback */
+    } finally {
+      setCatalogLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setCompletedBatch(null);
+    setErrorMsg(null);
+    void loadCatalog();
+  }, [isOpen, loadCatalog]);
+
+  useEffect(() => {
+    if (!isOpen || catalog.length === 0) return;
+    const resolved = initialRecipeId
+      ? resolveManufacturingRecipeId(initialRecipeId)
+      : catalog[0].recipeId;
+    const found =
+      catalog.find((r) => r.recipeId === resolved) ??
+      catalog.find((r) => r.recipeId === initialRecipeId) ??
+      catalog[0];
+    setSelectedRecipeId(found.recipeId);
+    setBatchOutputQty(found.standardBatchYield);
+    setCustomWeights({});
+  }, [isOpen, initialRecipeId, catalog]);
+
   const selectedRecipe = useMemo(
     () =>
-      KITCHEN_RECIPES_CATALOG.find((r) => r.recipeId === selectedRecipeId) ||
-      KITCHEN_RECIPES_CATALOG[0],
-    [selectedRecipeId]
+      catalog.find((r) => r.recipeId === selectedRecipeId) || catalog[0],
+    [catalog, selectedRecipeId]
   );
 
   const scaleRatio =
@@ -280,9 +303,16 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
   }, [selectedRecipe.targetRetailPrice, unitOutputCost]);
 
   if (!isOpen) return null;
+  if (!selectedRecipe) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
+        <p className="text-sm text-slate-300">No hay recetas BOM disponibles.</p>
+      </div>
+    );
+  }
 
   const handleRecipeChange = (newRecipeId: string) => {
-    const found = KITCHEN_RECIPES_CATALOG.find((r) => r.recipeId === newRecipeId);
+    const found = catalog.find((r) => r.recipeId === newRecipeId);
     setSelectedRecipeId(newRecipeId);
     if (found) {
       setBatchOutputQty(found.standardBatchYield);
@@ -293,19 +323,42 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
   };
 
   const handleExecuteProduction = async () => {
+    if (!selectedRecipe) return;
     setSubmitting(true);
     setErrorMsg(null);
 
-    try {
-      const ingredientOverrides = varianceEnabled
-        ? computedBomRows
-            .filter((r) => r.allowVariance)
-            .map((r) => ({
-              ingredient_product_id: r.ingredientProductId,
-              actual_qty_used: r.actualQty,
-            }))
-        : undefined;
+    const ingredientOverrides = varianceEnabled
+      ? computedBomRows
+          .filter((r) => r.allowVariance)
+          .map((r) => ({
+            ingredient_product_id: r.ingredientProductId,
+            actual_qty_used: r.actualQty,
+          }))
+      : undefined;
 
+    const previewSummary: ProductionBatchExecutedSummary = {
+      recipeId: selectedRecipe.recipeId,
+      recipeName: selectedRecipe.recipeName,
+      outputProductId: selectedRecipe.outputProductId,
+      outputProductName: selectedRecipe.outputProductName,
+      batchOutputQty,
+      totalBatchCost,
+      unitOutputCost,
+      ingredientsUsed: computedBomRows.map((r) => ({
+        ingredientProductId: r.ingredientProductId,
+        name: r.name,
+        actualQtyUsed: r.actualQty,
+        unit: r.unit,
+      })),
+    };
+
+    onBatchProduced?.(previewSummary);
+    notifyInventoryUpdated();
+    window.dispatchEvent(new CustomEvent('freshloop-kitchen-inbox'));
+    onClose();
+    setSubmitting(false);
+
+    try {
       const res = await fetch('/api/manufacturing', {
         method: 'POST',
         headers: {
@@ -316,7 +369,7 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
           recipe_id: selectedRecipe.recipeId,
           batch_output: batchOutputQty,
           staff_role: staffRole,
-          staff_id: 'chef-kitchen-01',
+          staff_id: activeUser?.id ?? 'staff-kitchen-prep-01',
           enforce_stock_check: true,
           ingredient_overrides: ingredientOverrides,
         }),
@@ -324,53 +377,34 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
 
       const json = await res.json();
 
-      // Enforce RBAC rejection if user tested a non-kitchen role
       if (res.status === 403) {
-        setErrorMsg(
+        onBatchFailed?.(
           json.error ||
-            'Acceso Denegado (RBAC): Solo el personal de cocina (KITCHEN_STAFF) puede ejecutar lotes BOM.'
+            'Acceso denegado: solo personal de cocina puede ejecutar lotes BOM.'
         );
-        setSubmitting(false);
         return;
       }
 
       if (!res.ok || json.success === false) {
-        setErrorMsg(json.error || 'Manufacturing batch failed on the server.');
+        onBatchFailed?.(json.error || 'El lote falló en el servidor.');
+        notifyInventoryUpdated();
         return;
       }
 
-      const summary: ProductionBatchExecutedSummary = {
-        recipeId: selectedRecipe.recipeId,
-        recipeName: selectedRecipe.recipeName,
-        outputProductId: selectedRecipe.outputProductId,
-        outputProductName: selectedRecipe.outputProductName,
-        batchOutputQty,
-        totalBatchCost: json.total_batch_cost ?? totalBatchCost,
-        unitOutputCost: json.unit_output_cost ?? unitOutputCost,
-        ingredientsUsed: computedBomRows.map((r) => ({
-          ingredientProductId: r.ingredientProductId,
-          name: r.name,
-          actualQtyUsed: r.actualQty,
-          unit: r.unit,
-        })),
-      };
-
-      setCompletedBatch(summary);
-      if (onBatchProduced) {
-        onBatchProduced(summary);
-      }
+      notifyInventoryUpdated();
     } catch {
-      setErrorMsg('Could not reach the manufacturing API. Check the connection and try again.');
-    } finally {
-      setSubmitting(false);
+      onBatchFailed?.(
+        'No se pudo contactar /api/manufacturing. Revisa la conexión e intenta de nuevo.'
+      );
+      notifyInventoryUpdated();
     }
   };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-md">
-      <div className="relative w-full max-w-3xl bg-zinc-900 border border-zinc-800 rounded-3xl overflow-hidden shadow-2xl flex flex-col max-h-[92vh]">
+      <div className="relative flex max-h-[92vh] w-full max-w-3xl flex-col overflow-hidden rounded-3xl border border-slate-800 bg-slate-900 shadow-2xl">
         {/* Header */}
-        <div className="flex items-center justify-between px-5 sm:px-6 py-4 border-b border-zinc-800 bg-zinc-950/75">
+        <div className="flex items-center justify-between border-b border-slate-800 bg-slate-950/75 px-5 py-4 sm:px-6">
           <div className="flex items-center gap-3">
             <div className="p-2.5 rounded-2xl bg-amber-500/15 border border-amber-500/40 text-amber-400">
               <ChefHat className="w-5 h-5" />
@@ -384,8 +418,11 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
                   RBAC: Kitchen Only
                 </span>
               </div>
-              <p className="text-xs text-zinc-400">
-                Descuenta ingredientes de <code className="text-amber-300">Kitchen_Prep</code> con Toggle de Varianza y añade el producto final al Ledger
+              <p className="text-xs text-slate-400">
+                {activeUser?.name ?? 'Staff'} · {staffRole} — descuenta{' '}
+                <code className="text-amber-300">Kitchen_Prep</code> y registra el
+                terminado en el ledger
+                {catalogLoading ? ' · actualizando stock…' : ''}
               </p>
             </div>
           </div>
@@ -424,7 +461,7 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
                     onChange={(e) => handleRecipeChange(e.target.value)}
                     className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-950 border border-zinc-800 text-xs font-bold text-white focus:outline-none focus:border-amber-500/60"
                   >
-                    {KITCHEN_RECIPES_CATALOG.map((rec) => (
+                    {catalog.map((rec) => (
                       <option key={rec.recipeId} value={rec.recipeId}>
                         {rec.recipeName} ({rec.standardBatchYield} {rec.outputUnit})
                       </option>
@@ -432,7 +469,7 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
                   </select>
                 </div>
 
-                <div className="sm:col-span-3">
+                <div className="sm:col-span-6">
                   <label className="font-bold text-zinc-400 uppercase text-[10px] tracking-wider block mb-1.5">
                     Porciones Producidas
                   </label>
@@ -443,26 +480,8 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
                     onChange={(e) =>
                       setBatchOutputQty(Math.max(1, Number(e.target.value) || 1))
                     }
-                    className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-950 border border-zinc-800 text-xs font-mono font-bold text-emerald-400 focus:outline-none focus:border-emerald-500/60"
+                    className="min-h-12 w-full rounded-xl border border-slate-800 bg-slate-950 px-3.5 py-2.5 text-xs font-mono font-bold text-emerald-400 focus:border-emerald-500/60 focus:outline-none"
                   />
-                </div>
-
-                <div className="sm:col-span-3">
-                  <label className="font-bold text-zinc-400 uppercase text-[10px] tracking-wider block mb-1.5">
-                    Rol Activo (RBAC)
-                  </label>
-                  <select
-                    value={staffRole}
-                    onChange={(e) => {
-                      setStaffRole(e.target.value);
-                      setErrorMsg(null);
-                    }}
-                    className="w-full px-3 py-2.5 rounded-xl bg-zinc-950 border border-zinc-800 text-xs font-bold text-amber-300"
-                  >
-                    <option value="KITCHEN_STAFF">KITCHEN_STAFF (Autorizado)</option>
-                    <option value="CHEF">EXECUTIVE_CHEF (Autorizado)</option>
-                    <option value="CASHIER">CASHIER (Bloqueado 403)</option>
-                  </select>
                 </div>
               </div>
 
@@ -671,18 +690,18 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
               type="button"
               onClick={handleExecuteProduction}
               disabled={submitting}
-              className="flex items-center gap-2 px-6 py-2.5 rounded-xl text-xs font-black bg-gradient-to-r from-amber-400 to-emerald-400 hover:from-amber-300 hover:to-emerald-300 text-zinc-950 shadow-lg shadow-amber-500/20 transition-all active:scale-95 cursor-pointer"
+              className="flex min-h-12 cursor-pointer items-center gap-2 rounded-xl bg-gradient-to-r from-amber-400 to-emerald-400 px-6 py-3 text-xs font-black text-slate-950 shadow-lg shadow-amber-500/20 transition-all hover:from-amber-300 hover:to-emerald-300 active:scale-95"
             >
               {submitting ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>Ejecutando BOM en /api/manufacturing...</span>
+                  <span>Enviando lote…</span>
                 </>
               ) : (
                 <>
-                  <Sparkles className="w-4 h-4 fill-zinc-950" />
+                  <Sparkles className="w-4 h-4 fill-slate-950" />
                   <span>
-                    Confirmar Producción (+{batchOutputQty}{' '}
+                    Execute batch (+{batchOutputQty}{' '}
                     {selectedRecipe.outputUnit})
                   </span>
                 </>

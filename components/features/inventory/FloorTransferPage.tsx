@@ -7,8 +7,10 @@ import { ArrowRight, Search } from 'lucide-react';
 import { useRole } from '@/components/auth/RoleProvider';
 import { RetailFloorTransferPanel } from '@/components/features/inventory/RetailFloorTransferPanel';
 import { PullSliderControl } from '@/components/ui/PullSliderControl';
+import { Toast } from '@/components/ui/Toast';
 import type { StockLevel } from '@/lib/domains/inventory/stock';
 import type { DepartmentType } from '@/lib/types';
+import { useOptimisticInventoryLevels } from '@/hooks/use-optimistic-inventory-levels';
 
 const DEPARTMENTS: DepartmentType[] = ['PRODUCE', 'DAIRY', 'BAKERY', 'PANTRY'];
 
@@ -23,18 +25,13 @@ function departmentForName(name: string): DepartmentType {
 export function FloorTransferPage({ levels: initialLevels }: { levels: StockLevel[] | null }) {
   const loading = initialLevels === null;
   const router = useRouter();
-  const [levels, setLevels] = useState<StockLevel[]>(() => initialLevels ?? []);
+  const { levels, performMove, setLevels } = useOptimisticInventoryLevels(initialLevels);
   const [query, setQuery] = useState('');
   const [department, setDepartment] = useState<string>('ALL');
   const [pullDays, setPullDays] = useState(3);
   const [toast, setToast] = useState<{ text: string; kitchen?: boolean } | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const { activeUser } = useRole();
-
-  useEffect(() => {
-    if (!initialLevels) return;
-    setLevels(initialLevels);
-  }, [initialLevels]);
 
   useEffect(() => {
     const sync = () => {
@@ -48,13 +45,7 @@ export function FloorTransferPage({ levels: initialLevels }: { levels: StockLeve
     };
     window.addEventListener('freshloop-inventory-updated', sync);
     return () => window.removeEventListener('freshloop-inventory-updated', sync);
-  }, []);
-
-  useEffect(() => {
-    if (!toast) return;
-    const t = window.setTimeout(() => setToast(null), 3200);
-    return () => window.clearTimeout(t);
-  }, [toast]);
+  }, [setLevels]);
 
   const departmentFilter = useCallback(
     (row: StockLevel) => department === 'ALL' || departmentForName(row.name) === department,
@@ -72,9 +63,6 @@ export function FloorTransferPage({ levels: initialLevels }: { levels: StockLeve
   );
 
   const handleSuccess = (message: string, level: StockLevel) => {
-    setLevels((current) =>
-      current.map((item) => (item.productId === level.productId ? level : item))
-    );
     setErrorMessage(null);
     setToast({
       text: message,
@@ -102,7 +90,7 @@ export function FloorTransferPage({ levels: initialLevels }: { levels: StockLeve
         </div>
         <Link
           href="/kitchen?inbox=1"
-          className="inline-flex h-10 items-center gap-1.5 rounded-xl border border-blue-900/50 bg-blue-950/30 px-3 text-xs font-bold text-blue-200"
+          className="inline-flex min-h-12 items-center gap-1.5 rounded-xl border border-blue-900/50 bg-blue-950/30 px-4 py-3 text-xs font-bold text-blue-200"
         >
           Kitchen inbox
           <ArrowRight className="h-4 w-4" />
@@ -119,7 +107,7 @@ export function FloorTransferPage({ levels: initialLevels }: { levels: StockLeve
         <select
           value={department}
           onChange={(e) => setDepartment(e.target.value)}
-          className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-xs font-medium text-slate-300"
+          className="min-h-12 rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-xs font-medium text-slate-300"
         >
           <option value="ALL">All departments</option>
           {DEPARTMENTS.map((dept) => (
@@ -128,13 +116,13 @@ export function FloorTransferPage({ levels: initialLevels }: { levels: StockLeve
             </option>
           ))}
         </select>
-        <label className="relative block flex-1 min-w-[12rem] sm:max-w-xs">
+        <label className="relative block min-h-12 flex-1 min-w-[12rem] sm:max-w-xs">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search item…"
-            className="w-full rounded-xl border border-slate-700 bg-slate-950 py-2 pl-9 pr-3 text-xs text-slate-200"
+            className="h-full w-full rounded-xl border border-slate-700 bg-slate-950 py-2 pl-9 pr-3 text-xs text-slate-200"
           />
         </label>
       </div>
@@ -154,6 +142,7 @@ export function FloorTransferPage({ levels: initialLevels }: { levels: StockLeve
             priorityOnly
             query={query}
             departmentFilter={departmentFilter}
+            performMove={performMove}
             onSuccess={handleSuccess}
             onError={setErrorMessage}
           />
@@ -169,6 +158,7 @@ export function FloorTransferPage({ levels: initialLevels }: { levels: StockLeve
               query={query}
               departmentFilter={departmentFilter}
               compact
+              performMove={performMove}
               onSuccess={handleSuccess}
               onError={setErrorMessage}
             />
@@ -176,14 +166,19 @@ export function FloorTransferPage({ levels: initialLevels }: { levels: StockLeve
         </>
       )}
 
-      {errorMessage ? <p className="mt-3 text-sm font-bold text-[#C4847A]">{errorMessage}</p> : null}
+      <Toast
+        message={errorMessage}
+        onDismiss={() => setErrorMessage(null)}
+        variant="destructive"
+      />
+
       {toast ? (
         <div className="fixed bottom-24 left-1/2 z-50 max-w-md -translate-x-1/2 rounded-2xl border border-slate-700 bg-slate-900/95 px-4 py-3 text-sm font-bold text-slate-100 shadow-xl md:bottom-8">
           <p>{toast.text}</p>
           {toast.kitchen ? (
             <Link
               href="/kitchen?inbox=1"
-              className="mt-2 inline-flex text-xs font-bold text-blue-300 underline-offset-2 hover:underline"
+              className="mt-2 inline-flex min-h-11 items-center text-xs font-bold text-blue-300 underline-offset-2 hover:underline"
             >
               Open kitchen inbox
             </Link>

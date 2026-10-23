@@ -12,6 +12,15 @@ import {
   InventoryLedgerError,
 } from '@/lib/domains/inventory/ledger';
 import { invalidateInventoryCaches } from '@/lib/domains/inventory/inventoryCache';
+import { authErrorResponse } from '@/lib/auth/http';
+import { requireRoles } from '@/lib/auth/session';
+import { MANUFACTURING_ROLES } from '@/lib/auth/permissions';
+import { buildManufacturingRecipeCatalog } from '@/lib/domains/manufacturing/buildCatalog';
+import {
+  FALLBACK_RECIPES,
+  resolveManufacturingRecipeId,
+  type FallbackRecipeCatalogEntry,
+} from '@/lib/domains/manufacturing/fallbackRecipes';
 
 // ============================================================================
 // Types & Interfaces for Phase 3 Kitchen Manufacturing Engine
@@ -72,159 +81,25 @@ const LOC_KITCHEN_PREP = 'Kitchen_Prep' as InventoryLocation;
 const TX_RESCUE = 'Rescue' as TransactionType;
 const TX_RECEIVE = 'Receive' as TransactionType;
 
-const ALLOWED_KITCHEN_ROLES = new Set([
-  'KITCHEN_STAFF',
-  'KITCHEN',
-  'CHEF',
-  'EXECUTIVE_CHEF',
-  'PREP_COOK',
-]);
+// ============================================================================
+// GET /api/manufacturing — live BOM catalog (Kitchen_Prep stock + MAC)
+// ============================================================================
 
-interface FallbackRecipeCatalogEntry {
-  id: string;
-  aliases: string[];
-  name: string;
-  outputProductId: string;
-  outputProductName: string;
-  outputUnit: UnitType;
-  outputShelfLifeDays: number;
-  batchYieldQty: number;
-  targetRetailPrice: number;
-  isActive: boolean;
-  bomItems: Array<{
-    ingredientProductId: string;
-    ingredientName: string;
-    requiredQty: number;
-    unit: UnitType;
-    allowVariance: boolean;
-    defaultMacCost: number;
-  }>;
+export async function GET() {
+  try {
+    const recipes = await buildManufacturingRecipeCatalog();
+    return NextResponse.json({ success: true, recipes });
+  } catch (error: unknown) {
+    return NextResponse.json(
+      {
+        success: false,
+        recipes: [],
+        error: error instanceof Error ? error.message : 'Could not load recipe catalog.',
+      },
+      { status: 500 }
+    );
+  }
 }
-
-const FALLBACK_RECIPES: FallbackRecipeCatalogEntry[] = [
-  {
-    id: 'rec-panzanella-001',
-    aliases: ['rec-tomato-panzanella', 'rec-001'],
-    name: 'Roasted Hot House Tomato & Sourdough Panzanella',
-    outputProductId: 'prod-deli-panzanella',
-    outputProductName: 'Roasted Tomato & Sourdough Panzanella (12 oz)',
-    outputUnit: 'TUB' as UnitType,
-    outputShelfLifeDays: 3,
-    batchYieldQty: 20,
-    targetRetailPrice: 8.99,
-    isActive: true,
-    bomItems: [
-      {
-        ingredientProductId: 'prod-tomato-hothouse',
-        ingredientName: 'Hot House Tomatoes (Ontario)',
-        requiredQty: 15,
-        unit: 'LBS' as UnitType,
-        allowVariance: true,
-        defaultMacCost: 2.5,
-      },
-      {
-        ingredientProductId: 'prod-sourdough-boule',
-        ingredientName: 'Artisanal Sourdough Boule',
-        requiredQty: 8,
-        unit: 'LOAF' as UnitType,
-        allowVariance: true,
-        defaultMacCost: 2.1,
-      },
-      {
-        ingredientProductId: 'prod-evoo-5l',
-        ingredientName: 'Extra Virgin Olive Oil (Bulk Kitchen)',
-        requiredQty: 0.5,
-        unit: 'LITER' as UnitType,
-        allowVariance: false,
-        defaultMacCost: 5.7,
-      },
-    ],
-  },
-  {
-    id: 'rec-parfait-002',
-    aliases: ['rec-apple-parfait', 'rec-002'],
-    name: 'Honeycrisp & Spiced Cream Bakery Parfait',
-    outputProductId: 'prod-deli-parfait',
-    outputProductName: 'Honeycrisp & Spiced Cream Parfait (10 oz)',
-    outputUnit: 'TUB' as UnitType,
-    outputShelfLifeDays: 3,
-    batchYieldQty: 28,
-    targetRetailPrice: 6.49,
-    isActive: true,
-    bomItems: [
-      {
-        ingredientProductId: 'prod-apple-honeycrisp',
-        ingredientName: 'Honey Crisp Apples',
-        requiredQty: 20,
-        unit: 'LBS' as UnitType,
-        allowVariance: true,
-        defaultMacCost: 2.62,
-      },
-      {
-        ingredientProductId: 'prod-heavy-cream',
-        ingredientName: 'Whole Heavy Cream 40%',
-        requiredQty: 6,
-        unit: 'LITER' as UnitType,
-        allowVariance: true,
-        defaultMacCost: 3.8,
-      },
-      {
-        ingredientProductId: 'prod-greek-yogurt',
-        ingredientName: 'Greek Whole Milk Yogurt (750g)',
-        requiredQty: 8,
-        unit: 'TUB' as UnitType,
-        allowVariance: false,
-        defaultMacCost: 2.2,
-      },
-    ],
-  },
-  {
-    id: 'rec-guacamole-003',
-    aliases: ['rec-avocado-guacamole', 'rec-003'],
-    name: 'Avocado & Ontario Tomato Guacamole Cups',
-    outputProductId: 'prod-deli-guacamole',
-    outputProductName: 'Fresh Kitchen Rescue Guacamole Cup (6 oz)',
-    outputUnit: 'TUB' as UnitType,
-    outputShelfLifeDays: 2,
-    batchYieldQty: 30,
-    targetRetailPrice: 4.99,
-    isActive: true,
-    bomItems: [
-      {
-        ingredientProductId: 'prod-avocado-hass',
-        ingredientName: 'Avocados Hass (Mexico)',
-        requiredQty: 18,
-        unit: 'UNIT' as UnitType,
-        allowVariance: true,
-        defaultMacCost: 1.81,
-      },
-      {
-        ingredientProductId: 'prod-tomato-cocktail',
-        ingredientName: 'Cocktail Tomatoes',
-        requiredQty: 2,
-        unit: 'LBS' as UnitType,
-        allowVariance: true,
-        defaultMacCost: 3.5,
-      },
-      {
-        ingredientProductId: 'prod-cilantro',
-        ingredientName: 'Fresh Cilantro Bunch',
-        requiredQty: 6,
-        unit: 'BUNCH' as UnitType,
-        allowVariance: true,
-        defaultMacCost: 1.38,
-      },
-      {
-        ingredientProductId: 'prod-jalapeno',
-        ingredientName: 'Jalapeno Peppers',
-        requiredQty: 4,
-        unit: 'LBS' as UnitType,
-        allowVariance: true,
-        defaultMacCost: 1.9,
-      },
-    ],
-  },
-];
 
 // ============================================================================
 // POST /api/manufacturing
@@ -232,26 +107,14 @@ const FALLBACK_RECIPES: FallbackRecipeCatalogEntry[] = [
 
 export async function POST(req: NextRequest) {
   try {
+    const actor = await requireRoles(MANUFACTURING_ROLES);
     const body = (await req.json()) as ManufacturingRequestBody;
 
-    // 1. RBAC Enforcement (Global Rule #5: BOM executions restricted exclusively to Kitchen Staff)
-    const headerRole = req.headers.get('x-staff-role')?.trim().toUpperCase();
-    const bodyRole = body.staff_role?.trim().toUpperCase();
-    const effectiveRole = bodyRole || headerRole || 'KITCHEN_STAFF';
+    const effectiveRole = actor.role;
+    const staffId = actor.id;
 
-    if (!ALLOWED_KITCHEN_ROLES.has(effectiveRole)) {
-      return NextResponse.json(
-        {
-          success: false,
-          code: 'RBAC_FORBIDDEN_ROLE',
-          error: `Access Denied: Recipe BOM manufacturing is restricted exclusively to KITCHEN_STAFF (received role: "${effectiveRole}").`,
-        },
-        { status: 403 }
-      );
-    }
-
-    // 2. Validate `recipe_id` and `batch_output`
-    const recipeId = body.recipe_id?.trim();
+    // Validate `recipe_id` and `batch_output`
+    const recipeId = resolveManufacturingRecipeId(body.recipe_id?.trim() ?? '');
     const batchOutput = Number(body.batch_output);
 
     if (!recipeId) {
@@ -276,9 +139,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const staffId = body.staff_id?.trim() || 'staff-kitchen-prep-01';
-
-    // 3. Query Recipe + RecipeBOM + Output Product (with fallback to seeded catalog if DB is unavailable)
+    // Query Recipe + RecipeBOM + Output Product (with fallback to seeded catalog if DB is unavailable)
     let resolvedRecipe: FallbackRecipeCatalogEntry | null = null;
     try {
       const dbRecipe = await prisma.recipe?.findUnique({
@@ -599,6 +460,8 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(response);
   } catch (error: unknown) {
+    const authRes = authErrorResponse(error);
+    if (authRes) return authRes;
     console.error('API Error in /api/manufacturing:', error);
     if (error instanceof InventoryLedgerError) {
       return NextResponse.json(

@@ -18,16 +18,47 @@ FreshLoop is a **monolithic Next.js App Router** app for independent grocers. Th
 | UI | React **19**, Tailwind **4**, Lucide, Recharts |
 | DB | PostgreSQL (often Supabase), **Prisma 6** |
 | AI | `@google/generative-ai` / `@google/genai`, Gemini for OCR, voice, recipe fusion |
-| Auth (current) | **Demo role picker** — `RoleProvider` loads `/api/users`, persists `freshloop-active-user` in `localStorage`. Not production SSO. |
+| Auth | **Auth.js v5** (`next-auth@beta`) + **Credentials** + **JWT** sessions; `RoleProvider` wraps `SessionProvider` / `useSession()`. |
 
 ```bash
 npm install
-cp .env.example .env.local   # if present; set DATABASE_URL, DIRECT_URL, GEMINI_API_KEY
-npx prisma migrate dev
-npm run db:seed              # optional sample products/recipes
-npm run dev                  # http://localhost:3000 → redirects to /admin
+cp .env.example .env.local   # DATABASE_URL, DIRECT_URL, AUTH_SECRET, GEMINI_API_KEY
+npx prisma migrate deploy    # or: npx prisma migrate dev
+npm run db:seed              # demo staff + products (password: freshloop)
+npm run dev                  # http://localhost:3000 → /login if unsigned
 npm run build                # prisma generate + next build
 ```
+
+### Authentication (Phase 1)
+
+| Piece | Location |
+|-------|----------|
+| Auth config | `auth.ts`, `auth.config.ts` (edge-safe JWT callbacks) |
+| Handlers | `app/api/auth/[...nextauth]/route.ts` |
+| Staff signup | `app/signup/page.tsx`, `POST /api/auth/signup` |
+| Forgot password | `app/forgot-password/page.tsx`, `POST /api/auth/forgot-password`, `POST /api/auth/reset-password` |
+| Session helpers | `lib/auth/session.ts` — `getSessionUser()`, `requireSessionUser()`, `requireRoles()` |
+| Route guards (API) | `lib/auth/guardRoute.ts` — manager / receiving / kitchen helpers |
+| Middleware RBAC | `middleware.ts` + `canVisit()` in `lib/utils/roles.ts` |
+
+**Environment**
+
+- `AUTH_SECRET` — required (e.g. `openssl rand -base64 32`)
+- `ALLOW_PUBLIC_SIGNUP=false` — disable self-service `/signup`
+
+**Demo logins** (after seed): `admin@freshloop.test`, `manager@freshloop.test`, `floor@freshloop.test`, etc. Password **`freshloop`**.
+
+**RBAC (pages)**
+
+| Routes | Roles |
+|--------|--------|
+| `/admin/users`, `/orders`, `/operations` | `ADMIN`, `STORE_MANAGER` |
+| `/receive` | + `RECEIVING_CLERK` |
+| `/kitchen` | + `DELI_CHEF` |
+| `/inventory/floor` | all operational roles |
+| `/admin` (profile) | any signed-in staff |
+
+**API writes** must use `await requireSessionUser()` (or role helpers)—never trust `staffId` / `role` from the JSON body. Middleware returns **401** for unsigned `/api/*` (except `/api/auth/*`).
 
 ---
 

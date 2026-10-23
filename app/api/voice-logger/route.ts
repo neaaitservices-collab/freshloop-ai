@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { Department, InventoryLocation, TransactionType } from '@prisma/client';
+import { Department, TargetAction } from '@prisma/client';
 import { generateContentWithFallback, parseModelJson } from '@/lib/domains/ai/gemini';
 import { prisma } from '@/lib/domains/inventory/ledger';
-import { invalidateInventoryCaches } from '@/lib/domains/inventory/inventoryCache';
+import { moveRetailStock } from '@/lib/domains/inventory/stock';
 import { INITIAL_INVENTORY_ITEMS } from '@/lib/legacy/mockData';
+import { authErrorResponse } from '@/lib/auth/http';
+import { requireSessionUser } from '@/lib/auth/session';
 
 // ============================================================================
 // Types & Interfaces for Phase 3 Voice Logger + Fuzzy Product Matcher
@@ -422,6 +424,7 @@ export async function POST(req: NextRequest) {
       confirmCommit,
       confirmedItems,
       staffId,
+      transcript: commitTranscript,
     } = body as {
       audioBase64?: string;
       mimeType?: string;
@@ -434,6 +437,7 @@ export async function POST(req: NextRequest) {
         condition?: string;
       }>;
       staffId?: string;
+      transcript?: string;
     };
 
     // ------------------------------------------------------------------------
@@ -442,6 +446,7 @@ export async function POST(req: NextRequest) {
     // in the [CONFIRMAR] / [EDITAR] UI modal (`confirmCommit: true`).
     // ------------------------------------------------------------------------
     if (confirmCommit && Array.isArray(confirmedItems) && confirmedItems.length > 0) {
+      const actor = await requireSessionUser();
       const invalid = confirmedItems.find(
         (item) => !item.product_id?.trim() || !Number.isFinite(Number(item.quantity)) || Number(item.quantity) <= 0
       );
@@ -455,68 +460,28 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      const committedTransactions = await prisma.$transaction(
-        confirmedItems.flatMap((item) => {
-          const absQty = Math.abs(Number(item.quantity) || 1);
-          const actor = staffId || 'staff-voice-floor';
-          const refId = `VOICE-CONFIRM-${Date.now()}`;
+      let ledgerMoves = 0;
 
-          if (item.target_action === 'DISCARD') {
-            return [
-              prisma.inventoryTransaction.create({
-                data: {
-                  productId: item.product_id,
-                  staffId: actor,
-                  qtyChange: -absQty,
-                  transactionType: TransactionType.Waste,
-                  fromLocation: InventoryLocation.Retail_Floor,
-                  toLocation: InventoryLocation.Waste_Bin,
-                  unitCostAtTime: 2.0,
-                  referenceId: refId,
-                  notes: `Confirmed Voice Logger Discard (${item.condition || 'Spoiled'})`,
-                },
-              }),
-            ];
-          }
+      for (const item of confirmedItems) {
+        const absQty = Math.abs(Number(item.quantity) || 1);
+        const ledgerAction = item.target_action === 'DISCARD' ? 'waste' : 'rescue';
+        await moveRetailStock(item.product_id, ledgerAction, actor.id, absQty);
+        ledgerMoves += ledgerAction === 'rescue' ? 2 : 1;
+      }
 
-          // PULL_RESCUE: Double-entry transfer from Retail_Floor -> Kitchen_Prep
-          return [
-            prisma.inventoryTransaction.create({
-              data: {
-                productId: item.product_id,
-                staffId: actor,
-                qtyChange: -absQty,
-                transactionType: TransactionType.Rescue,
-                fromLocation: InventoryLocation.Retail_Floor,
-                toLocation: InventoryLocation.Kitchen_Prep,
-                unitCostAtTime: 2.0,
-                referenceId: refId,
-                notes: `Confirmed Voice Rescue Outflow (${item.condition || 'Overripe'})`,
-              },
-            }),
-            prisma.inventoryTransaction.create({
-              data: {
-                productId: item.product_id,
-                staffId: actor,
-                qtyChange: absQty,
-                transactionType: TransactionType.Rescue,
-                fromLocation: InventoryLocation.Retail_Floor,
-                toLocation: InventoryLocation.Kitchen_Prep,
-                unitCostAtTime: 2.0,
-                referenceId: refId,
-                notes: `Confirmed Voice Rescue Inflow to Kitchen Prep`,
-              },
-            }),
-          ];
-        })
-      );
-      invalidateInventoryCaches();
+      const hasDiscard = confirmedItems.some((i) => i.target_action === 'DISCARD');
+      await prisma.voiceLog.create({
+        data: {
+          transcript: commitTranscript?.trim() || 'Voice floor log (confirmed)',
+          parsedData: confirmedItems,
+          targetAction: hasDiscard ? TargetAction.DISCARD : TargetAction.KITCHEN_RESCUE,
+        },
+      });
 
       return NextResponse.json({
         success: true,
         committed: true,
-        transactionsCreated: committedTransactions.length,
-        transactions: committedTransactions,
+        transactionsCreated: ledgerMoves,
         timestamp: new Date().toISOString(),
       });
     }
@@ -610,6 +575,8 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(responsePayload);
   } catch (error: unknown) {
+    const authRes = authErrorResponse(error);
+    if (authRes) return authRes;
     console.error('API Error in /api/voice-logger:', error);
     return NextResponse.json(
       {

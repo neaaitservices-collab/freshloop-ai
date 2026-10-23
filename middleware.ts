@@ -1,17 +1,96 @@
+import NextAuth from 'next-auth';
 import { NextResponse } from 'next/server';
-import type { NextRequest } from 'next/server';
-import { ROLE_COOKIE, homePathForRole } from '@/lib/utils/roleRouting';
+import { authConfig } from '@/auth.config';
+import { canVisit, homeForRole, isRoleName, type RoleName } from '@/lib/utils/roles';
+import { homePathForRole } from '@/lib/utils/roleRouting';
 
-export function middleware(request: NextRequest) {
-  if (request.nextUrl.pathname !== '/') {
+const { auth } = NextAuth(authConfig);
+
+const PUBLIC_PAGE_PREFIXES = ['/login', '/signup', '/forgot-password', '/reset-password'];
+
+function isPublicPage(pathname: string): boolean {
+  return PUBLIC_PAGE_PREFIXES.some(
+    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`)
+  );
+}
+
+function isAuthApi(pathname: string): boolean {
+  return pathname.startsWith('/api/auth');
+}
+
+type MiddlewareSession = {
+  user?: { id?: string; email?: string | null; role?: string };
+} | null;
+
+function isLoggedIn(session: MiddlewareSession): boolean {
+  const user = session?.user;
+  if (!user) return false;
+  if (user.id) return true;
+  return typeof user.email === 'string' && user.email.length > 0;
+}
+
+function roleFromAuth(session: { user?: { role?: string } } | null): RoleName | null {
+  const roleRaw = session?.user?.role;
+  return typeof roleRaw === 'string' && isRoleName(roleRaw) ? roleRaw : null;
+}
+
+export default auth((req) => {
+  const { pathname } = req.nextUrl;
+  const session = req.auth;
+  const loggedIn = isLoggedIn(session);
+  const role = roleFromAuth(session) ?? (loggedIn ? ('FLOOR_STAFF' as RoleName) : null);
+
+  if (pathname.startsWith('/api/')) {
+    if (isAuthApi(pathname)) {
+      return NextResponse.next();
+    }
+    if (!loggedIn) {
+      return NextResponse.json(
+        { success: false, error: 'Unauthorized — sign in required.' },
+        { status: 401 }
+      );
+    }
     return NextResponse.next();
   }
 
-  const role = request.cookies.get(ROLE_COOKIE)?.value;
-  const destination = homePathForRole(role);
-  return NextResponse.redirect(new URL(destination, request.url));
-}
+  if (isPublicPage(pathname)) {
+    if (
+      loggedIn &&
+      role &&
+      (pathname === '/login' ||
+        pathname === '/signup' ||
+        pathname === '/forgot-password' ||
+        pathname === '/reset-password')
+    ) {
+      return NextResponse.redirect(new URL(homePathForRole(role), req.url));
+    }
+    return NextResponse.next();
+  }
+
+  if (pathname === '/') {
+    if (!loggedIn || !role) {
+      const login = new URL('/login', req.url);
+      login.searchParams.set('callbackUrl', homePathForRole(role ?? undefined));
+      return NextResponse.redirect(login);
+    }
+    return NextResponse.redirect(new URL(homeForRole(role), req.url));
+  }
+
+  if (!loggedIn || !role) {
+    const login = new URL('/login', req.url);
+    login.searchParams.set('callbackUrl', pathname);
+    return NextResponse.redirect(login);
+  }
+
+  if (!canVisit(role, pathname)) {
+    return NextResponse.redirect(new URL(homeForRole(role), req.url));
+  }
+
+  return NextResponse.next();
+});
 
 export const config = {
-  matcher: ['/'],
+  matcher: [
+    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+  ],
 };

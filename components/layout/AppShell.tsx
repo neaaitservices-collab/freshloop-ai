@@ -5,6 +5,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { Navigation } from '@/components/layout/Navigation';
 import { useRole } from '@/components/auth/RoleProvider';
 import { VoiceLoggerModal } from '@/components/features/voice/VoiceLoggerModal';
+import { notifyInventoryUpdated } from '@/lib/domains/inventory/inventoryMoveClient';
 import { canVisit, homeForRole } from '@/lib/utils/roles';
 
 export function AppShell({
@@ -32,7 +33,13 @@ export function AppShell({
       <Navigation onVoice={openVoice} />
       <div className="flex min-w-0 flex-1 flex-col pb-20 md:pb-0">{children}</div>
       {!onVoice ? (
-        <VoiceLoggerModal isOpen={voiceOpen} onClose={() => setVoiceOpen(false)} />
+        <VoiceLoggerModal
+          isOpen={voiceOpen}
+          onClose={() => setVoiceOpen(false)}
+          onVoiceConfirmed={() => {
+            notifyInventoryUpdated();
+          }}
+        />
       ) : null}
     </div>
   );

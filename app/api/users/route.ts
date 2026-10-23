@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Role } from '@prisma/client';
 import { prisma } from '@/lib/domains/inventory/ledger';
+import { authErrorResponse } from '@/lib/auth/http';
+import { requireRoles, requireSessionUser } from '@/lib/auth/session';
+import { MANAGER_ROLES } from '@/lib/auth/permissions';
 import { isRoleName, type StaffUser } from '@/lib/utils/roles';
 
 export const dynamic = 'force-dynamic';
@@ -23,9 +26,15 @@ function toStaffUser(user: {
 
 export async function GET() {
   try {
+    const sessionUser = await requireSessionUser();
+    if (!MANAGER_ROLES.includes(sessionUser.role)) {
+      return NextResponse.json({ success: true, users: [sessionUser] });
+    }
     const users = await prisma.user.findMany({ orderBy: [{ role: 'asc' }, { name: 'asc' }] });
     return NextResponse.json({ success: true, users: users.map(toStaffUser) });
   } catch (error) {
+    const authRes = authErrorResponse(error);
+    if (authRes) return authRes;
     return NextResponse.json(
       { success: false, error: error instanceof Error ? error.message : 'Staff could not be loaded.' },
       { status: 500 }
@@ -35,6 +44,7 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   try {
+    await requireRoles(MANAGER_ROLES);
     const body = (await req.json()) as {
       name?: string;
       email?: string;
@@ -59,6 +69,8 @@ export async function POST(req: NextRequest) {
     });
     return NextResponse.json({ success: true, user: toStaffUser(user) });
   } catch (error) {
+    const authRes = authErrorResponse(error);
+    if (authRes) return authRes;
     const message = error instanceof Error ? error.message : 'Staff could not be added.';
     const status = message.includes('Unique constraint') ? 409 : 500;
     return NextResponse.json(

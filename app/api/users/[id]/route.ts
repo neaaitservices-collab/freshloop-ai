@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Role } from '@prisma/client';
 import { prisma } from '@/lib/domains/inventory/ledger';
-import { isRoleName, type StaffUser } from '@/lib/utils/roles';
+import { authErrorResponse } from '@/lib/auth/http';
+import { AuthError, requireRoles, requireSessionUser } from '@/lib/auth/session';
+import { MANAGER_ROLES } from '@/lib/auth/permissions';
+import { isManager, isRoleName, type StaffUser } from '@/lib/utils/roles';
 
 export const dynamic = 'force-dynamic';
 
@@ -23,7 +26,12 @@ function toStaffUser(user: {
 
 export async function PATCH(req: NextRequest, context: { params: Promise<{ id: string }> }) {
   try {
+    const actor = await requireSessionUser();
     const { id } = await context.params;
+    const isSelf = actor.id === id;
+    if (!isSelf && !isManager(actor.role)) {
+      throw new AuthError('Forbidden — managers only.', 403);
+    }
     const body = (await req.json()) as {
       name?: string;
       email?: string;
@@ -33,7 +41,10 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
     const name = body.name?.trim() ?? '';
     const email = body.email?.trim().toLowerCase() ?? '';
     const position = body.position?.trim() ?? '';
-    const role = body.role ?? '';
+    let role = body.role ?? '';
+    if (isSelf && !isManager(actor.role)) {
+      role = actor.role;
+    }
     if (!name || !email || !position || !isRoleName(role)) {
       return NextResponse.json(
         { success: false, error: 'Name, email, position, and role are required.' },
@@ -56,6 +67,8 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
     });
     return NextResponse.json({ success: true, user: toStaffUser(user) });
   } catch (error) {
+    const authRes = authErrorResponse(error);
+    if (authRes) return authRes;
     const message = error instanceof Error ? error.message : 'Staff could not be updated.';
     const status = message.includes('Unique constraint') ? 409 : 500;
     return NextResponse.json(
@@ -67,6 +80,7 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
 
 export async function DELETE(_req: NextRequest, context: { params: Promise<{ id: string }> }) {
   try {
+    await requireRoles(MANAGER_ROLES);
     const { id } = await context.params;
     const current = await prisma.user.findUnique({ where: { id } });
     if (!current) {
@@ -84,6 +98,8 @@ export async function DELETE(_req: NextRequest, context: { params: Promise<{ id:
     await prisma.user.delete({ where: { id } });
     return NextResponse.json({ success: true });
   } catch (error) {
+    const authRes = authErrorResponse(error);
+    if (authRes) return authRes;
     return NextResponse.json(
       { success: false, error: error instanceof Error ? error.message : 'Staff could not be removed.' },
       { status: 500 }

@@ -1,11 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { applyRetailMarkdown, moveKitchenPrepToWaste, moveRetailStock } from '@/lib/domains/inventory/stock';
 import { apiError, apiErrorFromUnknown } from '@/lib/domains/ai/apiError';
+import { authErrorResponse } from '@/lib/auth/http';
+import { requireSessionUser } from '@/lib/auth/session';
 
 export const dynamic = 'force-dynamic';
 
 export async function POST(req: NextRequest) {
   try {
+    const actor = await requireSessionUser();
     let body: {
       productId?: string;
       action?: string;
@@ -23,7 +26,7 @@ export async function POST(req: NextRequest) {
       return apiError('productId is required.', 400);
     }
     if (action === 'markdown') {
-      const marked = await applyRetailMarkdown(productId, body.staffId ?? '');
+      const marked = await applyRetailMarkdown(productId, actor.id);
       return NextResponse.json({
         success: true,
         action: 'markdown',
@@ -31,7 +34,7 @@ export async function POST(req: NextRequest) {
       });
     }
     if (action === 'kitchen_waste') {
-      const moved = await moveKitchenPrepToWaste(productId, body.staffId ?? '', body.quantity);
+      const moved = await moveKitchenPrepToWaste(productId, actor.id, body.quantity);
       return NextResponse.json({
         success: true,
         action,
@@ -47,7 +50,7 @@ export async function POST(req: NextRequest) {
     const moved = await moveRetailStock(
       productId,
       action as 'waste' | 'rescue',
-      body.staffId ?? '',
+      actor.id,
       body.quantity
     );
     return NextResponse.json({
@@ -59,6 +62,8 @@ export async function POST(req: NextRequest) {
       kitchenPrepQty: moved.level.kitchenPrepQty,
     });
   } catch (error) {
+    const authRes = authErrorResponse(error);
+    if (authRes) return authRes;
     return apiErrorFromUnknown(error, 'The stock could not be moved.');
   }
 }

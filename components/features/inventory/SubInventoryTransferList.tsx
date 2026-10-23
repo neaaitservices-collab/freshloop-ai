@@ -1,14 +1,18 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import { TriangleAlert } from 'lucide-react';
 import {
   SubInventoryTransferBar,
+  type PerformInventoryMove,
   type TransferBarVariant,
 } from '@/components/features/inventory/SubInventoryTransferBar';
+import { SwipeTransferRow } from '@/components/features/inventory/SwipeTransferRow';
 import { stockLevelToTransferRow } from '@/lib/domains/inventory/inventoryMoveClient';
 import type { StockLevel } from '@/lib/domains/inventory/stock';
 import { formatCurrency, formatPercent, formatUnits, stockUnitLabel } from '@/lib/domains/receiving/yieldPricing';
+import { useMediaMaxWidth } from '@/hooks/use-media-max-width';
+import { cn } from '@/lib/utils/cn';
 
 function casesLabel(value: number): string {
   return Number.isInteger(value) ? String(value) : value.toFixed(2);
@@ -42,6 +46,8 @@ export function SubInventoryTransferList({
   pullDays = 3,
   staffId,
   compact,
+  actionQueue = false,
+  performMove,
   emptyMessage,
   onSuccess,
   onError,
@@ -51,39 +57,81 @@ export function SubInventoryTransferList({
   pullDays?: number;
   staffId?: string;
   compact?: boolean;
+  /** Short-dated floor board: stacked cards + swipe on touch viewports. */
+  actionQueue?: boolean;
+  performMove?: PerformInventoryMove;
   emptyMessage: string;
   onSuccess: (message: string, level: StockLevel) => void;
   onError: (message: string) => void;
 }) {
   const [pendingId, setPendingId] = useState<string | null>(null);
   const variant = transferVariantForTab(location);
+  const touchViewport = useMediaMaxWidth(768);
+  const swipeEnabled = actionQueue && location === 'retail_floor' && touchViewport && Boolean(performMove);
+
+  const quickMove = useCallback(
+    async (row: StockLevel, action: 'rescue' | 'waste') => {
+      if (!performMove) return;
+      const qty = suggestedPullQty(row, pullDays);
+      if (!(qty > 0)) {
+        onError('Nothing left on the floor to move.');
+        return;
+      }
+      setPendingId(row.productId);
+      const outcome = await performMove({
+        productId: row.productId,
+        action,
+        quantity: qty,
+        staffId,
+        row: stockLevelToTransferRow(row),
+      });
+      setPendingId(null);
+      if (outcome.success) {
+        onSuccess(outcome.message, outcome.level);
+      } else {
+        onError(outcome.error);
+      }
+    },
+    [performMove, pullDays, staffId, onSuccess, onError]
+  );
 
   if (rows.length === 0) {
     return <p className="px-4 py-10 text-center text-sm text-slate-400">{emptyMessage}</p>;
   }
 
   return (
-    <ul>
+    <ul className={cn(actionQueue && 'space-y-2 p-2 md:space-y-0 md:p-0')}>
       {rows.map((row) => {
         const margin = storedMargin(row);
         const shelf = shelfCue(row.daysRemaining);
         const unit = stockUnitLabel(row.unitType);
         const qtyAtLocation = location === 'retail_floor' ? row.onHand : row.kitchenPrepQty;
+        const defaultQty =
+          location === 'retail_floor' ? suggestedPullQty(row, pullDays) : Math.min(row.kitchenPrepQty, 1);
 
-        return (
-          <li
-            key={row.productId}
-            className="flex flex-col gap-3 border-b border-slate-800/80 px-4 py-3 last:border-b-0 sm:flex-row sm:items-start"
+        const rowBody = (
+          <div
+            className={cn(
+              'flex flex-col gap-3 px-4 py-3 md:flex-row md:items-start',
+              actionQueue &&
+                'rounded-xl border border-slate-800/90 bg-slate-900/50 md:rounded-none md:border-0 md:border-b md:border-slate-800/80 md:bg-transparent'
+            )}
           >
             <div className="min-w-0 flex-1">
               <span className="block truncate text-sm font-bold text-slate-100">{row.name}</span>
-              <span className="mt-0.5 block truncate text-[11px] text-slate-500">{row.supplier}</span>
+              <span className="mt-0.5 hidden truncate text-[11px] text-slate-500 md:block">
+                {row.supplier}
+              </span>
               <span className="mt-1 block font-mono text-[11px] text-slate-300">
                 {location === 'retail_floor' ? (
                   <>
-                    On floor: {formatUnits(row.onHand)} {unit} / {casesLabel(row.onHandCases)} cases
+                    On floor: {formatUnits(row.onHand)} {unit}
+                    <span className="hidden sm:inline">
+                      {' '}
+                      / {casesLabel(row.onHandCases)} cases
+                    </span>
                     {row.kitchenPrepQty > 0 ? (
-                      <span className="text-emerald-400/90">
+                      <span className="hidden text-emerald-400/90 md:inline">
                         {' '}
                         · Kitchen: {formatUnits(row.kitchenPrepQty)} {unit}
                       </span>
@@ -102,7 +150,7 @@ export function SubInventoryTransferList({
                 )}
               </span>
               {location === 'retail_floor' ? (
-                <span className="mt-0.5 block text-[11px] text-slate-400">
+                <span className="mt-0.5 hidden text-[11px] text-slate-400 sm:block">
                   {row.retailPrice !== null ? (
                     <>Shelf: {formatCurrency(row.retailPrice)} · </>
                   ) : null}
@@ -118,7 +166,7 @@ export function SubInventoryTransferList({
                 <span
                   className={`mt-1 flex flex-wrap items-center gap-2 text-[11px] font-bold ${shelf.className}`}
                 >
-                  {shelf.warn ? <TriangleAlert className="h-3 w-3" /> : null}
+                  {shelf.warn ? <TriangleAlert className="h-3.5 w-3.5" /> : null}
                   {shelf.label}
                   {row.isMarkdown ? (
                     <span className="rounded-full border border-amber-500/40 bg-amber-500/15 px-2 py-0.5 text-[10px] text-amber-200">
@@ -127,22 +175,42 @@ export function SubInventoryTransferList({
                   ) : null}
                 </span>
               ) : null}
+              {swipeEnabled ? (
+                <p className="mt-2 text-[10px] font-semibold text-slate-500 md:hidden">
+                  Swipe → kitchen · ← waste
+                </p>
+              ) : null}
             </div>
-            <div className="w-full sm:max-w-md sm:shrink-0">
+            <div className="w-full md:max-w-md md:shrink-0">
               <SubInventoryTransferBar
                 row={stockLevelToTransferRow(row)}
                 staffId={staffId}
-                defaultQty={
-                  location === 'retail_floor' ? suggestedPullQty(row, pullDays) : Math.min(row.kitchenPrepQty, 1)
-                }
+                defaultQty={defaultQty}
                 variant={variant}
                 compact={compact}
+                performMove={performMove}
                 busy={pendingId === row.productId}
                 onBusyChange={(b) => setPendingId(b ? row.productId : null)}
                 onSuccess={({ level, message }) => onSuccess(message, level)}
                 onError={onError}
               />
             </div>
+          </div>
+        );
+
+        return (
+          <li key={row.productId} className={cn(!actionQueue && 'border-b border-slate-800/80 last:border-b-0')}>
+            {swipeEnabled ? (
+              <SwipeTransferRow
+                enabled
+                onSwipeRight={() => void quickMove(row, 'rescue')}
+                onSwipeLeft={() => void quickMove(row, 'waste')}
+              >
+                {rowBody}
+              </SwipeTransferRow>
+            ) : (
+              rowBody
+            )}
           </li>
         );
       })}

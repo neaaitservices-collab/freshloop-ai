@@ -6,10 +6,11 @@ import { SubInventoryWorkspace } from '@/components/features/inventory/SubInvent
 import { Card, CardBody, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Toast } from '@/components/ui/Toast';
 import type { StockLevel } from '@/lib/domains/inventory/stock';
+import { useOptimisticInventoryLevels } from '@/hooks/use-optimistic-inventory-levels';
 
 export function KitchenSubInventoryPanel() {
   const { activeUser } = useRole();
-  const [levels, setLevels] = useState<StockLevel[]>([]);
+  const { levels, setLevels, performMove } = useOptimisticInventoryLevels(null);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -27,7 +28,7 @@ export function KitchenSubInventoryPanel() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [setLevels]);
 
   useEffect(() => {
     void load();
@@ -58,6 +59,7 @@ export function KitchenSubInventoryPanel() {
             staffId={activeUser?.id}
             retailPriorityOnly={false}
             showRetailCatalog={false}
+            performMove={performMove}
             onSuccess={(message, level) => {
               patchLevel(level);
               setToast(message);
@@ -66,7 +68,7 @@ export function KitchenSubInventoryPanel() {
             onError={(message) => setError(message)}
           />
           {error ? (
-            <p className="mt-3 rounded-xl border border-rose-900/50 bg-rose-950/30 px-3 py-2 text-xs font-semibold text-rose-400">
+            <p className="mt-3 rounded-xl border border-rose-900/50 bg-rose-950/30 px-3 py-2 text-xs font-semibold text-rose-200">
               {error}
             </p>
           ) : null}

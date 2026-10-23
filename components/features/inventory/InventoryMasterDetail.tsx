@@ -5,7 +5,10 @@ import { Search } from 'lucide-react';
 import { useRole } from '@/components/auth/RoleProvider';
 import { YieldBreakdown } from '@/components/features/receive/YieldBreakdown';
 import { PricingStrategy } from '@/components/features/receive/PricingStrategy';
-import { SubInventoryTransferBar } from '@/components/features/inventory/SubInventoryTransferBar';
+import {
+  SubInventoryTransferBar,
+  type PerformInventoryMove,
+} from '@/components/features/inventory/SubInventoryTransferBar';
 import { stockLevelToTransferRow } from '@/lib/domains/inventory/inventoryMoveClient';
 import { Badge, DaysRemainingBadge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -83,6 +86,8 @@ export function InventoryMasterDetail({
   onToast,
   onError,
   highlightProductId,
+  patchLevelOptimistic,
+  performMove,
 }: {
   levels: StockLevel[];
   onLevelsChange: (next: StockLevel[]) => void;
@@ -92,6 +97,13 @@ export function InventoryMasterDetail({
   onToast: (message: string) => void;
   onError: (message: string) => void;
   highlightProductId?: string | null;
+  patchLevelOptimistic?: (
+    body: Record<string, unknown>,
+    preview: (row: StockLevel) => StockLevel
+  ) => Promise<
+    { success: true; level: StockLevel } | { success: false; error: string }
+  >;
+  performMove?: PerformInventoryMove;
 }) {
   const { activeUser, loading: roleLoading } = useRole();
   const [roleReady, setRoleReady] = useState(false);
@@ -214,17 +226,37 @@ export function InventoryMasterDetail({
     setSaving(true);
     setSavedMessage(null);
     onError('');
+    const body = {
+      productId: selected.productId,
+      packSize: pack,
+      yieldDivisor: divisor,
+      retailUnit,
+      retailPrice: priceNumber,
+    };
     try {
+      if (patchLevelOptimistic) {
+        const outcome = await patchLevelOptimistic(body, (row) => ({
+          ...row,
+          casePackSize: pack,
+          retailPrice: priceNumber,
+        }));
+        if (!outcome.success) {
+          onError(outcome.error ?? 'The case could not be saved.');
+          return;
+        }
+        onLevelsChange(
+          levels.map((row) =>
+            row.productId === selected.productId ? outcome.level! : row
+          )
+        );
+        setSavedMessage('Case updated.');
+        onToast('Stock updated — case saved.');
+        return;
+      }
       const response = await fetch('/api/inventory/levels', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          productId: selected.productId,
-          packSize: pack,
-          yieldDivisor: divisor,
-          retailUnit,
-          retailPrice: priceNumber,
-        }),
+        body: JSON.stringify(body),
       });
       const json = await response.json();
       if (!response.ok || !json.success) {
@@ -248,16 +280,37 @@ export function InventoryMasterDetail({
     if (!selected || !activeUser || !canOverride) return;
     setSavingStock(true);
     onError('');
+    const cases = toNumber(casesOnHand);
+    const body = {
+      productId: selected.productId,
+      casesOnHand: cases,
+      role: activeUser.role,
+      staffId: activeUser.id,
+    };
     try {
+      if (patchLevelOptimistic) {
+        const outcome = await patchLevelOptimistic(body, (row) => {
+          const pack = row.casePackSize || 1;
+          return {
+            ...row,
+            onHandCases: cases,
+            onHand: Number((cases * pack).toFixed(2)),
+          };
+        });
+        if (!outcome.success) {
+          onError(outcome.error ?? 'Stock could not be updated.');
+          return;
+        }
+        const level = outcome.level!;
+        onLevelsChange(levels.map((row) => (row.productId === selected.productId ? level : row)));
+        setCasesOnHand(casesLabel(level.onHandCases));
+        onToast(`${formatUnits(level.onHand)} ${stockUnitLabel(level.unitType)} on hand.`);
+        return;
+      }
       const response = await fetch('/api/inventory/levels', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          productId: selected.productId,
-          casesOnHand: toNumber(casesOnHand),
-          role: activeUser.role,
-          staffId: activeUser.id,
-        }),
+        body: JSON.stringify(body),
       });
       const json = await response.json();
       if (!response.ok || !json.success) {
@@ -432,11 +485,11 @@ export function InventoryMasterDetail({
                 ) : null}
                 <Button
                   variant="success"
-                  className="w-full py-3 text-base"
+                  className="min-h-12 w-full py-3 text-base"
                   disabled={saving || !(pack > 0) || !(divisor > 0)}
                   onClick={() => void saveCase()}
                 >
-                  {saving ? 'Saving…' : 'Save'}
+                  {saving ? 'Saving…' : 'Save case'}
                 </Button>
               </CardBody>
             </Card>
@@ -465,7 +518,7 @@ export function InventoryMasterDetail({
                   </p>
                   <Button
                     variant="secondary"
-                    className="w-full"
+                    className="min-h-12 w-full"
                     disabled={savingStock}
                     onClick={() => void updateStock()}
                   >
@@ -485,6 +538,7 @@ export function InventoryMasterDetail({
                   row={stockLevelToTransferRow(selected)}
                   staffId={activeUser?.id ?? 'staff-inventory'}
                   variant="floor"
+                  performMove={performMove}
                   busy={transferBusy}
                   onBusyChange={(b) => setTransferBusy(b)}
                   onSuccess={({ level, message }) => {

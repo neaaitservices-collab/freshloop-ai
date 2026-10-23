@@ -1,6 +1,6 @@
 'use client';
 
-import React, { Suspense, useState, useEffect } from 'react';
+import React, { Suspense, useState, useEffect, useCallback } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { stashInvoiceForReceiving } from '@/lib/domains/receiving/receivingBridge';
 import type { InvoiceOcrResult } from '@/lib/types';
@@ -11,13 +11,18 @@ import { InvoiceUploadModal } from '@/components/features/invoices/InvoiceUpload
 import { VoiceRecorderModal } from '@/components/features/voice/VoiceRecorderModal';
 import { DeliLabelModal } from '@/components/features/recipes/DeliLabelModal';
 import { KitchenSubInventoryPanel } from '@/components/features/kitchen/KitchenSubInventoryPanel';
-import { KitchenFloorInbox } from '@/components/features/kitchen/KitchenFloorInbox';
+import { KitchenIncomingRescueQueue } from '@/components/features/kitchen/KitchenIncomingRescueQueue';
 import { RecipeFusionResult } from '@/lib/types';
 import { INITIAL_FUSION_RECIPES } from '@/lib/legacy/mockData';
-import { Sparkles, UtensilsCrossed, Search, Loader2, Mic } from 'lucide-react';
+import {
+  RecipeProductionModal,
+  type ProductionBatchExecutedSummary,
+} from '@/components/features/recipes/RecipeProductionModal';
+import { Sparkles, UtensilsCrossed, Search, Loader2, Mic, ChefHat } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardBody } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
+import { Toast } from '@/components/ui/Toast';
 
 function KitchenPageContent() {
   const router = useRouter();
@@ -27,11 +32,16 @@ function KitchenPageContent() {
   const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(false);
+  const [prepProductIds, setPrepProductIds] = useState<string[]>([]);
+  const [fusionError, setFusionError] = useState<string | null>(null);
 
   // Modals state
   const [isInvoiceModalOpen, setIsInvoiceModalOpen] = useState<boolean>(false);
   const [isVoiceModalOpen, setIsVoiceModalOpen] = useState<boolean>(false);
   const [selectedDeliRecipe, setSelectedDeliRecipe] = useState<RecipeFusionResult | null>(null);
+  const [productionOpen, setProductionOpen] = useState(false);
+  const [productionRecipeId, setProductionRecipeId] = useState<string | undefined>();
+  const [batchToast, setBatchToast] = useState<string | null>(null);
 
   const fetchRecipes = async () => {
     try {
@@ -40,8 +50,8 @@ function KitchenPageContent() {
       if (json.success && json.recipes) {
         setRecipes(json.recipes);
       }
-    } catch (err) {
-      console.warn('Failed to fetch recipes:', err);
+    } catch {
+      /* keep seeded / cached recipes */
     }
   };
 
@@ -51,11 +61,15 @@ function KitchenPageContent() {
 
   const handleGenerateNewRecipes = async () => {
     setLoading(true);
+    setFusionError(null);
     try {
       const res = await fetch('/api/recipe-fusion', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ customCategory: selectedCategory })
+        body: JSON.stringify({
+          customCategory: selectedCategory === 'ALL' ? undefined : selectedCategory,
+          kitchenPrepProductIds: prepProductIds,
+        }),
       });
       const json = await res.json();
       if (json.success && json.data) {
@@ -65,13 +79,19 @@ function KitchenPageContent() {
           );
           return [...newItems, ...prev];
         });
+      } else {
+        setFusionError(json.error ?? 'Could not synthesize recipes.');
       }
-    } catch (err) {
-      console.error('Failed to generate recipes:', err);
+    } catch {
+      setFusionError('Network error while calling Recipe Fusion.');
     } finally {
       setLoading(false);
     }
   };
+
+  const onPrepIdsChange = useCallback((ids: string[]) => {
+    setPrepProductIds(ids);
+  }, []);
 
   const filteredRecipes = recipes.filter((r) => {
     const matchesSearch = r.recipeName.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -89,8 +109,7 @@ function KitchenPageContent() {
           title="Cook what the floor pulled"
           description="Turn short-dated ingredients into a prepared item, then print the deli label. Scrap buckets belong here too."
         />
-        <KitchenFloorInbox focusInbox={focusInbox} />
-        <KitchenSubInventoryPanel />
+        <KitchenIncomingRescueQueue focusInbox={focusInbox} onPrepProductIdsChange={onPrepIdsChange} />
         {/* Header */}
         <Card className="border-emerald-900/40 bg-gradient-to-r from-emerald-950/70 via-slate-900/80 to-slate-950 shadow-2xl">
           <CardBody className="flex flex-col gap-4 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-6">
@@ -115,6 +134,17 @@ function KitchenPageContent() {
             >
               <Mic className="h-4 w-4 fill-slate-950" />
               Voice Transfer
+            </Button>
+            <Button
+              variant="secondary"
+              className="min-h-[44px] border-amber-800/50 bg-amber-950/40 text-amber-100 text-xs"
+              onClick={() => {
+                setProductionRecipeId(undefined);
+                setProductionOpen(true);
+              }}
+            >
+              <ChefHat className="h-4 w-4" />
+              Execute BOM batch
             </Button>
             <Button
               variant="success"
@@ -177,9 +207,23 @@ function KitchenPageContent() {
               key={recipe.id}
               recipe={recipe}
               onOpenDeliModal={(r) => setSelectedDeliRecipe(r)}
+              onExecuteBatch={(r) => {
+                setProductionRecipeId(r.id);
+                setProductionOpen(true);
+              }}
             />
           ))}
         </div>
+
+        <details className="group rounded-2xl border border-slate-800/90 bg-slate-900/30">
+          <summary className="cursor-pointer list-none px-4 py-3 text-sm font-bold text-slate-300 marker:content-none [&::-webkit-details-marker]:hidden">
+            Manage prep stock & transfers
+            <span className="ml-2 text-xs font-normal text-slate-500">(ledger moves)</span>
+          </summary>
+          <div className="border-t border-slate-800/80 px-1 pb-2 pt-1">
+            <KitchenSubInventoryPanel />
+          </div>
+        </details>
       </main>
 
       <InvoiceUploadModal
@@ -202,6 +246,30 @@ function KitchenPageContent() {
         isOpen={!!selectedDeliRecipe}
         onClose={() => setSelectedDeliRecipe(null)}
         recipe={selectedDeliRecipe}
+      />
+
+      <RecipeProductionModal
+        isOpen={productionOpen}
+        initialRecipeId={productionRecipeId}
+        onClose={() => setProductionOpen(false)}
+        onBatchProduced={(summary: ProductionBatchExecutedSummary) => {
+          setBatchToast(
+            `Lote registrado: +${summary.batchOutputQty} × ${summary.outputProductName}`
+          );
+        }}
+        onBatchFailed={(message) => setFusionError(message)}
+      />
+
+      <Toast
+        message={batchToast}
+        onDismiss={() => setBatchToast(null)}
+        variant="success"
+      />
+
+      <Toast
+        message={fusionError}
+        onDismiss={() => setFusionError(null)}
+        variant="destructive"
       />
     </div>
     </AppShell>

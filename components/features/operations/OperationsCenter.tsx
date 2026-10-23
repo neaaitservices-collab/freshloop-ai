@@ -6,6 +6,8 @@ import { useRouter } from 'next/navigation';
 import { stashInvoiceForReceiving } from '@/lib/domains/receiving/receivingBridge';
 import type { InvoiceOcrResult } from '@/lib/types';
 import { AppShell } from '@/components/layout/AppShell';
+import { useRole } from '@/components/auth/RoleProvider';
+import { notifyInventoryUpdated } from '@/lib/domains/inventory/inventoryMoveClient';
 import { DepartmentBadge } from '@/components/ui/DepartmentBadge';
 import { InvoiceUploadModal } from '@/components/features/invoices/InvoiceUploadModal';
 import { VoiceLoggerModal, ConfirmedVoiceCommitResult } from '@/components/features/voice/VoiceLoggerModal';
@@ -284,9 +286,9 @@ const DEFAULT_LEDGER_ROWS: SubInventoryLedgerRow[] = [
 
 export default function OperationsCenter() {
   const router = useRouter();
-  // Core state
-  const [ledgerRows, setLedgerRows] =
-    useState<SubInventoryLedgerRow[]>(DEFAULT_LEDGER_ROWS);
+  const { activeUser } = useRole();
+  // Core state — live ledger from API; mock seed only when DB is offline
+  const [ledgerRows, setLedgerRows] = useState<SubInventoryLedgerRow[]>([]);
   const [recipes, setRecipes] = useState<RecipeFusionResult[]>(
     INITIAL_FUSION_RECIPES
   );
@@ -334,8 +336,10 @@ export default function OperationsCenter() {
           setWasteKpiReport(json.liveLedger.wasteKpi as WasteKpiReport);
         }
       }
-    } catch (err) {
-      console.warn('Using local ledger snapshot:', err);
+    } catch {
+      setLedgerRows((current) =>
+        current.length === 0 ? DEFAULT_LEDGER_ROWS : current
+      );
     } finally {
       setLoading(false);
     }
@@ -343,6 +347,13 @@ export default function OperationsCenter() {
 
   useEffect(() => {
     fetchDashboardData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pullSensitivityDays]);
+
+  useEffect(() => {
+    const onUpdate = () => void fetchDashboardData();
+    window.addEventListener('freshloop-inventory-updated', onUpdate);
+    return () => window.removeEventListener('freshloop-inventory-updated', onUpdate);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pullSensitivityDays]);
 
@@ -1083,8 +1094,8 @@ export default function OperationsCenter() {
                               </span>
                             </td>
 
-                            <td className="py-3.5 px-4 text-right text-[10px] text-slate-500">
-                              Live panel ↑
+                            <td className="py-3.5 px-4 text-right text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                              Read-only
                             </td>
                           </tr>
                         );
@@ -1231,8 +1242,8 @@ export default function OperationsCenter() {
                                 </Link>
                               )}
                             </td>
-                            <td className="py-3.5 px-4 text-right text-[10px] text-slate-500">
-                              Live panel ↑
+                            <td className="py-3.5 px-4 text-right text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                              Read-only
                             </td>
                           </tr>
                         );
@@ -1258,13 +1269,18 @@ export default function OperationsCenter() {
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({
                     buckets: bucketsDelta,
-                    staffId: 'staff-kitchen',
+                    staffId: activeUser?.id ?? 'staff-kitchen',
                   }),
                 });
-                const json = (await res.json()) as { success?: boolean; error?: string };
+                const json = (await res.json()) as {
+                  success?: boolean;
+                  error?: string;
+                  referenceId?: string;
+                };
                 if (!res.ok || !json.success) {
                   throw new Error(json.error ?? 'Could not log volumetric scrap.');
                 }
+                notifyInventoryUpdated();
                 await fetchDashboardData();
                 setTransferToast(
                   `Scrap Volumétrico Registrado: +${bucketsDelta} cubeta(s) 20L (${event.estimatedWeightKg} kg = +$${event.estimatedScrapCostValue.toFixed(
@@ -1441,7 +1457,14 @@ export default function OperationsCenter() {
             `Lote Producido: +${summary.batchOutputQty} uds de "${summary.outputProductName}" en Kitchen_Prep`
           );
           setTimeout(() => setTransferToast(null), 4000);
-          fetchDashboardData();
+          notifyInventoryUpdated();
+          void fetchDashboardData();
+        }}
+        onBatchFailed={(message) => {
+          setTransferToast(message);
+          setTimeout(() => setTransferToast(null), 5000);
+          notifyInventoryUpdated();
+          void fetchDashboardData();
         }}
       />
 

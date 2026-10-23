@@ -112,7 +112,8 @@ export const VolumetricScrapForm: React.FC<VolumetricScrapFormProps> = ({
               </span>
             </div>
             <p className="text-xs text-slate-400 mt-0.5">
-              Convierte automáticamente cubetas de recortes orgánicos de cocina a peso estimado y valor monetario en el KPI de Merma.
+              20L × 0.65 kg/L × $3.50/kg por cubeta. Ledger ref{' '}
+              <code className="text-slate-300">VOL-SCRAP-BUCKET</code>.
             </p>
           </div>
         </div>
@@ -139,7 +140,7 @@ export const VolumetricScrapForm: React.FC<VolumetricScrapFormProps> = ({
                 key={bucketPreset}
                 type="button"
                 onClick={() => triggerOneClickLog(bucketPreset)}
-                className="group p-3.5 rounded-2xl bg-slate-950 hover:bg-rose-950/50 border border-slate-800 hover:border-rose-500/60 transition-all text-left flex flex-col justify-between cursor-pointer active:scale-95"
+                className="group min-h-12 rounded-2xl border border-slate-800 bg-slate-950 p-3.5 text-left flex flex-col justify-between cursor-pointer transition-all hover:border-rose-500/60 hover:bg-rose-950/50 active:scale-95"
               >
                 <div className="flex items-center justify-between">
                   <span className="text-xs sm:text-sm font-black text-white group-hover:text-rose-300">
@@ -183,7 +184,7 @@ export const VolumetricScrapForm: React.FC<VolumetricScrapFormProps> = ({
           <button
             type="button"
             onClick={() => triggerOneClickLog(customBuckets)}
-            className="px-4 py-2.5 rounded-xl bg-rose-500 hover:bg-rose-400 text-slate-950 font-black text-xs shadow-lg shadow-rose-500/20 transition-all active:scale-95 cursor-pointer shrink-0"
+            className="min-h-12 shrink-0 rounded-xl bg-rose-500 px-4 py-3 text-xs font-black text-slate-950 shadow-lg shadow-rose-500/20 transition-all hover:bg-rose-400 active:scale-95 cursor-pointer"
           >
             Registrar Scrap
           </button>

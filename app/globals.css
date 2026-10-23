@@ -24,3 +24,29 @@ body {
   color: var(--foreground);
   font-family: var(--font-geist-sans, system-ui, sans-serif);
 }
+
+@media print {
+  body {
+    background: #fff;
+    color: #000;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+
+  .deli-label-modal-root {
+    position: static;
+    inset: auto;
+    display: block;
+    background: transparent;
+    padding: 0;
+  }
+
+  .deli-label-print-surface {
+    box-shadow: none;
+    margin: 0 auto;
+    max-width: 100%;
+    page-break-inside: avoid;
+  }
+}
