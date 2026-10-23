@@ -4,7 +4,8 @@ import { prisma } from '@/lib/domains/inventory/ledger';
 import { authErrorResponse } from '@/lib/auth/http';
 import { requireRoles, requireSessionUser } from '@/lib/auth/session';
 import { MANAGER_ROLES } from '@/lib/auth/permissions';
-import { isRoleName, type StaffUser } from '@/lib/utils/roles';
+import { positionByLabel } from '@/lib/utils/positions';
+import type { StaffUser } from '@/lib/utils/roles';
 
 export const dynamic = 'force-dynamic';
 
@@ -53,19 +54,15 @@ export async function POST(req: NextRequest) {
     };
     const name = body.name?.trim() ?? '';
     const email = body.email?.trim().toLowerCase() ?? '';
-    const position = body.position?.trim() ?? '';
-    const role = body.role ?? '';
-    if (!name || !email || !position) {
+    const assigned = positionByLabel(body.position ?? '');
+    if (!name || !email || !assigned) {
       return NextResponse.json(
-        { success: false, error: 'Name, email, and position are required.' },
+        { success: false, error: 'Name, email, and a position are required. Permissions follow that position.' },
         { status: 400 }
       );
     }
-    if (!isRoleName(role)) {
-      return NextResponse.json({ success: false, error: 'Choose a valid role.' }, { status: 400 });
-    }
     const user = await prisma.user.create({
-      data: { name, email, position, role },
+      data: { name, email, position: assigned.label, role: assigned.role },
     });
     return NextResponse.json({ success: true, user: toStaffUser(user) });
   } catch (error) {

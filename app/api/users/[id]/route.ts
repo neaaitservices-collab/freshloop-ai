@@ -4,6 +4,7 @@ import { prisma } from '@/lib/domains/inventory/ledger';
 import { authErrorResponse } from '@/lib/auth/http';
 import { AuthError, requireRoles, requireSessionUser } from '@/lib/auth/session';
 import { MANAGER_ROLES } from '@/lib/auth/permissions';
+import { positionByLabel } from '@/lib/utils/positions';
 import { isManager, isRoleName, type StaffUser } from '@/lib/utils/roles';
 
 export const dynamic = 'force-dynamic';
@@ -36,27 +37,46 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
       name?: string;
       email?: string;
       position?: string;
-      role?: string;
     };
     const name = body.name?.trim() ?? '';
     const email = body.email?.trim().toLowerCase() ?? '';
-    const position = body.position?.trim() ?? '';
-    let role = body.role ?? '';
-    if (isSelf && !isManager(actor.role)) {
-      role = actor.role;
-    }
-    if (!name || !email || !position || !isRoleName(role)) {
+    if (!name || !email) {
       return NextResponse.json(
-        { success: false, error: 'Name, email, position, and role are required.' },
+        { success: false, error: 'Name and email are required.' },
         { status: 400 }
       );
     }
-    if (role !== 'ADMIN') {
-      const admins = await prisma.user.count({ where: { role: 'ADMIN', NOT: { id } } });
-      const current = await prisma.user.findUnique({ where: { id } });
-      if (current?.role === 'ADMIN' && admins === 0) {
+
+    const current = await prisma.user.findUnique({ where: { id } });
+    if (!current || !isRoleName(current.role)) {
+      return NextResponse.json({ success: false, error: 'That person is already gone.' }, { status: 404 });
+    }
+
+    let position = current.position;
+    let role = current.role;
+    if (typeof body.position === 'string' && body.position.trim()) {
+      if (!isManager(actor.role)) {
         return NextResponse.json(
-          { success: false, error: 'Keep at least one admin.' },
+          { success: false, error: 'Only a manager can change a position.' },
+          { status: 403 }
+        );
+      }
+      const assigned = positionByLabel(body.position);
+      if (!assigned) {
+        return NextResponse.json(
+          { success: false, error: 'Choose a position. Permissions follow that position.' },
+          { status: 400 }
+        );
+      }
+      position = assigned.label;
+      role = assigned.role;
+    }
+
+    if (role !== 'ADMIN' && current.role === 'ADMIN') {
+      const admins = await prisma.user.count({ where: { role: 'ADMIN', NOT: { id } } });
+      if (admins === 0) {
+        return NextResponse.json(
+          { success: false, error: 'Keep at least one owner.' },
           { status: 400 }
         );
       }

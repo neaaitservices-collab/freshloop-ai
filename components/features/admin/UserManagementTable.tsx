@@ -3,13 +3,13 @@
 import React, { useState } from 'react';
 import { Pencil, Trash2, UserPlus } from 'lucide-react';
 import { useRole } from '@/components/auth/RoleProvider';
-import { ROLE_LABELS, ROLES, type RoleName, type StaffUser } from '@/lib/utils/roles';
+import { positionByLabel, positionForStaff, STAFF_POSITIONS } from '@/lib/utils/positions';
+import { ROLE_LABELS, type StaffUser } from '@/lib/utils/roles';
 
 const EMPTY_FORM = {
   name: '',
   email: '',
-  position: '',
-  role: 'FLOOR_STAFF' as RoleName,
+  position: 'Produce floor',
 };
 
 export function UserManagementTable() {
@@ -24,8 +24,7 @@ export function UserManagementTable() {
     setForm({
       name: user.name,
       email: user.email,
-      position: user.position,
-      role: user.role,
+      position: positionForStaff(user.position, user.role).label,
     });
     setError(null);
   };
@@ -58,6 +57,8 @@ export function UserManagementTable() {
     }
   };
 
+  const selected = positionByLabel(form.position) ?? STAFF_POSITIONS[3];
+
   const remove = async (user: StaffUser) => {
     setError(null);
     try {
@@ -79,7 +80,7 @@ export function UserManagementTable() {
       <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-emerald-300">Controls</p>
       <h2 className="mt-1 text-2xl font-black tracking-tight text-white">Staff</h2>
       <p className="mt-1 max-w-2xl text-sm text-zinc-400">
-        Add the people who work the store and give each one a job.
+        Add the people who work the store. The position you choose is the access they get on the platform.
       </p>
 
       {loading && users.length === 0 ? <p className="mt-4 text-sm text-zinc-400">Loading staff…</p> : null}
@@ -110,28 +111,23 @@ export function UserManagementTable() {
               className="mt-1 w-full rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-3 text-sm text-white"
             />
           </label>
-          <label className="text-xs font-bold text-zinc-400">
+          <label className="text-xs font-bold text-zinc-400 sm:col-span-2">
             Position
-            <input
+            <select
               required
               value={form.position}
               onChange={(event) => setForm((current) => ({ ...current, position: event.target.value }))}
               className="mt-1 w-full rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-3 text-sm text-white"
-            />
-          </label>
-          <label className="text-xs font-bold text-zinc-400">
-            Role
-            <select
-              value={form.role}
-              onChange={(event) => setForm((current) => ({ ...current, role: event.target.value as RoleName }))}
-              className="mt-1 w-full rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-3 text-sm text-white"
             >
-              {ROLES.map((role) => (
-                <option key={role} value={role}>
-                  {ROLE_LABELS[role]}
+              {STAFF_POSITIONS.map((position) => (
+                <option key={position.label} value={position.label}>
+                  {position.label} · {ROLE_LABELS[position.role]}
                 </option>
               ))}
             </select>
+            <span className="mt-1 block font-medium normal-case tracking-normal text-zinc-500">
+              {selected.access}
+            </span>
           </label>
           <div className="flex flex-wrap items-center gap-2 sm:col-span-2">
             <button
@@ -157,7 +153,7 @@ export function UserManagementTable() {
               <tr>
                 <th className="px-4 py-3">Name</th>
                 <th className="px-4 py-3">Position</th>
-                <th className="px-4 py-3">Role</th>
+                <th className="px-4 py-3">Permissions</th>
                 <th className="px-4 py-3 text-right">Actions</th>
               </tr>
             </thead>
@@ -169,7 +165,12 @@ export function UserManagementTable() {
                     <p className="text-xs text-zinc-500">{user.email}</p>
                   </td>
                   <td className="px-4 py-3 text-zinc-300">{user.position}</td>
-                  <td className="px-4 py-3 font-bold text-emerald-300">{ROLE_LABELS[user.role]}</td>
+                  <td className="px-4 py-3">
+                    <p className="font-bold text-emerald-300">{ROLE_LABELS[user.role]}</p>
+                    <p className="max-w-xs text-xs text-zinc-500">
+                      {positionForStaff(user.position, user.role).access}
+                    </p>
+                  </td>
                   <td className="px-4 py-3">
                     <div className="flex justify-end gap-2">
                       <button

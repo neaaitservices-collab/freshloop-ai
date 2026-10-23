@@ -22,12 +22,12 @@ FreshLoop AI helps independent fresh grocers eliminate inventory shrinkage and m
 | Stock levels / receive post | `lib/domains/inventory/stock.ts` |
 | Yield & receiving | `lib/domains/receiving/*` |
 | Route handlers | `app/api/**/route.ts` |
-| Role demo auth | `components/auth/RoleProvider.tsx` → `/api/users` |
+| Staff auth | Auth.js — `middleware.ts`, `components/auth/RoleProvider.tsx` |
 | Mock / demo data | `lib/legacy/*` (avoid for new features) |
 
 After changes: `npm run build`. Client refresh hook: `freshloop-inventory-updated` event.
 
-**Other docs:** [Store managers](./docs/FOR_STORE_MANAGERS.md) · [Executive summary](./docs/EXECUTIVE_SUMMARY.md)
+**Other docs:** [Deployment (Vercel + Supabase)](./docs/DEPLOYMENT.md) · [Store managers](./docs/FOR_STORE_MANAGERS.md) · [Executive summary](./docs/EXECUTIVE_SUMMARY.md)
 
 ---
 
@@ -74,19 +74,31 @@ Copy `.env.example` to `.env.local`:
 ```bash
 cp .env.example .env.local
 ```
-Set your Google Gemini API Key:
-```env
-GEMINI_API_KEY=your_gemini_api_key_here
-DATABASE_URL="postgresql://postgres:password@localhost:5432/freshloop"
-DIRECT_URL="postgresql://postgres:password@localhost:5432/freshloop"
+
+Fill at minimum: `DATABASE_URL`, `DIRECT_URL`, `AUTH_SECRET`, `GEMINI_API_KEY`, `NEXTAUTH_URL`, `NEXT_PUBLIC_SITE_URL`.
+
+**Supabase (production / remote):**
+
+| Variable | Purpose |
+|----------|---------|
+| `DATABASE_URL` | **Transaction pooler** — port **6543**, append `?pgbouncer=true` (runtime + serverless) |
+| `DIRECT_URL` | **Direct session** — port **5432** (required for `prisma migrate deploy` / `migrate dev`) |
+
+For local Postgres, both URLs can point at the same `localhost:5432` database.
+
+Generate session secret:
+```bash
+openssl rand -base64 32
 ```
 
 ### 3. Database Setup & Migration
-Apply the PostgreSQL migration script:
 ```bash
-npx prisma migrate dev --name init
-# Or execute prisma/migrations/20261005000000_init/migration.sql directly in Supabase SQL Editor
+npx prisma migrate dev    # local development
+# Production (after deploy): npm run db:push:prod   → prisma migrate deploy
+# Optional seed:            npm run db:seed:prod
 ```
+
+Full Vercel checklist: **[docs/DEPLOYMENT.md](./docs/DEPLOYMENT.md)** (includes GitHub Actions migrate on `main`).
 
 ### 4. Run Development Server
 ```bash

@@ -22,12 +22,16 @@ FreshLoop is a **monolithic Next.js App Router** app for independent grocers. Th
 
 ```bash
 npm install
-cp .env.example .env.local   # DATABASE_URL, DIRECT_URL, AUTH_SECRET, GEMINI_API_KEY
+cp .env.example .env.local   # see .env.example for full list
 npx prisma migrate deploy    # or: npx prisma migrate dev
 npm run db:seed              # demo staff + products (password: freshloop)
 npm run dev                  # http://localhost:3000 → /login if unsigned
 npm run build                # prisma generate + next build
 ```
+
+**Production deploy:** [DEPLOYMENT.md](./DEPLOYMENT.md) — Supabase pooler URLs, Vercel env vars, GitHub CI/migrate workflows, `npm run db:push:prod`, `GET /api/health`.
+
+**Env helpers:** `lib/env/server.ts` (`getAuthOrigin`, `getPublicSiteUrl`, `getAuthSecret`).
 
 ### Authentication (Phase 1)
 

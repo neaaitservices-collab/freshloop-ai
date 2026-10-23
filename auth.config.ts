@@ -6,7 +6,7 @@ import { isRoleName } from '@/lib/utils/roles';
  * Edge-safe Auth.js config (no Prisma). Shared by middleware and `auth.ts`.
  */
 export const authConfig = {
-  secret: process.env.AUTH_SECRET,
+  secret: process.env.AUTH_SECRET ?? process.env.NEXTAUTH_SECRET,
   pages: {
     signIn: '/login',
   },
