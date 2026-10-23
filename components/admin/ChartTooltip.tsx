@@ -22,7 +22,7 @@ export function ChartTooltip({
   const total = payload.reduce((sum, item) => sum + (Number(item.value) || 0), 0);
 
   return (
-    <div className="rounded-xl border border-slate-700 bg-slate-950/95 px-3 py-2 text-xs shadow-2xl backdrop-blur-md">
+    <div className="rounded-xl border border-zinc-700 bg-zinc-950/95 px-3 py-2 text-xs shadow-2xl">
       {label ? <p className="mb-1 font-bold text-white">{label}</p> : null}
       {payload.map((item) => {
         const value = Number(item.value) || 0;

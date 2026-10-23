@@ -20,13 +20,13 @@ function Metric({
   icon: React.ComponentType<{ className?: string }>;
 }) {
   return (
-    <article className="rounded-2xl border border-slate-800 bg-slate-900/50 p-3 backdrop-blur-md">
+    <article className="rounded-3xl border border-zinc-800 bg-zinc-900/70 p-4 shadow-xl shadow-black/20 backdrop-blur-sm transition hover:-translate-y-0.5 hover:border-emerald-500/40">
       <div className="flex items-center justify-between gap-3">
-        <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">{label}</p>
-        <Icon className="h-4 w-4 text-[#6E8EAE]" />
+        <p className="text-[11px] font-bold uppercase tracking-wider text-zinc-400">{label}</p>
+        <Icon className="h-4 w-4 text-emerald-300" />
       </div>
-      <p className="mt-1.5 font-mono text-2xl font-black text-slate-100">{value}</p>
-      <p className="mt-1 line-clamp-2 text-[11px] leading-snug text-slate-500">{detail}</p>
+      <p className="mt-2 font-mono text-2xl font-black text-white">{value}</p>
+      <p className="mt-1 text-xs leading-relaxed text-zinc-500">{detail}</p>
     </article>
   );
 }
@@ -34,22 +34,23 @@ function Metric({
 export function AdminStats({ stats }: { stats: StoreStats | null }) {
   if (!stats) {
     return (
-      <section className="mt-4 space-y-3" aria-busy="true" aria-label="Loading store statistics">
+      <section className="mt-5 space-y-4" aria-busy="true" aria-label="Loading store statistics">
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           {Array.from({ length: 4 }, (_, index) => (
-            <div key={index} className="h-[92px] animate-pulse rounded-2xl border border-slate-800 bg-slate-900/50" />
+            <div key={index} className="h-[118px] animate-pulse rounded-3xl border border-zinc-800 bg-zinc-900/70" />
           ))}
         </div>
-        <div className="grid gap-3 lg:grid-cols-3">
-          <div className="h-64 animate-pulse rounded-2xl border border-slate-800 bg-slate-900/50" />
-          <div className="h-64 animate-pulse rounded-2xl border border-slate-800 bg-slate-900/50 lg:col-span-2" />
+        <div className="grid gap-3 lg:grid-cols-2">
+          <div className="h-80 animate-pulse rounded-3xl border border-zinc-800 bg-zinc-900/70" />
+          <div className="h-80 animate-pulse rounded-3xl border border-zinc-800 bg-zinc-900/70" />
+          <div className="h-80 animate-pulse rounded-3xl border border-zinc-800 bg-zinc-900/70 lg:col-span-2" />
         </div>
       </section>
     );
   }
 
   return (
-    <section className="mt-4 space-y-3">
+    <section className="mt-5 space-y-4">
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <Metric
           label="Value rescued"
@@ -77,14 +78,10 @@ export function AdminStats({ stats }: { stats: StoreStats | null }) {
         />
       </div>
 
-      <div className="grid items-start gap-3 lg:grid-cols-3">
+      <div className="grid gap-3 lg:grid-cols-2">
         <WasteVsRescueChart data={stats.rescueVsDiscard} />
-        <div className="lg:col-span-2">
-          <RevenueRecoveryChart data={stats.revenueDays} />
-        </div>
-        <div className="lg:col-span-3">
-          <DepartmentAlertsChart data={stats.departmentAlerts} />
-        </div>
+        <RevenueRecoveryChart data={stats.revenueDays} />
+        <DepartmentAlertsChart data={stats.departmentAlerts} />
       </div>
     </section>
   );
