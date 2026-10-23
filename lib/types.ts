@@ -39,6 +39,11 @@ export interface InvoiceLineItemExtract {
   subUnit: string; // e.g. 'lbs', 'kg', 'units', 'ml'
   unitCost: number; // Cost per case
   totalCost: number;
+  productId?: string | null;
+  historicalAvgCost?: number | null;
+  costVariancePct?: number | null;
+  requires_approval?: boolean;
+  guardrailReason?: string | null;
 }
 
 export interface InvoiceOcrResult {
@@ -55,6 +60,9 @@ export interface InvoiceOcrResult {
   lineItems: InvoiceLineItemExtract[];
   rawSummary?: string;
   source?: 'sample' | 'photo';
+  requiresManagerApproval?: boolean;
+  flaggedItemsCount?: number;
+  guardrailThresholdPct?: number;
 }
 
 export interface VoiceParsedItem {

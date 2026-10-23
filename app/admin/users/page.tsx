@@ -1,5 +1,5 @@
-import { UserManagementTable } from '@/components/UserManagementTable';
+import { redirect } from 'next/navigation';
 
-export default function AdminUsersPage() {
-  return <UserManagementTable />;
+export default function AdminUsersRedirect() {
+  redirect('/admin');
 }

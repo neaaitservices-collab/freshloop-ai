@@ -317,6 +317,7 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
           batch_output: batchOutputQty,
           staff_role: staffRole,
           staff_id: 'chef-kitchen-01',
+          enforce_stock_check: true,
           ingredient_overrides: ingredientOverrides,
         }),
       });
@@ -330,6 +331,11 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
             'Acceso Denegado (RBAC): Solo el personal de cocina (KITCHEN_STAFF) puede ejecutar lotes BOM.'
         );
         setSubmitting(false);
+        return;
+      }
+
+      if (!res.ok || json.success === false) {
+        setErrorMsg(json.error || 'Manufacturing batch failed on the server.');
         return;
       }
 
@@ -354,26 +360,7 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
         onBatchProduced(summary);
       }
     } catch {
-      // Fallback for offline DB preview
-      const summary: ProductionBatchExecutedSummary = {
-        recipeId: selectedRecipe.recipeId,
-        recipeName: selectedRecipe.recipeName,
-        outputProductId: selectedRecipe.outputProductId,
-        outputProductName: selectedRecipe.outputProductName,
-        batchOutputQty,
-        totalBatchCost,
-        unitOutputCost,
-        ingredientsUsed: computedBomRows.map((r) => ({
-          ingredientProductId: r.ingredientProductId,
-          name: r.name,
-          actualQtyUsed: r.actualQty,
-          unit: r.unit,
-        })),
-      };
-      setCompletedBatch(summary);
-      if (onBatchProduced) {
-        onBatchProduced(summary);
-      }
+      setErrorMsg('Could not reach the manufacturing API. Check the connection and try again.');
     } finally {
       setSubmitting(false);
     }

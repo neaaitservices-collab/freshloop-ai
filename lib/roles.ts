@@ -36,12 +36,13 @@ export function isManager(role: RoleName): boolean {
 
 export function homeForRole(role: RoleName): string {
   if (role === 'RECEIVING_CLERK') return '/receive';
-  if (role === 'FLOOR_STAFF') return '/floor';
+  if (role === 'FLOOR_STAFF') return '/inventory/floor';
   if (role === 'DELI_CHEF') return '/kitchen';
-  return '/dashboard';
+  return '/admin';
 }
 
 export function canVisit(role: RoleName, pathname: string): boolean {
+  if (pathname === '/admin' || pathname.startsWith('/admin/')) return true;
   if (isManager(role)) return true;
   if (role === 'RECEIVING_CLERK') {
     return (
@@ -51,7 +52,16 @@ export function canVisit(role: RoleName, pathname: string): boolean {
       pathname.startsWith('/inventory/')
     );
   }
-  if (role === 'FLOOR_STAFF') return pathname === '/floor' || pathname.startsWith('/floor/');
-  if (role === 'DELI_CHEF') return pathname === '/kitchen' || pathname.startsWith('/kitchen/');
+  if (role === 'FLOOR_STAFF') {
+    return pathname === '/inventory' || pathname.startsWith('/inventory/');
+  }
+  if (role === 'DELI_CHEF') {
+    return (
+      pathname === '/kitchen' ||
+      pathname.startsWith('/kitchen/') ||
+      pathname === '/inventory' ||
+      pathname.startsWith('/inventory/')
+    );
+  }
   return false;
 }

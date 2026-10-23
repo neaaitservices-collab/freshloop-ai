@@ -1,5 +1,47 @@
 import { InvoiceOcrResult, VoiceLoggerResult, RecipeFusionResult, InventoryItem } from './types';
 
+/**
+ * Parses model output that should be JSON (handles markdown fences and common wrappers).
+ */
+export function parseModelJson<T = unknown>(raw: string): T {
+  let text = raw.trim();
+  if (!text) {
+    throw new SyntaxError('Empty model response');
+  }
+  if (text.startsWith('```')) {
+    text = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+  }
+  const firstBrace = text.search(/[{[]/);
+  if (firstBrace > 0) {
+    text = text.slice(firstBrace);
+  }
+  const lastChar = text.endsWith(']') ? text.lastIndexOf(']') : text.lastIndexOf('}');
+  if (lastChar >= 0 && lastChar < text.length - 1) {
+    text = text.slice(0, lastChar + 1);
+  }
+
+  const parsed: unknown = JSON.parse(text);
+  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+    const obj = parsed as Record<string, unknown>;
+    if (obj.data && typeof obj.data === 'object') {
+      return obj.data as T;
+    }
+    if (obj.result && typeof obj.result === 'object') {
+      return obj.result as T;
+    }
+  }
+  return parsed as T;
+}
+
+/** Returns null instead of throwing when model output is not valid JSON. */
+export function tryParseModelJson<T = unknown>(raw: string): T | null {
+  try {
+    return parseModelJson<T>(raw);
+  } catch {
+    return null;
+  }
+}
+
 function getApiKey(): string | null {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey || apiKey.trim() === '' || apiKey === 'your_gemini_api_key_here') {
@@ -271,22 +313,25 @@ Make sure totalAmount equals sum of department totals and line item costs. Forma
       cleanData ? { data: cleanData, mimeType: mimeType || 'image/jpeg' } : undefined
     );
 
-    const parsed = JSON.parse(text);
+    const parsed = parseModelJson<Record<string, unknown>>(text);
+
+    const dept = parsed.departmentBreakdown as InvoiceOcrResult['departmentBreakdown'] | undefined;
 
     return {
-      vendorName: parsed.vendorName || 'Fresh Grocer Wholesale',
-      invoiceNumber: parsed.invoiceNumber || `INV-${Math.floor(Math.random() * 90000 + 10000)}`,
-      invoiceDate: parsed.invoiceDate || new Date().toISOString().split('T')[0],
-      totalAmount: parsed.totalAmount || 0,
-      departmentBreakdown: parsed.departmentBreakdown || { PRODUCE: 0, DAIRY: 0, BAKERY: 0, PANTRY: 0 },
-      lineItems: parsed.lineItems || [],
-      rawSummary: `Extracted ${parsed.lineItems?.length || 0} line items with ${modelUsed}.`
+      vendorName: String(parsed.vendorName || 'Fresh Grocer Wholesale'),
+      invoiceNumber: String(
+        parsed.invoiceNumber || `INV-${Math.floor(Math.random() * 90000 + 10000)}`
+      ),
+      invoiceDate: String(parsed.invoiceDate || new Date().toISOString().split('T')[0]),
+      totalAmount: Number(parsed.totalAmount) || 0,
+      departmentBreakdown: dept || { PRODUCE: 0, DAIRY: 0, BAKERY: 0, PANTRY: 0 },
+      lineItems: (parsed.lineItems as InvoiceOcrResult['lineItems']) || [],
+      rawSummary: `Extracted ${Array.isArray(parsed.lineItems) ? parsed.lineItems.length : 0} line items with ${modelUsed}.`
     };
-  } catch (error: any) {
-    console.error('Error in processInvoiceOcr Gemini call:', error.message);
-    const mock = getMockOcrResult();
-    mock.rawSummary = 'Extracted 10 Produce line items from GAMBLES vendor delivery receipt.';
-    return mock;
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error('Error in processInvoiceOcr Gemini call:', message);
+    throw error instanceof Error ? error : new Error(message);
   }
 }
 
@@ -339,14 +384,17 @@ Rules:
       cleanAudio ? { data: cleanAudio, mimeType: mimeType || 'audio/webm' } : undefined
     );
 
-    const parsed = JSON.parse(text);
+    const parsed = parseModelJson<Record<string, unknown>>(text);
 
     return {
-      transcript: parsed.transcript || spokenText || 'Logged 10 lbs bruised apples and 4L heavy cream',
-      targetAction: parsed.targetAction || 'KITCHEN_RESCUE',
-      parsedItems: parsed.parsedItems || [],
-      kitchenRescueNotes: parsed.kitchenRescueNotes || 'Transfer items immediately to prep kitchen for Recipe Fusion.',
-      estimatedWasteSavedValue: parsed.estimatedWasteSavedValue || 38.50
+      transcript: String(parsed.transcript || spokenText || 'Logged 10 lbs bruised apples and 4L heavy cream'),
+      targetAction: (parsed.targetAction as VoiceLoggerResult['targetAction']) || 'KITCHEN_RESCUE',
+      parsedItems: (parsed.parsedItems as VoiceLoggerResult['parsedItems']) || [],
+      kitchenRescueNotes: String(
+        parsed.kitchenRescueNotes ||
+          'Transfer items immediately to prep kitchen for Recipe Fusion.'
+      ),
+      estimatedWasteSavedValue: Number(parsed.estimatedWasteSavedValue) || 38.5,
     };
   } catch (error) {
     console.error('Error in processVoiceFloorLog Gemini call:', error);
@@ -403,13 +451,17 @@ Return a JSON array of recipes adhering strictly to this schema:
 ]`;
 
     const { text } = await generateContentWithFallback(prompt);
-    const parsed = JSON.parse(text);
+    const parsed = parseModelJson<unknown>(text);
 
     let rawList: any[] = [];
     if (Array.isArray(parsed)) {
       rawList = parsed;
-    } else if (parsed.recipes && Array.isArray(parsed.recipes)) {
-      rawList = parsed.recipes;
+    } else if (
+      parsed &&
+      typeof parsed === 'object' &&
+      Array.isArray((parsed as Record<string, unknown>).recipes)
+    ) {
+      rawList = (parsed as Record<string, unknown>).recipes as any[];
     } else {
       return getMockRecipeFusion();
     }

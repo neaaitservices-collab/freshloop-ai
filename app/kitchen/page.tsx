@@ -1,17 +1,22 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
+import { stashInvoiceForReceiving } from '@/lib/receivingBridge';
+import type { InvoiceOcrResult } from '@/lib/types';
 import { AppShell } from '@/components/shell/AppShell';
 import { PageIntro } from '@/components/shell/PageIntro';
 import { RecipeFusionCard } from '@/components/RecipeFusionCard';
 import { InvoiceUploadModal } from '@/components/InvoiceUploadModal';
 import { VoiceRecorderModal } from '@/components/VoiceRecorderModal';
 import { DeliLabelModal } from '@/components/DeliLabelModal';
+import { KitchenSubInventoryPanel } from '@/components/kitchen/KitchenSubInventoryPanel';
 import { RecipeFusionResult } from '@/lib/types';
 import { INITIAL_FUSION_RECIPES } from '@/lib/mockData';
 import { Sparkles, UtensilsCrossed, Filter, Search, Loader2, Mic } from 'lucide-react';
 
 export default function RecipesPage() {
+  const router = useRouter();
   const [recipes, setRecipes] = useState<RecipeFusionResult[]>(INITIAL_FUSION_RECIPES);
   const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -78,6 +83,7 @@ export default function RecipesPage() {
           title="Cook what the floor pulled"
           description="Turn short-dated ingredients into a prepared item, then print the deli label. Scrap buckets belong here too."
         />
+        <KitchenSubInventoryPanel />
         {/* Header */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-gradient-to-r from-emerald-950/70 via-zinc-900 to-zinc-950 border border-emerald-900/40 rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-2xl">
           <div>
@@ -167,7 +173,11 @@ export default function RecipesPage() {
       <InvoiceUploadModal
         isOpen={isInvoiceModalOpen}
         onClose={() => setIsInvoiceModalOpen(false)}
-        onInvoiceImported={fetchRecipes}
+        onInvoiceImported={(result: InvoiceOcrResult) => {
+          stashInvoiceForReceiving(result);
+          setIsInvoiceModalOpen(false);
+          router.push('/receive');
+        }}
       />
 
       <VoiceRecorderModal

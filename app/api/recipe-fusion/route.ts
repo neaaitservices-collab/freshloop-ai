@@ -7,8 +7,9 @@ export async function GET() {
   try {
     const recipes = await getFusionRecipes();
     return NextResponse.json({ success: true, recipes });
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Failed to load fusion recipes.';
+    return NextResponse.json({ success: false, error: message }, { status: 500 });
   }
 }
 
@@ -44,11 +45,9 @@ export async function POST(req: NextRequest) {
       usedItemCount: itemsToProcess.length,
       timestamp: new Date().toISOString()
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('API Error in /api/recipe-fusion:', error);
-    return NextResponse.json(
-      { error: error.message || 'Failed to generate recipe fusion' },
-      { status: 500 }
-    );
+    const message = error instanceof Error ? error.message : 'Failed to generate recipe fusion.';
+    return NextResponse.json({ success: false, error: message }, { status: 500 });
   }
 }

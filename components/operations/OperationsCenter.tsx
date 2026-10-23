@@ -2,6 +2,9 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import { stashInvoiceForReceiving } from '@/lib/receivingBridge';
+import type { InvoiceOcrResult } from '@/lib/types';
 import { AppShell } from '@/components/shell/AppShell';
 import { DepartmentBadge } from '@/components/DepartmentBadge';
 import { InvoiceUploadModal } from '@/components/InvoiceUploadModal';
@@ -10,6 +13,8 @@ import { RecipeProductionModal, ProductionBatchExecutedSummary } from '@/compone
 import { VolumetricScrapForm } from '@/components/VolumetricScrapForm';
 import { DeliLabelModal } from '@/components/DeliLabelModal';
 import { InventoryItem, RecipeFusionResult, DepartmentType } from '@/lib/types';
+import type { WasteKpiReport } from '@/lib/inventory';
+import { OperationsLiveTransfers } from '@/components/operations/OperationsLiveTransfers';
 import { INITIAL_INVENTORY_ITEMS, INITIAL_FUSION_RECIPES } from '@/lib/mockData';
 import {
   Activity,
@@ -64,15 +69,6 @@ interface SubInventoryLedgerRow {
   expirationDate: string;
   supplier: string;
   isManufactured: boolean;
-}
-
-interface LiveWasteKpiState {
-  wastePct: number;
-  targetWastePct: number;
-  totalDiscardValue: number;
-  volumetricScrapValue: number;
-  volumetricScrapBucketsCount: number;
-  grossSalesRevenue: number;
 }
 
 // ============================================================================
@@ -287,6 +283,7 @@ const DEFAULT_LEDGER_ROWS: SubInventoryLedgerRow[] = [
 ];
 
 export default function OperationsCenter() {
+  const router = useRouter();
   // Core state
   const [ledgerRows, setLedgerRows] =
     useState<SubInventoryLedgerRow[]>(DEFAULT_LEDGER_ROWS);
@@ -301,12 +298,7 @@ export default function OperationsCenter() {
   const [onlyShowFlaggedPulls, setOnlyShowFlaggedPulls] =
     useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(false);
-
-  // StoreSetting & Real-Time Waste KPI state
-  const [targetWastePct] = useState<number>(2.5);
-  const [baseDiscardValue, setBaseDiscardValue] = useState<number>(48.5);
-  const [scrapBucketsCount, setScrapBucketsCount] = useState<number>(0); // 1 bucket (20L * 0.65kg/L * $3.50/kg) = $45.50
-  const [grossSalesRevenue, setGrossSalesRevenue] = useState<number>(3420.0);
+  const [wasteKpiReport, setWasteKpiReport] = useState<WasteKpiReport | null>(null);
 
   // Modals state
   const [isInvoiceModalOpen, setIsInvoiceModalOpen] = useState<boolean>(false);
@@ -317,37 +309,18 @@ export default function OperationsCenter() {
     useState<RecipeFusionResult | null>(null);
   const [transferToast, setTransferToast] = useState<string | null>(null);
 
-  // Cost of 1 volumetric 20L bucket based on StoreSetting (20L * 0.65 kg/L * $3.50/kg = $45.50)
-  const COST_PER_20L_BUCKET = 20.0 * 0.65 * 3.5;
-
-  // Live Waste KPI Formula: (Valor Total Descarte + Valor Scraps Volumétricos) / Ventas Brutas Totales
-  const wasteKpi: LiveWasteKpiState = useMemo(() => {
-    const volumetricScrapValue = Number(
-      (scrapBucketsCount * COST_PER_20L_BUCKET).toFixed(2)
-    );
-    const totalWaste = baseDiscardValue + volumetricScrapValue;
-    const rawPct =
-      grossSalesRevenue > 0 ? (totalWaste / grossSalesRevenue) * 100 : 0;
-
-    return {
-      wastePct: Number(rawPct.toFixed(2)),
-      targetWastePct,
-      totalDiscardValue: Number(baseDiscardValue.toFixed(2)),
-      volumetricScrapValue,
-      volumetricScrapBucketsCount: scrapBucketsCount,
-      grossSalesRevenue: Number(grossSalesRevenue.toFixed(2)),
-    };
-  }, [baseDiscardValue, scrapBucketsCount, grossSalesRevenue, targetWastePct, COST_PER_20L_BUCKET]);
-
-  const isWasteExceedingTarget = wasteKpi.wastePct > wasteKpi.targetWastePct;
+  const wasteKpi = wasteKpiReport;
+  const wastePctDisplay =
+    wasteKpi?.wastePct === null || wasteKpi?.wastePct === undefined
+      ? '—'
+      : `${wasteKpi.wastePct.toFixed(2)}%`;
+  const isWasteExceedingTarget = wasteKpi?.isExceedingTarget ?? false;
 
   // Fetch live ledger data from /api/inventory
   const fetchDashboardData = async () => {
     setLoading(true);
     try {
-      const res = await fetch(
-        `/api/inventory?pullDays=${pullSensitivityDays}&scrapBuckets=${scrapBucketsCount}`
-      );
+      const res = await fetch(`/api/inventory?pullDays=${pullSensitivityDays}`);
       const json = await res.json();
 
       if (json.success && json.liveLedger) {
@@ -357,9 +330,8 @@ export default function OperationsCenter() {
         ) {
           setLedgerRows(json.liveLedger.subInventoryRows);
         }
-        if (json.liveLedger.wasteKpi && json.liveLedger.wasteKpi.grossSalesRevenue > 0) {
-          setBaseDiscardValue(json.liveLedger.wasteKpi.totalDiscardValue || 48.5);
-          setGrossSalesRevenue(json.liveLedger.wasteKpi.grossSalesRevenue);
+        if (json.liveLedger.wasteKpi) {
+          setWasteKpiReport(json.liveLedger.wasteKpi as WasteKpiReport);
         }
       }
     } catch (err) {
@@ -375,31 +347,6 @@ export default function OperationsCenter() {
   }, [pullSensitivityDays]);
 
   // Instant 1-Click Rescue Transfer: Retail_Floor -> Kitchen_Prep (Double-Entry)
-  const handleTransferToKitchenPrep = (
-    row: SubInventoryLedgerRow,
-    transferQty: number
-  ) => {
-    const safeQty = Math.min(row.retailFloorQty, Math.max(1, transferQty));
-    if (safeQty <= 0) return;
-
-    setLedgerRows((prev) =>
-      prev.map((item) =>
-        item.productId === row.productId
-          ? {
-              ...item,
-              retailFloorQty: Number((item.retailFloorQty - safeQty).toFixed(2)),
-              kitchenPrepQty: Number((item.kitchenPrepQty + safeQty).toFixed(2)),
-            }
-          : item
-      )
-    );
-
-    setTransferToast(
-      `Rescued ${safeQty} ${row.unitType} of "${row.name}" (Retail_Floor → Kitchen_Prep)`
-    );
-    setTimeout(() => setTransferToast(null), 4000);
-  };
-
   // Filtered rows & sub-inventory calculations
   const filteredRows = useMemo(() => {
     return ledgerRows.filter((row) => {
@@ -653,17 +600,21 @@ export default function OperationsCenter() {
                           : 'text-emerald-400 drop-shadow-[0_0_12px_rgba(52,211,153,0.45)]'
                       }`}
                     >
-                      {wasteKpi.wastePct.toFixed(2)}%
+                      {wastePctDisplay}
                     </span>
                     <span className="text-xs font-bold text-zinc-400">
                       / Meta{' '}
                       <strong className="text-white">
-                        {wasteKpi.targetWastePct.toFixed(1)}%
+                        {(wasteKpi?.targetWastePct ?? 2.5).toFixed(1)}%
                       </strong>
                     </span>
                   </div>
                   <p className="text-xs text-zinc-400 mt-1">
-                    {isWasteExceedingTarget ? (
+                    {wasteKpi?.wastePct === null || wasteKpi?.wastePct === undefined ? (
+                      <span className="text-zinc-400 font-medium">
+                        Ventas brutas insuficientes para calcular % de merma (ledger en vivo).
+                      </span>
+                    ) : isWasteExceedingTarget ? (
                       <span className="text-rose-300 font-semibold flex items-center gap-1.5">
                         <AlertOctagon className="w-4 h-4 text-rose-400 shrink-0 animate-bounce" />
                         ¡Merma supera Target_Waste_Pct por +
@@ -690,14 +641,17 @@ export default function OperationsCenter() {
                         : 'bg-gradient-to-r from-emerald-500 to-teal-400'
                     }`}
                     style={{
-                      width: `${Math.min(100, (wasteKpi.wastePct / (wasteKpi.targetWastePct * 1.6)) * 100)}%`,
+                      width:
+                        wasteKpi?.wastePct != null
+                          ? `${Math.min(100, (wasteKpi.wastePct / (wasteKpi.targetWastePct * 1.6)) * 100)}%`
+                          : '0%',
                     }}
                   />
                 </div>
                 <div className="flex justify-between text-[10px] font-mono text-zinc-400">
                   <span>0.0%</span>
                   <span className="text-amber-400 font-bold">
-                    Umbral Meta: {wasteKpi.targetWastePct}%
+                    Umbral Meta: {wasteKpi?.targetWastePct ?? 2.5}%
                   </span>
                   <span>4.0%+</span>
                 </div>
@@ -709,47 +663,36 @@ export default function OperationsCenter() {
                   <div className="p-2 rounded-xl bg-zinc-900/80 border border-zinc-800">
                     <span className="text-[10px] text-zinc-400 block">Descarte Directo</span>
                     <strong className="text-white font-mono">
-                      ${wasteKpi.totalDiscardValue.toFixed(2)}
+                      ${(wasteKpi?.totalDiscardValue ?? 0).toFixed(2)}
                     </strong>
                   </div>
                   <div className="p-2 rounded-xl bg-zinc-900/80 border border-zinc-800">
                     <span className="text-[10px] text-zinc-400 block">Scraps (20L)</span>
                     <strong className="text-amber-300 font-mono">
-                      ${wasteKpi.volumetricScrapValue.toFixed(2)}
+                      ${(wasteKpi?.volumetricScrapValue ?? 0).toFixed(2)}
                     </strong>
                   </div>
                   <div className="p-2 rounded-xl bg-zinc-900/80 border border-zinc-800">
                     <span className="text-[10px] text-zinc-400 block">Ventas Brutas</span>
                     <strong className="text-emerald-300 font-mono">
-                      ${wasteKpi.grossSalesRevenue.toFixed(0)}
+                      ${(wasteKpi?.grossSalesRevenue ?? 0).toFixed(0)}
                     </strong>
                   </div>
                 </div>
 
-                {/* Interactive Volumetric Scrap Bucket Tester to preview Green vs Red Blinking */}
                 <div className="flex items-center justify-between pt-1 border-t border-zinc-800/80">
                   <span className="text-[11px] text-zinc-400 flex items-center gap-1.5">
                     <Scale className="w-3.5 h-3.5 text-amber-400" />
                     <span>
-                      Cubetas Scrap 20L ({scrapBucketsCount} × $45.50):
+                      Cubetas scrap registradas hoy:{' '}
+                      {(wasteKpi?.volumetricScrapBucketsCount ?? 0).toFixed(1)}
                     </span>
                   </span>
-                  <div className="flex items-center gap-1.5">
-                    <button
-                      onClick={() =>
-                        setScrapBucketsCount((c) => Math.max(0, c - 1))
-                      }
-                      className="px-2.5 py-1 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-zinc-200 font-bold text-xs cursor-pointer"
-                    >
-                      -1
-                    </button>
-                    <button
-                      onClick={() => setScrapBucketsCount((c) => c + 1)}
-                      className="px-2.5 py-1 rounded-lg bg-rose-950/80 hover:bg-rose-900 border border-rose-500/40 text-rose-200 font-bold text-xs cursor-pointer"
-                    >
-                      +1 Cubeta 20L
-                    </button>
-                  </div>
+                  {wasteKpi?.formulaBreakdown ? (
+                    <span className="text-[10px] text-zinc-500 max-w-[55%] text-right">
+                      {wasteKpi.formulaBreakdown}
+                    </span>
+                  ) : null}
                 </div>
               </div>
             </div>
@@ -994,6 +937,11 @@ export default function OperationsCenter() {
           </div>
         </div>
 
+        <OperationsLiveTransfers
+          pullDays={pullSensitivityDays}
+          onLedgerRefresh={() => void fetchDashboardData()}
+        />
+
         {/* ==================================================================== */}
         {/* ROW 3: TABLAS DE SUB-INVENTARIOS (Retail_Floor vs. Kitchen_Prep)     */}
         {/* ==================================================================== */}
@@ -1047,7 +995,7 @@ export default function OperationsCenter() {
                       <th className="py-3 px-3 text-right">Stock Piso</th>
                       <th className="py-3 px-3 text-right">Costo MAC</th>
                       <th className="py-3 px-3 text-center">Vida Útil</th>
-                      <th className="py-3 px-4 text-right">Acción Rescate</th>
+                      <th className="py-3 px-4 text-right">Transfer</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-zinc-800/70 text-xs">
@@ -1064,11 +1012,6 @@ export default function OperationsCenter() {
                       retailFloorRows.map((row) => {
                         const isPullFlagged =
                           row.daysRemaining <= pullSensitivityDays;
-                        const suggestedPullQty = Math.max(
-                          1,
-                          Math.round(row.retailFloorQty * 0.25)
-                        );
-
                         return (
                           <tr
                             key={row.productId}
@@ -1140,27 +1083,8 @@ export default function OperationsCenter() {
                               </span>
                             </td>
 
-                            <td className="py-3.5 px-4 text-right">
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  handleTransferToKitchenPrep(
-                                    row,
-                                    suggestedPullQty
-                                  )
-                                }
-                                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[11px] font-extrabold transition-all active:scale-95 cursor-pointer ${
-                                  isPullFlagged
-                                    ? 'bg-amber-400 hover:bg-amber-300 text-zinc-950 shadow-md shadow-amber-500/20'
-                                    : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700'
-                                }`}
-                                title="Transferir lote a Kitchen_Prep en el Ledger"
-                              >
-                                <ArrowRightLeft className="w-3.5 h-3.5" />
-                                <span>
-                                  Enviar {suggestedPullQty} {row.unitType} a Cocina
-                                </span>
-                              </button>
+                            <td className="py-3.5 px-4 text-right text-[10px] text-zinc-500">
+                              Live panel ↑
                             </td>
                           </tr>
                         );
@@ -1218,13 +1142,14 @@ export default function OperationsCenter() {
                       <th className="py-3 px-3 text-right">Yield %</th>
                       <th className="py-3 px-3 text-right">Valor Lote</th>
                       <th className="py-3 px-4 text-right">Estado BOM</th>
+                      <th className="py-3 px-4 text-right">Transfer</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-zinc-800/70 text-xs">
                     {kitchenPrepRows.length === 0 ? (
                       <tr>
                         <td
-                          colSpan={6}
+                          colSpan={7}
                           className="py-10 text-center text-zinc-500 font-medium"
                         >
                           No hay insumos en Kitchen_Prep que coincidan con el filtro actual.
@@ -1306,6 +1231,9 @@ export default function OperationsCenter() {
                                 </Link>
                               )}
                             </td>
+                            <td className="py-3.5 px-4 text-right text-[10px] text-zinc-500">
+                              Live panel ↑
+                            </td>
                           </tr>
                         );
                       })
@@ -1321,17 +1249,38 @@ export default function OperationsCenter() {
         {/* ROW 3.5: PHASE 5 VOLUMETRIC SCRAP 1-CLICK FORM (20L BUCKETS)        */}
         {/* ==================================================================== */}
         <VolumetricScrapForm
-          totalBucketsLoggedToday={scrapBucketsCount}
+          totalBucketsLoggedToday={wasteKpi?.volumetricScrapBucketsCount ?? 0}
           onLogScrapBuckets={(bucketsDelta, event) => {
-            setScrapBucketsCount((prev) => Number((prev + bucketsDelta).toFixed(2)));
-            setTransferToast(
-              `Scrap Volumétrico Registrado: +${bucketsDelta} cubeta(s) 20L (${event.estimatedWeightKg} kg = +$${event.estimatedScrapCostValue.toFixed(
-                2
-              )})`
-            );
-            setTimeout(() => setTransferToast(null), 4000);
+            void (async () => {
+              try {
+                const res = await fetch('/api/inventory/volumetric-scrap', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    buckets: bucketsDelta,
+                    staffId: 'staff-kitchen',
+                  }),
+                });
+                const json = (await res.json()) as { success?: boolean; error?: string };
+                if (!res.ok || !json.success) {
+                  throw new Error(json.error ?? 'Could not log volumetric scrap.');
+                }
+                await fetchDashboardData();
+                setTransferToast(
+                  `Scrap Volumétrico Registrado: +${bucketsDelta} cubeta(s) 20L (${event.estimatedWeightKg} kg = +$${event.estimatedScrapCostValue.toFixed(
+                    2
+                  )})`
+                );
+                setTimeout(() => setTransferToast(null), 4000);
+              } catch (err) {
+                const message =
+                  err instanceof Error ? err.message : 'Could not log volumetric scrap.';
+                setTransferToast(message);
+                setTimeout(() => setTransferToast(null), 5000);
+              }
+            })();
           }}
-          onResetBuckets={() => setScrapBucketsCount(0)}
+          onResetBuckets={() => void fetchDashboardData()}
         />
 
         {/* ==================================================================== */}
@@ -1414,7 +1363,11 @@ export default function OperationsCenter() {
       <InvoiceUploadModal
         isOpen={isInvoiceModalOpen}
         onClose={() => setIsInvoiceModalOpen(false)}
-        onInvoiceImported={fetchDashboardData}
+        onInvoiceImported={(result: InvoiceOcrResult) => {
+          stashInvoiceForReceiving(result);
+          setIsInvoiceModalOpen(false);
+          router.push('/receive');
+        }}
       />
 
       <VoiceLoggerModal
@@ -1437,10 +1390,6 @@ export default function OperationsCenter() {
                 updatedRetail = Number((updatedRetail - qty).toFixed(2));
                 if (item.target_action === 'PULL_RESCUE') {
                   updatedKitchen = Number((updatedKitchen + qty).toFixed(2));
-                } else if (item.target_action === 'DISCARD') {
-                  setBaseDiscardValue((prevDiscard) =>
-                    Number((prevDiscard + qty * row.movingAvgCost).toFixed(2))
-                  );
                 }
               }
 

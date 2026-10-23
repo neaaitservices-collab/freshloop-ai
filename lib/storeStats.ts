@@ -1,6 +1,8 @@
 import { InventoryLocation, TransactionType } from '@prisma/client';
 import { prisma, VOLUMETRIC_SCRAP_REF_PREFIX } from '@/lib/inventory';
+import { getStockLevels } from '@/lib/stock';
 import type { DepartmentAlert, StoreStats } from '@/lib/storeStatsTypes';
+import { computeWastePct } from '@/lib/wasteKpi';
 
 export type { DepartmentAlert, RescueSlice, RevenueDay, StoreStats } from '@/lib/storeStatsTypes';
 
@@ -32,6 +34,10 @@ function dayKey(date: Date): string {
 const CACHE_MS = 20_000;
 let cachedStats: { at: number; value: Promise<StoreStats> } | null = null;
 
+export function invalidateStoreStats(): void {
+  cachedStats = null;
+}
+
 export function getStoreStats(): Promise<StoreStats> {
   const now = Date.now();
   if (cachedStats && now - cachedStats.at < CACHE_MS) return cachedStats.value;
@@ -50,7 +56,7 @@ async function loadStoreStats(): Promise<StoreStats> {
   weekStart.setHours(0, 0, 0, 0);
   weekStart.setDate(weekStart.getDate() - 6);
 
-  const [products, sums, expirations, movements, setting, sales] = await Promise.all([
+  const [products, stockLevels, expirations, movements, setting, sales] = await Promise.all([
     prisma.product.findMany({
       where: { isManufactured: false },
       select: {
@@ -62,10 +68,7 @@ async function loadStoreStats(): Promise<StoreStats> {
         parCases: true,
       },
     }),
-    prisma.inventoryTransaction.groupBy({
-      by: ['productId'],
-      _sum: { qtyChange: true },
-    }),
+    getStockLevels(),
     prisma.$queryRaw<Array<{ productId: string; expirationDate: Date }>>`
       SELECT DISTINCT ON ("Product_ID")
         "Product_ID" AS "productId",
@@ -110,7 +113,7 @@ async function loadStoreStats(): Promise<StoreStats> {
     }),
   ]);
 
-  const onHandById = new Map(sums.map((row) => [row.productId, row._sum.qtyChange ?? 0]));
+  const levelById = new Map(stockLevels.map((row) => [row.productId, row]));
   const expirationById = new Map(expirations.map((row) => [row.productId, row.expirationDate]));
 
   let inventoryValue = 0;
@@ -124,15 +127,21 @@ async function loadStoreStats(): Promise<StoreStats> {
   }
 
   for (const product of products) {
-    const onHand = onHandById.get(product.id) ?? 0;
+    const level = levelById.get(product.id);
+    const onHand = level?.onHand ?? 0;
     const pack = product.casePackSize && product.casePackSize > 0 ? product.casePackSize : 1;
-    const unitCost = product.standardCost && product.standardCost > 0 ? product.standardCost : 0;
+    const unitCost =
+      level?.unitCost && level.unitCost > 0
+        ? level.unitCost
+        : product.standardCost && product.standardCost > 0
+          ? product.standardCost
+          : 0;
     if (onHand > 0) inventoryValue += onHand * unitCost;
 
     const bucket = alerts.get(product.department);
     if (!bucket || onHand <= 0) continue;
 
-    const parUnits = (product.parCases ?? 2) * pack;
+    const parUnits = level?.parUnits ?? (product.parCases ?? 2) * pack;
     if (onHand < parUnits) {
       bucket.low += 1;
       lowCount += 1;
@@ -215,7 +224,7 @@ async function loadStoreStats(): Promise<StoreStats> {
     grossSales += unitsSold * price;
   }
   const totalWasteValue = totalDiscardValue + volumetricScrapValue;
-  const wastePct = grossSales > 0 ? Number(((totalWasteValue / grossSales) * 100).toFixed(2)) : 0;
+  const wastePct = computeWastePct(totalWasteValue, grossSales);
 
   return {
     rescuedValue: money(rescuedValue),
