@@ -300,40 +300,37 @@ const STEPS = [
 
 function DaySteps() {
   return (
-    <>
-      <ol className="mt-5 grid gap-3 md:grid-cols-3">
-        {STEPS.map((step) => {
-          const Icon = step.icon;
-          return (
-            <li key={step.href}>
-              <Link
-                href={step.href}
-                className="flex h-full flex-col rounded-3xl border border-zinc-800 bg-zinc-900 p-4 transition hover:-translate-y-0.5 hover:border-emerald-400/50"
-              >
-                <span className="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-400 text-sm font-black text-zinc-950">
-                  {step.step}
-                </span>
-                <span className="mt-3 flex items-center gap-2 text-lg font-black text-white">
-                  <Icon className="h-5 w-5 text-emerald-300" />
-                  {step.title}
-                </span>
-                <span className="mt-1 flex-1 text-sm leading-relaxed text-zinc-400">{step.text}</span>
-                <span className="mt-4 inline-flex items-center gap-1 text-xs font-black text-emerald-300">
-                  Open
-                  <ArrowRight className="h-3.5 w-3.5" />
-                </span>
-              </Link>
-            </li>
-          );
-        })}
-      </ol>
+    <nav
+      className="mt-4 flex flex-col gap-2 rounded-2xl border border-slate-800/80 bg-slate-900/40 p-3 sm:flex-row sm:flex-wrap sm:items-center"
+      aria-label="Daily workflow"
+    >
+      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 sm:mr-1">
+        Today
+      </span>
+      {STEPS.map((step) => {
+        const Icon = step.icon;
+        return (
+          <Link
+            key={step.href}
+            href={step.href}
+            className="inline-flex items-center gap-2 rounded-xl border border-slate-800 bg-slate-950/60 px-3 py-2 text-xs font-bold text-slate-200 transition hover:border-blue-800/60 hover:bg-slate-800/50"
+          >
+            <span className="flex h-6 w-6 items-center justify-center rounded-full bg-blue-900/40 text-[10px] font-black text-blue-200">
+              {step.step}
+            </span>
+            <Icon className="h-3.5 w-3.5 text-blue-300/90" />
+            {step.title}
+            <ArrowRight className="h-3 w-3 text-slate-500" />
+          </Link>
+        );
+      })}
       <Link
         href="/operations"
-        className="mt-5 inline-flex text-sm font-bold text-zinc-400 underline-offset-4 hover:text-white hover:underline"
+        className="text-xs font-bold text-slate-400 underline-offset-2 hover:text-slate-200 hover:underline sm:ml-auto"
       >
-        Open the full ledger
+        Full ledger
       </Link>
-    </>
+    </nav>
   );
 }
 
@@ -359,13 +356,13 @@ export function AccountPage({
           title={title}
           description={
             showControls
-              ? 'The numbers come from the ledger. The three steps are the day’s work. Your details and the store controls sit below.'
+              ? 'Ledger KPIs and recovery charts at a glance. Profile, settings, and case board below.'
               : 'Your name, email, and position.'
           }
         />
         {showControls ? (
           <>
-            {figures}
+            <div className="mt-4">{figures}</div>
             <DaySteps />
           </>
         ) : null}

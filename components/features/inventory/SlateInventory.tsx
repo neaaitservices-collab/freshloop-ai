@@ -26,7 +26,13 @@ function departmentForName(name: string): DepartmentType {
   return 'PRODUCE';
 }
 
-export function SlateInventory({ levels: initialLevels }: { levels: StockLevel[] | null }) {
+export function SlateInventory({
+  levels: initialLevels,
+  highlightProductId,
+}: {
+  levels: StockLevel[] | null;
+  highlightProductId?: string | null;
+}) {
   const loading = initialLevels === null;
   const router = useRouter();
   const [levels, setLevels] = useState<StockLevel[]>(() => initialLevels ?? []);
@@ -189,6 +195,7 @@ export function SlateInventory({ levels: initialLevels }: { levels: StockLevel[]
       ) : (
         <InventoryMasterDetail
           levels={levels}
+          highlightProductId={highlightProductId}
           onLevelsChange={setLevels}
           pullDays={pullDays}
           query={query}
@@ -230,6 +237,7 @@ export function SlateInventory({ levels: initialLevels }: { levels: StockLevel[]
                 setLevels((current) =>
                   current.map((item) => (item.productId === level.productId ? level : item))
                 );
+                window.dispatchEvent(new CustomEvent('freshloop-inventory-updated'));
                 setToast(message);
                 router.refresh();
               }}

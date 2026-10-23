@@ -1,3 +1,5 @@
+import { homePathForRole } from '@/lib/utils/roleRouting';
+
 export const ROLES = [
   'ADMIN',
   'STORE_MANAGER',
@@ -35,25 +37,22 @@ export function isManager(role: RoleName): boolean {
 }
 
 export function homeForRole(role: RoleName): string {
-  if (role === 'RECEIVING_CLERK') return '/receive';
-  if (role === 'FLOOR_STAFF') return '/inventory/floor';
-  if (role === 'DELI_CHEF') return '/kitchen';
-  return '/admin';
+  return homePathForRole(role);
 }
 
 export function canVisit(role: RoleName, pathname: string): boolean {
   if (pathname === '/admin' || pathname.startsWith('/admin/')) return true;
   if (isManager(role)) return true;
+  if (pathname === '/operations' || pathname.startsWith('/operations/')) return false;
   if (role === 'RECEIVING_CLERK') {
     return (
       pathname === '/receive' ||
       pathname.startsWith('/receive/') ||
-      pathname === '/inventory' ||
-      pathname.startsWith('/inventory/')
+      pathname === '/inventory'
     );
   }
   if (role === 'FLOOR_STAFF') {
-    return pathname === '/inventory' || pathname.startsWith('/inventory/');
+    return pathname === '/inventory/floor' || pathname.startsWith('/inventory/floor');
   }
   if (role === 'DELI_CHEF') {
     return (

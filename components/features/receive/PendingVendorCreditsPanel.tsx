@@ -41,7 +41,7 @@ export function PendingVendorCreditsPanel({
           >
             <div className="min-w-0">
               <p className="truncate text-sm font-bold text-white">{row.itemName}</p>
-              <p className="text-[11px] text-zinc-400">
+              <p className="text-[11px] text-slate-400">
                 {row.casesReceived} cases · {formatCurrency(row.caseCost)}/case · added{' '}
                 {new Date(row.createdAt).toLocaleDateString()}
               </p>

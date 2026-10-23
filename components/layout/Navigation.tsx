@@ -4,6 +4,7 @@ import React, { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
+  Activity,
   ChefHat,
   ClipboardList,
   Leaf,
@@ -15,6 +16,7 @@ import {
   Warehouse,
 } from 'lucide-react';
 import { useRole } from '@/components/auth/RoleProvider';
+import { homePathForRole } from '@/lib/utils/roleRouting';
 import { isManager, ROLE_LABELS, type RoleName } from '@/lib/utils/roles';
 
 type NavIcon = React.ComponentType<{ className?: string }>;
@@ -39,6 +41,13 @@ const ITEMS: NavItem[] = [
   },
   { id: 'voice', label: 'Voice', icon: Mic, voice: true, roles: ['ADMIN', 'STORE_MANAGER', 'FLOOR_STAFF'] },
   { id: 'kitchen', label: 'Kitchen', icon: ChefHat, href: '/kitchen', roles: ['ADMIN', 'STORE_MANAGER', 'DELI_CHEF'] },
+  {
+    id: 'operations',
+    label: 'Operations',
+    icon: Activity,
+    href: '/operations',
+    roles: ['ADMIN', 'STORE_MANAGER'],
+  },
   { id: 'orders', label: 'Orders', icon: ClipboardList, href: '/orders', roles: ['ADMIN', 'STORE_MANAGER'] },
   {
     id: 'account',
@@ -56,16 +65,19 @@ function displayItem(item: NavItem, role: RoleName | null): NavItem {
   if (item.id === 'inventory' && role === 'FLOOR_STAFF') {
     return { ...item, label: 'Floor', href: '/inventory/floor' };
   }
+  if (item.id === 'inventory' && role === 'RECEIVING_CLERK') {
+    return { ...item, label: 'Stock', href: '/inventory' };
+  }
   return item;
 }
 
-function brandHref(items: NavItem[], role: RoleName | null): string {
-  if (!role || isManager(role)) return '/admin';
-  return items.find((item) => item.href && item.id !== 'account')?.href ?? '/admin';
+function brandHref(role: RoleName | null): string {
+  return homePathForRole(role ?? undefined);
 }
 
 function isActive(pathname: string, href: string) {
   if (href === '/inventory' && pathname.startsWith('/inventory/floor')) return false;
+  if (href === '/inventory/floor' && pathname.startsWith('/inventory/floor')) return true;
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 
@@ -84,25 +96,26 @@ export function Navigation({ onVoice }: { onVoice: () => void }) {
   const { users, activeUser, setActiveUserId } = useRole();
   const [collapsed, setCollapsed] = useState(false);
   const items = itemsFor(activeUser?.role ?? null);
+  const role = activeUser?.role ?? null;
 
   return (
     <>
       <aside
-        className={`sticky top-0 hidden h-screen shrink-0 flex-col border-r border-zinc-800 bg-zinc-950 md:flex ${
+        className={`sticky top-0 hidden h-screen shrink-0 flex-col border-r border-slate-800 bg-slate-950 md:flex ${
           collapsed ? 'w-[72px]' : 'w-56'
         }`}
       >
         <div className={`flex items-center gap-2 px-3 py-4 ${collapsed ? 'justify-center' : ''}`}>
-          <Link href={brandHref(items, activeUser?.role ?? null)} className="flex items-center gap-2">
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-emerald-400 text-zinc-950">
+          <Link href={brandHref(role)} className="flex items-center gap-2">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-blue-900/50 text-blue-200 ring-1 ring-blue-800/60">
               <Leaf className="h-5 w-5" />
             </span>
-            {collapsed ? null : <span className="text-base font-black text-white">FreshLoop</span>}
+            {collapsed ? null : <span className="text-base font-black text-slate-100">FreshLoop</span>}
           </Link>
         </div>
         <nav className="flex-1 space-y-1 px-2">
           {items.map((item) => {
-            const shown = displayItem(item, activeUser?.role ?? null);
+            const shown = displayItem(item, role);
             return (
               <NavRow
                 key={shown.id}
@@ -114,15 +127,15 @@ export function Navigation({ onVoice }: { onVoice: () => void }) {
             );
           })}
         </nav>
-        <div className="space-y-2 border-t border-zinc-800 p-2">
+        <div className="space-y-2 border-t border-slate-800 p-2">
           {collapsed ? null : (
-            <label className="block px-1 text-[10px] font-bold uppercase tracking-wider text-zinc-500">
+            <label className="block px-1 text-[10px] font-bold uppercase tracking-wider text-slate-500">
               Acting as
               <select
                 aria-label="Acting as"
                 value={activeUser?.id ?? ''}
                 onChange={(event) => setActiveUserId(event.target.value)}
-                className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-2 py-2 text-xs font-bold text-white"
+                className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900/60 px-2 py-2 text-xs font-bold text-slate-100"
               >
                 {users.map((user) => (
                   <option key={user.id} value={user.id}>
@@ -135,7 +148,7 @@ export function Navigation({ onVoice }: { onVoice: () => void }) {
           <button
             type="button"
             onClick={() => setCollapsed((current) => !current)}
-            className="flex w-full items-center justify-center gap-2 rounded-xl px-2 py-2 text-xs font-bold text-zinc-400 hover:bg-zinc-900"
+            className="flex w-full items-center justify-center gap-2 rounded-xl px-2 py-2 text-xs font-bold text-slate-400 hover:bg-slate-800/50"
             aria-label={collapsed ? 'Expand navigation' : 'Collapse navigation'}
           >
             <PanelLeft className="h-4 w-4" />
@@ -144,18 +157,18 @@ export function Navigation({ onVoice }: { onVoice: () => void }) {
         </div>
       </aside>
 
-      <header className="sticky top-0 z-40 flex items-center justify-between gap-3 border-b border-zinc-800 bg-zinc-950/95 px-3 py-3 backdrop-blur-xl md:hidden">
-        <Link href={brandHref(items, activeUser?.role ?? null)} className="flex items-center gap-2">
-          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-400 text-zinc-950">
+      <header className="sticky top-0 z-40 flex items-center justify-between gap-3 border-b border-slate-800 bg-slate-950/95 px-3 py-3 backdrop-blur-xl md:hidden">
+        <Link href={brandHref(role)} className="flex items-center gap-2">
+          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-900/50 text-blue-200 ring-1 ring-blue-800/60">
             <Leaf className="h-4 w-4" />
           </span>
-          <span className="text-sm font-black text-white">FreshLoop</span>
+          <span className="text-sm font-black text-slate-100">FreshLoop</span>
         </Link>
         <select
           aria-label="Acting as"
           value={activeUser?.id ?? ''}
           onChange={(event) => setActiveUserId(event.target.value)}
-          className="max-w-[11rem] rounded-lg border border-zinc-700 bg-zinc-900 px-2 py-2 text-xs font-bold text-white"
+          className="max-w-[11rem] rounded-lg border border-slate-700 bg-slate-900/60 px-2 py-2 text-xs font-bold text-slate-100"
         >
           {users.map((user) => (
             <option key={user.id} value={user.id}>
@@ -165,14 +178,14 @@ export function Navigation({ onVoice }: { onVoice: () => void }) {
         </select>
       </header>
 
-      <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-zinc-800 bg-zinc-950/95 px-1 pb-[max(0.35rem,env(safe-area-inset-bottom))] pt-1 backdrop-blur-xl md:hidden">
+      <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-slate-800 bg-slate-950/95 px-1 pb-[max(0.35rem,env(safe-area-inset-bottom))] pt-1 backdrop-blur-xl md:hidden">
         <ul className="flex overflow-x-auto">
           {items.map((item) => {
-            const shown = displayItem(item, activeUser?.role ?? null);
+            const shown = displayItem(item, role);
             const Icon = shown.icon;
             const active = shown.href ? isActive(pathname, shown.href) : false;
             const className = `flex min-w-[4.25rem] flex-1 flex-col items-center gap-0.5 px-1 py-1 text-[10px] font-bold ${
-              active ? 'text-emerald-300' : 'text-zinc-400'
+              active ? 'text-blue-300' : 'text-slate-400'
             }`;
             if (shown.voice) {
               return (
@@ -211,9 +224,13 @@ function NavRow({
   onVoice: () => void;
 }) {
   const Icon = item.icon;
-  const className = `flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-bold transition hover:text-white ${
+  const className = `flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-bold transition ${
     collapsed ? 'justify-center' : ''
-  } ${active ? 'bg-emerald-400 text-zinc-950 hover:text-zinc-950' : 'text-zinc-300 hover:bg-zinc-900'}`;
+  } ${
+    active
+      ? 'bg-blue-900/40 text-slate-100 ring-1 ring-blue-800/70'
+      : 'text-slate-300 hover:bg-slate-800/50 hover:text-slate-100'
+  }`;
   if (item.voice) {
     return (
       <button type="button" onClick={onVoice} className={className} title="Voice">

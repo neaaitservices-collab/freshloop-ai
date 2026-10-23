@@ -44,6 +44,36 @@ function currentMargin(row: StockLevel): number | null {
   return ((row.retailPrice - row.unitCost) / row.retailPrice) * 100;
 }
 
+function shelfValue(row: StockLevel): number {
+  const unit = row.retailPrice !== null && row.retailPrice > 0 ? row.retailPrice : row.unitCost;
+  return row.onHand * unit;
+}
+
+function dispatchInventoryUpdated() {
+  window.dispatchEvent(new CustomEvent('freshloop-inventory-updated'));
+}
+
+function suggestedRetailPrice(input: {
+  caseCost: number;
+  packSize: number;
+  yieldDivisor: number;
+  marginMode: MarginMode;
+  customMarginPercent: string;
+}): string | null {
+  const targetMargin = resolveTargetMargin(
+    input.marginMode,
+    toNumber(input.customMarginPercent)
+  );
+  const quote = calculateYieldQuote({
+    caseCost: input.caseCost,
+    packSize: input.packSize,
+    yieldDivisor: input.yieldDivisor,
+    targetMargin,
+    currentRetailPrice: 0,
+  });
+  return quote.targetSrp !== null ? quote.targetSrp.toFixed(2) : null;
+}
+
 export function InventoryMasterDetail({
   levels,
   onLevelsChange,
@@ -52,6 +82,7 @@ export function InventoryMasterDetail({
   departmentFilter,
   onToast,
   onError,
+  highlightProductId,
 }: {
   levels: StockLevel[];
   onLevelsChange: (next: StockLevel[]) => void;
@@ -60,6 +91,7 @@ export function InventoryMasterDetail({
   departmentFilter: (row: StockLevel) => boolean;
   onToast: (message: string) => void;
   onError: (message: string) => void;
+  highlightProductId?: string | null;
 }) {
   const { activeUser, loading: roleLoading } = useRole();
   const [roleReady, setRoleReady] = useState(false);
@@ -104,13 +136,40 @@ export function InventoryMasterDetail({
   const [transferBusy, setTransferBusy] = useState(false);
 
   useEffect(() => {
+    if (catalog.length === 0) return;
+    if (highlightProductId && catalog.some((row) => row.productId === highlightProductId)) {
+      setSelectedId(highlightProductId);
+      window.setTimeout(() => {
+        document.getElementById('inventory-row-highlight')?.scrollIntoView({
+          block: 'nearest',
+          behavior: 'smooth',
+        });
+      }, 200);
+      return;
+    }
+    setSelectedId((id) => id ?? catalog[0]!.productId);
+  }, [catalog, highlightProductId]);
+
+  useEffect(() => {
     if (!selected) return;
-    setPackSize(String(selected.casePackSize));
+    const initialPack = selected.casePackSize;
+    setPackSize(String(initialPack));
     setYieldDivisor('1');
     setRetailUnit(retailUnitFor(selected.unitType));
     setMarginMode('40');
+    const unitsPerCase = initialPack > 0 ? initialPack : 1;
+    const initialCaseCost = selected.unitCost * unitsPerCase;
+    const suggested = suggestedRetailPrice({
+      caseCost: initialCaseCost,
+      packSize: initialPack,
+      yieldDivisor: 1,
+      marginMode: '40',
+      customMarginPercent: '35',
+    });
     setCurrentRetailPrice(
-      selected.retailPrice !== null ? selected.retailPrice.toFixed(2) : '0.00'
+      selected.retailPrice !== null
+        ? selected.retailPrice.toFixed(2)
+        : (suggested ?? '0.00')
     );
     setCasesOnHand(casesLabel(selected.onHandCases));
     setSavedMessage(null);
@@ -123,6 +182,18 @@ export function InventoryMasterDetail({
   const unitsPerCase =
     selected && pack > 0 && divisor > 0 ? pack / divisor : (selected?.casePackSize ?? 1);
   const caseCost = selected ? selected.unitCost * unitsPerCase : 0;
+
+  useEffect(() => {
+    if (!selected || marginMode !== 'custom') return;
+    const next = suggestedRetailPrice({
+      caseCost,
+      packSize: pack,
+      yieldDivisor: divisor,
+      marginMode,
+      customMarginPercent,
+    });
+    if (next !== null) setCurrentRetailPrice(next);
+  }, [customMarginPercent, marginMode, selectedKey, caseCost, pack, divisor, selected]);
 
   const quote = useMemo(
     () =>
@@ -163,6 +234,7 @@ export function InventoryMasterDetail({
       onLevelsChange(
         levels.map((row) => (row.productId === selected.productId ? json.level : row))
       );
+      dispatchInventoryUpdated();
       setSavedMessage('Case updated.');
       onToast('Stock updated — case saved.');
     } catch {
@@ -195,6 +267,7 @@ export function InventoryMasterDetail({
       const level = json.level as StockLevel;
       onLevelsChange(levels.map((row) => (row.productId === selected.productId ? level : row)));
       setCasesOnHand(casesLabel(level.onHandCases));
+      dispatchInventoryUpdated();
       onToast(
         `${formatUnits(level.onHand)} ${stockUnitLabel(level.unitType)} on hand.`
       );
@@ -203,6 +276,19 @@ export function InventoryMasterDetail({
     } finally {
       setSavingStock(false);
     }
+  };
+
+  const applyMarginMode = (mode: MarginMode) => {
+    setMarginMode(mode);
+    setSavedMessage(null);
+    const next = suggestedRetailPrice({
+      caseCost,
+      packSize: pack,
+      yieldDivisor: divisor,
+      marginMode: mode,
+      customMarginPercent,
+    });
+    if (next !== null) setCurrentRetailPrice(next);
   };
 
   if (catalog.length === 0) {
@@ -233,37 +319,55 @@ export function InventoryMasterDetail({
             />
           </label>
         </CardHeader>
+        <div className="sticky top-0 z-10 hidden border-b border-slate-800/80 bg-slate-900/80 px-4 py-2 backdrop-blur-md sm:grid sm:grid-cols-[minmax(0,1.35fr)_minmax(0,0.9fr)_3.5rem_4.5rem_minmax(0,5.5rem)] sm:gap-2 sm:text-[10px] sm:font-bold sm:uppercase sm:tracking-wider sm:text-slate-500">
+          <span>Item · supplier</span>
+          <span className="text-right">Units / cases</span>
+          <span className="text-right">Margin</span>
+          <span className="text-right">Value</span>
+          <span className="text-right">Expiry</span>
+        </div>
         <ul className="max-h-[36rem] divide-y divide-slate-800/80 overflow-y-auto">
           {catalog.map((row) => {
             const active = row.productId === selected?.productId;
             const margin = currentMargin(row);
             const urgent = row.daysRemaining <= pullDays || row.low;
             return (
-              <li key={row.productId}>
+              <li
+                key={row.productId}
+                id={row.productId === highlightProductId ? 'inventory-row-highlight' : undefined}
+              >
                 <button
                   type="button"
                   onClick={() => setSelectedId(row.productId)}
                   className={cn(
-                    'grid w-full grid-cols-1 gap-1 px-3 py-2.5 text-left transition sm:grid-cols-[minmax(0,1.4fr)_auto_auto_auto] sm:items-center sm:gap-3 sm:px-4',
+                    'grid w-full grid-cols-1 gap-1.5 px-3 py-2 text-left transition sm:grid-cols-[minmax(0,1.35fr)_minmax(0,0.9fr)_3.5rem_4.5rem_minmax(0,5.5rem)] sm:items-center sm:gap-2 sm:px-4 sm:py-2.5',
                     active
-                      ? 'bg-blue-950/10 ring-1 ring-inset ring-blue-800'
-                      : 'hover:bg-slate-800/40',
-                    urgent && !active && 'bg-rose-950/10'
+                      ? 'border-l-2 border-l-blue-700 bg-blue-950/20 ring-1 ring-inset ring-blue-800/80'
+                      : 'border-l-2 border-l-transparent hover:bg-slate-800/40',
+                    urgent && !active && 'bg-rose-950/10',
+                    row.productId === highlightProductId && !active && 'bg-blue-950/20 ring-1 ring-inset ring-blue-800/60'
                   )}
                 >
                   <div className="min-w-0">
                     <p className="truncate text-sm font-bold text-slate-100">{row.name}</p>
-                    <p className="truncate text-[11px] text-slate-500">{row.supplier}</p>
+                    <p className="truncate text-[11px] text-slate-400">{row.supplier || '—'}</p>
                   </div>
-                  <p className="font-mono text-[11px] text-slate-300 sm:text-right">
+                  <p className="font-mono text-[11px] leading-tight text-slate-300 sm:text-right">
                     {formatUnits(row.onHand)} {stockUnitLabel(row.unitType)}
-                    <span className="text-slate-500"> · </span>
-                    {casesLabel(row.onHandCases)} cs
+                    <span className="block text-slate-500">{casesLabel(row.onHandCases)} cs</span>
                   </p>
-                  <p className="text-[11px] text-slate-400 sm:text-right">
+                  <p
+                    className={cn(
+                      'text-[11px] font-semibold sm:text-right',
+                      margin !== null && margin < 35 ? 'text-amber-400/90' : 'text-slate-300'
+                    )}
+                  >
                     {margin === null ? '—' : `${formatPercent(margin)}%`}
                   </p>
-                  <div className="flex flex-wrap items-center gap-1 sm:justify-end">
+                  <p className="font-mono text-[11px] font-semibold text-slate-100 sm:text-right">
+                    {formatCurrency(shelfValue(row))}
+                  </p>
+                  <div className="flex flex-wrap items-center justify-start gap-1 sm:justify-end">
                     <DaysRemainingBadge days={row.daysRemaining} />
                     {row.low ? <Badge variant="warning">Low</Badge> : null}
                     {row.isMarkdown ? <Badge variant="ocean">30% off</Badge> : null}
@@ -298,11 +402,19 @@ export function InventoryMasterDetail({
                     marginMode={marginMode}
                     customMarginPercent={customMarginPercent}
                     currentRetailPrice={currentRetailPrice}
-                    onMarginMode={setMarginMode}
+                    onMarginMode={applyMarginMode}
                     onCustomMargin={setCustomMarginPercent}
                     onCurrentRetailPrice={setCurrentRetailPrice}
                   />
                 </div>
+                {quote.targetSrp !== null ? (
+                  <p className="text-center text-[11px] text-slate-400">
+                    Suggested SRP at target margin:{' '}
+                    <span className="font-mono font-bold text-blue-300/90">
+                      {formatCurrency(quote.targetSrp)}
+                    </span>
+                  </p>
+                ) : null}
                 <p
                   className={cn(
                     'text-center font-mono text-lg font-black',
@@ -324,7 +436,7 @@ export function InventoryMasterDetail({
                   disabled={saving || !(pack > 0) || !(divisor > 0)}
                   onClick={() => void saveCase()}
                 >
-                  {saving ? 'Saving…' : 'Save case'}
+                  {saving ? 'Saving…' : 'Save'}
                 </Button>
               </CardBody>
             </Card>
@@ -357,7 +469,7 @@ export function InventoryMasterDetail({
                     disabled={savingStock}
                     onClick={() => void updateStock()}
                   >
-                    {savingStock ? 'Updating…' : 'Update stock level'}
+                    {savingStock ? 'Updating…' : 'Update stock'}
                   </Button>
                 </CardBody>
               </Card>

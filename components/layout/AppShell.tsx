@@ -28,7 +28,7 @@ export function AppShell({
   }, [activeUser, loading, pathname, router]);
 
   return (
-    <div className="flex min-h-screen flex-col bg-zinc-950 text-zinc-100 md:flex-row">
+    <div className="flex min-h-screen flex-col bg-slate-950 text-slate-100 md:flex-row">
       <Navigation onVoice={openVoice} />
       <div className="flex min-w-0 flex-1 flex-col pb-20 md:pb-0">{children}</div>
       {!onVoice ? (

@@ -3,9 +3,9 @@
 import React from 'react';
 import { Loader2, Mail, X } from 'lucide-react';
 import type { PoDraft } from '@/components/features/orders/supplierMail';
-
-const fieldClass =
-  'mt-1 w-full rounded-2xl border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm font-semibold normal-case tracking-normal text-white outline-none transition focus:border-emerald-400/70 focus:ring-2 focus:ring-emerald-500/20';
+import { Button } from '@/components/ui/Button';
+import { Card, CardBody, CardHeader, CardTitle } from '@/components/ui/Card';
+import { Input } from '@/components/ui/Input';
 
 export function PoEmailPanel({
   draft,
@@ -21,59 +21,60 @@ export function PoEmailPanel({
   onSend: () => void;
 }) {
   return (
-    <section id="po-email" className="rounded-3xl border border-zinc-800 bg-zinc-900/80 p-4">
-      <header className="flex items-center justify-between gap-2">
-        <h2 className="flex items-center gap-2 text-sm font-black text-white">
-          <Mail className="h-4 w-4 text-emerald-300" />
-          Send PO Email
-        </h2>
+    <div id="po-email">
+    <Card className="overflow-hidden">
+      <CardHeader className="flex flex-row items-center justify-between gap-2 py-3">
+        <CardTitle className="flex items-center gap-2 text-sm">
+          <Mail className="h-4 w-4 text-blue-300/90" />
+          Send PO email
+          <span className="font-normal text-slate-400">· {draft.supplier}</span>
+        </CardTitle>
         <button
           type="button"
           onClick={onClose}
           aria-label="Close purchase order email"
-          className="rounded-xl p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-white"
+          className="rounded-xl p-1.5 text-slate-400 hover:bg-slate-800/60 hover:text-slate-100"
         >
           <X className="h-4 w-4" />
         </button>
-      </header>
-
-      <label className="mt-3 block text-[10px] font-bold uppercase tracking-wider text-zinc-500">
-        To
-        <input
-          value={draft.to}
-          onChange={(event) => onChange({ ...draft, to: event.target.value })}
-          className={fieldClass}
-        />
-      </label>
-
-      <label className="mt-3 block text-[10px] font-bold uppercase tracking-wider text-zinc-500">
-        Subject
-        <input
-          value={draft.subject}
-          onChange={(event) => onChange({ ...draft, subject: event.target.value })}
-          className={fieldClass}
-        />
-      </label>
-
-      <label className="mt-3 block text-[10px] font-bold uppercase tracking-wider text-zinc-500">
-        Draft
-        <textarea
-          value={draft.body}
-          rows={7}
-          onChange={(event) => onChange({ ...draft, body: event.target.value })}
-          className={`${fieldClass} resize-y font-mono text-[12px] font-normal leading-relaxed`}
-        />
-      </label>
-
-      <button
-        type="button"
-        onClick={onSend}
-        disabled={sending || draft.productIds.length === 0 || !draft.to.trim()}
-        className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-emerald-400 px-4 py-3 text-sm font-black text-zinc-950 transition hover:bg-emerald-300 disabled:cursor-not-allowed disabled:bg-zinc-800 disabled:text-zinc-500"
-      >
-        {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4" />}
-        {sending ? 'Sending…' : 'Send PO Email'}
-      </button>
-    </section>
+      </CardHeader>
+      <CardBody className="space-y-3 pt-0">
+        <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">
+          To
+          <Input
+            value={draft.to}
+            onChange={(event) => onChange({ ...draft, to: event.target.value })}
+            className="mt-1 text-sm font-semibold"
+          />
+        </label>
+        <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">
+          Subject
+          <Input
+            value={draft.subject}
+            onChange={(event) => onChange({ ...draft, subject: event.target.value })}
+            className="mt-1 text-sm font-semibold"
+          />
+        </label>
+        <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">
+          Draft
+          <textarea
+            value={draft.body}
+            rows={7}
+            onChange={(event) => onChange({ ...draft, body: event.target.value })}
+            className="mt-1 w-full resize-y rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-xs leading-relaxed text-slate-200 outline-none focus:border-slate-500 focus:ring-1 focus:ring-slate-600"
+          />
+        </label>
+        <Button
+          variant="success"
+          className="w-full py-3"
+          disabled={sending || draft.productIds.length === 0 || !draft.to.trim()}
+          onClick={onSend}
+        >
+          {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4" />}
+          {sending ? 'Sending…' : 'Send PO email'}
+        </Button>
+      </CardBody>
+    </Card>
+    </div>
   );
 }

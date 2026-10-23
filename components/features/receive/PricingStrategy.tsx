@@ -32,7 +32,7 @@ export function PricingStrategy({
     <SectionCard step="3" title="Floor price" hint="Margin updates with the price">
       <div className="flex flex-wrap items-end gap-3">
         <div className="space-y-1.5">
-          <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">Target margin</p>
+          <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Target margin</p>
           <div className="flex gap-1.5">
             {modes.map((mode) => {
               const active = marginMode === mode.id;
@@ -43,8 +43,8 @@ export function PricingStrategy({
                   onClick={() => onMarginMode(mode.id)}
                   className={`rounded-full px-3 py-2 text-xs font-black transition active:scale-95 ${
                     active
-                      ? 'bg-emerald-400 text-zinc-950'
-                      : 'border border-zinc-700 bg-zinc-950 text-zinc-300 hover:border-emerald-500/40'
+                      ? 'border border-blue-800 bg-blue-900/40 text-slate-100'
+                      : 'border border-slate-700 bg-slate-950 text-slate-300 hover:border-blue-800/60'
                   }`}
                 >
                   {mode.label}
@@ -74,7 +74,7 @@ export function PricingStrategy({
           />
         </div>
         <div className="pb-1">
-          <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-zinc-500">Margin</p>
+          <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-500">Margin</p>
           <MarginBadge currentMarginPct={quote.currentMarginPct} />
         </div>
       </div>

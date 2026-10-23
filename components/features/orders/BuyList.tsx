@@ -90,6 +90,21 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
     setPrintedAt(new Date().toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }));
   }, []);
 
+  useEffect(() => {
+    const syncFromServer = () => {
+      void fetch('/api/inventory/levels', { cache: 'no-store' })
+        .then((response) => response.json())
+        .then((json) => {
+          if (json.success && Array.isArray(json.levels)) {
+            setLevels(json.levels as StockLevel[]);
+          }
+        })
+        .catch(() => undefined);
+    };
+    window.addEventListener('freshloop-inventory-updated', syncFromServer);
+    return () => window.removeEventListener('freshloop-inventory-updated', syncFromServer);
+  }, []);
+
   const draftKey = draft ? `${draft.supplier}:${draft.productIds.join(',')}` : '';
 
   useEffect(() => {
@@ -190,6 +205,7 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
         return false;
       }
       setLevels((current) => current.map((item) => (item.productId === row.productId ? json.level : item)));
+      window.dispatchEvent(new CustomEvent('freshloop-inventory-updated'));
       return true;
     } catch {
       setError('The supplier could not be saved.');
@@ -222,12 +238,16 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
         return;
       }
       setLevels((current) => current.map((item) => (item.productId === row.productId ? json.level : item)));
+      window.dispatchEvent(new CustomEvent('freshloop-inventory-updated'));
     } catch {
       setError('The alert level could not be saved.');
     } finally {
       setSavingId(null);
     }
   };
+
+  const rowsForPo = (group: (typeof activeOrders)[number]) =>
+    group.approved.length > 0 ? group.approved : group.open;
 
   const approve = (productId: string) => {
     setMarks((current) => (current[productId] === 'sent' ? current : { ...current, [productId]: 'approved' }));
@@ -280,11 +300,11 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
 
     return (
       <>
-        <ul className="divide-y divide-zinc-800 md:hidden">
+        <ul className="divide-y divide-slate-800/80 md:hidden">
           {visible.map((row) => (
             <li key={row.productId} className="space-y-2 px-3 py-3">
               <div className="flex items-start justify-between gap-2">
-                <p className="text-sm font-black leading-snug text-white">{row.name}</p>
+                <p className="text-sm font-bold leading-snug text-slate-100">{row.name}</p>
                 <StatusBadge row={row} mark={marks[row.productId]} />
               </div>
               <SupplierField
@@ -292,7 +312,7 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
                 saving={savingSupplierId === row.productId}
                 onCommit={(value) => void saveSupplier(row, value)}
               />
-              <p className="font-mono text-[11px] text-zinc-400">
+              <p className="font-mono text-[11px] text-slate-400">
                 {formatUnits(row.onHand)} {stockUnitLabel(row.unitType)} / {casesLabel(row.onHandCases)}{' '}
                 {caseWord(row.onHandCases)}
               </p>
@@ -317,39 +337,39 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
           ))}
         </ul>
         <div className="hidden overflow-x-auto md:block">
-          <table className="w-full min-w-[920px] text-left text-sm">
-            <thead className="bg-zinc-950 text-[11px] uppercase tracking-wider text-zinc-500">
+          <table className="w-full min-w-[640px] text-left text-sm">
+            <thead className="bg-slate-950/80 text-[10px] uppercase tracking-wider text-slate-500">
               <tr>
-                <th className="px-4 py-3 font-bold">Item</th>
-                <th className="px-4 py-3 font-bold">Supplier</th>
-                <th className="px-4 py-3 text-right font-bold">On hand</th>
-                <th className="px-4 py-3 text-right font-bold">Order</th>
-                <th className="px-4 py-3 text-center font-bold">Alert</th>
-                <th className="px-4 py-3 font-bold">Status</th>
-                <th className="px-4 py-3 text-right font-bold">Actions</th>
+                <th className="px-4 py-2.5 font-bold">Item</th>
+                <th className="px-4 py-2.5 text-right font-bold">On hand</th>
+                <th className="px-4 py-2.5 text-right font-bold">Order amount</th>
+                <th className="px-4 py-2.5 text-center font-bold">Alert level</th>
+                <th className="px-4 py-2.5 font-bold">Status</th>
+                <th className="px-4 py-2.5 text-right font-bold">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-zinc-800">
+            <tbody className="divide-y divide-slate-800/80">
               {visible.map((row) => (
-                <tr key={row.productId} className={row.low ? 'bg-orange-500/[0.04]' : undefined}>
-                  <td className="px-4 py-3 font-bold text-white">{row.name}</td>
-                  <td className="px-4 py-3">
+                <tr key={row.productId} className={row.low ? 'bg-amber-950/15' : undefined}>
+                  <td className="px-4 py-2.5">
+                    <p className="font-bold text-slate-100">{row.name}</p>
                     <SupplierField
                       row={row}
                       saving={savingSupplierId === row.productId}
                       onCommit={(value) => void saveSupplier(row, value)}
+                      compact
                     />
                   </td>
-                  <td className="whitespace-nowrap px-4 py-3 text-right font-mono text-xs text-zinc-300">
+                  <td className="whitespace-nowrap px-4 py-2.5 text-right font-mono text-xs text-slate-300">
                     {formatUnits(row.onHand)} {stockUnitLabel(row.unitType)}
-                    <span className="block text-[11px] text-zinc-500">
+                    <span className="block text-[11px] text-slate-500">
                       {casesLabel(row.onHandCases)} {caseWord(row.onHandCases)}
                     </span>
                   </td>
-                  <td className="px-4 py-3 text-right">
+                  <td className="px-4 py-2.5 text-right">
                     <OrderAmount row={row} />
                   </td>
-                  <td className="px-4 py-3 text-center">
+                  <td className="px-4 py-2.5 text-center">
                     <AlertField
                       row={row}
                       saving={savingId === row.productId}
@@ -357,10 +377,10 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
                       onCommit={(value) => void savePar(withPar(row, Number(value)))}
                     />
                   </td>
-                  <td className="px-4 py-3">
+                  <td className="px-4 py-2.5">
                     <StatusBadge row={row} mark={marks[row.productId]} />
                   </td>
-                  <td className="px-4 py-3">
+                  <td className="px-4 py-2.5">
                     <LineActions
                       row={row}
                       mark={marks[row.productId]}
@@ -379,7 +399,7 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
           <button
             type="button"
             onClick={() => setStockOpen((current) => ({ ...current, [supplier]: !current[supplier] }))}
-            className="flex w-full items-center justify-center gap-1 border-t border-zinc-800 px-3 py-2 text-[11px] font-bold uppercase tracking-wider text-zinc-500 hover:text-emerald-300"
+            className="flex w-full items-center justify-center gap-1 border-t border-slate-800/80 px-3 py-2 text-[11px] font-bold uppercase tracking-wider text-slate-500 hover:text-blue-300/90"
           >
             <ChevronDown className={`h-3.5 w-3.5 transition ${stockOpen[supplier] ? 'rotate-180' : ''}`} />
             {stockOpen[supplier] ? 'Hide in-stock items' : `Show ${resting.length} in stock`}
@@ -516,20 +536,21 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
             />
           </label>
           {needle ? (
-            <ul className="mt-2 overflow-hidden rounded-3xl border border-zinc-800 bg-zinc-900/80">
+            <Card className="mt-2 overflow-hidden">
               {matches.length === 0 ? (
-                <li className="px-4 py-4 text-sm text-zinc-400">No item matches that search.</li>
+                <CardBody className="py-4 text-sm text-slate-400">No item matches that search.</CardBody>
               ) : (
-                matches.map((row) => {
+                <ul>
+                {matches.map((row) => {
                   const listed = onThisOrder(row);
                   return (
                     <li
                       key={row.productId}
-                      className="flex flex-col gap-2 border-b border-zinc-800 px-4 py-3 last:border-0 sm:flex-row sm:items-center"
+                      className="flex flex-col gap-2 border-b border-slate-800/80 px-4 py-3 last:border-0 sm:flex-row sm:items-center"
                     >
                       <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-black text-white">{row.name}</p>
-                        <p className="font-mono text-[11px] text-zinc-500">
+                        <p className="truncate text-sm font-bold text-slate-100">{row.name}</p>
+                        <p className="font-mono text-[11px] text-slate-500">
                           {formatUnits(row.onHand)} {stockUnitLabel(row.unitType)} on hand
                         </p>
                       </div>
@@ -549,9 +570,10 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
                       </Button>
                     </li>
                   );
-                })
+                })}
+                </ul>
               )}
-            </ul>
+            </Card>
           ) : null}
           <datalist id="order-suppliers">
             {supplierChoices.map((supplier) => (
@@ -562,35 +584,41 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
           <div className="mt-4 grid items-start gap-4 lg:grid-cols-[3fr_1fr]">
             <div className="space-y-3">
               {loading ? (
-                <div className="space-y-2 rounded-3xl border border-zinc-800 bg-zinc-900/70 p-3">
-                  {Array.from({ length: 8 }, (_, index) => (
-                    <span key={index} className="block h-8 animate-pulse rounded-xl bg-zinc-800" />
-                  ))}
-                </div>
+                <Card>
+                  <CardBody className="space-y-2 py-3">
+                    {Array.from({ length: 6 }, (_, index) => (
+                      <span key={index} className="block h-8 animate-pulse rounded-xl bg-slate-800/80" />
+                    ))}
+                  </CardBody>
+                </Card>
               ) : null}
               {!loading && listedNames.length === 0 && quietNames.length === 0 ? (
-                <p className="rounded-3xl border border-zinc-800 bg-zinc-900 px-4 py-10 text-center text-sm text-zinc-300">
-                  {query.trim() ? 'Nothing matches that search.' : 'Nothing is in the catalog yet.'}
-                </p>
+                <Card>
+                  <CardBody className="py-10 text-center text-sm text-slate-400">
+                    {query.trim() ? 'Nothing matches that search.' : 'Nothing is in the catalog yet.'}
+                  </CardBody>
+                </Card>
               ) : null}
               {listedNames.map((supplier) => renderSupplier(supplier))}
               {!loading && !query.trim() && quietNames.length > 0 ? (
-                <section className="overflow-hidden rounded-3xl border border-zinc-800 bg-zinc-900/40">
+                <Card className="overflow-hidden">
                   <button
                     type="button"
                     onClick={() => setQuietOpen((current) => !current)}
-                    className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left"
+                    className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left hover:bg-slate-800/30"
                   >
                     <span>
-                      <span className="block text-sm font-black text-white">In stock</span>
-                      <span className="text-xs text-zinc-400">
+                      <span className="block text-sm font-bold text-slate-100">In stock</span>
+                      <span className="text-xs text-slate-400">
                         {quietNames.length} supplier{quietNames.length === 1 ? '' : 's'} at or above the alert level
                       </span>
                     </span>
-                    <ChevronDown className={`h-4 w-4 text-zinc-400 transition ${quietOpen ? 'rotate-180' : ''}`} />
+                    <ChevronDown className={`h-4 w-4 text-slate-400 transition ${quietOpen ? 'rotate-180' : ''}`} />
                   </button>
-                  {quietOpen ? <div className="space-y-3 border-t border-zinc-800 p-3">{quietNames.map(renderSupplier)}</div> : null}
-                </section>
+                  {quietOpen ? (
+                    <div className="space-y-3 border-t border-slate-800/80 p-3">{quietNames.map(renderSupplier)}</div>
+                  ) : null}
+                </Card>
               ) : null}
             </div>
 
@@ -610,33 +638,38 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
                   <p className="text-sm text-slate-400">No open supplier orders.</p>
                 ) : null}
                 <ul className="space-y-2">
-                  {activeOrders.map((group) => (
-                    <li
-                      key={group.supplier}
-                      className="rounded-xl border border-slate-800/80 bg-slate-950/60 p-3"
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <p className="text-sm font-bold text-slate-100">{group.supplier}</p>
-                        <p className="font-mono text-sm font-bold text-emerald-400/90">
-                          {formatCurrency(group.approved.length > 0 ? group.approvedCost : group.suggested)}
-                        </p>
-                      </div>
-                      <p className="mt-0.5 text-[10px] font-bold uppercase tracking-wider text-slate-500">
-                        {group.approved.length > 0
-                          ? `${group.approved.length} approved`
-                          : `Suggested · ${group.open.length} open`}
-                      </p>
-                      <Button
-                        variant={group.approved.length > 0 ? 'success' : 'secondary'}
-                        className="mt-2 w-full text-xs"
-                        disabled={group.approved.length === 0}
-                        onClick={() => openDraft(draftForRows(group.supplier, group.approved))}
+                  {activeOrders.map((group) => {
+                    const poRows = rowsForPo(group);
+                    return (
+                      <li
+                        key={group.supplier}
+                        className="rounded-xl border border-slate-800/80 bg-slate-950/60 p-3"
                       >
-                        <Mail className="h-3.5 w-3.5" />
-                        Send PO email
-                      </Button>
-                    </li>
-                  ))}
+                        <div className="flex items-start justify-between gap-2">
+                          <p className="text-sm font-bold text-slate-100">{group.supplier}</p>
+                          <p className="font-mono text-sm font-bold text-emerald-400/90">
+                            {formatCurrency(
+                              group.approved.length > 0 ? group.approvedCost : group.suggested
+                            )}
+                          </p>
+                        </div>
+                        <p className="mt-0.5 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                          {group.approved.length > 0
+                            ? `${group.approved.length} approved · subtotal`
+                            : `${group.open.length} suggested · subtotal`}
+                        </p>
+                        <Button
+                          variant={group.approved.length > 0 ? 'success' : 'primary'}
+                          className="mt-2 w-full text-xs"
+                          disabled={poRows.length === 0}
+                          onClick={() => openDraft(draftForRows(group.supplier, poRows))}
+                        >
+                          <Mail className="h-3.5 w-3.5" />
+                          {group.approved.length > 0 ? 'Send PO email' : 'Send group email'}
+                        </Button>
+                      </li>
+                    );
+                  })}
                 </ul>
                 </CardBody>
               </Card>
@@ -727,11 +760,11 @@ function StatusBadge({ row, mark }: { row: StockLevel; mark: LineMark | undefine
 }
 
 function OrderAmount({ row }: { row: StockLevel }) {
-  if (!row.low) return <span className="text-xs text-zinc-600">—</span>;
+  if (!row.low) return <span className="text-xs text-slate-600">—</span>;
   return (
-    <span className="font-mono text-xs font-bold text-orange-200">
+    <span className="font-mono text-xs font-bold text-amber-400/90">
       {row.orderCases} {caseWord(row.orderCases)}
-      <span className="mt-0.5 block text-[11px] text-zinc-300">{formatCurrency(row.orderCost)}</span>
+      <span className="mt-0.5 block text-[11px] text-slate-400">{formatCurrency(row.orderCost)}</span>
     </span>
   );
 }
@@ -763,9 +796,9 @@ function AlertField({
         onKeyDown={(event) => {
           if (event.key === 'Enter') event.currentTarget.blur();
         }}
-        className="h-8 w-14 rounded-xl border border-zinc-700 bg-zinc-950 text-center font-mono text-xs font-bold text-white outline-none focus:border-emerald-400/70"
+        className="h-8 w-14 rounded-xl border border-slate-700 bg-slate-950 text-center font-mono text-xs font-bold text-slate-100 outline-none focus:border-blue-800/80 focus:ring-1 focus:ring-blue-900/40"
       />
-      {saving ? <span className="mt-0.5 text-[10px] font-bold text-zinc-500">Saving</span> : null}
+      {saving ? <span className="mt-0.5 text-[10px] font-bold text-slate-500">Saving</span> : null}
     </label>
   );
 }
@@ -774,10 +807,12 @@ function SupplierField({
   row,
   saving,
   onCommit,
+  compact,
 }: {
   row: StockLevel;
   saving: boolean;
   onCommit: (value: string) => void;
+  compact?: boolean;
 }) {
   const [value, setValue] = useState(row.supplier);
 
@@ -786,7 +821,7 @@ function SupplierField({
   }, [row.supplier]);
 
   return (
-    <label className="block min-w-[10rem]">
+    <label className={cn('block', compact ? 'mt-1 max-w-[12rem]' : 'min-w-[10rem]')}>
       <span className="sr-only">Supplier for {row.name}</span>
       <input
         list="order-suppliers"
@@ -797,9 +832,14 @@ function SupplierField({
         onKeyDown={(event) => {
           if (event.key === 'Enter') event.currentTarget.blur();
         }}
-        className="w-full rounded-xl border border-zinc-700 bg-zinc-950 px-2.5 py-1.5 text-xs font-bold text-white outline-none focus:border-emerald-400/70"
+        className={cn(
+          'w-full rounded-lg border border-slate-700 bg-slate-950 font-bold text-slate-200 outline-none focus:border-blue-800/80',
+          compact ? 'px-2 py-1 text-[10px]' : 'px-2.5 py-1.5 text-xs'
+        )}
       />
-      {saving ? <span className="mt-0.5 block text-[10px] font-bold text-zinc-500">Saving supplier</span> : null}
+      {saving ? (
+        <span className="mt-0.5 block text-[10px] font-bold text-slate-500">Saving supplier</span>
+      ) : null}
     </label>
   );
 }

@@ -6,6 +6,8 @@ import { AppShell } from '@/components/layout/AppShell';
 import { PageIntro } from '@/components/layout/PageIntro';
 import { YieldPricingDashboard } from '@/components/features/receive/YieldPricingDashboard';
 import { InvoiceUploadModal } from '@/components/features/invoices/InvoiceUploadModal';
+import { Button } from '@/components/ui/Button';
+import { Card, CardBody } from '@/components/ui/Card';
 import type { ReceivingLogsResult } from '@/lib/domains/receiving/receivingSheet';
 import type { InvoiceOcrResult } from '@/lib/types';
 import { receivingLogsFromInvoice } from '@/lib/domains/receiving/receivingBridge';
@@ -29,26 +31,22 @@ export function ReceiveScreen({ initial }: { initial: ReceivingLogsResult }) {
 
   return (
     <AppShell>
-      <main className="mx-auto w-full max-w-7xl px-3 py-4 sm:px-6 sm:py-8">
+      <main className="mx-auto w-full max-w-7xl bg-slate-950 px-3 py-4 sm:px-6 sm:py-8">
         <PageIntro
           step="Step 1 · Receive"
           title="Price the delivery"
           description="Pick a case, set the yield and the floor price, then save it into inventory."
           action={
-            <button
-              type="button"
-              onClick={() => setInvoiceOpen(true)}
-              className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-emerald-400 px-4 py-3 text-sm font-black text-zinc-950 sm:w-auto"
-            >
+            <Button variant="success" className="w-full sm:w-auto py-3" onClick={() => setInvoiceOpen(true)}>
               <FileText className="h-4 w-4" />
               Scan invoice
-            </button>
+            </Button>
           }
         />
         {scanNote ? (
-          <p className="mt-3 rounded-2xl border border-emerald-500/30 bg-emerald-400/10 px-4 py-3 text-sm font-semibold text-emerald-200">
-            {scanNote}
-          </p>
+          <Card className="mt-3 border-emerald-800/40 bg-emerald-950/20">
+            <CardBody className="py-3 text-sm font-semibold text-emerald-400/90">{scanNote}</CardBody>
+          </Card>
         ) : null}
         <div className="mt-4">
           <YieldPricingDashboard

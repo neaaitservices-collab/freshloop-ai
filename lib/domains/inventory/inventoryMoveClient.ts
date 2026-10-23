@@ -63,6 +63,13 @@ export async function executeInventoryMove(input: {
       };
     }
     notifyInventoryUpdated();
+    if (input.action === 'rescue' && typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new CustomEvent('freshloop-kitchen-inbox', {
+          detail: { productId: input.productId, units: json.units },
+        })
+      );
+    }
     return {
       success: true,
       action: input.action,

@@ -1,0 +1,338 @@
+# FreshLoop AI — Developer guide
+
+Technical overview for engineers working in this repo: architecture, data model, API surface, domain modules, and where legacy demo code still appears.
+
+---
+
+## Product intent (one paragraph)
+
+FreshLoop is a **monolithic Next.js App Router** app for independent grocers. The **canonical source of truth** for floor stock and waste KPIs is the **Prisma `InventoryTransaction` ledger** (`lib/domains/inventory/ledger.ts`, `stock.ts`). UI routes under `app/` call **Route Handlers** in `app/api/*`, which delegate to **`lib/domains/*`**. Some screens (notably parts of **OperationsCenter**) still blend **live ledger data** with **`lib/legacy/mockData`** demo rows when the DB is empty or for UX prototypes.
+
+---
+
+## Stack
+
+| Layer | Choice |
+|-------|--------|
+| Runtime | Node.js, Next.js **16.x** App Router |
+| UI | React **19**, Tailwind **4**, Lucide, Recharts |
+| DB | PostgreSQL (often Supabase), **Prisma 6** |
+| AI | `@google/generative-ai` / `@google/genai`, Gemini for OCR, voice, recipe fusion |
+| Auth (current) | **Demo role picker** — `RoleProvider` loads `/api/users`, persists `freshloop-active-user` in `localStorage`. Not production SSO. |
+
+```bash
+npm install
+cp .env.example .env.local   # if present; set DATABASE_URL, DIRECT_URL, GEMINI_API_KEY
+npx prisma migrate dev
+npm run db:seed              # optional sample products/recipes
+npm run dev                  # http://localhost:3000 → redirects to /admin
+npm run build                # prisma generate + next build
+```
+
+---
+
+## Repository layout
+
+```
+app/                    # Routes only (pages + app/api route.ts)
+components/
+  ui/                   # Design system (Card, Button, Input, Toast, …)
+  layout/               # AppShell, Navigation, PageIntro
+  auth/                 # RoleProvider
+  features/<domain>/    # Feature UI grouped by business area
+lib/
+  domains/              # Business logic (prefer importing from here)
+  legacy/               # mockData, in-memory fallbacks, old db helper
+  utils/                # roles, cn, units
+types/                  # Shared TS types (@/types, re-export @/lib/types)
+prisma/                 # schema, migrations, seed
+docs/                   # PROJECT_STRUCTURE, manager/executive docs, this file
+```
+
+**Rule of thumb:** add behavior in `lib/domains/*`, keep `route.ts` thin (parse JSON → call domain → `NextResponse.json`). Add UI in `components/features/<area>/`.
+
+See also [PROJECT_STRUCTURE.md](./PROJECT_STRUCTURE.md).
+
+---
+
+## App routes (pages)
+
+| Path | Entry | Notes |
+|------|--------|------|
+| `/` | redirect | → `/admin` |
+| `/admin` | `app/admin/page.tsx` | Dashboard, charts, case board |
+| `/admin/users` | user CRUD UI | Backed by `/api/users` |
+| `/receive` | ReceiveScreen | YieldPricingDashboard, dispositions |
+| `/inventory` | SlateInventory + master-detail | PATCH/GET via `/api/inventory/levels` |
+| `/inventory/floor` | FloorTransferPage | Clerk-focused transfers |
+| `/operations` | OperationsCenter | KPI + demo ledger + OperationsLiveTransfers |
+| `/kitchen` | Recipe fusion hub | `/api/recipe-fusion`, KitchenSubInventoryPanel |
+| `/orders` | BuyList | Par/low stock from levels API |
+| `/dashboard`, `/floor`, `/recipes`, `/rescue` | Legacy/alternate entry points | Check before linking in nav |
+
+Most pages use **`AppShell`** + **`Navigation`** (role-filtered items in `components/layout/Navigation.tsx`).
+
+---
+
+## HTTP API reference
+
+All handlers use `export const dynamic = 'force-dynamic'` unless noted. Errors often go through `lib/domains/ai/apiError.ts` (`apiError`, `apiErrorFromUnknown`).
+
+### Inventory (ledger-backed)
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET` | `/api/inventory/levels` | `getStockLevels()` → `{ success, levels, parCases, lowCount, orderCost }` |
+| `PATCH` | `/api/inventory/levels` | `parCases`, `supplier`, case/yield/price fields, `casesOnHand` (manager role in body), or `action`: `rescue` \| `waste` \| `markdown` |
+| `POST` | `/api/inventory/move` | `productId`, `action`: `rescue` \| `waste` \| `kitchen_waste` \| `markdown`, optional `quantity`, `staffId` |
+| `GET` | `/api/inventory/on-hand` | Query on-hand for product(s) |
+| `GET`/`PATCH` | `/api/inventory` | Broader inventory reads/updates (see `app/api/inventory/route.ts`) |
+| `POST` | `/api/inventory/volumetric-scrap` | Bucket volume → waste transaction(s) |
+
+**Client-side cache busting:** after successful moves/receives, UI dispatches `window` event **`freshloop-inventory-updated`**. Listeners refetch levels. Server-side: **`invalidateInventoryCaches()`** clears ledger read cache + store stats cache.
+
+### Receiving
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET` | `/api/receiving-logs` | `loadReceivingLogs()` — Google Sheet or sample rows |
+| `POST` | `/api/receiving-logs` | Save pack → `postReceipt()` / yield math (`yieldPricing.ts`) |
+| `GET` | `/api/receiving-dispositions` | Pending vendor credits |
+| `POST` | `/api/receiving-dispositions` | Create disposition (not received / removed) |
+| `PATCH` | `/api/receiving-dispositions/[id]` | Resolve credit |
+
+**Receive UI session keys:** `freshloop-posted-receiving`, `freshloop-receiving-hidden` (optimistic hide before refetch).
+
+Bridge from invoice OCR: `lib/domains/receiving/receivingBridge.ts` (`receivingLogsFromInvoice`, `consumeStashedReceivingScan`).
+
+### Admin & users
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET` | `/api/admin/stats` | Store stats / KPI aggregates |
+| `GET`/`PATCH` | `/api/admin/settings` | `StoreSetting` row (waste target, pull days, scrap bucket params) |
+| `GET`/`POST` | `/api/users` | Staff list / create |
+| `PATCH` | `/api/users/[id]` | Update user |
+
+### AI & manufacturing
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `POST` | `/api/invoice-ocr` | Multipart image → Gemini → `InvoiceOcrResult` |
+| `POST` | `/api/voice-logger` | Audio/text → parsed transfer + `TargetAction` |
+| `GET`/`POST` | `/api/recipe-fusion` | List / generate fusion recipes (DB + legacy memory) |
+| `POST` | `/api/manufacturing` | BOM execution / production batch (see route for payload) |
+
+Gemini helpers: `lib/domains/ai/gemini.ts`.
+
+---
+
+## Domain modules
+
+### `lib/domains/inventory/`
+
+| Module | Responsibility |
+|--------|----------------|
+| `ledger.ts` | Prisma singleton, `InventoryLedgerError`, receive/sale/rescue/waste/bundle explosion, `getCurrentStock`, volumetric scrap refs |
+| `stock.ts` | **`StockLevel`** DTO, `getStockLevels`, `postReceipt`, `moveRetailStock`, markdown, par/supplier/case updates, product name matching |
+| `inventoryCache.ts` | `invalidateInventoryCaches()` |
+| `ledgerCache.ts` | Memoized ledger reads (invalidate on writes) |
+| `parLevel.ts` | Default par cases, order quantity math |
+| `productMarkdownColumn.ts` | Markdown price column on product (schema evolution helper) |
+| `subInventoryView.ts` | View-model helpers for sub-inventory UI |
+| `inventoryMoveClient.ts` | Browser fetch wrapper for moves |
+
+**Locations** (enum `InventoryLocation`): e.g. `Receiving`, `Main_Storage`, `Retail_Floor`, `Kitchen_Prep`, `Waste_Bin`, `Customer_Out`, …
+
+**Transaction types:** `Receive`, `Sale`, `Rescue`, `Waste`, `POS_Sale`.
+
+### `lib/domains/receiving/`
+
+| Module | Responsibility |
+|--------|----------------|
+| `yieldPricing.ts` | Yield quote, margin modes, `ReceivingLog` types, formatting |
+| `receivingSheet.ts` | Google Sheets loader + sample fallback |
+| `receivingDisposition.ts` | CRUD for `ReceivingDisposition` |
+| `receivingBridge.ts` | Invoice → receiving logs, session stash |
+
+### `lib/domains/stats/`
+
+| Module | Responsibility |
+|--------|----------------|
+| `wasteKpi.ts` | Waste % computations used by ledger/admin |
+| `storeStats.ts` | Cached aggregates for admin dashboard |
+| `platformSettings.ts` | Settings access |
+
+### `lib/domains/ai/`
+
+| Module | Responsibility |
+|--------|----------------|
+| `gemini.ts` | Model calls, shared prompts |
+| `apiError.ts` | Consistent JSON error responses |
+
+---
+
+## Data model (Prisma)
+
+File: `prisma/schema.prisma`.
+
+**Core ledger path**
+
+- **`Product`** — catalog SKU (department, unit, par, yield, prices, supplier).
+- **`InventoryTransaction`** — immutable movement rows (qty, type, from/to, unit cost, staff, expiration).
+
+**Operations & AI**
+
+- **`StoreSetting`** — store-wide knobs (waste target %, pull sensitivity, scrap bucket economics).
+- **`User`** — staff + `Role` enum.
+- **`Recipe`** + **`RecipeBOM`** — manufacturing BOM (output product + ingredient lines).
+- **`RecipeFusion`** — AI suggestion records (`ingredientsUsed` JSON, margin, instructions).
+- **`ReceivingDisposition`** — lines removed from receive board (`NOT_RECEIVED` → vendor credit workflow).
+- **`VendorInvoice`** / **`InvoiceLineItem`** — OCR persistence.
+- **`InventoryItem`** — legacy/rich item row (status enum, pull thresholds); bridged to `Product` where linked.
+- **`VoiceLog`**, **`Bundle`**, **`POSMapping`** — voice audit, bundles, future POS mapping.
+
+**Queries the schema supports**
+
+1. **Aging** — `expirationDate` on transactions/items; `receivedDate`; time-indexed transaction history.
+2. **Revenue at risk** — derived from `Product.retailPrice` / markdown fields vs. `unitCostAtTime` on waste transactions (not a single DB column).
+3. **Recipe consumption** — `RecipeBOM.quantityRequired` + `Recipe.yieldPortions`; fusion via `RecipeFusion.ingredientsUsed` JSON.
+
+Run migrations after schema changes:
+
+```bash
+npx prisma migrate dev --name your_change
+npx prisma generate
+```
+
+---
+
+## Frontend patterns
+
+### Role context
+
+`components/auth/RoleProvider.tsx`:
+
+- Fetches `GET /api/users`.
+- Stores active user id in **`localStorage`** key `freshloop-active-user`.
+- **`staffId`** on API calls usually comes from `activeUser.id` (fallback strings like `staff-operations` in places).
+
+Authorization is **partial**: some PATCH routes check `isManager(role)` from body; there is **no** middleware JWT. Treat as **prototype security**.
+
+### Imports
+
+- Prefer `@/lib/domains/...`, `@/components/features/...`, `@/types`.
+- Shims: `@/lib/types`, `@/lib/yieldPricing`, `components/features/receive/Fields` (re-exports for old paths).
+
+### UI kit
+
+Slate & Ocean Steel: `components/ui/*`, `lib/utils/cn.ts`, chart colors in admin charts.
+
+### Next.js 16
+
+See repo `AGENTS.md` — this Next version may differ from older docs; check `node_modules/next/dist/docs/` when unsure.
+
+---
+
+## Legacy vs live (important)
+
+| Live (Prisma ledger) | Legacy / demo |
+|----------------------|----------------|
+| `/api/inventory/levels`, `/move`, receive POST → `postReceipt` | `lib/legacy/mockData.ts` seeds |
+| `getStockLevels`, admin stats (when DB up) | `lib/legacy/db.ts` in-memory inventory + fusion fallback |
+| OperationsLiveTransfers, SubInventoryWorkspace | OperationsCenter table rows from `INITIAL_*` mock |
+
+When extending features, **wire new UI to domain functions** that write `InventoryTransaction`. Avoid adding new dependencies on in-memory stores.
+
+---
+
+## Extending the system
+
+### Add a new inventory movement
+
+1. Add or reuse `TransactionType` / locations in schema if needed (migration).
+2. Implement writer in `ledger.ts` (single transaction boundary, call `invalidateInventoryCaches()`).
+3. Expose via `stock.ts` helper and thin `app/api/.../route.ts`.
+4. Dispatch `freshloop-inventory-updated` from client on success.
+
+### Add a receiving side effect
+
+1. Domain logic in `receivingDisposition.ts` or `stock.postReceipt`.
+2. API route + optimistic UI in `YieldPricingDashboard` / `PackReceiptCard`.
+
+### Add a page
+
+1. `app/<route>/page.tsx` (server component unless hooks needed).
+2. Feature component under `components/features/`.
+3. Register nav in `Navigation.tsx` with `roles` array.
+
+---
+
+## Environment variables
+
+Typical (names may vary; check `.env.local` in your deploy):
+
+| Variable | Use |
+|----------|-----|
+| `DATABASE_URL` | Prisma pooled connection |
+| `DIRECT_URL` | Prisma migrations / direct |
+| `GEMINI_API_KEY` | OCR, voice, recipe fusion |
+| Sheet / Google credentials | If configured in `receivingSheet.ts` (see implementation) |
+
+---
+
+## Testing & quality
+
+- **Build gate:** `npm run build` (TypeScript + Next).
+- **Lint:** `npm run lint`.
+- No unified e2e suite in repo yet — smoke: `/receive`, `/inventory`, `/inventory/floor`, `/operations`, `/kitchen`, `/orders`, `/admin`.
+
+---
+
+## Related docs
+
+| Doc | Audience |
+|-----|----------|
+| [FOR_STORE_MANAGERS.md](./FOR_STORE_MANAGERS.md) | Operations training |
+| [EXECUTIVE_SUMMARY.md](./EXECUTIVE_SUMMARY.md) | One-page business summary |
+| [PROJECT_STRUCTURE.md](./PROJECT_STRUCTURE.md) | Folder conventions |
+| [README.md](../README.md) | Clone, install, feature list |
+
+---
+
+## Mental model diagram
+
+```mermaid
+flowchart LR
+  subgraph ui [App Router UI]
+    Receive["/receive"]
+    Inv["/inventory"]
+    Ops["/operations"]
+    Admin["/admin"]
+  end
+  subgraph api [app/api]
+    Levels["/inventory/levels"]
+    Recv["/receiving-logs"]
+    Stats["/admin/stats"]
+  end
+  subgraph domain [lib/domains]
+    Stock["stock.ts"]
+    Ledger["ledger.ts"]
+    Yield["yieldPricing.ts"]
+  end
+  subgraph db [PostgreSQL]
+    Tx["InventoryTransaction"]
+    Prod["Product"]
+  end
+  Receive --> Recv
+  Inv --> Levels
+  Ops --> Levels
+  Admin --> Stats
+  Recv --> Stock
+  Levels --> Stock
+  Stock --> Ledger
+  Ledger --> Tx
+  Ledger --> Prod
+```
+
+This is the path new features should follow unless explicitly marked as demo-only.

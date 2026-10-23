@@ -7,12 +7,29 @@ import { AMBER, CORAL, GRID, TICK, chartCard } from '@/components/ui/chartColors
 import type { DepartmentAlert } from '@/lib/domains/stats/storeStatsTypes';
 import { cn } from '@/lib/utils/cn';
 
-export function DepartmentAlertsChart({ data }: { data: DepartmentAlert[] }) {
+export function DepartmentAlertsChart({
+  data,
+  compact,
+}: {
+  data: DepartmentAlert[];
+  compact?: boolean;
+}) {
+  const chartHeight = compact ? 'h-56' : 'h-72';
   return (
-    <article className={cn(chartCard, 'transition hover:border-slate-700')}>
-      <h2 className="text-sm font-black text-slate-100">Alerts by department</h2>
-      <p className="mt-1 text-xs leading-relaxed text-slate-400">Below par and due within 48h.</p>
-      <div className="h-72">
+    <article
+      className={cn(
+        compact ? 'p-0' : cn(chartCard, 'transition hover:border-slate-700')
+      )}
+    >
+      {!compact ? (
+        <>
+          <h2 className="text-sm font-black text-slate-100">Alerts by department</h2>
+          <p className="mt-1 text-xs leading-relaxed text-slate-400">Below par and due within 48h.</p>
+        </>
+      ) : (
+        <p className="mb-2 text-[11px] text-slate-500">Below par and due within 48h.</p>
+      )}
+      <div className={chartHeight}>
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={data} barGap={4}>
             <CartesianGrid stroke={GRID} vertical={false} />

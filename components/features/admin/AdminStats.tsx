@@ -2,7 +2,6 @@
 
 import React from 'react';
 import { Clock, DollarSign, Leaf, Percent } from 'lucide-react';
-import { DepartmentAlertsChart } from '@/components/features/admin/DepartmentAlertsChart';
 import { RevenueRecoveryChart } from '@/components/features/admin/RevenueRecoveryChart';
 import { WasteVsRescueChart } from '@/components/features/admin/WasteVsRescueChart';
 import { Card, CardBody } from '@/components/ui/Card';
@@ -24,13 +23,15 @@ function Metric({
 }) {
   return (
     <Card>
-      <CardBody className="py-4">
-        <div className="flex items-center justify-between gap-3">
+      <CardBody className="py-3 sm:py-3.5">
+        <div className="flex items-center justify-between gap-2">
           <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{label}</p>
-          <Icon className="h-4 w-4 text-blue-400/90" />
+          <Icon className="h-3.5 w-3.5 shrink-0 text-blue-400/90" />
         </div>
-        <p className={`mt-2 font-mono text-3xl font-black tracking-tight ${accent}`}>{value}</p>
-        <p className="mt-1 text-xs leading-relaxed text-slate-500">{detail}</p>
+        <p className={`mt-1.5 font-mono text-2xl font-black tracking-tight sm:text-[1.65rem] ${accent}`}>
+          {value}
+        </p>
+        <p className="mt-0.5 line-clamp-2 text-[11px] leading-snug text-slate-500">{detail}</p>
       </CardBody>
     </Card>
   );
@@ -39,24 +40,26 @@ function Metric({
 export function AdminStats({ stats }: { stats: StoreStats | null }) {
   if (!stats) {
     return (
-      <section className="space-y-4" aria-busy="true" aria-label="Loading store statistics">
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <section className="space-y-3" aria-busy="true" aria-label="Loading store statistics">
+        <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-4 lg:gap-3">
           {Array.from({ length: 4 }, (_, index) => (
-            <div key={index} className="h-[120px] animate-pulse rounded-2xl border border-slate-800 bg-slate-900/50" />
+            <div
+              key={index}
+              className="h-[92px] animate-pulse rounded-2xl border border-slate-800 bg-slate-900/50 sm:h-[100px]"
+            />
           ))}
         </div>
-        <div className="grid gap-3 xl:grid-cols-3">
-          {Array.from({ length: 3 }, (_, index) => (
-            <div key={index} className="h-72 animate-pulse rounded-2xl border border-slate-800 bg-slate-900/50" />
-          ))}
+        <div className="grid gap-3 lg:grid-cols-3">
+          <div className="h-72 animate-pulse rounded-2xl border border-slate-800 bg-slate-900/50 lg:col-span-1" />
+          <div className="h-72 animate-pulse rounded-2xl border border-slate-800 bg-slate-900/50 lg:col-span-2" />
         </div>
       </section>
     );
   }
 
   return (
-    <section className="space-y-4">
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+    <section className="space-y-3" aria-label="Store KPIs and charts">
+      <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-4 lg:gap-3">
         <Metric
           label="Value rescued"
           value={formatCurrency(stats.rescuedValue)}
@@ -87,10 +90,13 @@ export function AdminStats({ stats }: { stats: StoreStats | null }) {
         />
       </div>
 
-      <div className="grid gap-3 xl:grid-cols-3">
-        <WasteVsRescueChart data={stats.rescueVsDiscard} />
-        <RevenueRecoveryChart data={stats.revenueDays} />
-        <DepartmentAlertsChart data={stats.departmentAlerts} />
+      <div className="grid gap-3 lg:grid-cols-3">
+        <div className="min-h-0 lg:col-span-1">
+          <WasteVsRescueChart data={stats.rescueVsDiscard} />
+        </div>
+        <div className="min-h-0 lg:col-span-2">
+          <RevenueRecoveryChart data={stats.revenueDays} />
+        </div>
       </div>
     </section>
   );

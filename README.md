@@ -5,6 +5,32 @@ FreshLoop AI helps independent fresh grocers eliminate inventory shrinkage and m
 
 ---
 
+## For developers
+
+**Architecture:** Next.js App Router monolith — UI in `app/` + `components/features/*`, business logic in **`lib/domains/*`**, PostgreSQL via **Prisma**. Floor stock and waste KPIs come from **`InventoryTransaction`** (`lib/domains/inventory/ledger.ts`, `stock.ts`), not from ad hoc UI state.
+
+**Start here:**
+
+- **[Developer guide](./docs/FOR_DEVELOPERS.md)** — stack, routes, **API table**, domain modules, schema, legacy vs live ledger, extension patterns  
+- **[Project structure](./docs/PROJECT_STRUCTURE.md)** — folder conventions  
+
+**Quick map**
+
+| Concern | Location |
+|---------|----------|
+| Ledger writes | `lib/domains/inventory/ledger.ts` |
+| Stock levels / receive post | `lib/domains/inventory/stock.ts` |
+| Yield & receiving | `lib/domains/receiving/*` |
+| Route handlers | `app/api/**/route.ts` |
+| Role demo auth | `components/auth/RoleProvider.tsx` → `/api/users` |
+| Mock / demo data | `lib/legacy/*` (avoid for new features) |
+
+After changes: `npm run build`. Client refresh hook: `freshloop-inventory-updated` event.
+
+**Other docs:** [Store managers](./docs/FOR_STORE_MANAGERS.md) · [Executive summary](./docs/EXECUTIVE_SUMMARY.md)
+
+---
+
 ## 🛠️ Technical Stack
 - **Framework & Frontend**: Next.js 15 (App Router), TypeScript, Tailwind CSS v4, Lucide React icons
 - **Database & ORM**: Supabase / PostgreSQL with Prisma ORM

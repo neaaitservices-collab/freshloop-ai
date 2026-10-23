@@ -95,7 +95,7 @@ export const VolumetricScrapForm: React.FC<VolumetricScrapFormProps> = ({
   };
 
   return (
-    <div className="rounded-3xl bg-gradient-to-br from-zinc-900/90 via-zinc-900/60 to-zinc-950 border border-rose-900/40 p-5 sm:p-6 shadow-2xl backdrop-blur-xl space-y-4">
+    <div className="rounded-3xl bg-gradient-to-br from-slate-900/90 via-slate-900/60 to-slate-950 border border-rose-900/40 p-5 sm:p-6 shadow-2xl backdrop-blur-xl space-y-4">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="flex items-center gap-3">
@@ -111,14 +111,14 @@ export const VolumetricScrapForm: React.FC<VolumetricScrapFormProps> = ({
                 StoreSetting Sync
               </span>
             </div>
-            <p className="text-xs text-zinc-400 mt-0.5">
+            <p className="text-xs text-slate-400 mt-0.5">
               Convierte automáticamente cubetas de recortes orgánicos de cocina a peso estimado y valor monetario en el KPI de Merma.
             </p>
           </div>
         </div>
 
         {/* Formula Pill */}
-        <div className="px-3.5 py-2 rounded-2xl bg-zinc-950 border border-zinc-800 text-[11px] font-mono text-zinc-300 shrink-0">
+        <div className="px-3.5 py-2 rounded-2xl bg-slate-950 border border-slate-800 text-[11px] font-mono text-slate-300 shrink-0">
           1 Cubeta ({storeConfig.scrapBucketVolumeL}L ×{' '}
           {storeConfig.estimatedWeightPerLiterKg}kg/L) ={' '}
           <strong className="text-amber-300">{weightPerBucketKg} kg</strong> × $
@@ -139,7 +139,7 @@ export const VolumetricScrapForm: React.FC<VolumetricScrapFormProps> = ({
                 key={bucketPreset}
                 type="button"
                 onClick={() => triggerOneClickLog(bucketPreset)}
-                className="group p-3.5 rounded-2xl bg-zinc-950 hover:bg-rose-950/50 border border-zinc-800 hover:border-rose-500/60 transition-all text-left flex flex-col justify-between cursor-pointer active:scale-95"
+                className="group p-3.5 rounded-2xl bg-slate-950 hover:bg-rose-950/50 border border-slate-800 hover:border-rose-500/60 transition-all text-left flex flex-col justify-between cursor-pointer active:scale-95"
               >
                 <div className="flex items-center justify-between">
                   <span className="text-xs sm:text-sm font-black text-white group-hover:text-rose-300">
@@ -147,7 +147,7 @@ export const VolumetricScrapForm: React.FC<VolumetricScrapFormProps> = ({
                   </span>
                   <Plus className="w-4 h-4 text-rose-400" />
                 </div>
-                <div className="mt-2 text-[11px] font-mono text-zinc-400">
+                <div className="mt-2 text-[11px] font-mono text-slate-400">
                   <span className="block">{presetKg} kg est.</span>
                   <strong className="text-rose-400">+${presetCost} merma</strong>
                 </div>
@@ -157,9 +157,9 @@ export const VolumetricScrapForm: React.FC<VolumetricScrapFormProps> = ({
         </div>
 
         {/* Custom X Cubetas Input + Submit */}
-        <div className="lg:col-span-5 flex items-center gap-2 bg-zinc-950 p-3 rounded-2xl border border-zinc-800">
+        <div className="lg:col-span-5 flex items-center gap-2 bg-slate-950 p-3 rounded-2xl border border-slate-800">
           <div className="flex-1">
-            <label className="text-[10px] font-bold uppercase text-zinc-500 block">
+            <label className="text-[10px] font-bold uppercase text-slate-500 block">
               Cantidad Personalizada (X Cubetas 20L)
             </label>
             <div className="flex items-center gap-2 mt-1">
@@ -171,9 +171,9 @@ export const VolumetricScrapForm: React.FC<VolumetricScrapFormProps> = ({
                 onChange={(e) =>
                   setCustomBuckets(Math.max(0.25, Number(e.target.value) || 1))
                 }
-                className="w-20 px-2.5 py-1.5 rounded-xl bg-zinc-900 border border-zinc-700 text-xs font-mono font-bold text-white"
+                className="w-20 px-2.5 py-1.5 rounded-xl bg-slate-900 border border-slate-700 text-xs font-mono font-bold text-white"
               />
-              <span className="text-[11px] font-mono text-zinc-400">
+              <span className="text-[11px] font-mono text-slate-400">
                 = {(customBuckets * weightPerBucketKg).toFixed(1)} kg ($
                 {(customBuckets * costPerBucket).toFixed(2)})
               </span>
@@ -183,7 +183,7 @@ export const VolumetricScrapForm: React.FC<VolumetricScrapFormProps> = ({
           <button
             type="button"
             onClick={() => triggerOneClickLog(customBuckets)}
-            className="px-4 py-2.5 rounded-xl bg-rose-500 hover:bg-rose-400 text-zinc-950 font-black text-xs shadow-lg shadow-rose-500/20 transition-all active:scale-95 cursor-pointer shrink-0"
+            className="px-4 py-2.5 rounded-xl bg-rose-500 hover:bg-rose-400 text-slate-950 font-black text-xs shadow-lg shadow-rose-500/20 transition-all active:scale-95 cursor-pointer shrink-0"
           >
             Registrar Scrap
           </button>
@@ -191,21 +191,21 @@ export const VolumetricScrapForm: React.FC<VolumetricScrapFormProps> = ({
       </div>
 
       {/* Live Daily Accumulated Volumetric Scrap Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-zinc-800/80 text-xs">
+      <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-800/80 text-xs">
         <div className="flex flex-wrap items-center gap-4">
-          <span className="text-zinc-400">
+          <span className="text-slate-400">
             Acumulado Hoy:{' '}
             <strong className="text-white font-mono">
               {totalBucketsLoggedToday} cubetas ({totalVolumeTodayL}L)
             </strong>
           </span>
-          <span className="text-zinc-400">
+          <span className="text-slate-400">
             Peso Orgánico:{' '}
             <strong className="text-amber-300 font-mono">
               {totalWeightTodayKg} kg
             </strong>
           </span>
-          <span className="text-zinc-400">
+          <span className="text-slate-400">
             Impacto en KPI Merma:{' '}
             <strong className="text-rose-400 font-mono">
               ${totalScrapCostToday.toFixed(2)}
@@ -225,7 +225,7 @@ export const VolumetricScrapForm: React.FC<VolumetricScrapFormProps> = ({
             <button
               type="button"
               onClick={onResetBuckets}
-              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-zinc-400 hover:text-white text-[11px] font-semibold cursor-pointer"
+              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-400 hover:text-white text-[11px] font-semibold cursor-pointer"
             >
               <RotateCcw className="w-3 h-3" />
               <span>Reiniciar Turno</span>

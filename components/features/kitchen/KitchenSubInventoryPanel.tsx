@@ -3,6 +3,8 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { useRole } from '@/components/auth/RoleProvider';
 import { SubInventoryWorkspace } from '@/components/features/inventory/SubInventoryWorkspace';
+import { Card, CardBody, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card';
+import { Toast } from '@/components/ui/Toast';
 import type { StockLevel } from '@/lib/domains/inventory/stock';
 
 export function KitchenSubInventoryPanel() {
@@ -34,12 +36,6 @@ export function KitchenSubInventoryPanel() {
     return () => window.removeEventListener('freshloop-inventory-updated', onUpdate);
   }, [load]);
 
-  useEffect(() => {
-    if (!toast) return;
-    const t = window.setTimeout(() => setToast(null), 3500);
-    return () => window.clearTimeout(t);
-  }, [toast]);
-
   const patchLevel = (level: StockLevel) => {
     setLevels((current) =>
       current.map((item) => (item.productId === level.productId ? level : item))
@@ -47,26 +43,36 @@ export function KitchenSubInventoryPanel() {
   };
 
   return (
-    <section className="space-y-3">
-      <SubInventoryWorkspace
-        levels={levels}
-        loading={loading}
-        staffId={activeUser?.id}
-        retailPriorityOnly={false}
-        showRetailCatalog={false}
-        onSuccess={(message, level) => {
-          patchLevel(level);
-          setToast(message);
-          setError(null);
-        }}
-        onError={(message) => setError(message)}
-      />
-      {error ? <p className="text-sm font-semibold text-rose-300">{error}</p> : null}
-      {toast ? (
-        <div className="fixed bottom-24 left-1/2 z-50 max-w-md -translate-x-1/2 rounded-2xl border border-zinc-700 bg-zinc-900/95 px-4 py-3 text-sm font-bold text-slate-100 shadow-xl md:bottom-8">
-          {toast}
-        </div>
-      ) : null}
-    </section>
+    <>
+      <Card>
+        <CardHeader>
+          <CardTitle>Kitchen sub-inventories</CardTitle>
+          <CardDescription>
+            Move stock between prep, floor, and scrap — same ledger as Inventory and Operations.
+          </CardDescription>
+        </CardHeader>
+        <CardBody className="pt-0">
+          <SubInventoryWorkspace
+            levels={levels}
+            loading={loading}
+            staffId={activeUser?.id}
+            retailPriorityOnly={false}
+            showRetailCatalog={false}
+            onSuccess={(message, level) => {
+              patchLevel(level);
+              setToast(message);
+              setError(null);
+            }}
+            onError={(message) => setError(message)}
+          />
+          {error ? (
+            <p className="mt-3 rounded-xl border border-rose-900/50 bg-rose-950/30 px-3 py-2 text-xs font-semibold text-rose-400">
+              {error}
+            </p>
+          ) : null}
+        </CardBody>
+      </Card>
+      <Toast message={toast} onDismiss={() => setToast(null)} variant="success" />
+    </>
   );
 }

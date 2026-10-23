@@ -27,7 +27,7 @@ export function FloorTransferPage({ levels: initialLevels }: { levels: StockLeve
   const [query, setQuery] = useState('');
   const [department, setDepartment] = useState<string>('ALL');
   const [pullDays, setPullDays] = useState(3);
-  const [toast, setToast] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ text: string; kitchen?: boolean } | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const { activeUser } = useRole();
 
@@ -76,7 +76,10 @@ export function FloorTransferPage({ levels: initialLevels }: { levels: StockLeve
       current.map((item) => (item.productId === level.productId ? level : item))
     );
     setErrorMessage(null);
-    setToast(message);
+    setToast({
+      text: message,
+      kitchen: /sent to kitchen/i.test(message),
+    });
     router.refresh();
   };
 
@@ -98,10 +101,10 @@ export function FloorTransferPage({ levels: initialLevels }: { levels: StockLeve
           </p>
         </div>
         <Link
-          href="/inventory"
-          className="inline-flex h-10 items-center gap-1.5 rounded-xl border border-slate-700 bg-slate-900 px-3 text-xs font-bold text-slate-300"
+          href="/kitchen?inbox=1"
+          className="inline-flex h-10 items-center gap-1.5 rounded-xl border border-blue-900/50 bg-blue-950/30 px-3 text-xs font-bold text-blue-200"
         >
-          Full inventory
+          Kitchen inbox
           <ArrowRight className="h-4 w-4" />
         </Link>
       </div>
@@ -176,7 +179,15 @@ export function FloorTransferPage({ levels: initialLevels }: { levels: StockLeve
       {errorMessage ? <p className="mt-3 text-sm font-bold text-[#C4847A]">{errorMessage}</p> : null}
       {toast ? (
         <div className="fixed bottom-24 left-1/2 z-50 max-w-md -translate-x-1/2 rounded-2xl border border-slate-700 bg-slate-900/95 px-4 py-3 text-sm font-bold text-slate-100 shadow-xl md:bottom-8">
-          {toast}
+          <p>{toast.text}</p>
+          {toast.kitchen ? (
+            <Link
+              href="/kitchen?inbox=1"
+              className="mt-2 inline-flex text-xs font-bold text-blue-300 underline-offset-2 hover:underline"
+            >
+              Open kitchen inbox
+            </Link>
+          ) : null}
         </div>
       ) : null}
     </main>

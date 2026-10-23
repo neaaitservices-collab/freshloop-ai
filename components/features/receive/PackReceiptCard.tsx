@@ -15,8 +15,8 @@ function ReceiptRow({
   emphasis?: boolean;
 }) {
   return (
-    <div className="flex items-baseline justify-between gap-4 border-b border-zinc-800/80 py-2.5 last:border-0">
-      <dt className="text-[11px] font-bold uppercase tracking-wider text-zinc-500">{label}</dt>
+    <div className="flex items-baseline justify-between gap-4 border-b border-slate-800/80 py-2.5 last:border-0">
+      <dt className="text-[11px] font-bold uppercase tracking-wider text-slate-500">{label}</dt>
       <dd className={`text-right font-mono text-sm ${emphasis ? 'text-base font-black text-emerald-300' : 'font-bold text-white'}`}>
         {value}
       </dd>
@@ -57,7 +57,7 @@ export function PackReceiptCard({
 }) {
   const tone = marginTone(quote.currentMarginPct);
   const marginClass =
-    tone === 'healthy' ? 'text-emerald-300' : tone === 'thin' ? 'text-orange-300' : 'text-zinc-400';
+    tone === 'healthy' ? 'text-emerald-300' : tone === 'thin' ? 'text-orange-300' : 'text-slate-400';
   const perCase = quote.totalRetailUnits;
   const deliveryUnits = perCase !== null ? log.casesReceived * perCase : null;
   const posted = Boolean(savedMessage);
@@ -68,16 +68,16 @@ export function PackReceiptCard({
 
   return (
     <aside className="min-w-0">
-      <div className="overflow-hidden rounded-3xl border border-emerald-500/25 bg-zinc-900/90 shadow-2xl shadow-black/30">
-        <div className="border-b border-zinc-800 px-5 py-4">
+      <div className="overflow-hidden rounded-3xl border border-emerald-500/25 bg-slate-900/90 shadow-2xl shadow-black/30">
+        <div className="border-b border-slate-800 px-5 py-4">
           <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-emerald-300/80">
             Receipt confirmation
           </p>
           <h2 className="mt-1 text-lg font-black leading-tight text-white">{log.itemName}</h2>
-          <p className="mt-1 text-sm text-zinc-300">
+          <p className="mt-1 text-sm text-slate-300">
             1 case = {formatUnits(perCase)} {retailUnit}
           </p>
-          <p className="text-xs text-zinc-500">{log.casesReceived} cases received</p>
+          <p className="text-xs text-slate-500">{log.casesReceived} cases received</p>
         </div>
 
         <dl className="px-5 py-1">
@@ -108,7 +108,7 @@ export function PackReceiptCard({
             />
           ) : null}
           {!posted && stockOnHand !== null && !stockMatched ? (
-            <p className="py-2 text-[11px] leading-relaxed text-zinc-400">
+            <p className="py-2 text-[11px] leading-relaxed text-slate-400">
               This item is not in inventory yet. Save starts the count from this delivery.
             </p>
           ) : null}
@@ -117,7 +117,7 @@ export function PackReceiptCard({
         </dl>
 
         <div className={`mx-5 mb-4 rounded-2xl px-4 py-3 ${tone === 'thin' ? 'bg-orange-500/10' : 'bg-emerald-500/10'}`}>
-          <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">Profit margin</p>
+          <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Profit margin</p>
           <p className={`font-mono text-2xl font-black ${marginClass}`}>
             {formatPercent(quote.currentMarginPct)}%
           </p>
@@ -126,7 +126,7 @@ export function PackReceiptCard({
       </div>
 
       <div className="fixed inset-x-0 bottom-20 z-30 px-3 md:bottom-4 md:pl-64 md:pr-6">
-        <div className="mx-auto w-full max-w-3xl space-y-2 rounded-2xl border border-zinc-800 bg-zinc-950/95 p-2 shadow-2xl shadow-black/50 backdrop-blur">
+        <div className="mx-auto w-full max-w-3xl space-y-2 rounded-2xl border border-slate-800 bg-slate-950/95 p-2 shadow-2xl shadow-black/50 backdrop-blur">
           {savedMessage ? (
             <p className="flex items-center gap-2 px-2 text-xs font-bold text-emerald-300">
               <CheckCircle2 className="h-4 w-4 shrink-0" />
@@ -153,7 +153,7 @@ export function PackReceiptCard({
                 type="button"
                 onClick={onRemoveFromList}
                 disabled={saving || dispositionBusy}
-                className="flex items-center justify-center gap-1.5 rounded-xl border border-zinc-600 bg-zinc-900 px-3 py-2.5 text-[11px] font-black text-zinc-300 hover:border-rose-500/40 hover:text-rose-200 disabled:opacity-50"
+                className="flex items-center justify-center gap-1.5 rounded-xl border border-slate-600 bg-slate-900 px-3 py-2.5 text-[11px] font-black text-slate-300 hover:border-rose-500/40 hover:text-rose-200 disabled:opacity-50"
               >
                 <Trash2 className="h-3.5 w-3.5 shrink-0" />
                 Remove
@@ -164,10 +164,10 @@ export function PackReceiptCard({
             type="button"
             onClick={onSave}
             disabled={saving || alreadyInInventory || dispositionBusy || quote.totalRetailUnits === null}
-            className="flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-400 px-4 py-3 text-sm font-black text-zinc-950 transition hover:bg-emerald-300 active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400"
+            className="flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-400 px-4 py-3 text-sm font-black text-slate-950 transition hover:bg-emerald-300 active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400"
           >
             {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-            {alreadyInInventory ? 'In inventory' : 'Save & Update Inventory'}
+            {alreadyInInventory ? 'In inventory' : 'Save'}
           </button>
         </div>
       </div>

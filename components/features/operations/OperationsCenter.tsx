@@ -442,7 +442,7 @@ export default function OperationsCenter() {
 
   return (
     <AppShell onVoice={() => setIsVoiceModalOpen(true)}>
-    <div className="min-h-screen bg-zinc-950 text-zinc-100 font-sans selection:bg-emerald-500 selection:text-zinc-950 flex flex-col">
+    <div className="min-h-screen bg-slate-950 text-slate-100 font-sans selection:bg-emerald-500 selection:text-slate-950 flex flex-col">
 
       {/* Real-Time Ledger Transfer Toast */}
       {transferToast && (
@@ -457,7 +457,7 @@ export default function OperationsCenter() {
 
       <main className="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 lg:px-8 py-5 sm:py-8 pb-28 sm:pb-12 space-y-6">
         {/* Header Bar */}
-        <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-zinc-900/90 via-zinc-900/60 to-zinc-950 border border-zinc-800/90 p-5 sm:p-7 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06)] backdrop-blur-xl">
+        <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-slate-900/90 via-slate-900/60 to-slate-950 border border-slate-800/90 p-5 sm:p-7 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06)] backdrop-blur-xl">
           <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-5">
             <div className="space-y-1.5">
               <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-[11px] font-bold uppercase tracking-wider">
@@ -470,7 +470,7 @@ export default function OperationsCenter() {
                   Yield &amp; Sub-Inventory Control
                 </span>
               </h1>
-              <p className="text-xs sm:text-sm text-zinc-400 max-w-2xl">
+              <p className="text-xs sm:text-sm text-slate-400 max-w-2xl">
                 Monitoreo en tiempo real del Semáforo KPI de Merma, sensibilidad de retiro humano (2, 3 y 4 días) y balance de doble partida entre{' '}
                 <code className="text-emerald-300 font-mono">Retail_Floor</code> y{' '}
                 <code className="text-amber-300 font-mono">Kitchen_Prep</code>.
@@ -480,7 +480,7 @@ export default function OperationsCenter() {
             <div className="flex flex-wrap items-center gap-2.5">
               <Link
                 href="/receive"
-                className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-emerald-400 hover:bg-emerald-300 text-zinc-950 font-extrabold text-xs shadow-lg shadow-emerald-500/20 transition-all active:scale-95"
+                className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-emerald-400 hover:bg-emerald-300 text-slate-950 font-extrabold text-xs shadow-lg shadow-emerald-500/20 transition-all active:scale-95"
               >
                 <DollarSign className="w-4 h-4" />
                 <span>Receiving prices</span>
@@ -488,15 +488,15 @@ export default function OperationsCenter() {
 
               <button
                 onClick={() => setIsVoiceModalOpen(true)}
-                className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-gradient-to-r from-teal-500 to-emerald-400 hover:from-teal-400 hover:to-emerald-300 text-zinc-950 font-extrabold text-xs shadow-lg shadow-teal-500/20 transition-all active:scale-95 cursor-pointer"
+                className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-gradient-to-r from-teal-500 to-emerald-400 hover:from-teal-400 hover:to-emerald-300 text-slate-950 font-extrabold text-xs shadow-lg shadow-teal-500/20 transition-all active:scale-95 cursor-pointer"
               >
-                <Mic className="w-4 h-4 fill-zinc-950" />
+                <Mic className="w-4 h-4 fill-slate-950" />
                 <span>Voice Logger (Confirm Loop)</span>
               </button>
 
               <button
                 onClick={() => setIsRecipeProductionModalOpen(true)}
-                className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-gradient-to-r from-amber-400 to-orange-400 hover:from-amber-300 hover:to-orange-300 text-zinc-950 font-extrabold text-xs shadow-lg shadow-amber-500/20 transition-all active:scale-95 cursor-pointer"
+                className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-gradient-to-r from-amber-400 to-orange-400 hover:from-amber-300 hover:to-orange-300 text-slate-950 font-extrabold text-xs shadow-lg shadow-amber-500/20 transition-all active:scale-95 cursor-pointer"
               >
                 <ChefHat className="w-4 h-4" />
                 <span>Producir Lote BOM (Varianza)</span>
@@ -504,7 +504,7 @@ export default function OperationsCenter() {
 
               <button
                 onClick={() => setIsInvoiceModalOpen(true)}
-                className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-700/80 text-zinc-100 font-bold text-xs shadow-inner transition-all active:scale-95 cursor-pointer"
+                className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-slate-900 hover:bg-slate-800 border border-slate-700/80 text-slate-100 font-bold text-xs shadow-inner transition-all active:scale-95 cursor-pointer"
               >
                 <FileText className="w-4 h-4 text-emerald-400" />
                 <span>Invoice OCR + Cost Guardrail</span>
@@ -513,7 +513,7 @@ export default function OperationsCenter() {
               <button
                 onClick={fetchDashboardData}
                 disabled={loading}
-                className="p-2.5 rounded-2xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-400 hover:text-white transition-all cursor-pointer"
+                className="p-2.5 rounded-2xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-400 hover:text-white transition-all cursor-pointer"
                 title="Sincronizar Ledger"
               >
                 <RefreshCw
@@ -532,8 +532,8 @@ export default function OperationsCenter() {
           <div
             className={`lg:col-span-5 relative overflow-hidden rounded-3xl p-6 transition-all duration-500 backdrop-blur-xl border ${
               isWasteExceedingTarget
-                ? 'bg-gradient-to-br from-rose-950/75 via-zinc-900/90 to-zinc-950 border-rose-500/70 shadow-[0_0_40px_-5px_rgba(244,63,94,0.45)]'
-                : 'bg-gradient-to-br from-emerald-950/60 via-zinc-900/90 to-zinc-950 border-emerald-500/50 shadow-[0_0_35px_-8px_rgba(16,185,129,0.35)]'
+                ? 'bg-gradient-to-br from-rose-950/75 via-slate-900/90 to-slate-950 border-rose-500/70 shadow-[0_0_40px_-5px_rgba(244,63,94,0.45)]'
+                : 'bg-gradient-to-br from-emerald-950/60 via-slate-900/90 to-slate-950 border-emerald-500/50 shadow-[0_0_35px_-8px_rgba(16,185,129,0.35)]'
             }`}
           >
             {/* Ambient Glow Orb */}
@@ -549,7 +549,7 @@ export default function OperationsCenter() {
               {/* Top Row: Title + Traffic Light Indicator */}
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <span className="text-[10px] font-extrabold uppercase tracking-widest text-zinc-400 block">
+                  <span className="text-[10px] font-extrabold uppercase tracking-widest text-slate-400 block">
                     KPI Financiero en Tiempo Real
                   </span>
                   <h2 className="text-lg sm:text-xl font-black text-white mt-0.5 flex items-center gap-2">
@@ -558,7 +558,7 @@ export default function OperationsCenter() {
                 </div>
 
                 {/* Physical Neumorphic Traffic Light Housing */}
-                <div className="flex items-center gap-2 px-3 py-1.5 rounded-2xl bg-zinc-950/90 border border-zinc-800 shadow-inner">
+                <div className="flex items-center gap-2 px-3 py-1.5 rounded-2xl bg-slate-950/90 border border-slate-800 shadow-inner">
                   {/* Green Lamp */}
                   <div
                     className={`w-4 h-4 rounded-full transition-all duration-300 ${
@@ -602,16 +602,16 @@ export default function OperationsCenter() {
                     >
                       {wastePctDisplay}
                     </span>
-                    <span className="text-xs font-bold text-zinc-400">
+                    <span className="text-xs font-bold text-slate-400">
                       / Meta{' '}
                       <strong className="text-white">
                         {(wasteKpi?.targetWastePct ?? 2.5).toFixed(1)}%
                       </strong>
                     </span>
                   </div>
-                  <p className="text-xs text-zinc-400 mt-1">
+                  <p className="text-xs text-slate-400 mt-1">
                     {wasteKpi?.wastePct === null || wasteKpi?.wastePct === undefined ? (
-                      <span className="text-zinc-400 font-medium">
+                      <span className="text-slate-400 font-medium">
                         Ventas brutas insuficientes para calcular % de merma (ledger en vivo).
                       </span>
                     ) : isWasteExceedingTarget ? (
@@ -633,7 +633,7 @@ export default function OperationsCenter() {
 
               {/* Progress Gauge Bar */}
               <div className="space-y-1.5">
-                <div className="h-3 w-full rounded-full bg-zinc-950 border border-zinc-800 overflow-hidden p-0.5">
+                <div className="h-3 w-full rounded-full bg-slate-950 border border-slate-800 overflow-hidden p-0.5">
                   <div
                     className={`h-full rounded-full transition-all duration-500 ${
                       isWasteExceedingTarget
@@ -648,7 +648,7 @@ export default function OperationsCenter() {
                     }}
                   />
                 </div>
-                <div className="flex justify-between text-[10px] font-mono text-zinc-400">
+                <div className="flex justify-between text-[10px] font-mono text-slate-400">
                   <span>0.0%</span>
                   <span className="text-amber-400 font-bold">
                     Umbral Meta: {wasteKpi?.targetWastePct ?? 2.5}%
@@ -658,30 +658,30 @@ export default function OperationsCenter() {
               </div>
 
               {/* Formula Breakdown & Quick Volumetric Bucket Simulator */}
-              <div className="p-3.5 rounded-2xl bg-zinc-950/80 border border-zinc-800/90 space-y-2.5 text-xs">
+              <div className="p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800/90 space-y-2.5 text-xs">
                 <div className="grid grid-cols-3 gap-2 text-center">
-                  <div className="p-2 rounded-xl bg-zinc-900/80 border border-zinc-800">
-                    <span className="text-[10px] text-zinc-400 block">Descarte Directo</span>
+                  <div className="p-2 rounded-xl bg-slate-900/80 border border-slate-800">
+                    <span className="text-[10px] text-slate-400 block">Descarte Directo</span>
                     <strong className="text-white font-mono">
                       ${(wasteKpi?.totalDiscardValue ?? 0).toFixed(2)}
                     </strong>
                   </div>
-                  <div className="p-2 rounded-xl bg-zinc-900/80 border border-zinc-800">
-                    <span className="text-[10px] text-zinc-400 block">Scraps (20L)</span>
+                  <div className="p-2 rounded-xl bg-slate-900/80 border border-slate-800">
+                    <span className="text-[10px] text-slate-400 block">Scraps (20L)</span>
                     <strong className="text-amber-300 font-mono">
                       ${(wasteKpi?.volumetricScrapValue ?? 0).toFixed(2)}
                     </strong>
                   </div>
-                  <div className="p-2 rounded-xl bg-zinc-900/80 border border-zinc-800">
-                    <span className="text-[10px] text-zinc-400 block">Ventas Brutas</span>
+                  <div className="p-2 rounded-xl bg-slate-900/80 border border-slate-800">
+                    <span className="text-[10px] text-slate-400 block">Ventas Brutas</span>
                     <strong className="text-emerald-300 font-mono">
                       ${(wasteKpi?.grossSalesRevenue ?? 0).toFixed(0)}
                     </strong>
                   </div>
                 </div>
 
-                <div className="flex items-center justify-between pt-1 border-t border-zinc-800/80">
-                  <span className="text-[11px] text-zinc-400 flex items-center gap-1.5">
+                <div className="flex items-center justify-between pt-1 border-t border-slate-800/80">
+                  <span className="text-[11px] text-slate-400 flex items-center gap-1.5">
                     <Scale className="w-3.5 h-3.5 text-amber-400" />
                     <span>
                       Cubetas scrap registradas hoy:{' '}
@@ -689,7 +689,7 @@ export default function OperationsCenter() {
                     </span>
                   </span>
                   {wasteKpi?.formulaBreakdown ? (
-                    <span className="text-[10px] text-zinc-500 max-w-[55%] text-right">
+                    <span className="text-[10px] text-slate-500 max-w-[55%] text-right">
                       {wasteKpi.formulaBreakdown}
                     </span>
                   ) : null}
@@ -699,7 +699,7 @@ export default function OperationsCenter() {
           </div>
 
           {/* 2. SLIDER DE RETIRO HUMANO (2, 3 y 4 Días de Sensibilidad) */}
-          <div className="lg:col-span-7 rounded-3xl bg-gradient-to-br from-zinc-900/90 via-zinc-900/60 to-zinc-950 border border-zinc-800/90 p-6 shadow-2xl backdrop-blur-xl flex flex-col justify-between space-y-5">
+          <div className="lg:col-span-7 rounded-3xl bg-gradient-to-br from-slate-900/90 via-slate-900/60 to-slate-950 border border-slate-800/90 p-6 shadow-2xl backdrop-blur-xl flex flex-col justify-between space-y-5">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div className="flex items-center gap-3">
                 <div className="p-3 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 shadow-inner">
@@ -714,7 +714,7 @@ export default function OperationsCenter() {
                       Sensibilidad de Expiración
                     </span>
                   </div>
-                  <p className="text-xs text-zinc-400 mt-0.5">
+                  <p className="text-xs text-slate-400 mt-0.5">
                     Ajusta el umbral de días restantes (2, 3 o 4 días) para marcar lotes envejecidos en{' '}
                     <code className="text-emerald-300">Retail_Floor</code> y transferirlos a{' '}
                     <code className="text-amber-300">Kitchen_Prep</code>.
@@ -740,7 +740,7 @@ export default function OperationsCenter() {
             {/* Interactive Range Track (2 - 3 - 4 Days) */}
             <div className="px-2 pt-2 space-y-3">
               <div className="flex items-center justify-between text-xs font-bold">
-                <span className="text-zinc-400 flex items-center gap-1.5">
+                <span className="text-slate-400 flex items-center gap-1.5">
                   <Clock className="w-4 h-4 text-emerald-400" />
                   Ventana Activa de Retiro Preventivo:
                 </span>
@@ -761,10 +761,10 @@ export default function OperationsCenter() {
                   )
                 }
                 aria-label="Sensibilidad de retiro humano en días"
-                className="w-full h-3 bg-zinc-800 rounded-full appearance-none cursor-pointer accent-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
+                className="w-full h-3 bg-slate-800 rounded-full appearance-none cursor-pointer accent-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
               />
 
-              <div className="flex justify-between text-[11px] font-bold text-zinc-500 px-1">
+              <div className="flex justify-between text-[11px] font-bold text-slate-500 px-1">
                 <span className={pullSensitivityDays === 2 ? 'text-emerald-400' : ''}>
                   2 Días (Estricto)
                 </span>
@@ -793,14 +793,14 @@ export default function OperationsCenter() {
                     className={`group text-left p-4 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between ${
                       isSelected
                         ? 'bg-emerald-950/60 border-emerald-400/70 shadow-[0_0_25px_-5px_rgba(16,185,129,0.35)] scale-[1.01]'
-                        : 'bg-zinc-950/60 border-zinc-800/90 hover:border-zinc-700 text-zinc-400'
+                        : 'bg-slate-950/60 border-slate-800/90 hover:border-slate-700 text-slate-400'
                     }`}
                   >
                     <div className="space-y-1.5">
                       <div className="flex items-center justify-between gap-2">
                         <span
                           className={`text-xs font-black ${
-                            isSelected ? 'text-emerald-300' : 'text-zinc-200'
+                            isSelected ? 'text-emerald-300' : 'text-slate-200'
                           }`}
                         >
                           {option.title}
@@ -808,22 +808,22 @@ export default function OperationsCenter() {
                         <span
                           className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
                             isSelected
-                              ? 'bg-emerald-400 text-zinc-950'
-                              : 'bg-zinc-800 text-zinc-400'
+                              ? 'bg-emerald-400 text-slate-950'
+                              : 'bg-slate-800 text-slate-400'
                           }`}
                         >
                           {countForOption} ítems
                         </span>
                       </div>
-                      <p className="text-[11px] text-zinc-400 leading-relaxed">
+                      <p className="text-[11px] text-slate-400 leading-relaxed">
                         {option.subtitle}
                       </p>
                     </div>
 
-                    <div className="mt-3 pt-2 border-t border-zinc-800/80 flex items-center justify-between text-[10px] font-bold">
+                    <div className="mt-3 pt-2 border-t border-slate-800/80 flex items-center justify-between text-[10px] font-bold">
                       <span
                         className={
-                          isSelected ? 'text-emerald-400' : 'text-zinc-500'
+                          isSelected ? 'text-emerald-400' : 'text-slate-500'
                         }
                       >
                         {option.badge}
@@ -844,7 +844,7 @@ export default function OperationsCenter() {
         {/* ==================================================================== */}
         {/* ROW 2: SUB-INVENTORY CONTROLS & FILTER BAR                           */}
         {/* ==================================================================== */}
-        <div className="rounded-3xl bg-zinc-900/80 border border-zinc-800/90 p-4 sm:p-5 shadow-xl backdrop-blur-xl space-y-4">
+        <div className="rounded-3xl bg-slate-900/80 border border-slate-800/90 p-4 sm:p-5 shadow-xl backdrop-blur-xl space-y-4">
           <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
             {/* Location View Switcher */}
             <div className="flex flex-wrap items-center gap-2">
@@ -853,8 +853,8 @@ export default function OperationsCenter() {
                 onClick={() => setActiveLocationTab('SPLIT_VIEW')}
                 className={`flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-extrabold transition-all cursor-pointer ${
                   activeLocationTab === 'SPLIT_VIEW'
-                    ? 'bg-emerald-500 text-zinc-950 shadow-lg shadow-emerald-500/20'
-                    : 'bg-zinc-950 text-zinc-400 hover:text-white border border-zinc-800'
+                    ? 'bg-emerald-500 text-slate-950 shadow-lg shadow-emerald-500/20'
+                    : 'bg-slate-950 text-slate-400 hover:text-white border border-slate-800'
                 }`}
               >
                 <Layers className="w-4 h-4" />
@@ -866,13 +866,13 @@ export default function OperationsCenter() {
                 onClick={() => setActiveLocationTab('Retail_Floor')}
                 className={`flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-extrabold transition-all cursor-pointer ${
                   activeLocationTab === 'Retail_Floor'
-                    ? 'bg-emerald-500 text-zinc-950 shadow-lg shadow-emerald-500/20'
-                    : 'bg-zinc-950 text-zinc-400 hover:text-white border border-zinc-800'
+                    ? 'bg-emerald-500 text-slate-950 shadow-lg shadow-emerald-500/20'
+                    : 'bg-slate-950 text-slate-400 hover:text-white border border-slate-800'
                 }`}
               >
                 <Store className="w-4 h-4" />
                 <span>Retail_Floor ({retailFloorRows.length})</span>
-                <span className="px-2 py-0.5 rounded-full bg-zinc-900/30 text-[10px] font-mono">
+                <span className="px-2 py-0.5 rounded-full bg-slate-900/30 text-[10px] font-mono">
                   ${totalRetailFloorValue.toFixed(0)} COGS
                 </span>
               </button>
@@ -882,13 +882,13 @@ export default function OperationsCenter() {
                 onClick={() => setActiveLocationTab('Kitchen_Prep')}
                 className={`flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-extrabold transition-all cursor-pointer ${
                   activeLocationTab === 'Kitchen_Prep'
-                    ? 'bg-amber-400 text-zinc-950 shadow-lg shadow-amber-400/20'
-                    : 'bg-zinc-950 text-zinc-400 hover:text-white border border-zinc-800'
+                    ? 'bg-amber-400 text-slate-950 shadow-lg shadow-amber-400/20'
+                    : 'bg-slate-950 text-slate-400 hover:text-white border border-slate-800'
                 }`}
               >
                 <ChefHat className="w-4 h-4" />
                 <span>Kitchen_Prep ({kitchenPrepRows.length})</span>
-                <span className="px-2 py-0.5 rounded-full bg-zinc-900/30 text-[10px] font-mono">
+                <span className="px-2 py-0.5 rounded-full bg-slate-900/30 text-[10px] font-mono">
                   ${totalKitchenPrepValue.toFixed(0)} COGS
                 </span>
               </button>
@@ -897,13 +897,13 @@ export default function OperationsCenter() {
             {/* Search, Department Filter & Pull Filter */}
             <div className="flex flex-wrap items-center gap-2.5">
               <div className="relative flex-1 sm:w-60">
-                <Search className="w-4 h-4 text-zinc-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                <Search className="w-4 h-4 text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
                 <input
                   type="text"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   placeholder="Buscar producto, PLU o proveedor..."
-                  className="w-full pl-9 pr-3 py-2 rounded-xl bg-zinc-950 border border-zinc-800 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-emerald-500/60"
+                  className="w-full pl-9 pr-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500/60"
                 />
               </div>
 
@@ -911,7 +911,7 @@ export default function OperationsCenter() {
                 value={departmentFilter}
                 onChange={(e) => setDepartmentFilter(e.target.value)}
                 aria-label="Filtrar por departamento"
-                className="px-3 py-2 rounded-xl bg-zinc-950 border border-zinc-800 text-xs font-semibold text-zinc-200 focus:outline-none focus:border-emerald-500/60"
+                className="px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs font-semibold text-slate-200 focus:outline-none focus:border-emerald-500/60"
               >
                 <option value="ALL">Todos los Deptos</option>
                 <option value="PRODUCE">Produce (Frutas/Verduras)</option>
@@ -927,7 +927,7 @@ export default function OperationsCenter() {
                 className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
                   onlyShowFlaggedPulls
                     ? 'bg-amber-500/20 border-amber-400 text-amber-200'
-                    : 'bg-zinc-950 border-zinc-800 text-zinc-400 hover:text-zinc-200'
+                    : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
                 }`}
               >
                 <Filter className="w-3.5 h-3.5 text-amber-400" />
@@ -953,9 +953,9 @@ export default function OperationsCenter() {
           {/* PANEL A: RETAIL_FLOOR SUB-INVENTORY TABLE */}
           {(activeLocationTab === 'SPLIT_VIEW' ||
             activeLocationTab === 'Retail_Floor') && (
-            <div className="rounded-3xl bg-zinc-900/85 border border-emerald-900/50 overflow-hidden shadow-2xl flex flex-col">
+            <div className="rounded-3xl bg-slate-900/85 border border-emerald-900/50 overflow-hidden shadow-2xl flex flex-col">
               {/* Panel Header */}
-              <div className="p-5 bg-gradient-to-r from-emerald-950/60 via-zinc-900 to-zinc-950 border-b border-zinc-800 flex items-center justify-between gap-4">
+              <div className="p-5 bg-gradient-to-r from-emerald-950/60 via-slate-900 to-slate-950 border-b border-slate-800 flex items-center justify-between gap-4">
                 <div className="flex items-center gap-3">
                   <div className="p-2.5 rounded-2xl bg-emerald-500/15 border border-emerald-500/40 text-emerald-400">
                     <Store className="w-5 h-5" />
@@ -969,14 +969,14 @@ export default function OperationsCenter() {
                         Piso de Venta
                       </span>
                     </div>
-                    <p className="text-xs text-zinc-400 mt-0.5">
-                      Stock calculado vía <code className="text-zinc-300">SUM(Qty_Change)</code> • Sensibilidad activa: ≤{pullSensitivityDays} días
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      Stock calculado vía <code className="text-slate-300">SUM(Qty_Change)</code> • Sensibilidad activa: ≤{pullSensitivityDays} días
                     </p>
                   </div>
                 </div>
 
                 <div className="text-right">
-                  <span className="text-xs font-bold text-zinc-400 block">
+                  <span className="text-xs font-bold text-slate-400 block">
                     Valor en Piso (MAC)
                   </span>
                   <strong className="text-lg font-black text-emerald-400 font-mono">
@@ -989,7 +989,7 @@ export default function OperationsCenter() {
               <div className="overflow-x-auto">
                 <table className="w-full text-left border-collapse">
                   <thead>
-                    <tr className="bg-zinc-950/80 text-[11px] font-bold uppercase tracking-wider text-zinc-400 border-b border-zinc-800">
+                    <tr className="bg-slate-950/80 text-[11px] font-bold uppercase tracking-wider text-slate-400 border-b border-slate-800">
                       <th className="py-3 px-4">Producto / PLU</th>
                       <th className="py-3 px-3">Depto</th>
                       <th className="py-3 px-3 text-right">Stock Piso</th>
@@ -998,12 +998,12 @@ export default function OperationsCenter() {
                       <th className="py-3 px-4 text-right">Transfer</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-zinc-800/70 text-xs">
+                  <tbody className="divide-y divide-slate-800/70 text-xs">
                     {retailFloorRows.length === 0 ? (
                       <tr>
                         <td
                           colSpan={6}
-                          className="py-10 text-center text-zinc-500 font-medium"
+                          className="py-10 text-center text-slate-500 font-medium"
                         >
                           No hay productos en Retail_Floor que coincidan con el filtro actual.
                         </td>
@@ -1018,7 +1018,7 @@ export default function OperationsCenter() {
                             className={`transition-colors ${
                               isPullFlagged
                                 ? 'bg-amber-950/25 hover:bg-amber-950/40'
-                                : 'hover:bg-zinc-800/40'
+                                : 'hover:bg-slate-800/40'
                             }`}
                           >
                             <td className="py-3.5 px-4">
@@ -1032,7 +1032,7 @@ export default function OperationsCenter() {
                                   </span>
                                 )}
                               </div>
-                              <div className="text-[11px] text-zinc-500 font-mono mt-0.5">
+                              <div className="text-[11px] text-slate-500 font-mono mt-0.5">
                                 SKU: {row.barcode} • {row.supplier}
                               </div>
                             </td>
@@ -1054,13 +1054,13 @@ export default function OperationsCenter() {
                               <span className="font-extrabold text-white text-sm">
                                 {row.retailFloorQty}
                               </span>{' '}
-                              <span className="text-zinc-400 text-[11px]">
+                              <span className="text-slate-400 text-[11px]">
                                 {row.unitType}
                               </span>
                             </td>
 
                             <td className="py-3.5 px-3 text-right font-mono">
-                              <div className="text-zinc-200 font-bold">
+                              <div className="text-slate-200 font-bold">
                                 ${row.movingAvgCost.toFixed(2)}
                               </div>
                               <div className="text-[10px] text-emerald-400">
@@ -1083,7 +1083,7 @@ export default function OperationsCenter() {
                               </span>
                             </td>
 
-                            <td className="py-3.5 px-4 text-right text-[10px] text-zinc-500">
+                            <td className="py-3.5 px-4 text-right text-[10px] text-slate-500">
                               Live panel ↑
                             </td>
                           </tr>
@@ -1099,9 +1099,9 @@ export default function OperationsCenter() {
           {/* PANEL B: KITCHEN_PREP SUB-INVENTORY TABLE */}
           {(activeLocationTab === 'SPLIT_VIEW' ||
             activeLocationTab === 'Kitchen_Prep') && (
-            <div className="rounded-3xl bg-zinc-900/85 border border-amber-900/50 overflow-hidden shadow-2xl flex flex-col">
+            <div className="rounded-3xl bg-slate-900/85 border border-amber-900/50 overflow-hidden shadow-2xl flex flex-col">
               {/* Panel Header */}
-              <div className="p-5 bg-gradient-to-r from-amber-950/60 via-zinc-900 to-zinc-950 border-b border-zinc-800 flex items-center justify-between gap-4">
+              <div className="p-5 bg-gradient-to-r from-amber-950/60 via-slate-900 to-slate-950 border-b border-slate-800 flex items-center justify-between gap-4">
                 <div className="flex items-center gap-3">
                   <div className="p-2.5 rounded-2xl bg-amber-500/15 border border-amber-500/40 text-amber-400">
                     <ChefHat className="w-5 h-5" />
@@ -1115,14 +1115,14 @@ export default function OperationsCenter() {
                         Cocina de Rescate &amp; BOM
                       </span>
                     </div>
-                    <p className="text-xs text-zinc-400 mt-0.5">
-                      Insumos rescatados listos para manufactura (<code className="text-zinc-300">/api/manufacturing</code>) y lotes terminados.
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      Insumos rescatados listos para manufactura (<code className="text-slate-300">/api/manufacturing</code>) y lotes terminados.
                     </p>
                   </div>
                 </div>
 
                 <div className="text-right">
-                  <span className="text-xs font-bold text-zinc-400 block">
+                  <span className="text-xs font-bold text-slate-400 block">
                     Valor en Cocina (MAC)
                   </span>
                   <strong className="text-lg font-black text-amber-400 font-mono">
@@ -1135,7 +1135,7 @@ export default function OperationsCenter() {
               <div className="overflow-x-auto">
                 <table className="w-full text-left border-collapse">
                   <thead>
-                    <tr className="bg-zinc-950/80 text-[11px] font-bold uppercase tracking-wider text-zinc-400 border-b border-zinc-800">
+                    <tr className="bg-slate-950/80 text-[11px] font-bold uppercase tracking-wider text-slate-400 border-b border-slate-800">
                       <th className="py-3 px-4">Insumo / Producto Deli</th>
                       <th className="py-3 px-3">Tipo</th>
                       <th className="py-3 px-3 text-right">Stock Cocina</th>
@@ -1145,12 +1145,12 @@ export default function OperationsCenter() {
                       <th className="py-3 px-4 text-right">Transfer</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-zinc-800/70 text-xs">
+                  <tbody className="divide-y divide-slate-800/70 text-xs">
                     {kitchenPrepRows.length === 0 ? (
                       <tr>
                         <td
                           colSpan={7}
-                          className="py-10 text-center text-zinc-500 font-medium"
+                          className="py-10 text-center text-slate-500 font-medium"
                         >
                           No hay insumos en Kitchen_Prep que coincidan con el filtro actual.
                         </td>
@@ -1166,14 +1166,14 @@ export default function OperationsCenter() {
                             className={`transition-colors ${
                               row.isManufactured
                                 ? 'bg-emerald-950/20 hover:bg-emerald-950/35'
-                                : 'hover:bg-zinc-800/40'
+                                : 'hover:bg-slate-800/40'
                             }`}
                           >
                             <td className="py-3.5 px-4">
                               <div className="font-bold text-white flex items-center gap-2">
                                 <span>{row.name}</span>
                               </div>
-                              <div className="text-[11px] text-zinc-500 font-mono mt-0.5">
+                              <div className="text-[11px] text-slate-500 font-mono mt-0.5">
                                 Costo MAC: ${row.movingAvgCost.toFixed(2)} /{' '}
                                 {row.unitType}
                               </div>
@@ -1201,13 +1201,13 @@ export default function OperationsCenter() {
                               <span className="font-extrabold text-amber-300 text-sm">
                                 {row.kitchenPrepQty}
                               </span>{' '}
-                              <span className="text-zinc-400 text-[11px]">
+                              <span className="text-slate-400 text-[11px]">
                                 {row.unitType}
                               </span>
                             </td>
 
                             <td className="py-3.5 px-3 text-right font-mono">
-                              <span className="px-2 py-0.5 rounded-lg bg-zinc-950 border border-zinc-800 text-zinc-300 font-bold">
+                              <span className="px-2 py-0.5 rounded-lg bg-slate-950 border border-slate-800 text-slate-300 font-bold">
                                 {row.yieldPct}%
                               </span>
                             </td>
@@ -1231,7 +1231,7 @@ export default function OperationsCenter() {
                                 </Link>
                               )}
                             </td>
-                            <td className="py-3.5 px-4 text-right text-[10px] text-zinc-500">
+                            <td className="py-3.5 px-4 text-right text-[10px] text-slate-500">
                               Live panel ↑
                             </td>
                           </tr>
@@ -1286,7 +1286,7 @@ export default function OperationsCenter() {
         {/* ==================================================================== */}
         {/* ROW 4: ACTIVE KITCHEN RESCUE RECIPES & DELI LABEL QUEUE              */}
         {/* ==================================================================== */}
-        <div className="rounded-3xl bg-zinc-900/75 border border-zinc-800/90 p-5 sm:p-6 shadow-xl space-y-4">
+        <div className="rounded-3xl bg-slate-900/75 border border-slate-800/90 p-5 sm:p-6 shadow-xl space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div className="flex items-center gap-3">
               <div className="p-2.5 rounded-2xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-400">
@@ -1296,7 +1296,7 @@ export default function OperationsCenter() {
                 <h3 className="text-base sm:text-lg font-black text-white">
                   Recetas BOM Activas en Cocina &amp; Etiquetado Grab-n-Go
                 </h3>
-                <p className="text-xs text-zinc-400">
+                <p className="text-xs text-slate-400">
                   Transformación de insumos en <code className="text-amber-300">Kitchen_Prep</code> hacia productos preparados de alto margen.
                 </p>
               </div>
@@ -1306,14 +1306,14 @@ export default function OperationsCenter() {
               <button
                 type="button"
                 onClick={() => setIsRecipeProductionModalOpen(true)}
-                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-amber-400 hover:bg-amber-300 text-zinc-950 text-xs font-black transition-all cursor-pointer"
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 text-xs font-black transition-all cursor-pointer"
               >
                 <ChefHat className="w-3.5 h-3.5" />
                 <span>Ejecutar Producción BOM</span>
               </button>
               <Link
                 href="/kitchen"
-                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-zinc-950 hover:bg-zinc-800 border border-zinc-700 text-xs font-bold text-zinc-200 transition-all"
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-700 text-xs font-bold text-slate-200 transition-all"
               >
                 <span>Abrir Motor de Recetas</span>
                 <ArrowRight className="w-3.5 h-3.5 text-emerald-400" />
@@ -1325,7 +1325,7 @@ export default function OperationsCenter() {
             {recipes.slice(0, 3).map((recipe) => (
               <div
                 key={recipe.id}
-                className="p-4 rounded-2xl bg-zinc-950/80 border border-zinc-800/90 hover:border-emerald-500/40 transition-all flex flex-col justify-between space-y-3"
+                className="p-4 rounded-2xl bg-slate-950/80 border border-slate-800/90 hover:border-emerald-500/40 transition-all flex flex-col justify-between space-y-3"
               >
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
@@ -1339,8 +1339,8 @@ export default function OperationsCenter() {
                   <h4 className="font-extrabold text-sm text-white">
                     {recipe.recipeName}
                   </h4>
-                  <p className="text-[11px] text-zinc-400">
-                    Rendimiento: <strong className="text-zinc-200">{recipe.estimatedYield}</strong> • PVP:{' '}
+                  <p className="text-[11px] text-slate-400">
+                    Rendimiento: <strong className="text-slate-200">{recipe.estimatedYield}</strong> • PVP:{' '}
                     <strong className="text-emerald-400">${recipe.targetRetailPrice.toFixed(2)}</strong>
                   </p>
                 </div>
