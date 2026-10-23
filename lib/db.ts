@@ -1,3 +1,7 @@
+/**
+ * Legacy demo helpers (`getInventoryItems`, fusion memory store). Production floor
+ * stock and KPIs use `lib/inventory.ts` + `lib/stock.ts` (Prisma ledger).
+ */
 import { PrismaClient } from '@prisma/client';
 import { INITIAL_INVENTORY_ITEMS, INITIAL_FUSION_RECIPES } from './mockData';
 import { InventoryItem, RecipeFusionResult, InvoiceOcrResult, VoiceLoggerResult } from './types';

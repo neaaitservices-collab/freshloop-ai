@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Department, InventoryLocation, TransactionType } from '@prisma/client';
 import { prisma, getMovingAverageCost } from '@/lib/inventory';
-import { invalidateLedgerReads } from '@/lib/ledgerCache';
+import { invalidateInventoryCaches } from '@/lib/inventoryCache';
 import { INITIAL_INVENTORY_ITEMS } from '@/lib/mockData';
-import { generateContentWithFallback, parseModelJson } from '@/lib/gemini';
+import { generateContentWithFallback, parseModelJson, tryParseModelJson } from '@/lib/gemini';
 
 // ============================================================================
 // Types & Interfaces for Phase 3 Invoice OCR + Cost Guardrail (>20% Variance)
@@ -219,12 +219,13 @@ async function evaluateCostGuardrail(
   let requiresApproval = false;
   let guardrailReason: string | null = null;
 
-  if (historicalAvgCost !== null && historicalAvgCost > 0) {
-    const rawVariance =
-      ((rawItem.unitCost - historicalAvgCost) / historicalAvgCost) * 100;
-    costVariancePct = Number(rawVariance.toFixed(2));
+  const invoiceUnitCost = Number.isFinite(rawItem.unitCost) ? rawItem.unitCost : 0;
 
-    if (Math.abs(costVariancePct) > thresholdPct) {
+  if (historicalAvgCost !== null && historicalAvgCost > 0 && invoiceUnitCost >= 0) {
+    const rawVariance = ((invoiceUnitCost - historicalAvgCost) / historicalAvgCost) * 100;
+    costVariancePct = Number.isFinite(rawVariance) ? Number(rawVariance.toFixed(2)) : null;
+
+    if (costVariancePct !== null && Math.abs(costVariancePct) > thresholdPct) {
       requiresApproval = true;
       const direction = costVariancePct > 0 ? 'increase' : 'decrease';
       guardrailReason = `Cost Guardrail triggered: ${Math.abs(
@@ -369,9 +370,11 @@ Analyze this supermarket vendor invoice image and return ONLY valid JSON matchin
     ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash']
   );
 
-  const parsed = parseModelJson<Record<string, unknown>>(text);
+  const parsed = tryParseModelJson<Record<string, unknown>>(text);
   if (!parsed || !Array.isArray(parsed.lineItems) || parsed.lineItems.length === 0) {
-    throw new Error('The photo was read, but no invoice lines were found. Try a closer photo of the item table.');
+    throw new Error(
+      'The invoice text could not be parsed as structured JSON. Try a clearer photo of the line-item table.'
+    );
   }
 
   return {
@@ -455,7 +458,7 @@ export async function POST(req: NextRequest) {
           })
         )
       );
-      invalidateLedgerReads();
+      invalidateInventoryCaches();
 
       return NextResponse.json({
         success: true,

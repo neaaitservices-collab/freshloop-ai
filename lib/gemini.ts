@@ -33,6 +33,15 @@ export function parseModelJson<T = unknown>(raw: string): T {
   return parsed as T;
 }
 
+/** Returns null instead of throwing when model output is not valid JSON. */
+export function tryParseModelJson<T = unknown>(raw: string): T | null {
+  try {
+    return parseModelJson<T>(raw);
+  } catch {
+    return null;
+  }
+}
+
 function getApiKey(): string | null {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey || apiKey.trim() === '' || apiKey === 'your_gemini_api_key_here') {

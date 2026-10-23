@@ -1,6 +1,7 @@
 import { Department, InventoryLocation, TransactionType, UnitType } from '@prisma/client';
-import { getCurrentStock, prisma } from '@/lib/inventory';
-import { invalidateLedgerReads, rememberLedgerRead } from '@/lib/ledgerCache';
+import { getCurrentStock, prisma, VOLUMETRIC_SCRAP_REF_PREFIX } from '@/lib/inventory';
+import { rememberLedgerRead } from '@/lib/ledgerCache';
+import { invalidateInventoryCaches } from '@/lib/inventoryCache';
 import { DEFAULT_PAR_CASES, normalizeParCases, stockFromPar } from '@/lib/parLevel';
 import {
   ensureProductMarkdownColumn,
@@ -296,7 +297,7 @@ export async function applyRetailMarkdown(
   const markdownPrice = Number((regular * 0.7).toFixed(2));
   const regularToStore = prices.regularRetailPrice ?? regular;
   await writeProductMarkdownPrices(productId, regularToStore, markdownPrice);
-  invalidateLedgerReads();
+  invalidateInventoryCaches();
   return { level: await readStockLevel(productId) };
 }
 
@@ -326,7 +327,7 @@ export async function setStockCases(productId: string, cases: number, staffId: s
       },
     });
   }
-  invalidateLedgerReads();
+  invalidateInventoryCaches();
   return readStockLevel(productId);
 }
 
@@ -339,7 +340,7 @@ export async function setSupplier(productId: string, supplier: string): Promise<
     where: { id: productId },
     data: { supplier: nextSupplier },
   });
-  invalidateLedgerReads();
+  invalidateInventoryCaches();
   const onHand = await getCurrentStock(productId);
   return buildStockLevel({
     productId: product.id,
@@ -373,7 +374,7 @@ export async function updateCase(input: {
       retailPrice: input.retailPrice > 0 ? input.retailPrice : null,
     },
   });
-  invalidateLedgerReads();
+  invalidateInventoryCaches();
   const onHand = await getCurrentStock(input.productId);
   return buildStockLevel({
     productId: product.id,
@@ -394,7 +395,7 @@ export async function setParCases(productId: string, parCases: number): Promise<
     where: { id: productId },
     data: { parCases: nextPar },
   });
-  invalidateLedgerReads();
+  invalidateInventoryCaches();
   const onHand = await getCurrentStock(productId);
   return buildStockLevel({
     productId: product.id,
@@ -514,7 +515,7 @@ export async function postReceipt(input: {
     return { product, created };
   });
 
-  invalidateLedgerReads();
+  invalidateInventoryCaches();
   const onHand = await getCurrentStock(posted.product.id);
   return {
     posted: true,
@@ -529,13 +530,19 @@ export async function postReceipt(input: {
 export async function moveRetailStock(
   productId: string,
   action: 'waste' | 'rescue',
-  staffId: string
+  staffId: string,
+  quantity?: number
 ): Promise<{ level: StockLevel; units: number }> {
   const product = await prisma.product.findUnique({ where: { id: productId } });
   if (!product) throw new Error('Item was not found.');
   const floorQty = await getCurrentStock(productId, InventoryLocation.Retail_Floor);
   if (!(floorQty > 0)) throw new Error('Nothing is on the retail floor to move.');
-  const qty = Number(floorQty.toFixed(4));
+  const requested =
+    quantity !== undefined && Number.isFinite(quantity)
+      ? Number(quantity)
+      : floorQty;
+  const qty = Number(Math.min(floorQty, Math.max(0, requested)).toFixed(4));
+  if (!(qty > 0)) throw new Error('Transfer quantity must be greater than zero.');
   const cost = product.standardCost && product.standardCost > 0 ? product.standardCost : 0;
   const actor = staffId.trim() || 'staff-floor';
   const referenceId = `${action === 'waste' ? 'WASTE' : 'RESCUE'}-${Date.now()}`;
@@ -580,6 +587,73 @@ export async function moveRetailStock(
     ]);
   }
 
-  invalidateLedgerReads();
+  invalidateInventoryCaches();
   return { level: await readStockLevel(productId), units: qty };
+}
+
+/** Discard quantity from `Kitchen_Prep` into `Waste_Bin` (prep spoilage). */
+export async function moveKitchenPrepToWaste(
+  productId: string,
+  staffId: string,
+  quantity?: number
+): Promise<{ level: StockLevel; units: number }> {
+  const product = await prisma.product.findUnique({ where: { id: productId } });
+  if (!product) throw new Error('Item was not found.');
+  const prepQty = await getCurrentStock(productId, InventoryLocation.Kitchen_Prep);
+  if (!(prepQty > 0)) throw new Error('Nothing is in kitchen prep to discard.');
+  const requested =
+    quantity !== undefined && Number.isFinite(quantity) ? Number(quantity) : prepQty;
+  const qty = Number(Math.min(prepQty, Math.max(0, requested)).toFixed(4));
+  if (!(qty > 0)) throw new Error('Transfer quantity must be greater than zero.');
+  const cost = product.standardCost && product.standardCost > 0 ? product.standardCost : 0;
+  await prisma.inventoryTransaction.create({
+    data: {
+      productId,
+      staffId: staffId.trim() || 'staff-kitchen',
+      qtyChange: -qty,
+      transactionType: TransactionType.Waste,
+      fromLocation: InventoryLocation.Kitchen_Prep,
+      toLocation: InventoryLocation.Waste_Bin,
+      unitCostAtTime: cost,
+      referenceId: `KITCHEN-WASTE-${Date.now()}`,
+      notes: 'Discarded from kitchen prep to waste',
+    },
+  });
+  invalidateInventoryCaches();
+  return { level: await readStockLevel(productId), units: qty };
+}
+
+/** Persists volumetric kitchen scrap as Waste rows tagged with `VOL-SCRAP-BUCKET`. */
+export async function logVolumetricScrapBuckets(
+  buckets: number,
+  staffId: string
+): Promise<{ buckets: number; referenceId: string }> {
+  if (!Number.isFinite(buckets) || buckets <= 0) {
+    throw new Error('Bucket count must be greater than zero.');
+  }
+  const anchor = await prisma.product.findFirst({
+    where: { isManufactured: false },
+    select: { id: true },
+    orderBy: { name: 'asc' },
+  });
+  if (!anchor) throw new Error('No catalog product available to anchor scrap ledger rows.');
+  const settings = await prisma.storeSetting.findFirst();
+  const scrapBucketVolumeL = settings?.scrapBucketVolumeL ?? 20;
+  const qty = Number(buckets.toFixed(4));
+  const referenceId = `${VOLUMETRIC_SCRAP_REF_PREFIX}-${Date.now()}`;
+  await prisma.inventoryTransaction.create({
+    data: {
+      productId: anchor.id,
+      staffId: staffId.trim() || 'staff-kitchen',
+      qtyChange: qty,
+      transactionType: TransactionType.Waste,
+      fromLocation: InventoryLocation.Kitchen_Prep,
+      toLocation: InventoryLocation.Waste_Bin,
+      unitCostAtTime: 0,
+      referenceId,
+      notes: `Volumetric scrap: ${qty} bucket(s) at ${scrapBucketVolumeL}L`,
+    },
+  });
+  invalidateInventoryCaches();
+  return { buckets: qty, referenceId };
 }

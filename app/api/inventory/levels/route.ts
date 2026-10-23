@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { apiErrorFromUnknown } from '@/lib/apiError';
 import { isManager, isRoleName } from '@/lib/roles';
 import {
   applyRetailMarkdown,
@@ -50,6 +51,7 @@ export async function PATCH(req: NextRequest) {
       casesOnHand?: number;
       role?: string;
       staffId?: string;
+      quantity?: number;
     };
     const productId = body.productId?.trim() ?? '';
     if (!productId) {
@@ -61,7 +63,12 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ success: true, action: 'markdown', level: marked.level });
     }
     if (body.action === 'rescue' || body.action === 'waste') {
-      const moved = await moveRetailStock(productId, body.action, body.staffId ?? '');
+      const moved = await moveRetailStock(
+        productId,
+        body.action,
+        body.staffId ?? '',
+        body.quantity
+      );
       return NextResponse.json({
         success: true,
         action: body.action,
@@ -121,12 +128,6 @@ export async function PATCH(req: NextRequest) {
       { status: 400 }
     );
   } catch (error) {
-    return NextResponse.json(
-      {
-        success: false,
-        error: error instanceof Error ? error.message : 'The alert level could not be saved.',
-      },
-      { status: 500 }
-    );
+    return apiErrorFromUnknown(error, 'The alert level could not be saved.');
   }
 }

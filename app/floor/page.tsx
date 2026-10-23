@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation';
 
-/** Floor is unified with inventory — on-hand ledger is the single source of truth. */
+/** Legacy `/floor` URL → clerk-focused retail floor transfers. */
 export default function FloorPage() {
-  redirect('/inventory');
+  redirect('/inventory/floor');
 }

@@ -8,27 +8,8 @@ import { YieldPricingDashboard } from '@/components/yield/YieldPricingDashboard'
 import { InvoiceUploadModal } from '@/components/InvoiceUploadModal';
 import type { ReceivingLogsResult } from '@/lib/receivingSheet';
 import type { InvoiceOcrResult } from '@/lib/types';
-import type { ReceivingLog, RetailUnit } from '@/lib/yieldPricing';
-
-function retailUnitFromSubUnit(subUnit: string | undefined): RetailUnit {
-  const value = (subUnit || '').toLowerCase();
-  if (value.includes('quart')) return 'quarts';
-  if (value === 'lb' || value === 'lbs' || value.includes('pound')) return 'lbs';
-  return 'units';
-}
-
-function invoiceToLogs(result: InvoiceOcrResult): ReceivingLog[] {
-  return result.lineItems
-    .filter((item) => item.name && Number(item.unitCost) >= 0)
-    .map((item, index) => ({
-      id: `scan-${result.invoiceNumber}-${index}`,
-      itemName: item.name,
-      casesReceived: Number(item.quantity) > 0 ? Number(item.quantity) : 1,
-      caseCost: Number(item.unitCost) || 0,
-      packSize: Number(item.casePackSize) > 0 ? Number(item.casePackSize) : undefined,
-      retailUnit: retailUnitFromSubUnit(item.subUnit),
-    }));
-}
+import { receivingLogsFromInvoice } from '@/lib/receivingBridge';
+import type { ReceivingLog } from '@/lib/yieldPricing';
 
 export function ReceiveScreen({ initial }: { initial: ReceivingLogsResult }) {
   const [invoiceOpen, setInvoiceOpen] = useState(false);
@@ -36,7 +17,7 @@ export function ReceiveScreen({ initial }: { initial: ReceivingLogsResult }) {
   const [scanNote, setScanNote] = useState<string | null>(null);
 
   const handleInvoiceImported = (result: InvoiceOcrResult) => {
-    const next = invoiceToLogs(result);
+    const next = receivingLogsFromInvoice(result);
     setScannedLogs(next);
     setScanNote(
       next.length

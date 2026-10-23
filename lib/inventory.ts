@@ -1,4 +1,5 @@
 import {
+  Prisma,
   PrismaClient,
   InventoryLocation,
   TransactionType,
@@ -6,7 +7,8 @@ import {
   UnitType,
   InventoryTransaction,
 } from '@prisma/client';
-import { invalidateLedgerReads } from '@/lib/ledgerCache';
+import { invalidateInventoryCaches } from '@/lib/inventoryCache';
+import { computeWastePct } from '@/lib/wasteKpi';
 
 // ============================================================================
 // Prisma Singleton Instance (Strict Typed)
@@ -89,8 +91,8 @@ export interface WasteCalculationOptions {
 }
 
 export interface WasteKpiReport {
-  /** Real-time waste percentage (0 - 100), e.g. 2.14 means 2.14% */
-  wastePct: number;
+  /** Real-time waste percentage (0 - 100), or null when sales data is too thin to ratio */
+  wastePct: number | null;
   /** Raw decimal ratio before multiplying by 100, e.g. 0.0214 */
   wasteRatio: number;
   /** Configured store target waste percentage from StoreSetting (e.g. 2.5%) */
@@ -428,7 +430,7 @@ export async function executeBundleSale(
         })
       )
     );
-    invalidateLedgerReads();
+    invalidateInventoryCaches();
 
     // 4. Build execution summary
     const deductions: ExplodedComponentDeduction[] = componentPlans.map((plan, index) => ({
@@ -508,20 +510,42 @@ export async function calculateRealTimeWastePct(
           }
         : {};
 
-    const [storeSetting, wasteTransactions, salesTransactions] = await Promise.all([
+    const volumetricPrefix = `${VOLUMETRIC_SCRAP_REF_PREFIX}%`;
+    const wasteTimeSql =
+      options?.startDate && options?.endDate
+        ? Prisma.sql`AND "timestamp" >= ${options.startDate} AND "timestamp" <= ${options.endDate}`
+        : options?.startDate
+          ? Prisma.sql`AND "timestamp" >= ${options.startDate}`
+          : options?.endDate
+            ? Prisma.sql`AND "timestamp" <= ${options.endDate}`
+            : Prisma.empty;
+
+    const [storeSetting, wasteAggRows, salesTransactions] = await Promise.all([
       prisma.storeSetting.findFirst(),
-      prisma.inventoryTransaction.findMany({
-        where: {
-          transactionType: TransactionType.Waste,
-          ...timestampFilter,
-        },
-        select: {
-          qtyChange: true,
-          unitCostAtTime: true,
-          referenceId: true,
-          notes: true,
-        },
-      }),
+      prisma.$queryRaw<Array<{ discardValue: number; bucketUnits: number }>>(Prisma.sql`
+        SELECT
+          COALESCE(SUM(
+            CASE
+              WHEN "Reference_ID" LIKE ${volumetricPrefix}
+                OR LOWER(COALESCE("notes", '')) LIKE '%volumetric scrap%'
+                OR LOWER(COALESCE("notes", '')) LIKE '%cubeta%'
+              THEN 0
+              ELSE ABS("Qty_Change") * "Unit_Cost_At_Time"
+            END
+          ), 0)::float8 AS "discardValue",
+          COALESCE(SUM(
+            CASE
+              WHEN "Reference_ID" LIKE ${volumetricPrefix}
+                OR LOWER(COALESCE("notes", '')) LIKE '%volumetric scrap%'
+                OR LOWER(COALESCE("notes", '')) LIKE '%cubeta%'
+              THEN ABS("Qty_Change")
+              ELSE 0
+            END
+          ), 0)::float8 AS "bucketUnits"
+        FROM "Inventory_Transactions"
+        WHERE "Transaction_Type" = 'Waste'
+        ${wasteTimeSql}
+      `),
       prisma.inventoryTransaction.findMany({
         where: {
           transactionType: {
@@ -550,25 +574,12 @@ export async function calculateRealTimeWastePct(
     const costPerScrapBucket =
       scrapBucketVolumeL * estimatedWeightPerLiterKg * defaultScrapCostPerKg;
 
-    let totalDiscardValue = 0;
-    let volumetricScrapValue = 0;
-    let volumetricScrapBucketsCount = 0;
-
-    for (const tx of wasteTransactions) {
-      const absQty = Math.abs(tx.qtyChange);
-      const isVolumetricBucketEntry =
-        Boolean(tx.referenceId?.startsWith(VOLUMETRIC_SCRAP_REF_PREFIX)) ||
-        Boolean(tx.notes?.toLowerCase().includes('volumetric scrap')) ||
-        Boolean(tx.notes?.toLowerCase().includes('cubeta'));
-
-      if (isVolumetricBucketEntry) {
-        // If qtyChange represents bucket count (or weight), compute volumetric value
-        volumetricScrapBucketsCount += absQty;
-        volumetricScrapValue += absQty * costPerScrapBucket;
-      } else {
-        totalDiscardValue += absQty * tx.unitCostAtTime;
-      }
-    }
+    const wasteAgg = wasteAggRows[0];
+    let totalDiscardValue = Number((wasteAgg?.discardValue ?? 0).toFixed(2));
+    let volumetricScrapBucketsCount = Number((wasteAgg?.bucketUnits ?? 0).toFixed(2));
+    let volumetricScrapValue = Number(
+      (volumetricScrapBucketsCount * costPerScrapBucket).toFixed(2)
+    );
 
     // Include any additional volumetric scrap buckets passed in options
     if (options?.additionalScrapBuckets && options.additionalScrapBuckets > 0) {
@@ -600,19 +611,27 @@ export async function calculateRealTimeWastePct(
     const totalWasteValue = Number((roundedDiscardValue + roundedVolumetricValue).toFixed(2));
     const roundedGrossSales = Number(grossSalesRevenue.toFixed(2));
 
+    const wastePct = computeWastePct(totalWasteValue, roundedGrossSales);
     const wasteRatio =
-      roundedGrossSales > 0 ? totalWasteValue / roundedGrossSales : 0;
-    const wastePct = Number((wasteRatio * 100).toFixed(2));
-    const isExceedingTarget = wastePct > targetWastePct;
+      wastePct === null ? 0 : Number((wastePct / 100).toFixed(4));
+    const isExceedingTarget =
+      wastePct !== null && wastePct > targetWastePct;
     const trafficLightStatus: 'GREEN' | 'RED_BLINKING' = isExceedingTarget
       ? 'RED_BLINKING'
       : 'GREEN';
 
-    const formulaBreakdown = `($${roundedDiscardValue.toFixed(2)} Descarte + $${roundedVolumetricValue.toFixed(
-      2
-    )} Scraps Volumétricos) / $${roundedGrossSales.toFixed(2)} Ventas Brutas = ${wastePct.toFixed(
-      2
-    )}% (Meta: ${targetWastePct.toFixed(2)}%)`;
+    const formulaBreakdown =
+      wastePct === null
+        ? `($${roundedDiscardValue.toFixed(2)} Descarte + $${roundedVolumetricValue.toFixed(
+            2
+          )} Scraps) — ventas brutas insuficientes ($${roundedGrossSales.toFixed(
+            2
+          )}) para calcular % (meta: ${targetWastePct.toFixed(2)}%)`
+        : `($${roundedDiscardValue.toFixed(2)} Descarte + $${roundedVolumetricValue.toFixed(
+            2
+          )} Scraps Volumétricos) / $${roundedGrossSales.toFixed(2)} Ventas Brutas = ${wastePct.toFixed(
+            2
+          )}% (Meta: ${targetWastePct.toFixed(2)}%)`;
 
     return {
       wastePct,

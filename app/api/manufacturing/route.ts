@@ -11,7 +11,7 @@ import {
   getCurrentStock,
   InventoryLedgerError,
 } from '@/lib/inventory';
-import { invalidateLedgerReads } from '@/lib/ledgerCache';
+import { invalidateInventoryCaches } from '@/lib/inventoryCache';
 
 // ============================================================================
 // Types & Interfaces for Phase 3 Kitchen Manufacturing Engine
@@ -299,7 +299,7 @@ export async function POST(req: NextRequest) {
           name: dbRecipe.name,
           outputProductId: dbRecipe.outputProductId,
           outputProductName: dbRecipe.outputProduct.name,
-          outputUnit: dbRecipe.outputUnit,
+          outputUnit: dbRecipe.outputProduct.unitType,
           outputShelfLifeDays: dbRecipe.outputProduct.shelfLifeDays || 3,
           batchYieldQty: dbRecipe.batchYieldQty,
           targetRetailPrice: dbRecipe.targetRetailPrice,
@@ -515,7 +515,7 @@ export async function POST(req: NextRequest) {
 
       ingredientTransactions = ledgerResults.slice(0, consumptionPlan.length);
       outputTransaction = ledgerResults[ledgerResults.length - 1];
-      invalidateLedgerReads();
+      invalidateInventoryCaches();
     } catch {
       const now = new Date();
       ingredientTransactions = consumptionPlan.map((item, idx) => ({

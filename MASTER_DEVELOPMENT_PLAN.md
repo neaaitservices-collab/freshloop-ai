@@ -14,7 +14,7 @@ The store in the seed data is FreshLoop Artisanal Market - Cobourg.
 4. **Orders.** Anything below its case alert level becomes a supplier order the manager can approve, print, or email.
 5. **Admin.** Managers see the day’s numbers, the three work steps, their own profile, store settings, staff, and the case editor. Everyone else opens the same address and sees only their profile.
 
-`/` and `/dashboard` both open `/admin`. `/floor` and `/rescue` redirect to `/inventory`. `/recipes` opens `/kitchen`. `/admin/users` opens `/admin`.
+`/` and `/dashboard` both open `/admin`. `/floor` redirects to `/inventory/floor` (clerk retail-only transfers). `/rescue` redirects to `/inventory`. `/recipes` opens `/kitchen`. `/admin/users` opens `/admin`.
 
 ## Rules the system follows
 
@@ -47,7 +47,7 @@ Recipe fusion statuses: `PROPOSED`, `IN_KITCHEN`, `COMPLETED`.
 | `ADMIN` | Admin | `/admin` | Every page |
 | `STORE_MANAGER` | Store manager | `/admin` | Every page |
 | `RECEIVING_CLERK` | Receiving | `/receive` | Receive, Inventory, and Profile |
-| `FLOOR_STAFF` | Floor | `/inventory` | Inventory (floor actions), the voice button, and Profile |
+| `FLOOR_STAFF` | Floor | `/inventory/floor` | Floor moves (retail only), the voice button, and Profile |
 | `DELI_CHEF` | Kitchen | `/kitchen` | Kitchen and Profile |
 
 `AppShell` sends a person away from a page their role cannot open. `/admin` is open to every role. Managers see the full dashboard there. Everyone else sees Profile.
@@ -67,7 +67,7 @@ Recipe fusion statuses: `PROPOSED`, `IN_KITCHEN`, `COMPLETED`.
 | Admin | `/admin` | Managers. It is the first item and the logo target. |
 | Profile | `/admin` | Receiving, floor, and kitchen. Same address, user icon. |
 | Receive | `/receive` | Admin, store manager, receiving clerk |
-| Inventory | `/inventory` | Admin, store manager, receiving clerk, floor staff |
+| Inventory | `/inventory` (managers/clerks) or `/inventory/floor` (floor staff nav label **Floor**) | Admin, store manager, receiving clerk, floor staff |
 | Voice | Opens the voice modal | Admin, store manager, floor staff |
 | Kitchen | `/kitchen` | Admin, store manager, deli chef |
 | Orders | `/orders` | Admin, store manager |
@@ -168,11 +168,16 @@ Save posts the receipt (`postReceipt` in `lib/stock.ts`): a `Receive` transactio
 
 `YieldWorkflowStepper` is the older step chrome for this flow and is not the live receive page.
 
-## Inventory & floor — `/inventory`
+## Inventory & floor — `/inventory` and `/inventory/floor`
 
-Step 2. “Inventory & floor management” (unified operations). **`/floor` redirects here.** On-hand quantity from the ledger *is* retail-floor stock; there is no separate floor quantity column.
+Step 2. “Inventory & floor management” (unified operations). **`/floor` redirects to `/inventory/floor`.** On-hand quantity from the ledger *is* retail-floor stock; kitchen prep is a separate sub-location on the same SKU.
 
-`app/inventory/page.tsx` server-loads `getStockLevels()` and passes rows to `StoredInventory` → `SlateInventory`. There is no pack, yield, price, or case editor on this page (that stays on Admin **Edit a case**).
+Both routes use the same transfer stack: `SubInventoryWorkspace` (tabs by role), `RetailFloorTransferPanel` / `KitchenPrepTransferPanel`, and `SubInventoryTransferBar` with explicit quantity (+/−, **All**, unit steps). Moves go through `executeInventoryMove` in `lib/inventoryMoveClient.ts` → `POST /api/inventory/move`.
+
+- **`/inventory`** — Managers and receiving see retail + kitchen tabs (`lib/subInventoryView.ts`). Server-loads `getStockLevels()` via `StoredInventory` → `SlateInventory`.
+- **`/inventory/floor`** — Clerks see retail floor only (`FloorTransferPage`): pull slider, flagged short-dated board, full catalog, same move actions.
+
+There is no pack, yield, price, or case editor on these pages (that stays on Admin **Edit a case**).
 
 ### Layout
 
@@ -188,11 +193,15 @@ Each row shows name, supplier, on-hand units and cases, margin, inventory value,
 
 ### Actions (ledger-backed)
 
-All three move only the **retail-floor** balance via `POST /api/inventory/move`:
+Retail-floor actions via `POST /api/inventory/move`:
 
 - **Kitchen** — `action: "rescue"`. Double entry `Retail_Floor` → `Kitchen_Prep`.
-- **30% off** — `POST /api/inventory/move` with `action: "markdown"`. Persists `regularRetailPrice` and sets `retailPrice` to 70% of the regular shelf price; UI updates price and `MARKDOWN` badge instantly from the returned `level`.
+- **30% off** — `action: "markdown"`. Persists `regularRetailPrice` and sets `retailPrice` to 70% of the regular shelf price; UI updates price and `MARKDOWN` badge instantly from the returned `level`.
 - **Waste** — `action: "waste"`. Negative `Waste` `Retail_Floor` → `Waste_Bin`. Row disappears when on-hand hits zero.
+
+Kitchen-prep actions on the same API:
+
+- **Kitchen waste** — `action: "kitchen_waste"`. `Kitchen_Prep` → `Waste_Bin` (`moveKitchenPrepToWaste` in `lib/stock.ts`).
 
 After a move, `invalidateLedgerReads()` runs on the server; the row updates from the API response. Toasts report units moved.
 
@@ -242,8 +251,9 @@ It shows:
 - **Semáforo KPI de merma.** Waste % = (discard value + volumetric scrap value) / gross sales. Green under the 2.5% target, rose and pulsing when over. Discard value, scrap value, bucket count, and gross sales sit on the card. Bucket count can be nudged +1 / −1 on the card itself.
 - **Slider de retiro humano.** 2 days (strict), 3 days (standard), 4 days (early warning). Filters the retail rows that are flagged.
 - Location tabs: split view, `Retail_Floor` only, or `Kitchen_Prep` only. Search and a “only pulls” filter.
-- **Retail_Floor table.** Quantity, moving-average cost, retail price, target margin, yield, days remaining, supplier, and a transfer of a lot into `Kitchen_Prep`.
-- **Kitchen_Prep table.** The rescued side of the same ledger, with its own value total.
+- **`OperationsLiveTransfers`.** Live `GET /api/inventory/levels` + the same `SubInventoryWorkspace` as Inventory (real writes). Link to **Clerk floor view** (`/inventory/floor`). Refreshes the analytics snapshot on `freshloop-inventory-updated`.
+- **Retail_Floor table.** Quantity, moving-average cost, retail price, target margin, yield, days remaining, supplier — read-only analytics (moves happen in the live panel above).
+- **Kitchen_Prep table.** The rescued side of the same ledger, with its own value total (read-only analytics).
 - `VolumetricScrapForm`. One click logs N buckets. Weight = buckets × 20 L × 0.65 kg/L. Cost = weight × $3.50/kg. Reset clears the count on this screen.
 - Active kitchen rescue recipes and a deli-label queue, using `RecipeFusionCard` and `DeliLabelModal`.
 - Modals: invoice upload, `VoiceLoggerModal` (the confirm loop), and `RecipeProductionModal`.
@@ -332,7 +342,7 @@ Seed file: `prisma/seed.ts`. Store setting id `store-config-main`. Seed transact
 | `/api/admin/stats` | GET | Store statistics payload. |
 | `/api/inventory` | GET, PATCH | Floor pull list plus `liveLedger` sub-inventory rows. PATCH updates a legacy inventory-item status. |
 | `/api/inventory/levels` | GET, PATCH | Stock levels for Inventory, Orders, and the case editor. PATCH updates par, supplier, case fields, or `action` (`rescue` \| `waste` \| `markdown`) and returns refreshed `level`. |
-| `/api/inventory/move` | POST | `rescue`, `waste`, or `markdown` for one product. Returns refreshed `StockLevel` (`onHand` = retail floor, `kitchenPrepQty`, prices). |
+| `/api/inventory/move` | POST | `rescue`, `waste`, `markdown`, or `kitchen_waste` for one product and quantity. Returns refreshed `StockLevel` (`onHand` = retail floor, `kitchenPrepQty`, prices). |
 | `/api/inventory/on-hand` | GET | Name lookup of current on-hand quantity. |
 | `/api/receiving-logs` | GET, POST | Receiving sheet rows used by the price-the-delivery board. |
 | `/api/invoice-ocr` | POST | Image to invoice JSON, with the cost guardrail. Does not post stock by itself. |
@@ -370,7 +380,9 @@ Seed file: `prisma/seed.ts`. Store setting id `store-config-main`. Seed transact
 - Legacy floor queue components (`InventoryList`, `InventoryTable`, `StatsOverview`) removed; use `SlateInventory` only.
 - `DepartmentBadge`
 - `PullSliderControl`
-- `app/floor/page.tsx` — redirect to `/inventory`
+- `app/floor/page.tsx` — redirect to `/inventory/floor`
+- `app/inventory/floor/page.tsx` — clerk retail-only transfer page
+- `components/operations/OperationsLiveTransfers.tsx` — live sub-inventory moves on Operations
 
 **Kitchen and ledger**
 - `VoiceRecorderModal`, `VoiceLoggerModal`

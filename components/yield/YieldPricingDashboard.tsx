@@ -17,6 +17,7 @@ import { ReceivingDetails } from '@/components/yield/ReceivingDetails';
 import { YieldBreakdown } from '@/components/yield/YieldBreakdown';
 import { PricingStrategy } from '@/components/yield/PricingStrategy';
 import { PackReceiptCard } from '@/components/yield/PackReceiptCard';
+import { consumeStashedReceivingScan } from '@/lib/receivingBridge';
 
 interface LogsResponse {
   success: boolean;
@@ -88,6 +89,8 @@ export function YieldPricingDashboard({
   const [stockMatched, setStockMatched] = useState(false);
   const [postedIds, setPostedIds] = useState<Set<string>>(() => new Set());
   const [movedNotice, setMovedNotice] = useState<string | null>(null);
+  const [stashedScanLogs, setStashedScanLogs] = useState<ReceivingLog[]>([]);
+  const [stashedScanNote, setStashedScanNote] = useState<string | null>(null);
   const stockRequest = useRef(0);
   const postedIdsRef = useRef<Set<string>>(new Set());
 
@@ -118,12 +121,24 @@ export function YieldPricingDashboard({
     postedIdsRef.current = stored;
     setPostedIds(stored);
     void loadLogs(seeded);
+    const stashed = consumeStashedReceivingScan();
+    if (stashed?.logs.length) {
+      setStashedScanLogs(stashed.logs);
+      setStashedScanNote(stashed.note);
+      setSelectedId(stashed.logs[0]?.id ?? null);
+      if (stashed.note) setMovedNotice(stashed.note);
+    }
   }, []);
 
   const visibleLogs = useMemo(() => {
-    const extraIds = new Set(extraLogs.map((log) => log.id));
-    return [...extraLogs, ...logs.filter((log) => !extraIds.has(log.id))];
-  }, [extraLogs, logs]);
+    const merged = [...extraLogs, ...stashedScanLogs, ...logs];
+    const seen = new Set<string>();
+    return merged.filter((log) => {
+      if (seen.has(log.id)) return false;
+      seen.add(log.id);
+      return true;
+    });
+  }, [extraLogs, stashedScanLogs, logs]);
 
   const openLogs = useMemo(
     () => visibleLogs.filter((log) => !postedIds.has(log.id)),
@@ -251,6 +266,9 @@ export function YieldPricingDashboard({
       setMovedNotice(
         `${savedName} is in inventory. ${formatUnits(Number(json.stock.onHand))} ${retailUnit} on hand.`
       );
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('freshloop-inventory-updated'));
+      }
     } catch {
       setErrorMessage('Save failed. Check the connection and try again.');
     } finally {

@@ -61,25 +61,6 @@ export function CaseBoard({
   const [levels, setLevels] = useState<StockLevel[]>(() => initialLevels ?? []);
   const [query, setQuery] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [packSize, setPackSize] = useState('1');
-  const [yieldDivisor, setYieldDivisor] = useState('1');
-  const [retailUnit, setRetailUnit] = useState<RetailUnit>('units');
-  const [marginMode, setMarginMode] = useState<MarginMode>('40');
-  const [customMarginPercent, setCustomMarginPercent] = useState('35');
-  const [currentRetailPrice, setCurrentRetailPrice] = useState('0.00');
-  const [saving, setSaving] = useState(false);
-  const [savedMessage, setSavedMessage] = useState<string | null>(null);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [casesOnHand, setCasesOnHand] = useState('0');
-  const [savingStock, setSavingStock] = useState(false);
-  const [stockMessage, setStockMessage] = useState<string | null>(null);
-  const { activeUser } = useRole();
-  const canOverride = activeUser ? isManager(activeUser.role) : false;
-
-  useEffect(() => {
-    if (!initialLevels) return;
-    setLevels(initialLevels);
-  }, [initialLevels]);
 
   const catalog = useMemo(
     () => levels.filter((row) => row.onHand > 0).sort((a, b) => a.name.localeCompare(b.name)),
@@ -107,6 +88,27 @@ export function CaseBoard({
     : (stored.find((row) => row.productId === selectedId) ?? stored[0] ?? null);
 
   const selectedKey = selected?.productId ?? '';
+  const [packSize, setPackSize] = useState(() => (selected ? String(selected.casePackSize) : '1'));
+  const [yieldDivisor, setYieldDivisor] = useState('1');
+  const [retailUnit, setRetailUnit] = useState<RetailUnit>(() => (selected ? retailUnitFor(selected.unitType) : 'units'));
+  const [marginMode, setMarginMode] = useState<MarginMode>('40');
+  const [customMarginPercent, setCustomMarginPercent] = useState('35');
+  const [currentRetailPrice, setCurrentRetailPrice] = useState(() =>
+    selected && selected.retailPrice !== null ? selected.retailPrice.toFixed(2) : '0.00'
+  );
+  const [saving, setSaving] = useState(false);
+  const [savedMessage, setSavedMessage] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [casesOnHand, setCasesOnHand] = useState(() => (selected ? casesLabel(selected.onHandCases) : '0'));
+  const [savingStock, setSavingStock] = useState(false);
+  const [stockMessage, setStockMessage] = useState<string | null>(null);
+  const { activeUser } = useRole();
+  const canOverride = activeUser ? isManager(activeUser.role) : false;
+
+  useEffect(() => {
+    if (!initialLevels) return;
+    setLevels(initialLevels);
+  }, [initialLevels]);
 
   useEffect(() => {
     if (!selected) return;

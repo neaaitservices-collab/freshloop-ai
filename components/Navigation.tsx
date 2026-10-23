@@ -35,7 +35,7 @@ const ITEMS: NavItem[] = [
     label: 'Inventory',
     icon: Warehouse,
     href: '/inventory',
-    roles: ['ADMIN', 'STORE_MANAGER', 'RECEIVING_CLERK', 'FLOOR_STAFF'],
+    roles: ['ADMIN', 'STORE_MANAGER', 'RECEIVING_CLERK', 'FLOOR_STAFF', 'DELI_CHEF'],
   },
   { id: 'voice', label: 'Voice', icon: Mic, voice: true, roles: ['ADMIN', 'STORE_MANAGER', 'FLOOR_STAFF'] },
   { id: 'kitchen', label: 'Kitchen', icon: ChefHat, href: '/kitchen', roles: ['ADMIN', 'STORE_MANAGER', 'DELI_CHEF'] },
@@ -53,6 +53,9 @@ function displayItem(item: NavItem, role: RoleName | null): NavItem {
   if (item.id === 'account' && role && !isManager(role)) {
     return { ...item, label: 'Profile', icon: User };
   }
+  if (item.id === 'inventory' && role === 'FLOOR_STAFF') {
+    return { ...item, label: 'Floor', href: '/inventory/floor' };
+  }
   return item;
 }
 
@@ -62,6 +65,7 @@ function brandHref(items: NavItem[], role: RoleName | null): string {
 }
 
 function isActive(pathname: string, href: string) {
+  if (href === '/inventory' && pathname.startsWith('/inventory/floor')) return false;
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 

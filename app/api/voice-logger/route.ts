@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { Department, InventoryLocation, TransactionType } from '@prisma/client';
 import { generateContentWithFallback, parseModelJson } from '@/lib/gemini';
 import { prisma } from '@/lib/inventory';
-import { invalidateLedgerReads } from '@/lib/ledgerCache';
+import { invalidateInventoryCaches } from '@/lib/inventoryCache';
 import { INITIAL_INVENTORY_ITEMS } from '@/lib/mockData';
 
 // ============================================================================
@@ -442,6 +442,19 @@ export async function POST(req: NextRequest) {
     // in the [CONFIRMAR] / [EDITAR] UI modal (`confirmCommit: true`).
     // ------------------------------------------------------------------------
     if (confirmCommit && Array.isArray(confirmedItems) && confirmedItems.length > 0) {
+      const invalid = confirmedItems.find(
+        (item) => !item.product_id?.trim() || !Number.isFinite(Number(item.quantity)) || Number(item.quantity) <= 0
+      );
+      if (invalid) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: 'Each confirmed item needs a product_id and a positive quantity.',
+          },
+          { status: 400 }
+        );
+      }
+
       const committedTransactions = await prisma.$transaction(
         confirmedItems.flatMap((item) => {
           const absQty = Math.abs(Number(item.quantity) || 1);
@@ -497,7 +510,7 @@ export async function POST(req: NextRequest) {
           ];
         })
       );
-      invalidateLedgerReads();
+      invalidateInventoryCaches();
 
       return NextResponse.json({
         success: true,

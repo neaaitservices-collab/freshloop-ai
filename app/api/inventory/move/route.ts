@@ -1,19 +1,26 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { applyRetailMarkdown, moveRetailStock } from '@/lib/stock';
+import { applyRetailMarkdown, moveKitchenPrepToWaste, moveRetailStock } from '@/lib/stock';
+import { apiError, apiErrorFromUnknown } from '@/lib/apiError';
 
 export const dynamic = 'force-dynamic';
 
 export async function POST(req: NextRequest) {
   try {
-    const body = (await req.json()) as {
+    let body: {
       productId?: string;
       action?: string;
       staffId?: string;
+      quantity?: number;
     };
+    try {
+      body = (await req.json()) as typeof body;
+    } catch {
+      return apiError('Request body must be valid JSON.', 400);
+    }
     const productId = body.productId?.trim() ?? '';
     const action = body.action;
     if (!productId) {
-      return NextResponse.json({ success: false, error: 'productId is required.' }, { status: 400 });
+      return apiError('productId is required.', 400);
     }
     if (action === 'markdown') {
       const marked = await applyRetailMarkdown(productId, body.staffId ?? '');
@@ -23,16 +30,26 @@ export async function POST(req: NextRequest) {
         level: marked.level,
       });
     }
-    if (action !== 'waste' && action !== 'rescue') {
-      return NextResponse.json(
-        {
-          success: false,
-          error: 'Use action rescue, waste, or markdown.',
-        },
-        { status: 400 }
-      );
+    if (action === 'kitchen_waste') {
+      const moved = await moveKitchenPrepToWaste(productId, body.staffId ?? '', body.quantity);
+      return NextResponse.json({
+        success: true,
+        action,
+        level: moved.level,
+        units: moved.units,
+        retailFloorQty: moved.level.onHand,
+        kitchenPrepQty: moved.level.kitchenPrepQty,
+      });
     }
-    const moved = await moveRetailStock(productId, action, body.staffId ?? '');
+    if (action !== 'waste' && action !== 'rescue') {
+      return apiError('Use action rescue, waste, kitchen_waste, or markdown.', 400);
+    }
+    const moved = await moveRetailStock(
+      productId,
+      action as 'waste' | 'rescue',
+      body.staffId ?? '',
+      body.quantity
+    );
     return NextResponse.json({
       success: true,
       action,
@@ -42,8 +59,6 @@ export async function POST(req: NextRequest) {
       kitchenPrepQty: moved.level.kitchenPrepQty,
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'The stock could not be moved.';
-    const status = message.includes('not found') || message.includes('Nothing is on the retail floor') ? 400 : 500;
-    return NextResponse.json({ success: false, error: message }, { status });
+    return apiErrorFromUnknown(error, 'The stock could not be moved.');
   }
 }
