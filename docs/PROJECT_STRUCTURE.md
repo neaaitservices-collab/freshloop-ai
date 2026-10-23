@@ -10,7 +10,7 @@ Route segments only: `page.tsx`, `layout.tsx`, `route.ts` under `app/api/`.
 
 | Path | Purpose |
 | --- | --- |
-| `ui/` | Shared Slate & Ocean Steel primitives (badges, yield fields, sliders, chart tooltip) |
+| `ui/` | Slate & Ocean Steel kit: `Card`, `Button`, `Input`, `Select`, `Badge`, `Toast`, yield fields, sliders, chart tooltip |
 | `layout/` | `AppShell`, `Navigation`, `PageIntro` |
 | `auth/` | `RoleProvider` |
 | `features/inventory/` | Floor, sub-inventory transfers, case board |

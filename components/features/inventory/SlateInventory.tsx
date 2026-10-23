@@ -3,10 +3,15 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { ArrowRight, Search, Sparkles } from 'lucide-react';
+import { ArrowRight, ChevronDown, Search, Sparkles } from 'lucide-react';
 import { useRole } from '@/components/auth/RoleProvider';
+import { InventoryMasterDetail } from '@/components/features/inventory/InventoryMasterDetail';
 import { SubInventoryWorkspace } from '@/components/features/inventory/SubInventoryWorkspace';
 import { PullSliderControl } from '@/components/ui/PullSliderControl';
+import { Card, CardBody } from '@/components/ui/Card';
+import { Input, Select } from '@/components/ui/Input';
+import { Toast } from '@/components/ui/Toast';
+import { Button } from '@/components/ui/Button';
 import type { StockLevel } from '@/lib/domains/inventory/stock';
 import type { DepartmentType } from '@/lib/types';
 import { formatCurrency } from '@/lib/domains/receiving/yieldPricing';
@@ -30,6 +35,7 @@ export function SlateInventory({ levels: initialLevels }: { levels: StockLevel[]
   const [pullDays, setPullDays] = useState(3);
   const [toast, setToast] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const { activeUser } = useRole();
 
   useEffect(() => {
@@ -51,12 +57,6 @@ export function SlateInventory({ levels: initialLevels }: { levels: StockLevel[]
     window.addEventListener('freshloop-inventory-updated', syncFromServer);
     return () => window.removeEventListener('freshloop-inventory-updated', syncFromServer);
   }, []);
-
-  useEffect(() => {
-    if (!toast) return;
-    const timer = window.setTimeout(() => setToast(null), 3200);
-    return () => window.clearTimeout(timer);
-  }, [toast]);
 
   const departmentFilter = useCallback(
     (row: StockLevel) => {
@@ -80,95 +80,71 @@ export function SlateInventory({ levels: initialLevels }: { levels: StockLevel[]
   const markdownCount = onHand.filter((row) => row.isMarkdown).length;
   const kitchenRoutedCount = levels.filter((row) => row.kitchenPrepQty > 0).length;
 
-  const patchLevel = (level: StockLevel) => {
-    setLevels((current) =>
-      current.map((item) => (item.productId === level.productId ? level : item))
-    );
-  };
-
-  const handleTransferSuccess = (message: string, level: StockLevel) => {
-    patchLevel(level);
-    setErrorMessage(null);
-    setToast(message);
-    router.refresh();
-  };
-
   return (
     <section className="space-y-4 sm:space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-emerald-500/90">
-            Unified operations
+          <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-blue-300/80">
+            Slate &amp; Ocean Steel
           </p>
           <h1 className="text-xl font-black tracking-tight text-slate-100 sm:text-2xl">
             Inventory &amp; floor management
           </h1>
           <p className="mt-1 max-w-2xl text-xs text-slate-400 sm:text-sm">
-            Two sub-inventories: <strong className="text-emerald-300">retail floor</strong> (shelf)
-            and <strong className="text-amber-200">kitchen prep</strong> (rescued / BOM). Clerks work
-            the floor tab; kitchen staff use prep or both.
+            Master-detail editing for yield and shelf price. Floor moves on the selected row.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Link
-            href="/operations"
-            className="inline-flex h-10 items-center gap-1.5 rounded-xl border border-slate-700 bg-slate-900 px-3 text-xs font-bold text-slate-300"
-          >
+          <Button variant="secondary" className="h-10 px-3 text-xs" onClick={() => router.push('/operations')}>
             <ArrowRight className="h-4 w-4 rotate-180" />
             Ledger
-          </Link>
-          <button
-            type="button"
-            onClick={() => router.push('/kitchen')}
-            className="inline-flex h-10 items-center gap-1.5 rounded-xl bg-emerald-500 px-3 text-xs font-bold text-zinc-950"
-          >
+          </Button>
+          <Button variant="success" className="h-10 px-3 text-xs" onClick={() => router.push('/kitchen')}>
             <Sparkles className="h-4 w-4" />
             Recipes
-          </button>
+          </Button>
         </div>
       </div>
 
       <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-4 lg:gap-4">
-        <div className="rounded-2xl border border-slate-800 bg-slate-900/80 p-3.5 shadow-lg sm:p-5">
-          <span className="block truncate text-[10px] font-semibold text-slate-400 sm:text-xs">
-            Total value at risk
-          </span>
-          <span className="mt-1 block text-lg font-extrabold text-amber-400 sm:text-2xl">
-            {formatCurrency(totalValueAtRisk)}
-          </span>
-          <span className="mt-0.5 block text-[10px] text-slate-500">
-            {flaggedForMetrics.length} short-dated / low items
-          </span>
-        </div>
-        <div className="rounded-2xl border border-slate-800 bg-slate-900/80 p-3.5 shadow-lg sm:p-5">
-          <span className="block truncate text-[10px] font-semibold text-slate-400 sm:text-xs">
-            Routed to kitchen
-          </span>
-          <span className="mt-1 block text-lg font-extrabold text-emerald-400 sm:text-2xl">
-            {kitchenRoutedCount} items
-          </span>
-          <span className="mt-0.5 block text-[10px] text-emerald-400/80">Kitchen prep balance</span>
-        </div>
-        <div className="rounded-2xl border border-slate-800 bg-slate-900/80 p-3.5 shadow-lg sm:p-5">
-          <span className="block truncate text-[10px] font-semibold text-slate-400 sm:text-xs">
-            On markdown floor
-          </span>
-          <span className="mt-1 block text-lg font-extrabold text-rose-400 sm:text-2xl">
-            {markdownCount} items
-          </span>
-          <span className="mt-0.5 block text-[10px] text-rose-400/80">30% discount labels</span>
-        </div>
-        <div className="rounded-2xl border border-slate-800 bg-slate-900/80 p-3.5 shadow-lg sm:p-5">
-          <span className="block truncate text-[10px] font-semibold text-slate-400 sm:text-xs">
-            Low stock
-          </span>
-          <span className="mt-1 block text-lg font-extrabold text-teal-300 sm:text-2xl">
-            {lowCount} items
-          </span>
-          <Link href="/orders" className="mt-0.5 block text-[10px] text-teal-400/80 underline">
-            Open buy list
-          </Link>
-        </div>
+        {[
+          {
+            label: 'Value at risk',
+            value: formatCurrency(totalValueAtRisk),
+            sub: `${flaggedForMetrics.length} flagged`,
+            accent: 'text-amber-400/90',
+          },
+          {
+            label: 'Kitchen prep',
+            value: `${kitchenRoutedCount}`,
+            sub: 'SKUs with prep balance',
+            accent: 'text-emerald-400/90',
+          },
+          {
+            label: 'Markdown floor',
+            value: `${markdownCount}`,
+            sub: '30% labels active',
+            accent: 'text-rose-400',
+          },
+          {
+            label: 'Low stock',
+            value: `${lowCount}`,
+            sub: 'Below par',
+            accent: 'text-slate-200',
+          },
+        ].map((metric) => (
+          <Card key={metric.label}>
+            <CardBody className="py-3.5 sm:py-4">
+              <span className="block truncate text-[10px] font-semibold text-slate-400 sm:text-xs">
+                {metric.label}
+              </span>
+              <span className={`mt-1 block text-lg font-extrabold sm:text-2xl ${metric.accent}`}>
+                {metric.value}
+              </span>
+              <span className="mt-0.5 block text-[10px] text-slate-500">{metric.sub}</span>
+            </CardBody>
+          </Card>
+        ))}
       </div>
 
       <PullSliderControl
@@ -178,10 +154,10 @@ export function SlateInventory({ levels: initialLevels }: { levels: StockLevel[]
       />
 
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
-        <select
+        <Select
           value={department}
           onChange={(e) => setDepartment(e.target.value)}
-          className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-xs font-medium text-slate-300 focus:border-emerald-500 focus:outline-none"
+          className="w-full sm:w-44 text-xs"
         >
           <option value="ALL">All departments</option>
           {DEPARTMENTS.map((dept) => (
@@ -189,38 +165,97 @@ export function SlateInventory({ levels: initialLevels }: { levels: StockLevel[]
               {dept.charAt(0) + dept.slice(1).toLowerCase()}
             </option>
           ))}
-        </select>
+        </Select>
         <label className="relative block w-full sm:w-48">
           <span className="sr-only">Search</span>
           <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
-          <input
+          <Input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search item…"
-            className="w-full rounded-xl border border-slate-700 bg-slate-950 py-2 pl-9 pr-3 text-xs text-slate-200 placeholder-slate-500 focus:border-emerald-500 focus:outline-none"
+            className="py-2 pl-9 text-xs"
           />
         </label>
       </div>
 
-      <SubInventoryWorkspace
-        levels={levels}
-        loading={loading}
-        pullDays={pullDays}
-        staffId={activeUser?.id}
-        query={query}
-        departmentFilter={departmentFilter}
-        retailPriorityOnly
-        showRetailCatalog
-        onSuccess={handleTransferSuccess}
-        onError={(message) => setErrorMessage(message)}
-      />
+      {loading ? (
+        <Card>
+          <CardBody className="space-y-2 py-8">
+            {Array.from({ length: 5 }, (_, i) => (
+              <div key={i} className="h-10 animate-pulse rounded-xl bg-slate-800/80" />
+            ))}
+          </CardBody>
+        </Card>
+      ) : (
+        <InventoryMasterDetail
+          levels={levels}
+          onLevelsChange={setLevels}
+          pullDays={pullDays}
+          query={query}
+          departmentFilter={departmentFilter}
+          onToast={(message) => {
+            setErrorMessage(null);
+            setToast(message);
+            router.refresh();
+          }}
+          onError={(message) => {
+            setErrorMessage(message || null);
+          }}
+        />
+      )}
 
-      {errorMessage ? <p className="text-sm font-bold text-[#C4847A]">{errorMessage}</p> : null}
-      {toast ? (
-        <div className="fixed bottom-24 left-1/2 z-50 max-w-md -translate-x-1/2 rounded-2xl border border-slate-700 bg-slate-900/95 px-4 py-3 text-sm font-bold text-slate-100 shadow-xl backdrop-blur md:bottom-8">
-          {toast}
-        </div>
+      <Card className="overflow-hidden">
+        <button
+          type="button"
+          onClick={() => setShowAdvanced((v) => !v)}
+          className="flex w-full items-center justify-between px-4 py-3 text-left text-sm font-bold text-slate-200 hover:bg-slate-800/40"
+        >
+          Split view: retail floor &amp; kitchen prep
+          <ChevronDown
+            className={`h-4 w-4 text-slate-400 transition ${showAdvanced ? 'rotate-180' : ''}`}
+          />
+        </button>
+        {showAdvanced ? (
+          <CardBody className="border-t border-slate-800/80 pt-4">
+            <SubInventoryWorkspace
+              levels={levels}
+              loading={loading}
+              pullDays={pullDays}
+              staffId={activeUser?.id}
+              query={query}
+              departmentFilter={departmentFilter}
+              retailPriorityOnly={false}
+              showRetailCatalog
+              onSuccess={(message, level) => {
+                setLevels((current) =>
+                  current.map((item) => (item.productId === level.productId ? level : item))
+                );
+                setToast(message);
+                router.refresh();
+              }}
+              onError={(message) => setErrorMessage(message)}
+            />
+          </CardBody>
+        ) : null}
+      </Card>
+
+      {lowCount > 0 ? (
+        <p className="text-center text-xs text-slate-400">
+          Restock from{' '}
+          <Link href="/orders" className="font-bold text-blue-300 underline-offset-2 hover:underline">
+            purchase orders
+          </Link>
+          .
+        </p>
       ) : null}
+
+      {errorMessage ? (
+        <p className="rounded-xl border border-rose-900/50 bg-rose-950/30 px-3 py-2 text-sm font-semibold text-rose-400">
+          {errorMessage}
+        </p>
+      ) : null}
+
+      <Toast message={toast} onDismiss={() => setToast(null)} variant="success" />
     </section>
   );
 }

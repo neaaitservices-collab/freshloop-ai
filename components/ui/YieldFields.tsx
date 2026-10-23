@@ -17,12 +17,12 @@ export function SectionCard({
     <section className="space-y-3">
       <div className="flex items-baseline justify-between gap-3">
         <div className="flex items-center gap-2">
-          <span className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-400 text-[10px] font-black text-zinc-950">
+          <span className="flex h-5 w-5 items-center justify-center rounded-full bg-blue-900/60 text-[10px] font-black text-blue-100 ring-1 ring-blue-800">
             {step}
           </span>
-          <h2 className="text-xs font-black uppercase tracking-wide text-white">{title}</h2>
+          <h2 className="text-xs font-black uppercase tracking-wide text-slate-100">{title}</h2>
         </div>
-        {hint ? <p className="text-[11px] text-zinc-500">{hint}</p> : null}
+        {hint ? <p className="text-[11px] text-slate-500">{hint}</p> : null}
       </div>
       {children}
     </section>
@@ -38,8 +38,8 @@ export function ReadOnlyStat({
 }) {
   return (
     <div className="min-w-0">
-      <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">{label}</p>
-      <p className="mt-0.5 truncate text-sm font-black text-white">{value}</p>
+      <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">{label}</p>
+      <p className="mt-0.5 truncate text-sm font-black text-slate-100">{value}</p>
     </div>
   );
 }
@@ -61,7 +61,7 @@ export function NumberField({
 }) {
   return (
     <label htmlFor={id} className="block space-y-1.5">
-      <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">{label}</span>
+      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{label}</span>
       <input
         id={id}
         type="number"
@@ -70,7 +70,7 @@ export function NumberField({
         step={step}
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="w-full rounded-2xl border border-zinc-700 bg-zinc-950 px-3.5 py-2.5 font-mono text-sm font-bold text-white outline-none transition focus:border-emerald-400/70 focus:ring-2 focus:ring-emerald-500/20"
+        className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3.5 py-2.5 font-mono text-sm font-bold text-slate-200 outline-none transition focus:border-slate-500 focus:ring-1 focus:ring-slate-600"
       />
     </label>
   );
@@ -89,9 +89,9 @@ export function CurrencyField({
 }) {
   return (
     <label htmlFor={id} className="block space-y-1.5">
-      <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">{label}</span>
-      <div className="flex overflow-hidden rounded-2xl border border-zinc-700 bg-zinc-950 focus-within:border-emerald-400/70 focus-within:ring-2 focus-within:ring-emerald-500/20">
-        <span className="flex items-center bg-zinc-900 px-3 font-mono text-sm font-black text-emerald-300">
+      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{label}</span>
+      <div className="flex overflow-hidden rounded-xl border border-slate-700 bg-slate-950 focus-within:border-slate-500 focus-within:ring-1 focus-within:ring-slate-600">
+        <span className="flex items-center bg-slate-900/80 px-3 font-mono text-sm font-black text-slate-300">
           $
         </span>
         <input
@@ -106,7 +106,7 @@ export function CurrencyField({
             const parsed = Number(value);
             if (Number.isFinite(parsed) && parsed >= 0) onChange(parsed.toFixed(2));
           }}
-          className="w-full bg-transparent px-3 py-2.5 font-mono text-sm font-bold text-white outline-none"
+          className="w-full bg-transparent px-3 py-2.5 font-mono text-sm font-bold text-slate-100 outline-none"
         />
       </div>
     </label>
