@@ -47,9 +47,9 @@ export function KitchenPrepTransferPanel({
       <div className="flex items-center gap-2 border-b border-slate-800 px-4 py-3">
         <ChefHat className="h-4 w-4 text-amber-400" />
         <div>
-          <h3 className="text-sm font-black text-white">Kitchen prep</h3>
+          <h3 className="text-sm font-black text-white">Production prep</h3>
           <p className="text-[11px] text-slate-400">
-            Rescue stock &amp; BOM inputs — record prep waste or run manufacturing.
+            Transferred inventory &amp; BOM inputs — record scrap waste or run recipe manufacturing.
           </p>
         </div>
         <span className="ml-auto rounded-full border border-amber-500/30 bg-amber-950/50 px-2.5 py-0.5 text-[10px] font-bold text-amber-200">

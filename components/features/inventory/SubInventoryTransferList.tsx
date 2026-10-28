@@ -133,13 +133,13 @@ export function SubInventoryTransferList({
                     {row.kitchenPrepQty > 0 ? (
                       <span className="hidden text-emerald-400/90 md:inline">
                         {' '}
-                        · Kitchen: {formatUnits(row.kitchenPrepQty)} {unit}
+                        · Production: {formatUnits(row.kitchenPrepQty)} {unit}
                       </span>
                     ) : null}
                   </>
                 ) : (
                   <>
-                    In kitchen: {formatUnits(row.kitchenPrepQty)} {unit}
+                    In production: {formatUnits(row.kitchenPrepQty)} {unit}
                     {row.onHand > 0 ? (
                       <span className="text-slate-400">
                         {' '}
@@ -170,14 +170,14 @@ export function SubInventoryTransferList({
                   {shelf.label}
                   {row.isMarkdown ? (
                     <span className="rounded-full border border-amber-500/40 bg-amber-500/15 px-2 py-0.5 text-[10px] text-amber-200">
-                      30% off
+                      {row.markdownPct ? `${row.markdownPct}% off` : 'Markdown'}
                     </span>
                   ) : null}
                 </span>
               ) : null}
               {swipeEnabled ? (
                 <p className="mt-2 text-[10px] font-semibold text-slate-500 md:hidden">
-                  Swipe → kitchen · ← waste
+                  Swipe → production · ← waste
                 </p>
               ) : null}
             </div>

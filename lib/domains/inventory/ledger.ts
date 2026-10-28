@@ -574,7 +574,7 @@ export async function calculateRealTimeWastePct(
       scrapBucketVolumeL * estimatedWeightPerLiterKg * defaultScrapCostPerKg;
 
     const wasteAgg = wasteAggRows[0];
-    let totalDiscardValue = Number((wasteAgg?.discardValue ?? 0).toFixed(2));
+    const totalDiscardValue = Number((wasteAgg?.discardValue ?? 0).toFixed(2));
     let volumetricScrapBucketsCount = Number((wasteAgg?.bucketUnits ?? 0).toFixed(2));
     let volumetricScrapValue = Number(
       (volumetricScrapBucketsCount * costPerScrapBucket).toFixed(2)

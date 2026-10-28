@@ -80,10 +80,10 @@ export function FloorTransferPage({ levels: initialLevels }: { levels: StockLeve
           </p>
           <h1 className="text-xl font-black text-slate-100 sm:text-2xl">Move shelf stock</h1>
           <p className="mt-1 max-w-lg text-xs text-slate-400">
-            Send to kitchen, mark down, or waste — pick the amount in lbs or units. Kitchen prep is
+            Send to production, mark down, or waste — pick the amount in lbs or units. Production prep is
             managed on{' '}
             <Link href="/kitchen" className="text-amber-300 underline">
-              Kitchen
+              Production
             </Link>
             .
           </p>
@@ -92,7 +92,7 @@ export function FloorTransferPage({ levels: initialLevels }: { levels: StockLeve
           href="/kitchen?inbox=1"
           className="inline-flex min-h-12 items-center gap-1.5 rounded-xl border border-blue-900/50 bg-blue-950/30 px-4 py-3 text-xs font-bold text-blue-200"
         >
-          Kitchen inbox
+          Production inbox
           <ArrowRight className="h-4 w-4" />
         </Link>
       </div>

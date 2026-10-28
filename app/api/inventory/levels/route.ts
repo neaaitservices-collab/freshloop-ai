@@ -55,6 +55,7 @@ export async function PATCH(req: NextRequest) {
       role?: string;
       staffId?: string;
       quantity?: number;
+      discountPct?: number;
     };
     const productId = body.productId?.trim() ?? '';
     if (!productId) {
@@ -62,7 +63,11 @@ export async function PATCH(req: NextRequest) {
     }
 
     if (body.action === 'markdown') {
-      const marked = await applyRetailMarkdown(productId, actor.id);
+      const discountPct =
+        typeof body.discountPct === 'number' && Number.isFinite(body.discountPct)
+          ? body.discountPct
+          : 30;
+      const marked = await applyRetailMarkdown(productId, actor.id, discountPct);
       return NextResponse.json({ success: true, action: 'markdown', level: marked.level });
     }
     if (body.action === 'rescue' || body.action === 'waste') {

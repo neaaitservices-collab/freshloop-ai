@@ -198,12 +198,12 @@ export function RecipeFusionCard({
             {sent ? (
               <>
                 <CheckCircle className="h-4 w-4" />
-                Queued for prep
+                Queued for Production
               </>
             ) : (
               <>
                 <Utensils className="h-4 w-4" />
-                Send to Prep Kitchen
+                Queue for Production
               </>
             )}
           </Button>

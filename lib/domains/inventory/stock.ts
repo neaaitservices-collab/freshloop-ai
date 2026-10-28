@@ -30,6 +30,7 @@ export interface StockLevel {
   retailPrice: number | null;
   regularRetailPrice: number | null;
   isMarkdown: boolean;
+  markdownPct?: number | null;
   daysRemaining: number;
 }
 
@@ -120,7 +121,12 @@ export function buildStockLevel(input: {
   const isMarkdown =
     regularRetailPrice !== null &&
     retailPrice !== null &&
-    retailPrice <= regularRetailPrice * 0.71;
+    retailPrice < regularRetailPrice * 0.99;
+
+  const markdownPct =
+    isMarkdown && regularRetailPrice && retailPrice
+      ? Math.max(1, Math.min(99, Math.round(((regularRetailPrice - retailPrice) / regularRetailPrice) * 100)))
+      : null;
 
   return {
     productId: input.productId,
@@ -135,6 +141,7 @@ export function buildStockLevel(input: {
     retailPrice,
     regularRetailPrice,
     isMarkdown,
+    markdownPct,
     daysRemaining: Number.isFinite(input.daysRemaining) ? Number(input.daysRemaining) : 7,
   };
 }
@@ -267,7 +274,8 @@ async function readStockLevel(productId: string): Promise<StockLevel> {
 
 export async function applyRetailMarkdown(
   productId: string,
-  staffId: string
+  staffId: string,
+  discountPct: number = 30
 ): Promise<{ level: StockLevel }> {
   void staffId;
   const product = await prisma.product.findUnique({ where: { id: productId } });
@@ -285,18 +293,22 @@ export async function applyRetailMarkdown(
     throw new Error('Set a retail price before applying a markdown.');
   }
 
+  const validDiscountPct = Math.max(5, Math.min(90, Math.round(discountPct || 30)));
   const regular = prices.regularRetailPrice ?? shelfPrice;
+  const targetMultiplier = (100 - validDiscountPct) / 100;
+  const targetPrice = Number((regular * targetMultiplier).toFixed(2));
+
+  // If already at or within 1 cent of the target discount, return current stock level
   if (
     prices.regularRetailPrice &&
     prices.retailPrice &&
-    prices.retailPrice <= regular * 0.71
+    Math.abs(prices.retailPrice - targetPrice) < 0.02
   ) {
     return { level: await readStockLevel(productId) };
   }
 
-  const markdownPrice = Number((regular * 0.7).toFixed(2));
   const regularToStore = prices.regularRetailPrice ?? regular;
-  await writeProductMarkdownPrices(productId, regularToStore, markdownPrice);
+  await writeProductMarkdownPrices(productId, regularToStore, targetPrice);
   invalidateInventoryCaches();
   return { level: await readStockLevel(productId) };
 }
