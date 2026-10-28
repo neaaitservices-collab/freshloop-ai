@@ -11,6 +11,9 @@ export interface FallbackRecipeCatalogEntry {
   batchYieldQty: number;
   targetRetailPrice: number;
   isActive: boolean;
+  laborHours?: number;
+  laborRatePerHour?: number;
+  packagingCostPerUnit?: number;
   bomItems: Array<{
     ingredientProductId: string;
     ingredientName: string;

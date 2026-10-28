@@ -1,6 +1,6 @@
 import { cn } from '@/lib/utils/cn';
 
-type RouteSkeletonVariant = 'default' | 'grid' | 'table';
+export type RouteSkeletonVariant = 'default' | 'grid' | 'table';
 
 export function RouteSkeleton({
   variant = 'default',

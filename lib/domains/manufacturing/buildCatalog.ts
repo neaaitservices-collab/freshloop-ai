@@ -51,6 +51,9 @@ async function mapFallbackToKitchenRecipe(
     outputUnit: String(entry.outputUnit),
     targetRetailPrice: entry.targetRetailPrice,
     prepTimeMinutes: 25,
+    laborHours: entry.laborHours ?? 0,
+    laborRatePerHour: entry.laborRatePerHour ?? 17.6,
+    packagingCostPerUnit: entry.packagingCostPerUnit ?? 0,
     bom,
   };
 }
@@ -100,6 +103,16 @@ export async function buildManufacturingRecipeCatalog(): Promise<
         })
       );
 
+      let defaultLaborRate = 17.6;
+      try {
+        const settings = await prisma.storeSetting.findFirst();
+        if (settings?.defaultLaborRatePerHour) {
+          defaultLaborRate = settings.defaultLaborRatePerHour;
+        }
+      } catch {
+        /* offline */
+      }
+
       byPrimaryId.set(dbRecipe.id, {
         recipeId: dbRecipe.id,
         recipeName: dbRecipe.name,
@@ -110,6 +123,9 @@ export async function buildManufacturingRecipeCatalog(): Promise<
         outputUnit: dbRecipe.outputProduct.unitType,
         targetRetailPrice: Number(dbRecipe.targetRetailPrice ?? 0),
         prepTimeMinutes: 25,
+        laborHours: Number(dbRecipe.laborHours ?? 0),
+        laborRatePerHour: Number(dbRecipe.laborRate ?? defaultLaborRate),
+        packagingCostPerUnit: Number(dbRecipe.packagingCostPerUnit ?? 0),
         bom,
       });
     }
@@ -117,9 +133,11 @@ export async function buildManufacturingRecipeCatalog(): Promise<
     /* DB offline */
   }
 
-  for (const fb of FALLBACK_RECIPES) {
-    if (!fb.isActive || byPrimaryId.has(fb.id)) continue;
-    byPrimaryId.set(fb.id, await mapFallbackToKitchenRecipe(fb));
+  if (byPrimaryId.size === 0) {
+    for (const fb of FALLBACK_RECIPES) {
+      if (!fb.isActive) continue;
+      byPrimaryId.set(fb.id, await mapFallbackToKitchenRecipe(fb));
+    }
   }
 
   return Array.from(byPrimaryId.values());

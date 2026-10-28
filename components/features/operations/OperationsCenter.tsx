@@ -1,11 +1,11 @@
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useCallback, useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { stashInvoiceForReceiving } from '@/lib/domains/receiving/receivingBridge';
 import type { InvoiceOcrResult } from '@/lib/types';
-import { AppShell } from '@/components/layout/AppShell';
+import { useRegisterAppVoice } from '@/components/layout/AppVoiceOverrideContext';
 import { useRole } from '@/components/auth/RoleProvider';
 import { notifyInventoryUpdated } from '@/lib/domains/inventory/inventoryMoveClient';
 import { DepartmentBadge } from '@/components/ui/DepartmentBadge';
@@ -17,7 +17,8 @@ import { DeliLabelModal } from '@/components/features/recipes/DeliLabelModal';
 import { InventoryItem, RecipeFusionResult, DepartmentType } from '@/lib/types';
 import type { WasteKpiReport } from '@/lib/domains/inventory/ledger';
 import { OperationsLiveTransfers } from '@/components/features/operations/OperationsLiveTransfers';
-import { INITIAL_INVENTORY_ITEMS, INITIAL_FUSION_RECIPES } from '@/lib/legacy/mockData';
+import { INITIAL_INVENTORY_ITEMS } from '@/lib/legacy/mockData';
+import { mapDbRecipeToFusionResult } from '@/lib/domains/manufacturing/mapDbRecipeToFusion';
 import {
   Activity,
   AlertOctagon,
@@ -289,9 +290,7 @@ export default function OperationsCenter() {
   const { activeUser } = useRole();
   // Core state — live ledger from API; mock seed only when DB is offline
   const [ledgerRows, setLedgerRows] = useState<SubInventoryLedgerRow[]>([]);
-  const [recipes, setRecipes] = useState<RecipeFusionResult[]>(
-    INITIAL_FUSION_RECIPES
-  );
+  const [recipes, setRecipes] = useState<RecipeFusionResult[]>([]);
   const [pullSensitivityDays, setPullSensitivityDays] = useState<2 | 3 | 4>(3);
   const [activeLocationTab, setActiveLocationTab] =
     useState<SubInventoryLocationTab>('SPLIT_VIEW');
@@ -311,6 +310,9 @@ export default function OperationsCenter() {
     useState<RecipeFusionResult | null>(null);
   const [transferToast, setTransferToast] = useState<string | null>(null);
 
+  const openVoiceModal = useCallback(() => setIsVoiceModalOpen(true), []);
+  useRegisterAppVoice(openVoiceModal);
+
   const wasteKpi = wasteKpiReport;
   const wastePctDisplay =
     wasteKpi?.wastePct === null || wasteKpi?.wastePct === undefined
@@ -322,8 +324,20 @@ export default function OperationsCenter() {
   const fetchDashboardData = async () => {
     setLoading(true);
     try {
-      const res = await fetch(`/api/inventory?pullDays=${pullSensitivityDays}`);
+      const [res, recipesRes] = await Promise.all([
+        fetch(`/api/inventory?pullDays=${pullSensitivityDays}`),
+        fetch('/api/recipes'),
+      ]);
       const json = await res.json();
+      const recipesJson = await recipesRes.json().catch(() => null);
+
+      if (
+        recipesJson?.success &&
+        Array.isArray(recipesJson.recipes) &&
+        recipesJson.recipes.length > 0
+      ) {
+        setRecipes(recipesJson.recipes.map(mapDbRecipeToFusionResult));
+      }
 
       if (json.success && json.liveLedger) {
         if (
@@ -452,7 +466,6 @@ export default function OperationsCenter() {
   ];
 
   return (
-    <AppShell onVoice={() => setIsVoiceModalOpen(true)}>
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans selection:bg-emerald-500 selection:text-slate-950 flex flex-col">
 
       {/* Real-Time Ledger Transfer Toast */}
@@ -1474,6 +1487,5 @@ export default function OperationsCenter() {
         recipe={selectedDeliRecipe}
       />
     </div>
-    </AppShell>
   );
 }

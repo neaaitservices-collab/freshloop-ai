@@ -31,9 +31,6 @@ enum InventoryLocation {
   Deli_Grab_N_Go
   Customer_Out
   Waste_Bin
-  Receiving
-  Supplier
-  POS
 }
 
 enum Department {
@@ -148,6 +145,8 @@ model StoreSetting {
   defaultScrapCostPerKg     Float    @default(3.5)
   pullSensitivityDays       Int      @default(3)
   costGuardrailVariancePct  Float    @default(20.0)
+  /// Brynn's Sheets default (e.g. $17.60/hr) when Recipe.laborRate is null.
+  defaultLaborRatePerHour   Float    @default(17.6) @map("Default_Labor_Rate_Per_Hour")
   updatedAt                 DateTime @updatedAt
 
   @@map("store_settings")
@@ -219,10 +218,15 @@ model Recipe {
   category          String?
   outputProductId   String
   outputProduct     Product      @relation("RecipeOutputProduct", fields: [outputProductId], references: [id], onDelete: Restrict)
-  yieldPortions     Float
+  yieldPortions     Float        @map("batchYieldQty")
   portionSize       String?
-  instructions      String?      @db.Text
-  targetRetailPrice Float?
+  instructions      String       @default("") @db.Text
+  targetRetailPrice Float
+  prepTimeMinutes   Int          @default(25)
+  /// Bill of materials — fixed batch costs (Juices_recipes_summary parity).
+  laborHours            Float  @default(0) @map("Labor_Hours")
+  laborRate             Float? @map("Labor_Rate_Per_Hour")
+  packagingCostPerUnit  Float  @default(0) @map("Packaging_Cost_Per_Unit")
   status            RecipeStatus @default(PROPOSED)
   createdAt         DateTime     @default(now())
   updatedAt         DateTime     @updatedAt
@@ -236,17 +240,20 @@ model Recipe {
 }
 
 model RecipeBOM {
-  id                  String  @id @default(uuid())
+  id                  String   @id @default(uuid())
   recipeId            String
-  recipe              Recipe  @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+  recipe              Recipe   @relation(fields: [recipeId], references: [id], onDelete: Cascade)
   ingredientProductId String
-  ingredientProduct   Product @relation("BomIngredientProduct", fields: [ingredientProductId], references: [id], onDelete: Restrict)
-  quantityRequired    Float
-  unit                String?
+  ingredientProduct   Product  @relation("BomIngredientProduct", fields: [ingredientProductId], references: [id], onDelete: Restrict)
+  quantityRequired    Float    @map("requiredQty")
+  unit                UnitType
+  allowVariance       Boolean  @default(true)
+  notes               String?
 
   @@unique([recipeId, ingredientProductId])
+  @@index([recipeId])
   @@index([ingredientProductId])
-  @@map("recipe_bom")
+  @@map("recipe_boms")
 }
 
 model Bundle {

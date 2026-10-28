@@ -38,9 +38,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html
       lang="en"
+      suppressHydrationWarning
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="flex min-h-full flex-col bg-slate-950 text-slate-100">
+      <body
+        suppressHydrationWarning
+        className="flex min-h-full flex-col bg-slate-950 text-slate-100"
+      >
         <RoleProvider>{children}</RoleProvider>
       </body>
     </html>

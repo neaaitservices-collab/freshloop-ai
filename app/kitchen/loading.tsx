@@ -1,10 +1,5 @@
-import { AppShell } from '@/components/layout/AppShell';
-import { RouteSkeleton } from '@/components/ui/RouteSkeleton';
+import { AppLoadingFallback } from '@/components/layout/AppLoadingFallback';
 
 export default function KitchenLoading() {
-  return (
-    <AppShell>
-      <RouteSkeleton variant="grid" />
-    </AppShell>
-  );
+  return <AppLoadingFallback variant="grid" />;
 }

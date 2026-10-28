@@ -1,9 +1,10 @@
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { ArrowRightLeft, Loader2, Minus, Plus, Tag, Trash2 } from 'lucide-react';
+import { ArrowRightLeft, Loader2, Minus, Plus, ShoppingCart, Tag, Trash2 } from 'lucide-react';
 import {
   executeInventoryMove,
+  notifyInventoryUpdated,
   type InventoryMoveAction,
   type SubInventoryTransferRow,
   transferSuccessMessage,
@@ -259,6 +260,53 @@ export function SubInventoryTransferBar({
     });
   };
 
+  const runSale = async (quantity: number) => {
+    if (!(quantity > 0)) {
+      onError?.('Enter a quantity greater than zero.');
+      return;
+    }
+    setBusy(true);
+    try {
+      const saleRes = await fetch('/api/sales', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          productId: row.productId,
+          quantity,
+          location: 'floor',
+        }),
+      });
+      const saleJson = (await saleRes.json()) as {
+        success?: boolean;
+        error?: string;
+      };
+      if (!saleRes.ok || !saleJson.success) {
+        onError?.(saleJson.error ?? 'Sale could not be recorded.');
+        return;
+      }
+      const levelsRes = await fetch('/api/inventory/levels', { cache: 'no-store' });
+      const levelsJson = (await levelsRes.json()) as {
+        success?: boolean;
+        levels?: StockLevel[];
+      };
+      notifyInventoryUpdated();
+      const level = levelsJson.levels?.find((l) => l.productId === row.productId);
+      if (!level) {
+        onError?.('Sale recorded; refresh the page to see updated stock.');
+        return;
+      }
+      onSuccess?.({
+        action: 'sale',
+        level,
+        message: transferSuccessMessage('sale', row, level, quantity),
+      });
+    } catch {
+      onError?.('Sale could not reach the server.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const showFloor = variant === 'floor' || variant === 'both';
   const showKitchen = variant === 'kitchen' || variant === 'both';
 
@@ -362,6 +410,16 @@ export function SubInventoryTransferBar({
             >
               <Trash2 className="h-3.5 w-3.5" />
               Floor waste
+            </button>
+            <button
+              type="button"
+              disabled={busy || floorQty <= 0}
+              onClick={() => void runSale(floorQty)}
+              className={`${compact ? compactBtn : btnClass} bg-emerald-500/15 text-emerald-300`}
+              title="Record POS sale (updates ledger & waste KPI sales denominator)"
+            >
+              {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShoppingCart className="h-3.5 w-3.5" />}
+              Record sale
             </button>
           </div>
         </div>

@@ -1,6 +1,5 @@
 import { Suspense } from 'react';
 import { BuyList } from '@/components/features/orders/BuyList';
-import { AppShell } from '@/components/layout/AppShell';
 import { getStockLevels } from '@/lib/domains/inventory/stock';
 
 export const dynamic = 'force-dynamic';
@@ -12,10 +11,8 @@ async function LiveOrders() {
 
 export default function OrdersPage() {
   return (
-    <AppShell>
-      <Suspense fallback={<BuyList levels={null} />}>
-        <LiveOrders />
-      </Suspense>
-    </AppShell>
+    <Suspense fallback={<BuyList levels={null} />}>
+      <LiveOrders />
+    </Suspense>
   );
 }

@@ -4,6 +4,7 @@ import React, { useEffect, useState } from 'react';
 import { ChefHat, Plus, Trash2, X, AlertCircle, CheckCircle2, Loader2, Sparkles, Scale } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
+import { computeRecipeBatchCost } from '@/lib/domains/manufacturing/batchCost';
 
 interface InventoryProductOption {
   id: string;
@@ -37,6 +38,9 @@ export function ManualRecipeCreatorModal({
   const [outputUnit, setOutputUnit] = useState('TUB');
   const [targetRetailPrice, setTargetRetailPrice] = useState<number | ''>(7.99);
   const [instructions, setInstructions] = useState('');
+  const [laborHours, setLaborHours] = useState<number | ''>(0.5);
+  const [laborRate, setLaborRate] = useState<number | ''>(17.6);
+  const [packagingCostPerUnit, setPackagingCostPerUnit] = useState<number | ''>(1);
   const [lines, setLines] = useState<IngredientLine[]>([
     { productId: '', quantity: 1, unit: 'LBS' },
   ]);
@@ -109,21 +113,24 @@ export function ManualRecipeCreatorModal({
     );
   };
 
-  // Estimated batch cost calculation
-  const estimatedBatchCost = lines.reduce((acc, line) => {
+  const ingredientCost = lines.reduce((acc, line) => {
     if (!line.productId || typeof line.quantity !== 'number') return acc;
     const prod = products.find((p) => p.id === line.productId);
     const unitCost = prod?.standardCost ?? 0;
     return acc + unitCost * line.quantity;
   }, 0);
 
-  const unitCost =
-    typeof yieldPortions === 'number' && yieldPortions > 0
-      ? estimatedBatchCost / yieldPortions
-      : 0;
+  const yieldNum = typeof yieldPortions === 'number' ? yieldPortions : 0;
+  const batchEconomics = computeRecipeBatchCost({
+    ingredientCost,
+    laborHours: typeof laborHours === 'number' ? laborHours : 0,
+    laborRatePerHour: typeof laborRate === 'number' ? laborRate : 17.6,
+    packagingCostPerUnit: typeof packagingCostPerUnit === 'number' ? packagingCostPerUnit : 0,
+    yieldUnits: yieldNum,
+  });
 
   const price = typeof targetRetailPrice === 'number' ? targetRetailPrice : 0;
-  const marginPct = price > 0 ? Math.round(((price - unitCost) / price) * 100) : 0;
+  const marginPct = batchEconomics.grossMarginPct(price);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -160,6 +167,10 @@ export function ManualRecipeCreatorModal({
           outputUnit,
           targetRetailPrice: price,
           instructions,
+          laborHours: typeof laborHours === 'number' ? laborHours : 0,
+          laborRate: typeof laborRate === 'number' ? laborRate : 17.6,
+          packagingCostPerUnit:
+            typeof packagingCostPerUnit === 'number' ? packagingCostPerUnit : 0,
           ingredients: validIngredients,
         }),
       });
@@ -290,6 +301,50 @@ export function ManualRecipeCreatorModal({
             </div>
           </div>
 
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div>
+              <label className="mb-1 block text-xs font-bold text-slate-300">Labor (hours / batch)</label>
+              <Input
+                type="number"
+                min="0"
+                step="0.25"
+                value={laborHours}
+                onChange={(e) =>
+                  setLaborHours(e.target.value === '' ? '' : parseFloat(e.target.value))
+                }
+                className="text-xs"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-bold text-slate-300">Labor rate ($/hr)</label>
+              <Input
+                type="number"
+                min="0"
+                step="0.01"
+                value={laborRate}
+                onChange={(e) =>
+                  setLaborRate(e.target.value === '' ? '' : parseFloat(e.target.value))
+                }
+                className="text-xs"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-bold text-slate-300">Packaging ($ / unit)</label>
+              <Input
+                type="number"
+                min="0"
+                step="0.01"
+                value={packagingCostPerUnit}
+                onChange={(e) =>
+                  setPackagingCostPerUnit(
+                    e.target.value === '' ? '' : parseFloat(e.target.value)
+                  )
+                }
+                className="text-xs"
+              />
+            </div>
+          </div>
+
           {/* Ingredient BOM Lines */}
           <div className="rounded-xl border border-slate-800/90 bg-slate-900/40 p-4 space-y-3">
             <div className="flex items-center justify-between">
@@ -368,15 +423,24 @@ export function ManualRecipeCreatorModal({
             )}
 
             {/* Financial Summary Preview */}
-            <div className="mt-3 flex flex-wrap items-center justify-between border-t border-slate-800/80 pt-3 text-xs">
+            <div className="mt-3 grid gap-2 border-t border-slate-800/80 pt-3 text-xs sm:grid-cols-2">
               <span className="text-slate-400">
-                Batch Ingredient Cost: <strong className="text-white">${estimatedBatchCost.toFixed(2)}</strong>
+                Ingredients: <strong className="text-white">${batchEconomics.ingredientCost.toFixed(2)}</strong>
               </span>
               <span className="text-slate-400">
-                Cost/Unit: <strong className="text-white">${unitCost.toFixed(2)}</strong>
+                Labor: <strong className="text-white">${batchEconomics.laborCost.toFixed(2)}</strong>
               </span>
               <span className="text-slate-400">
-                Projected Margin:{' '}
+                Packaging: <strong className="text-white">${batchEconomics.packagingCost.toFixed(2)}</strong>
+              </span>
+              <span className="text-slate-400">
+                Total batch: <strong className="text-white">${batchEconomics.totalBatchCost.toFixed(2)}</strong>
+              </span>
+              <span className="text-slate-400">
+                Cost / unit: <strong className="text-white">${batchEconomics.unitCost.toFixed(2)}</strong>
+              </span>
+              <span className="text-slate-400">
+                Gross margin @ shelf:{' '}
                 <strong className={marginPct >= 40 ? 'text-emerald-400' : 'text-amber-400'}>
                   {marginPct}%
                 </strong>

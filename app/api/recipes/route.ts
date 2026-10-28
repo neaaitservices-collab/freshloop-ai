@@ -67,6 +67,9 @@ export async function POST(req: NextRequest) {
       targetRetailPrice,
       instructions,
       outputUnit,
+      laborHours,
+      laborRate,
+      packagingCostPerUnit,
       ingredients, // Array of { productId: string, quantity: number, unit?: string }
     } = body;
 
@@ -113,6 +116,14 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const ingredientProducts = await prisma.product.findMany({
+      where: { id: { in: validIngredients.map((i) => i.productId) } },
+      select: { id: true, unitType: true },
+    });
+    const unitByProductId = new Map(
+      ingredientProducts.map((p) => [p.id, p.unitType] as const)
+    );
+
     // Create or find manufactured output Product
     const retailPriceNum =
       Number.isFinite(Number(targetRetailPrice)) && Number(targetRetailPrice) > 0
@@ -139,6 +150,19 @@ export async function POST(req: NextRequest) {
     });
 
     // Create Recipe and BOM lines in transaction
+    const laborHoursNum =
+      Number.isFinite(Number(laborHours)) && Number(laborHours) >= 0
+        ? Number(Number(laborHours).toFixed(2))
+        : 0;
+    const laborRateNum =
+      Number.isFinite(Number(laborRate)) && Number(laborRate) > 0
+        ? Number(Number(laborRate).toFixed(2))
+        : null;
+    const packagingNum =
+      Number.isFinite(Number(packagingCostPerUnit)) && Number(packagingCostPerUnit) >= 0
+        ? Number(Number(packagingCostPerUnit).toFixed(4))
+        : 0;
+
     const createdRecipe = await prisma.recipe.create({
       data: {
         name: trimmedName,
@@ -146,15 +170,24 @@ export async function POST(req: NextRequest) {
         outputProductId: outputProduct.id,
         yieldPortions: yieldQty,
         portionSize: portionSize ? String(portionSize).trim() : undefined,
-        instructions: instructions ? String(instructions).trim() : undefined,
+        instructions: instructions ? String(instructions).trim() : '',
         targetRetailPrice: retailPriceNum,
+        laborHours: laborHoursNum,
+        laborRate: laborRateNum,
+        packagingCostPerUnit: packagingNum,
         status: RecipeStatus.IN_KITCHEN,
         bomLines: {
-          create: validIngredients.map((item) => ({
-            ingredientProductId: item.productId,
-            quantityRequired: item.quantity,
-            unit: item.unit,
-          })),
+          create: validIngredients.map((item) => {
+            const parsedUnit =
+              item.unit && Object.values(UnitType).includes(item.unit as UnitType)
+                ? (item.unit as UnitType)
+                : unitByProductId.get(item.productId) ?? UnitType.UNIT;
+            return {
+              ingredientProductId: item.productId,
+              quantityRequired: item.quantity,
+              unit: parsedUnit,
+            };
+          }),
         },
       },
       include: {

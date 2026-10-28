@@ -1,19 +1,18 @@
 'use client';
 
-import React, { Suspense, useState, useEffect, useCallback } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import React, { Suspense, useCallback, useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { stashInvoiceForReceiving } from '@/lib/domains/receiving/receivingBridge';
 import type { InvoiceOcrResult } from '@/lib/types';
-import { AppShell } from '@/components/layout/AppShell';
+import { useRegisterAppVoice } from '@/components/layout/AppVoiceOverrideContext';
 import { PageIntro } from '@/components/layout/PageIntro';
 import { RecipeFusionCard } from '@/components/features/recipes/RecipeFusionCard';
 import { InvoiceUploadModal } from '@/components/features/invoices/InvoiceUploadModal';
 import { VoiceRecorderModal } from '@/components/features/voice/VoiceRecorderModal';
 import { DeliLabelModal } from '@/components/features/recipes/DeliLabelModal';
 import { KitchenSubInventoryPanel } from '@/components/features/kitchen/KitchenSubInventoryPanel';
-import { KitchenIncomingRescueQueue } from '@/components/features/kitchen/KitchenIncomingRescueQueue';
 import { RecipeFusionResult } from '@/lib/types';
-import { INITIAL_FUSION_RECIPES } from '@/lib/legacy/mockData';
+import { mapDbRecipeToFusionResult } from '@/lib/domains/manufacturing/mapDbRecipeToFusion';
 import {
   RecipeProductionModal,
   type ProductionBatchExecutedSummary,
@@ -27,12 +26,10 @@ import { Toast } from '@/components/ui/Toast';
 
 function KitchenPageContent() {
   const router = useRouter();
-  const searchParams = useSearchParams();
-  const focusInbox = searchParams.get('inbox') === '1';
-  const [recipes, setRecipes] = useState<RecipeFusionResult[]>(INITIAL_FUSION_RECIPES);
+  const [recipes, setRecipes] = useState<RecipeFusionResult[]>([]);
+  const [savedRecipeCount, setSavedRecipeCount] = useState(0);
   const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
-  const [prepProductIds, setPrepProductIds] = useState<string[]>([]);
   const [fusionError, setFusionError] = useState<string | null>(null);
 
   // Modals state
@@ -44,12 +41,21 @@ function KitchenPageContent() {
   const [productionRecipeId, setProductionRecipeId] = useState<string | undefined>();
   const [batchToast, setBatchToast] = useState<string | null>(null);
 
+  const openVoiceModal = useCallback(() => setIsVoiceModalOpen(true), []);
+  useRegisterAppVoice(openVoiceModal);
+
   const fetchRecipes = async () => {
     try {
-      const res = await fetch('/api/recipe-fusion');
-      const json = await res.json();
-      if (json.success && json.recipes) {
-        setRecipes(json.recipes);
+      const bomRes = await fetch('/api/recipes');
+      const bomJson = await bomRes.json();
+
+      if (bomJson.success && Array.isArray(bomJson.recipes) && bomJson.recipes.length > 0) {
+        setSavedRecipeCount(bomJson.recipes.length);
+        const fromDb: RecipeFusionResult[] = bomJson.recipes.map(mapDbRecipeToFusionResult);
+        setRecipes(fromDb);
+      } else {
+        setRecipes([]);
+        setSavedRecipeCount(0);
       }
     } catch {
       /* keep seeded / cached recipes */
@@ -60,10 +66,6 @@ function KitchenPageContent() {
     fetchRecipes();
   }, []);
 
-  const onPrepIdsChange = useCallback((ids: string[]) => {
-    setPrepProductIds(ids);
-  }, []);
-
   const filteredRecipes = recipes.filter((r) => {
     const matchesSearch = r.recipeName.toLowerCase().includes(searchQuery.toLowerCase()) ||
                           r.category.toLowerCase().includes(searchQuery.toLowerCase());
@@ -72,7 +74,6 @@ function KitchenPageContent() {
   });
 
   return (
-    <AppShell onVoice={() => setIsVoiceModalOpen(true)}>
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans selection:bg-emerald-500 flex flex-col">
       <main className="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-8 pb-28 sm:pb-8 space-y-4 sm:space-y-6">
         <PageIntro
@@ -80,7 +81,16 @@ function KitchenPageContent() {
           title="Production & Recipe Batching"
           description="Transform surplus produce and inventory into standard prepared deli goods. Execute BOM batches, consume raw ingredients on the ledger, and print deli labels."
         />
-        <KitchenIncomingRescueQueue focusInbox={focusInbox} onPrepProductIdsChange={onPrepIdsChange} />
+        {savedRecipeCount > 0 ? (
+          <p className="text-xs font-semibold text-emerald-300/90">
+            {savedRecipeCount} production recipe{savedRecipeCount === 1 ? '' : 's'} saved in your BOM catalog.
+            Use <strong className="text-emerald-200">New Recipe (BOM)</strong> to add more.
+          </p>
+        ) : (
+          <p className="text-xs text-slate-400">
+            No saved BOM recipes yet — start with <strong className="text-emerald-300">New Recipe (BOM)</strong>.
+          </p>
+        )}
         {/* Header */}
         <Card className="border-emerald-900/40 bg-gradient-to-r from-emerald-950/70 via-slate-900/80 to-slate-950 shadow-2xl">
           <CardBody className="flex flex-col gap-4 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-6">
@@ -242,7 +252,6 @@ function KitchenPageContent() {
         variant="destructive"
       />
     </div>
-    </AppShell>
   );
 }
 

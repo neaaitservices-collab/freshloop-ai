@@ -1,7 +1,7 @@
 import type { StockLevel } from '@/lib/domains/inventory/stock';
 import { formatCurrency, formatUnits, stockUnitLabel } from '@/lib/domains/receiving/yieldPricing';
 
-export type InventoryMoveAction = 'rescue' | 'waste' | 'markdown' | 'kitchen_waste';
+export type InventoryMoveAction = 'rescue' | 'waste' | 'markdown' | 'kitchen_waste' | 'sale';
 
 export interface SubInventoryTransferRow {
   productId: string;
@@ -113,6 +113,9 @@ export function transferSuccessMessage(
   }
   if (action === 'waste') {
     return `${row.name}: ${formatUnits(moved)} ${unitLabel} discarded from the floor.`;
+  }
+  if (action === 'sale') {
+    return `${row.name}: sold ${formatUnits(moved)} ${unitLabel} · floor now ${formatUnits(level.onHand)} ${unitLabel}.`;
   }
   return `${row.name}: ${formatUnits(moved)} ${unitLabel} sent to kitchen · floor now ${formatUnits(level.onHand)} ${unitLabel}.`;
 }

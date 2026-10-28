@@ -3,7 +3,6 @@
 import React from 'react';
 import Link from 'next/link';
 import { ArrowRight, ChefHat, Package, Store } from 'lucide-react';
-import { AppShell } from '@/components/layout/AppShell';
 
 const STEPS = [
   {
@@ -31,7 +30,6 @@ const STEPS = [
 
 export function TodayHome({ figures }: { figures: React.ReactNode }) {
   return (
-    <AppShell>
       <main className="mx-auto w-full max-w-7xl px-3 py-5 pb-28 sm:px-6 sm:py-8">
         <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-emerald-300">Store dashboard</p>
         <h1 className="mt-1 text-3xl font-black tracking-tight text-white">Today</h1>
@@ -75,6 +73,5 @@ export function TodayHome({ figures }: { figures: React.ReactNode }) {
           Open the full ledger
         </Link>
       </main>
-    </AppShell>
   );
 }

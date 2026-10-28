@@ -1,5 +1,4 @@
 import { Suspense } from 'react';
-import { AppShell } from '@/components/layout/AppShell';
 import { FloorTransferPage } from '@/components/features/inventory/FloorTransferPage';
 import { getStockLevels } from '@/lib/domains/inventory/stock';
 
@@ -12,14 +11,8 @@ async function LiveFloor() {
 
 export default function InventoryFloorPage() {
   return (
-    <AppShell>
-      <Suspense
-        fallback={
-          <FloorTransferPage levels={null} />
-        }
-      >
-        <LiveFloor />
-      </Suspense>
-    </AppShell>
+    <Suspense fallback={<FloorTransferPage levels={null} />}>
+      <LiveFloor />
+    </Suspense>
   );
 }

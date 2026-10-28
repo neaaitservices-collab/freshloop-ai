@@ -197,8 +197,8 @@ async function loadStockLevels(): Promise<StockLevel[]> {
       ) AS "expirationDate",
       COALESCE(SUM(
         CASE
-          WHEN t."To_Location" = 'Retail_Floor'::"InventoryLocation" AND t."Qty_Change" > 0 THEN t."Qty_Change"
-          WHEN t."From_Location" = 'Retail_Floor'::"InventoryLocation" AND t."Qty_Change" < 0 THEN t."Qty_Change"
+          WHEN t."To_Location" IN ('Retail_Floor'::"InventoryLocation", 'Deli_Grab_N_Go'::"InventoryLocation") AND t."Qty_Change" > 0 THEN t."Qty_Change"
+          WHEN t."From_Location" IN ('Retail_Floor'::"InventoryLocation", 'Deli_Grab_N_Go'::"InventoryLocation") AND t."Qty_Change" < 0 THEN t."Qty_Change"
           ELSE 0
         END
       ), 0)::float8 AS "onHand",
@@ -211,7 +211,6 @@ async function loadStockLevels(): Promise<StockLevel[]> {
       ), 0)::float8 AS "kitchenPrepQty"
     FROM products p
     LEFT JOIN "Inventory_Transactions" t ON t."Product_ID" = p.id
-    WHERE p."isManufactured" = false
     GROUP BY p.id
   `;
 
@@ -468,6 +467,8 @@ export async function postReceipt(input: {
   yieldDivisor: number;
   retailPrice: number;
   retailUnit?: string;
+  staffId?: string;
+  targetMargin?: number;
 }): Promise<PostedReceipt | SkippedReceipt> {
   const unitsPerCase = input.yieldDivisor > 0 ? input.packSize / input.yieldDivisor : 0;
   const unitsAdded = Number((input.casesReceived * unitsPerCase).toFixed(4));
@@ -499,6 +500,8 @@ export async function postReceipt(input: {
       });
       productId = createdProduct.id;
     }
+    const yieldPct =
+      input.yieldDivisor > 0 ? Number((100 / input.yieldDivisor).toFixed(2)) : undefined;
     const product = await tx.product.update({
       where: { id: productId },
       data: {
@@ -506,6 +509,10 @@ export async function postReceipt(input: {
         unitType: unitTypeFor(input.retailUnit ?? 'units'),
         standardCost: Number(unitCost.toFixed(4)),
         ...(input.retailPrice > 0 ? { retailPrice: input.retailPrice } : {}),
+        ...(yieldPct !== undefined ? { yieldPct } : {}),
+        ...(input.targetMargin !== undefined && input.targetMargin >= 0
+          ? { targetMargin: input.targetMargin }
+          : {}),
       },
       select: { id: true, name: true, shelfLifeDays: true },
     });
@@ -513,7 +520,7 @@ export async function postReceipt(input: {
     const created = await tx.inventoryTransaction.create({
       data: {
         productId: product.id,
-        staffId: 'staff-receiver-01',
+        staffId: input.staffId?.trim() || 'staff-receiver-01',
         qtyChange: unitsAdded,
         transactionType: TransactionType.Receive,
         fromLocation: InventoryLocation.External_Vendor,

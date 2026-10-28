@@ -2,7 +2,6 @@
 
 import React, { useState } from 'react';
 import { FileText } from 'lucide-react';
-import { AppShell } from '@/components/layout/AppShell';
 import { PageIntro } from '@/components/layout/PageIntro';
 import { YieldPricingDashboard } from '@/components/features/receive/YieldPricingDashboard';
 import { InvoiceUploadModal } from '@/components/features/invoices/InvoiceUploadModal';
@@ -30,7 +29,7 @@ export function ReceiveScreen({ initial }: { initial: ReceivingLogsResult }) {
   };
 
   return (
-    <AppShell>
+    <>
       <main className="mx-auto w-full max-w-7xl bg-slate-950 px-3 py-4 sm:px-6 sm:py-8">
         <PageIntro
           step="Step 1 · Receive"
@@ -68,6 +67,6 @@ export function ReceiveScreen({ initial }: { initial: ReceivingLogsResult }) {
         onClose={() => setInvoiceOpen(false)}
         onInvoiceImported={handleInvoiceImported}
       />
-    </AppShell>
+    </>
   );
 }
