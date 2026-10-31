@@ -1,24 +1,24 @@
 'use client';
 
-import React, { Suspense, useState, useEffect, useCallback } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import React, { Suspense, useCallback, useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { stashInvoiceForReceiving } from '@/lib/domains/receiving/receivingBridge';
 import type { InvoiceOcrResult } from '@/lib/types';
-import { AppShell } from '@/components/layout/AppShell';
+import { useRegisterAppVoice } from '@/components/layout/AppVoiceOverrideContext';
 import { PageIntro } from '@/components/layout/PageIntro';
 import { RecipeFusionCard } from '@/components/features/recipes/RecipeFusionCard';
 import { InvoiceUploadModal } from '@/components/features/invoices/InvoiceUploadModal';
 import { VoiceRecorderModal } from '@/components/features/voice/VoiceRecorderModal';
 import { DeliLabelModal } from '@/components/features/recipes/DeliLabelModal';
 import { KitchenSubInventoryPanel } from '@/components/features/kitchen/KitchenSubInventoryPanel';
-import { KitchenIncomingRescueQueue } from '@/components/features/kitchen/KitchenIncomingRescueQueue';
 import { RecipeFusionResult } from '@/lib/types';
-import { INITIAL_FUSION_RECIPES } from '@/lib/legacy/mockData';
+import { mapDbRecipeToFusionResult } from '@/lib/domains/manufacturing/mapDbRecipeToFusion';
 import {
   RecipeProductionModal,
   type ProductionBatchExecutedSummary,
 } from '@/components/features/recipes/RecipeProductionModal';
-import { Sparkles, UtensilsCrossed, Search, Loader2, Mic, ChefHat } from 'lucide-react';
+import { ManualRecipeCreatorModal } from '@/components/features/recipes/ManualRecipeCreatorModal';
+import { UtensilsCrossed, Search, Mic, ChefHat, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardBody } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
@@ -26,29 +26,36 @@ import { Toast } from '@/components/ui/Toast';
 
 function KitchenPageContent() {
   const router = useRouter();
-  const searchParams = useSearchParams();
-  const focusInbox = searchParams.get('inbox') === '1';
-  const [recipes, setRecipes] = useState<RecipeFusionResult[]>(INITIAL_FUSION_RECIPES);
+  const [recipes, setRecipes] = useState<RecipeFusionResult[]>([]);
+  const [savedRecipeCount, setSavedRecipeCount] = useState(0);
   const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
-  const [loading, setLoading] = useState<boolean>(false);
-  const [prepProductIds, setPrepProductIds] = useState<string[]>([]);
   const [fusionError, setFusionError] = useState<string | null>(null);
 
   // Modals state
   const [isInvoiceModalOpen, setIsInvoiceModalOpen] = useState<boolean>(false);
   const [isVoiceModalOpen, setIsVoiceModalOpen] = useState<boolean>(false);
+  const [isCreateRecipeModalOpen, setIsCreateRecipeModalOpen] = useState<boolean>(false);
   const [selectedDeliRecipe, setSelectedDeliRecipe] = useState<RecipeFusionResult | null>(null);
   const [productionOpen, setProductionOpen] = useState(false);
   const [productionRecipeId, setProductionRecipeId] = useState<string | undefined>();
   const [batchToast, setBatchToast] = useState<string | null>(null);
 
+  const openVoiceModal = useCallback(() => setIsVoiceModalOpen(true), []);
+  useRegisterAppVoice(openVoiceModal);
+
   const fetchRecipes = async () => {
     try {
-      const res = await fetch('/api/recipe-fusion');
-      const json = await res.json();
-      if (json.success && json.recipes) {
-        setRecipes(json.recipes);
+      const bomRes = await fetch('/api/recipes');
+      const bomJson = await bomRes.json();
+
+      if (bomJson.success && Array.isArray(bomJson.recipes) && bomJson.recipes.length > 0) {
+        setSavedRecipeCount(bomJson.recipes.length);
+        const fromDb: RecipeFusionResult[] = bomJson.recipes.map(mapDbRecipeToFusionResult);
+        setRecipes(fromDb);
+      } else {
+        setRecipes([]);
+        setSavedRecipeCount(0);
       }
     } catch {
       /* keep seeded / cached recipes */
@@ -59,40 +66,6 @@ function KitchenPageContent() {
     fetchRecipes();
   }, []);
 
-  const handleGenerateNewRecipes = async () => {
-    setLoading(true);
-    setFusionError(null);
-    try {
-      const res = await fetch('/api/recipe-fusion', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          customCategory: selectedCategory === 'ALL' ? undefined : selectedCategory,
-          kitchenPrepProductIds: prepProductIds,
-        }),
-      });
-      const json = await res.json();
-      if (json.success && json.data) {
-        setRecipes((prev) => {
-          const newItems = json.data.filter(
-            (item: RecipeFusionResult) => !prev.some((p) => p.id === item.id)
-          );
-          return [...newItems, ...prev];
-        });
-      } else {
-        setFusionError(json.error ?? 'Could not synthesize recipes.');
-      }
-    } catch {
-      setFusionError('Network error while calling Recipe Fusion.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const onPrepIdsChange = useCallback((ids: string[]) => {
-    setPrepProductIds(ids);
-  }, []);
-
   const filteredRecipes = recipes.filter((r) => {
     const matchesSearch = r.recipeName.toLowerCase().includes(searchQuery.toLowerCase()) ||
                           r.category.toLowerCase().includes(searchQuery.toLowerCase());
@@ -101,68 +74,66 @@ function KitchenPageContent() {
   });
 
   return (
-    <AppShell onVoice={() => setIsVoiceModalOpen(true)}>
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans selection:bg-emerald-500 flex flex-col">
       <main className="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-8 pb-28 sm:pb-8 space-y-4 sm:space-y-6">
         <PageIntro
-          step="Step 3 · Kitchen"
-          title="Cook what the floor pulled"
-          description="Turn short-dated ingredients into a prepared item, then print the deli label. Scrap buckets belong here too."
+          step="Step 3 · Production"
+          title="Production & Recipe Batching"
+          description="Transform surplus produce and inventory into standard prepared deli goods. Execute BOM batches, consume raw ingredients on the ledger, and print deli labels."
         />
-        <KitchenIncomingRescueQueue focusInbox={focusInbox} onPrepProductIdsChange={onPrepIdsChange} />
+        {savedRecipeCount > 0 ? (
+          <p className="text-xs font-semibold text-emerald-300/90">
+            {savedRecipeCount} production recipe{savedRecipeCount === 1 ? '' : 's'} saved in your BOM catalog.
+            Use <strong className="text-emerald-200">New Recipe (BOM)</strong> to add more.
+          </p>
+        ) : (
+          <p className="text-xs text-slate-400">
+            No saved BOM recipes yet — start with <strong className="text-emerald-300">New Recipe (BOM)</strong>.
+          </p>
+        )}
         {/* Header */}
         <Card className="border-emerald-900/40 bg-gradient-to-r from-emerald-950/70 via-slate-900/80 to-slate-950 shadow-2xl">
           <CardBody className="flex flex-col gap-4 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-6">
           <div>
             <div className="flex items-center gap-2 mb-1">
               <UtensilsCrossed className="w-4 h-4 text-emerald-400" />
-              <span className="text-[10px] sm:text-xs font-bold text-emerald-400 uppercase tracking-widest">Cross-Department Rescue Engine</span>
+              <span className="text-[10px] sm:text-xs font-bold text-emerald-400 uppercase tracking-widest">Standard Bill of Materials (BOM)</span>
             </div>
             <h1 className="text-xl sm:text-3xl font-extrabold text-white tracking-tight">
-              Prepared Foods Recipe Fusion Hub
+              Prepared Goods & Production Hub
             </h1>
             <p className="text-xs sm:text-sm text-slate-400 mt-1 max-w-2xl leading-relaxed">
-              Transform surplus produce, near-expiry dairy, and day-old bakery loaves into high-margin prepared soups, panzanellas, and parfait desserts.
+              Standardized recipes and bill of materials (BOM). Produce high-margin deli items, consume ingredients from production prep, and generate retail barcodes.
             </p>
           </div>
 
-          <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:items-center sm:gap-3">
+          <div className="grid w-full grid-cols-3 gap-2 sm:flex sm:w-auto sm:items-center sm:gap-3">
             <Button
-              variant="primary"
-              className="min-h-[44px] border-teal-700 bg-teal-500 text-slate-950 hover:bg-teal-400 text-xs"
-              onClick={() => setIsVoiceModalOpen(true)}
+              variant="secondary"
+              className="min-h-[44px] border-emerald-500/40 bg-slate-900 text-emerald-300 hover:bg-slate-800 text-xs font-bold shadow-md"
+              onClick={() => setIsCreateRecipeModalOpen(true)}
             >
-              <Mic className="h-4 w-4 fill-slate-950" />
-              Voice Transfer
+              <Plus className="h-4 w-4 text-emerald-400" />
+              New Recipe (BOM)
             </Button>
             <Button
               variant="secondary"
-              className="min-h-[44px] border-amber-800/50 bg-amber-950/40 text-amber-100 text-xs"
+              className="min-h-[44px] border-emerald-500/50 bg-emerald-500/20 text-emerald-200 hover:bg-emerald-500/30 text-xs font-bold shadow-lg shadow-emerald-500/20"
               onClick={() => {
                 setProductionRecipeId(undefined);
                 setProductionOpen(true);
               }}
             >
-              <ChefHat className="h-4 w-4" />
-              Execute BOM batch
+              <ChefHat className="h-4 w-4 text-emerald-400" />
+              Execute BOM Batch
             </Button>
             <Button
-              variant="success"
-              className="min-h-[44px] bg-gradient-to-r from-emerald-500 to-teal-400 text-slate-950 hover:from-emerald-400 hover:to-teal-300 text-xs shadow-lg shadow-emerald-500/25"
-              onClick={handleGenerateNewRecipes}
-              disabled={loading}
+              variant="primary"
+              className="min-h-[44px] border-teal-700 bg-teal-500 text-slate-950 hover:bg-teal-400 text-xs font-bold"
+              onClick={() => setIsVoiceModalOpen(true)}
             >
-              {loading ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Chef Cooking…
-                </>
-              ) : (
-                <>
-                  <Sparkles className="h-4 w-4 fill-slate-950" />
-                  Synthesize Recipes
-                </>
-              )}
+              <Mic className="h-4 w-4 fill-slate-950" />
+              Voice Transfer
             </Button>
           </div>
           </CardBody>
@@ -248,6 +219,15 @@ function KitchenPageContent() {
         recipe={selectedDeliRecipe}
       />
 
+      <ManualRecipeCreatorModal
+        isOpen={isCreateRecipeModalOpen}
+        onClose={() => setIsCreateRecipeModalOpen(false)}
+        onRecipeCreated={() => {
+          setBatchToast('Recipe created successfully with Bill of Materials.');
+          void fetchRecipes();
+        }}
+      />
+
       <RecipeProductionModal
         isOpen={productionOpen}
         initialRecipeId={productionRecipeId}
@@ -272,7 +252,6 @@ function KitchenPageContent() {
         variant="destructive"
       />
     </div>
-    </AppShell>
   );
 }
 

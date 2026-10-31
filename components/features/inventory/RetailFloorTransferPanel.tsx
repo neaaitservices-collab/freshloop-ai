@@ -70,7 +70,7 @@ export function RetailFloorTransferPanel({
           <p className="text-[11px] text-slate-400">
             {priorityOnly
               ? 'Pull window items — swipe on mobile or use the action buttons.'
-              : `Shelf stock — send to kitchen, markdown, or waste (choose qty in ${rows[0] ? 'lbs/units' : 'each unit'}).`}
+              : `Shelf stock — send to production, markdown, or waste (choose qty in ${rows[0] ? 'lbs/units' : 'each unit'}).`}
           </p>
         </div>
         <span className="ml-auto rounded-full border border-emerald-500/30 bg-emerald-950/50 px-2.5 py-0.5 text-[10px] font-bold text-emerald-300">

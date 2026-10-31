@@ -9,7 +9,8 @@ function roundQty(value: number): number {
 export function applyOptimisticMove(
   row: StockLevel,
   action: InventoryMoveAction,
-  quantity: number
+  quantity: number,
+  discountPct?: number
 ): StockLevel {
   const qty = Math.max(0, quantity);
 
@@ -41,12 +42,15 @@ export function applyOptimisticMove(
   }
 
   if (action === 'markdown') {
+    const pct = discountPct ?? 30;
     const regular = row.regularRetailPrice ?? row.retailPrice ?? row.unitCost;
+    const multiplier = (100 - pct) / 100;
     const markdownPrice =
-      regular !== null && regular > 0 ? Number((regular * 0.7).toFixed(2)) : row.retailPrice;
+      regular !== null && regular > 0 ? Number((regular * multiplier).toFixed(2)) : row.retailPrice;
     return {
       ...row,
       isMarkdown: true,
+      markdownPct: pct,
       regularRetailPrice: row.regularRetailPrice ?? row.retailPrice ?? regular,
       retailPrice: markdownPrice,
     };

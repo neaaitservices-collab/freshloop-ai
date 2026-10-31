@@ -1,0 +1,6 @@
+-- Recipe BOM: labor + packaging (Sheets Juices_recipes_summary parity)
+ALTER TABLE "store_settings" ADD COLUMN IF NOT EXISTS "Default_Labor_Rate_Per_Hour" DOUBLE PRECISION NOT NULL DEFAULT 17.6;
+
+ALTER TABLE "recipes" ADD COLUMN IF NOT EXISTS "Labor_Hours" DOUBLE PRECISION NOT NULL DEFAULT 0;
+ALTER TABLE "recipes" ADD COLUMN IF NOT EXISTS "Labor_Rate_Per_Hour" DOUBLE PRECISION;
+ALTER TABLE "recipes" ADD COLUMN IF NOT EXISTS "Packaging_Cost_Per_Unit" DOUBLE PRECISION NOT NULL DEFAULT 0;

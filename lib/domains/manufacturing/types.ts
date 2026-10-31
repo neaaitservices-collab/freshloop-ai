@@ -18,6 +18,9 @@ export interface KitchenRecipeDefinition {
   outputUnit: string;
   targetRetailPrice: number;
   prepTimeMinutes: number;
+  laborHours: number;
+  laborRatePerHour: number;
+  packagingCostPerUnit: number;
   bom: KitchenRecipeBOMIngredient[];
 }
 

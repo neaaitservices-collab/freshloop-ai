@@ -55,6 +55,9 @@ const KITCHEN_RECIPES_CATALOG: KitchenRecipeDefinition[] = [
     outputUnit: 'TUB',
     targetRetailPrice: 8.99,
     prepTimeMinutes: 25,
+    laborHours: 0.75,
+    laborRatePerHour: 17.6,
+    packagingCostPerUnit: 1,
     bom: [
       {
         ingredientProductId: 'prod-tomato-hothouse',
@@ -95,6 +98,9 @@ const KITCHEN_RECIPES_CATALOG: KitchenRecipeDefinition[] = [
     outputUnit: 'TUB',
     targetRetailPrice: 4.99,
     prepTimeMinutes: 20,
+    laborHours: 0.5,
+    laborRatePerHour: 17.6,
+    packagingCostPerUnit: 0.85,
     bom: [
       {
         ingredientProductId: 'prod-avocado-hass',
@@ -144,6 +150,9 @@ const KITCHEN_RECIPES_CATALOG: KitchenRecipeDefinition[] = [
     outputUnit: 'TUB',
     targetRetailPrice: 6.49,
     prepTimeMinutes: 30,
+    laborHours: 1,
+    laborRatePerHour: 17.6,
+    packagingCostPerUnit: 1.1,
     bom: [
       {
         ingredientProductId: 'prod-apple-honeycrisp',

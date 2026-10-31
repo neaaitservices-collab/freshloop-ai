@@ -126,8 +126,8 @@ export function SlateInventory({
           {
             label: 'Markdown floor',
             value: `${markdownCount}`,
-            sub: '30% labels active',
-            accent: 'text-rose-400',
+            sub: 'Discount labels active',
+            accent: 'text-amber-400',
           },
           {
             label: 'Low stock',

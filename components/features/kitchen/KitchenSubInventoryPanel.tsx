@@ -47,9 +47,9 @@ export function KitchenSubInventoryPanel() {
     <>
       <Card>
         <CardHeader>
-          <CardTitle>Kitchen sub-inventories</CardTitle>
+          <CardTitle>Production sub-inventories</CardTitle>
           <CardDescription>
-            Move stock between prep, floor, and scrap — same ledger as Inventory and Operations.
+            Move stock between production prep, retail floor, and scrap — synchronized on the ledger.
           </CardDescription>
         </CardHeader>
         <CardBody className="pt-0">

@@ -1,10 +1,5 @@
-import { AppShell } from '@/components/layout/AppShell';
-import { RouteSkeleton } from '@/components/ui/RouteSkeleton';
+import { AppLoadingFallback } from '@/components/layout/AppLoadingFallback';
 
 export default function RootLoading() {
-  return (
-    <AppShell>
-      <RouteSkeleton />
-    </AppShell>
-  );
+  return <AppLoadingFallback />;
 }

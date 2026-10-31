@@ -16,6 +16,7 @@ import { authErrorResponse } from '@/lib/auth/http';
 import { requireRoles } from '@/lib/auth/session';
 import { MANUFACTURING_ROLES } from '@/lib/auth/permissions';
 import { buildManufacturingRecipeCatalog } from '@/lib/domains/manufacturing/buildCatalog';
+import { computeScaledBatchCost } from '@/lib/domains/manufacturing/batchCost';
 import {
   FALLBACK_RECIPES,
   resolveManufacturingRecipeId,
@@ -78,6 +79,7 @@ export interface ManufacturingExecutionResponse {
 }
 
 const LOC_KITCHEN_PREP = 'Kitchen_Prep' as InventoryLocation;
+const LOC_DELI = 'Deli_Grab_N_Go' as InventoryLocation;
 const TX_RESCUE = 'Rescue' as TransactionType;
 const TX_RECEIVE = 'Receive' as TransactionType;
 
@@ -141,6 +143,9 @@ export async function POST(req: NextRequest) {
 
     // Query Recipe + RecipeBOM + Output Product (with fallback to seeded catalog if DB is unavailable)
     let resolvedRecipe: FallbackRecipeCatalogEntry | null = null;
+    let recipeLaborHours = 0;
+    let recipeLaborRate = 17.6;
+    let recipePackagingPerUnit = 0;
     try {
       const dbRecipe = await prisma.recipe?.findUnique({
         where: { id: recipeId },
@@ -154,6 +159,12 @@ export async function POST(req: NextRequest) {
         },
       });
       if (dbRecipe) {
+        const storeSetting = await prisma.storeSetting.findFirst();
+        recipeLaborHours = Number(dbRecipe.laborHours ?? 0);
+        recipeLaborRate = Number(
+          dbRecipe.laborRate ?? storeSetting?.defaultLaborRatePerHour ?? 17.6
+        );
+        recipePackagingPerUnit = Number(dbRecipe.packagingCostPerUnit ?? 0);
         resolvedRecipe = {
           id: dbRecipe.id,
           aliases: [],
@@ -319,11 +330,25 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // 5. Compute Total Batch Cost and Finished Output Unit Cost
-    const totalBatchCost = Number(
+    // 5. Compute Total Batch Cost (ingredients + labor + packaging) and unit cost
+    const ingredientBatchCost = Number(
       consumptionPlan.reduce((sum, item) => sum + item.lineCost, 0).toFixed(4)
     );
-    const unitOutputCost = Number((totalBatchCost / batchOutput).toFixed(4));
+    const laborFromFallback = resolvedRecipe.laborHours ?? recipeLaborHours;
+    const rateFromFallback = resolvedRecipe.laborRatePerHour ?? recipeLaborRate;
+    const packagingFromFallback =
+      resolvedRecipe.packagingCostPerUnit ?? recipePackagingPerUnit;
+
+    const costBreakdown = computeScaledBatchCost({
+      ingredientCost: ingredientBatchCost,
+      laborHours: laborFromFallback,
+      laborRatePerHour: rateFromFallback,
+      packagingCostPerUnit: packagingFromFallback,
+      standardYield,
+      actualBatchOutput: batchOutput,
+    });
+    const totalBatchCost = costBreakdown.totalBatchCost;
+    const unitOutputCost = costBreakdown.unitCost;
     const batchReferenceId = `MFG-${resolvedRecipe.id.slice(0, 8).toUpperCase()}-${Date.now()}`;
 
     const expirationDate = new Date(
@@ -361,56 +386,41 @@ export async function POST(req: NextRequest) {
             qtyChange: Math.abs(batchOutput),
             transactionType: TX_RECEIVE,
             fromLocation: LOC_KITCHEN_PREP,
-            toLocation: LOC_KITCHEN_PREP,
+            toLocation: LOC_DELI,
             unitCostAtTime: unitOutputCost,
             referenceId: batchReferenceId,
             expirationDate,
             notes:
               body.notes ||
-              `Manufactured ${batchOutput} units of "${resolvedRecipe.outputProductName}" in Kitchen_Prep (Batch Cost: $${totalBatchCost.toFixed(
+              `Manufactured ${batchOutput} units of "${resolvedRecipe.outputProductName}" → Deli Grab-n-Go (Batch: $${totalBatchCost.toFixed(
                 2
-              )})`,
+              )}, labor $${costBreakdown.laborCost.toFixed(2)}, packaging $${costBreakdown.packagingCost.toFixed(2)})`,
+          },
+        }),
+        prisma.product.update({
+          where: { id: resolvedRecipe.outputProductId },
+          data: {
+            isManufactured: true,
+            department: 'DELI_KITCHEN',
+            standardCost: unitOutputCost,
+            ...(resolvedRecipe.targetRetailPrice > 0
+              ? { retailPrice: resolvedRecipe.targetRetailPrice }
+              : {}),
           },
         }),
       ]);
 
-      ingredientTransactions = ledgerResults.slice(0, consumptionPlan.length);
-      outputTransaction = ledgerResults[ledgerResults.length - 1];
+      ingredientTransactions = ledgerResults.slice(0, consumptionPlan.length) as InventoryTransaction[];
+      outputTransaction = ledgerResults[consumptionPlan.length] as InventoryTransaction;
       invalidateInventoryCaches();
-    } catch {
-      const now = new Date();
-      ingredientTransactions = consumptionPlan.map((item, idx) => ({
-        id: `tx-mfg-ing-${Date.now()}-${idx}`,
-        productId: item.ingredientProductId,
-        staffId,
-        qtyChange: -Math.abs(item.actualQtyToDeduct),
-        transactionType: TX_RESCUE,
-        fromLocation: LOC_KITCHEN_PREP,
-        toLocation: LOC_KITCHEN_PREP,
-        unitCostAtTime: item.unitMovingAvgCost,
-        referenceId: batchReferenceId,
-        expirationDate: null,
-        notes: `BOM Consumption for "${resolvedRecipe.name}" (${item.actualQtyToDeduct} ${item.unit})`,
-        timestamp: now,
-      }));
-      outputTransaction = {
-        id: `tx-mfg-out-${Date.now()}`,
-        productId: resolvedRecipe.outputProductId,
-        staffId,
-        qtyChange: Math.abs(batchOutput),
-        transactionType: TX_RECEIVE,
-        fromLocation: LOC_KITCHEN_PREP,
-        toLocation: LOC_KITCHEN_PREP,
-        unitCostAtTime: unitOutputCost,
-        referenceId: batchReferenceId,
-        expirationDate,
-        notes:
-          body.notes ||
-          `Manufactured ${batchOutput} units of "${resolvedRecipe.outputProductName}" in Kitchen_Prep (Batch Cost: $${totalBatchCost.toFixed(
-            2
-          )})`,
-        timestamp: now,
-      };
+    } catch (ledgerError) {
+      throw new InventoryLedgerError(
+        ledgerError instanceof Error
+          ? ledgerError.message
+          : 'Manufacturing batch could not be written to the ledger.',
+        'MFG_LEDGER_FAILED',
+        500
+      );
     }
 
     const ingredientsConsumed: ManufacturedIngredientConsumption[] =
@@ -444,7 +454,7 @@ export async function POST(req: NextRequest) {
       recipe_name: resolvedRecipe.name,
       output_product_id: resolvedRecipe.outputProductId,
       output_product_name: resolvedRecipe.outputProductName,
-      location: LOC_KITCHEN_PREP,
+      location: LOC_DELI,
       standard_batch_yield: resolvedRecipe.batchYieldQty,
       actual_batch_output: batchOutput,
       total_batch_cost: Number(totalBatchCost.toFixed(2)),

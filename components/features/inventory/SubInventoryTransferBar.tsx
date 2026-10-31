@@ -1,9 +1,10 @@
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { ArrowRightLeft, Loader2, Minus, Plus, Tag, Trash2 } from 'lucide-react';
+import { ArrowRightLeft, Loader2, Minus, Plus, ShoppingCart, Tag, Trash2 } from 'lucide-react';
 import {
   executeInventoryMove,
+  notifyInventoryUpdated,
   type InventoryMoveAction,
   type SubInventoryTransferRow,
   transferSuccessMessage,
@@ -18,6 +19,7 @@ export type PerformInventoryMove = (input: {
   action: InventoryMoveAction;
   quantity?: number;
   staffId?: string;
+  discountPct?: number;
   row: SubInventoryTransferRow;
 }) => Promise<
   | { success: true; level: StockLevel; message: string }
@@ -191,6 +193,9 @@ export function SubInventoryTransferBar({
   const [kitchenQty, setKitchenQty] = useState(() => clampTransferQty(step, kitchenMax, step));
   const [internalBusy, setInternalBusy] = useState(false);
 
+  const [selectedDiscount, setSelectedDiscount] = useState<number>(30);
+  const [showDiscountPicker, setShowDiscountPicker] = useState<boolean>(false);
+
   const busy = busyProp ?? internalBusy;
 
   useEffect(() => {
@@ -206,11 +211,13 @@ export function SubInventoryTransferBar({
     onBusyChange?.(value);
   };
 
-  const run = async (action: InventoryMoveAction, quantity: number) => {
+  const run = async (action: InventoryMoveAction, quantity: number, discountOverride?: number) => {
     if (action !== 'markdown' && !(quantity > 0)) {
       onError?.('Enter a quantity greater than zero.');
       return;
     }
+
+    const discountPct = discountOverride ?? selectedDiscount;
 
     if (performMove) {
       const outcome = await performMove({
@@ -218,6 +225,7 @@ export function SubInventoryTransferBar({
         action,
         quantity,
         staffId,
+        discountPct,
         row,
       });
       if (outcome.success) {
@@ -238,6 +246,7 @@ export function SubInventoryTransferBar({
       action,
       quantity,
       staffId,
+      discountPct,
     });
     setBusy(false);
     if (!result.success || !result.level) {
@@ -249,6 +258,53 @@ export function SubInventoryTransferBar({
       level: result.level,
       message: transferSuccessMessage(action, row, result.level, result.units),
     });
+  };
+
+  const runSale = async (quantity: number) => {
+    if (!(quantity > 0)) {
+      onError?.('Enter a quantity greater than zero.');
+      return;
+    }
+    setBusy(true);
+    try {
+      const saleRes = await fetch('/api/sales', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          productId: row.productId,
+          quantity,
+          location: 'floor',
+        }),
+      });
+      const saleJson = (await saleRes.json()) as {
+        success?: boolean;
+        error?: string;
+      };
+      if (!saleRes.ok || !saleJson.success) {
+        onError?.(saleJson.error ?? 'Sale could not be recorded.');
+        return;
+      }
+      const levelsRes = await fetch('/api/inventory/levels', { cache: 'no-store' });
+      const levelsJson = (await levelsRes.json()) as {
+        success?: boolean;
+        levels?: StockLevel[];
+      };
+      notifyInventoryUpdated();
+      const level = levelsJson.levels?.find((l) => l.productId === row.productId);
+      if (!level) {
+        onError?.('Sale recorded; refresh the page to see updated stock.');
+        return;
+      }
+      onSuccess?.({
+        action: 'sale',
+        level,
+        message: transferSuccessMessage('sale', row, level, quantity),
+      });
+    } catch {
+      onError?.('Sale could not reach the server.');
+    } finally {
+      setBusy(false);
+    }
   };
 
   const showFloor = variant === 'floor' || variant === 'both';
@@ -295,18 +351,57 @@ export function SubInventoryTransferBar({
               className={`${compact ? compactBtn : btnClass} bg-[#163832] text-[#7dcec4]`}
             >
               {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ArrowRightLeft className="h-3.5 w-3.5" />}
-              To kitchen
+              To production
             </button>
-            <button
-              type="button"
-              disabled={busy || Boolean(row.isMarkdown)}
-              onClick={() => void run('markdown', floorQty)}
-              className={`${compact ? compactBtn : btnClass} bg-amber-500/15 text-amber-300`}
-              title="Applies 30% markdown to shelf price (full line)"
-            >
-              <Tag className="h-3.5 w-3.5" />
-              30% off
-            </button>
+            {/* Markdown action with 10%, 20%, 25%, 30% selector */}
+            <div className="relative inline-flex items-center rounded-lg border border-amber-500/30 bg-amber-500/10 p-0.5 shadow-sm">
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void run('markdown', floorQty, selectedDiscount)}
+                className={`${compact ? 'min-h-9 px-2.5 py-1 text-[11px]' : 'min-h-11 px-3 py-1.5 text-xs'} flex items-center gap-1.5 font-bold text-amber-300 hover:text-amber-100 disabled:opacity-40 transition-colors`}
+                title={`Apply ${selectedDiscount}% markdown to shelf price`}
+              >
+                {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Tag className="h-3.5 w-3.5 text-amber-400" />}
+                <span>{row.isMarkdown ? `Update ${selectedDiscount}%` : `${selectedDiscount}% off`}</span>
+              </button>
+
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => setShowDiscountPicker((prev) => !prev)}
+                className="flex min-h-8 items-center justify-center rounded px-1.5 py-1 text-[10px] font-bold text-amber-400/90 hover:bg-amber-500/20 hover:text-amber-200 transition-colors"
+                title="Select discount percentage: 10%, 20%, 25%, 30%"
+                aria-label="Change discount percentage"
+              >
+                ▼
+              </button>
+
+              {showDiscountPicker ? (
+                <div className="absolute top-full left-0 z-30 mt-1 flex gap-1 rounded-xl border border-amber-500/40 bg-slate-900/95 p-1.5 shadow-xl backdrop-blur-md">
+                  {[10, 20, 25, 30].map((pct) => (
+                    <button
+                      key={pct}
+                      type="button"
+                      disabled={busy}
+                      onClick={() => {
+                        setSelectedDiscount(pct);
+                        setShowDiscountPicker(false);
+                        void run('markdown', floorQty, pct);
+                      }}
+                      className={`min-h-8 rounded-lg px-2.5 py-1 text-xs font-bold transition-all ${
+                        selectedDiscount === pct
+                          ? 'bg-amber-500 text-slate-950 shadow'
+                          : 'bg-slate-800/80 text-amber-200 hover:bg-slate-700/80 hover:text-white'
+                      }`}
+                    >
+                      {pct}%
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+
             <button
               type="button"
               disabled={busy || floorQty <= 0}
@@ -316,6 +411,16 @@ export function SubInventoryTransferBar({
               <Trash2 className="h-3.5 w-3.5" />
               Floor waste
             </button>
+            <button
+              type="button"
+              disabled={busy || floorQty <= 0}
+              onClick={() => void runSale(floorQty)}
+              className={`${compact ? compactBtn : btnClass} bg-emerald-500/15 text-emerald-300`}
+              title="Record POS sale (updates ledger & waste KPI sales denominator)"
+            >
+              {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShoppingCart className="h-3.5 w-3.5" />}
+              Record sale
+            </button>
           </div>
         </div>
       ) : null}
@@ -323,7 +428,7 @@ export function SubInventoryTransferBar({
       {showKitchen && kitchenMax > 0 ? (
         <div className="flex flex-col gap-2">
           <TransferQtyPicker
-            label="Kitchen amount"
+            label="Production amount"
             value={kitchenQty}
             max={kitchenMax}
             step={step}

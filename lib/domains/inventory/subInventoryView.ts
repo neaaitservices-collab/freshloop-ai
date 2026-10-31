@@ -6,7 +6,7 @@ export type SubInventoryTab = 'retail_floor' | 'kitchen_prep';
 
 export const SUB_INVENTORY_TAB_LABELS: Record<SubInventoryTab, string> = {
   retail_floor: 'Retail floor',
-  kitchen_prep: 'Kitchen prep',
+  kitchen_prep: 'Production prep',
 };
 
 /** Which sub-inventory tabs a role may see. Clerks get retail only; kitchen gets both. */

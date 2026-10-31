@@ -15,12 +15,13 @@ export type OptimisticMovePayload = {
   productId: string;
   action: InventoryMoveAction;
   quantity: number;
+  discountPct?: number;
 };
 
 function applyMoveReducer(state: StockLevel[], update: OptimisticMovePayload): StockLevel[] {
   return state.map((row) =>
     row.productId === update.productId
-      ? applyOptimisticMove(row, update.action, update.quantity)
+      ? applyOptimisticMove(row, update.action, update.quantity, update.discountPct)
       : row
   );
 }
@@ -34,15 +35,11 @@ export function useOptimisticInventoryLevels(initialLevels: StockLevel[] | null)
   const [optimisticLevels, addOptimisticMove] = useOptimistic(levels, applyMoveReducer);
   const [, startTransition] = useTransition();
   const snapshot = snapshotKey(initialLevels);
-  const snapshotRef = useRef(initialLevels);
-  snapshotRef.current = initialLevels;
 
   useEffect(() => {
-    if (snapshot == null) return;
-    const next = snapshotRef.current;
-    if (!next) return;
-    setLevels((current) => (snapshotKey(current) === snapshot ? current : next));
-  }, [snapshot]);
+    if (!initialLevels) return;
+    setLevels((current) => (snapshotKey(current) === snapshot ? current : initialLevels));
+  }, [initialLevels, snapshot]);
 
   const performMove = useCallback(
     async (input: {
@@ -50,6 +47,7 @@ export function useOptimisticInventoryLevels(initialLevels: StockLevel[] | null)
       action: InventoryMoveAction;
       quantity?: number;
       staffId?: string;
+      discountPct?: number;
       row: SubInventoryTransferRow;
     }) => {
       const quantity =
@@ -63,6 +61,7 @@ export function useOptimisticInventoryLevels(initialLevels: StockLevel[] | null)
           productId: input.productId,
           action: input.action,
           quantity,
+          discountPct: input.discountPct,
         });
       });
 
@@ -71,6 +70,7 @@ export function useOptimisticInventoryLevels(initialLevels: StockLevel[] | null)
         action: input.action,
         quantity: input.action === 'markdown' ? undefined : quantity,
         staffId: input.staffId,
+        discountPct: input.discountPct,
       });
 
       if (result.success && result.level) {

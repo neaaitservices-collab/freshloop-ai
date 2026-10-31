@@ -14,6 +14,7 @@ export async function POST(req: NextRequest) {
       action?: string;
       staffId?: string;
       quantity?: number;
+      discountPct?: number;
     };
     try {
       body = (await req.json()) as typeof body;
@@ -26,7 +27,11 @@ export async function POST(req: NextRequest) {
       return apiError('productId is required.', 400);
     }
     if (action === 'markdown') {
-      const marked = await applyRetailMarkdown(productId, actor.id);
+      const discountPct =
+        typeof body.discountPct === 'number' && Number.isFinite(body.discountPct)
+          ? body.discountPct
+          : 30;
+      const marked = await applyRetailMarkdown(productId, actor.id, discountPct);
       return NextResponse.json({
         success: true,
         action: 'markdown',

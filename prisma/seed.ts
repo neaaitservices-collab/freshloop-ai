@@ -334,7 +334,7 @@ async function main() {
           staffId: "SEED-STAFF",
           qtyChange: product.receiveQty,
           transactionType: TransactionType.Receive,
-          fromLocation: InventoryLocation.Supplier,
+          fromLocation: InventoryLocation.External_Vendor,
           toLocation: InventoryLocation.Retail_Floor,
           unitCostAtTime: product.unitCost,
           referenceId: "SEED-RECEIVE",
@@ -367,6 +367,34 @@ async function main() {
     },
   });
 
+  await prisma.product.update({
+    where: { id: productIds.panzanella },
+    data: {
+      isManufactured: true,
+      department: "DELI_KITCHEN",
+      retailPrice: 8.99,
+      regularRetailPrice: 8.99,
+    },
+  });
+  await prisma.product.update({
+    where: { id: productIds.parfait },
+    data: {
+      isManufactured: true,
+      department: "DELI_KITCHEN",
+      retailPrice: 6.49,
+      regularRetailPrice: 6.49,
+    },
+  });
+  await prisma.product.update({
+    where: { id: productIds.guacamole },
+    data: {
+      isManufactured: true,
+      department: "DELI_KITCHEN",
+      retailPrice: 4.99,
+      regularRetailPrice: 4.99,
+    },
+  });
+
   const panzanella = await prisma.recipe.create({
     data: {
       name: "Roasted Hot House Tomato & Sourdough Panzanella",
@@ -375,9 +403,12 @@ async function main() {
       yieldPortions: 20,
       portionSize: "12 oz deli tub",
       targetRetailPrice: 8.99,
+      laborHours: 0.75,
+      laborRate: 17.6,
+      packagingCostPerUnit: 1,
       instructions:
         "Cube sourdough; roast tomatoes; toss with vinaigrette and herbs.",
-      status: "PROPOSED",
+      status: "IN_KITCHEN",
       bomLines: {
         create: [
           {
@@ -408,8 +439,11 @@ async function main() {
       yieldPortions: 28,
       portionSize: "10 oz parfait cup",
       targetRetailPrice: 6.49,
+      laborHours: 1,
+      laborRate: 17.6,
+      packagingCostPerUnit: 1.1,
       instructions: "Dice apples; layer with cream and yogurt.",
-      status: "PROPOSED",
+      status: "IN_KITCHEN",
       bomLines: {
         create: [
           {
@@ -440,8 +474,11 @@ async function main() {
       yieldPortions: 30,
       portionSize: "6 oz Grab-n-Go cup",
       targetRetailPrice: 4.99,
+      laborHours: 0.5,
+      laborRate: 17.6,
+      packagingCostPerUnit: 0.85,
       instructions: "Mash avocado with tomato, jalapeno, cilantro, and lime.",
-      status: "PROPOSED",
+      status: "IN_KITCHEN",
       bomLines: {
         create: [
           {
@@ -488,10 +525,64 @@ async function main() {
     },
   });
 
+  const floorStaff = "staff-floor";
+  const saleSkus = ["honeycrisp", "strawberries", "panzanella"] as const;
+  for (const key of saleSkus) {
+    const pid = productIds[key];
+    if (!pid) continue;
+    const product = await prisma.product.findUnique({ where: { id: pid } });
+    const price = product?.retailPrice ?? product?.standardCost ?? 3;
+    await prisma.inventoryTransaction.create({
+      data: {
+        productId: pid,
+        staffId: floorStaff,
+        qtyChange: -4,
+        transactionType: TransactionType.Sale,
+        fromLocation:
+          key === "panzanella"
+            ? InventoryLocation.Deli_Grab_N_Go
+            : InventoryLocation.Retail_Floor,
+        toLocation: InventoryLocation.Customer_Out,
+        unitCostAtTime: Number(price),
+        referenceId: `SEED-SALE-${key}`,
+        notes: "Demo POS sales for Financial Yield KPI",
+      },
+    });
+  }
+
+  await prisma.inventoryTransaction.create({
+    data: {
+      productId: productIds.apricots,
+      staffId: floorStaff,
+      qtyChange: -2,
+      transactionType: TransactionType.Waste,
+      fromLocation: InventoryLocation.Retail_Floor,
+      toLocation: InventoryLocation.Waste_Bin,
+      unitCostAtTime: 5.8,
+      referenceId: "SEED-WASTE-1",
+      notes: "Demo shrink for operations KPI",
+    },
+  });
+
+  await prisma.inventoryTransaction.create({
+    data: {
+      productId: productIds.honeycrisp,
+      staffId: "staff-kitchen",
+      qtyChange: 5,
+      transactionType: TransactionType.Rescue,
+      fromLocation: InventoryLocation.Retail_Floor,
+      toLocation: InventoryLocation.Kitchen_Prep,
+      unitCostAtTime: 1.46,
+      referenceId: "SEED-RESCUE-1",
+      notes: "Demo floor → kitchen rescue",
+    },
+  });
+
   console.log("Seed complete", {
     products: PRODUCTS.length,
     recipes: [panzanella.name, parfait.name],
     bundles: 1,
+    demoLedger: "Sale, Waste, Rescue",
   });
 }
 

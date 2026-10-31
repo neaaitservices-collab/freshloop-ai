@@ -7,6 +7,7 @@ export interface PlatformSettings {
   scrapBucketVolumeL: number;
   estimatedWeightPerLiterKg: number;
   defaultScrapCostPerKg: number;
+  defaultLaborRatePerHour: number;
   pullSensitivityDays: number;
   costGuardrailVariancePct: number;
 }
@@ -17,6 +18,7 @@ export const PLATFORM_DEFAULTS: PlatformSettings = {
   scrapBucketVolumeL: 20,
   estimatedWeightPerLiterKg: 0.65,
   defaultScrapCostPerKg: 3.5,
+  defaultLaborRatePerHour: 17.6,
   pullSensitivityDays: 3,
   costGuardrailVariancePct: 20,
 };
@@ -35,6 +37,7 @@ export function parsePlatformSettings(body: unknown): { settings: PlatformSettin
   const scrapBucketVolumeL = finite(source.scrapBucketVolumeL);
   const estimatedWeightPerLiterKg = finite(source.estimatedWeightPerLiterKg);
   const defaultScrapCostPerKg = finite(source.defaultScrapCostPerKg);
+  const defaultLaborRatePerHour = finite(source.defaultLaborRatePerHour);
   const pullSensitivityDays = finite(source.pullSensitivityDays);
   const costGuardrailVariancePct = finite(source.costGuardrailVariancePct);
 
@@ -51,6 +54,9 @@ export function parsePlatformSettings(body: unknown): { settings: PlatformSettin
   if (defaultScrapCostPerKg === null || defaultScrapCostPerKg < 0) {
     return { error: 'Scrap cost cannot be negative.' };
   }
+  if (defaultLaborRatePerHour === null || defaultLaborRatePerHour <= 0) {
+    return { error: 'Labor rate must be greater than 0.' };
+  }
   if (pullSensitivityDays === null || !PULL_DAYS.has(pullSensitivityDays)) {
     return { error: 'Pull window must be 2, 3, or 4 days.' };
   }
@@ -65,6 +71,7 @@ export function parsePlatformSettings(body: unknown): { settings: PlatformSettin
       scrapBucketVolumeL,
       estimatedWeightPerLiterKg,
       defaultScrapCostPerKg,
+      defaultLaborRatePerHour,
       pullSensitivityDays,
       costGuardrailVariancePct,
     },
@@ -80,6 +87,7 @@ export async function getPlatformSettings(): Promise<PlatformSettings> {
     scrapBucketVolumeL: row.scrapBucketVolumeL,
     estimatedWeightPerLiterKg: row.estimatedWeightPerLiterKg,
     defaultScrapCostPerKg: row.defaultScrapCostPerKg,
+    defaultLaborRatePerHour: row.defaultLaborRatePerHour ?? 17.6,
     pullSensitivityDays: row.pullSensitivityDays,
     costGuardrailVariancePct: row.costGuardrailVariancePct,
   };
@@ -87,9 +95,19 @@ export async function getPlatformSettings(): Promise<PlatformSettings> {
 
 export async function savePlatformSettings(settings: PlatformSettings): Promise<PlatformSettings> {
   const existing = await prisma.storeSetting.findFirst({ orderBy: { updatedAt: 'desc' } });
+  const data = {
+    storeName: settings.storeName,
+    targetWastePct: settings.targetWastePct,
+    scrapBucketVolumeL: settings.scrapBucketVolumeL,
+    estimatedWeightPerLiterKg: settings.estimatedWeightPerLiterKg,
+    defaultScrapCostPerKg: settings.defaultScrapCostPerKg,
+    defaultLaborRatePerHour: settings.defaultLaborRatePerHour,
+    pullSensitivityDays: settings.pullSensitivityDays,
+    costGuardrailVariancePct: settings.costGuardrailVariancePct,
+  };
   const saved = existing
-    ? await prisma.storeSetting.update({ where: { id: existing.id }, data: settings })
-    : await prisma.storeSetting.create({ data: settings });
+    ? await prisma.storeSetting.update({ where: { id: existing.id }, data })
+    : await prisma.storeSetting.create({ data });
   invalidateStoreStats();
   return {
     storeName: saved.storeName,
@@ -97,6 +115,7 @@ export async function savePlatformSettings(settings: PlatformSettings): Promise<
     scrapBucketVolumeL: saved.scrapBucketVolumeL,
     estimatedWeightPerLiterKg: saved.estimatedWeightPerLiterKg,
     defaultScrapCostPerKg: saved.defaultScrapCostPerKg,
+    defaultLaborRatePerHour: saved.defaultLaborRatePerHour,
     pullSensitivityDays: saved.pullSensitivityDays,
     costGuardrailVariancePct: saved.costGuardrailVariancePct,
   };

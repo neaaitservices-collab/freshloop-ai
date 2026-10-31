@@ -5,6 +5,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { Navigation } from '@/components/layout/Navigation';
 import { useRole } from '@/components/auth/RoleProvider';
 import { VoiceLoggerModal } from '@/components/features/voice/VoiceLoggerModal';
+import { useAppVoiceOverride } from '@/components/layout/AppVoiceOverrideContext';
 import { notifyInventoryUpdated } from '@/lib/domains/inventory/inventoryMoveClient';
 import { canVisit, homeForRole } from '@/lib/utils/roles';
 
@@ -13,13 +14,16 @@ export function AppShell({
   onVoice,
 }: {
   children: React.ReactNode;
+  /** Prefer `useRegisterAppVoice` from a page when using AppShellLayout. */
   onVoice?: () => void;
 }) {
   const pathname = usePathname();
   const router = useRouter();
   const { activeUser, loading } = useRole();
   const [voiceOpen, setVoiceOpen] = useState(false);
-  const openVoice = onVoice ?? (() => setVoiceOpen(true));
+  const voiceOverride = useAppVoiceOverride();
+  const openVoice = onVoice ?? voiceOverride ?? (() => setVoiceOpen(true));
+  const useBuiltInVoiceModal = !onVoice && !voiceOverride;
 
   useEffect(() => {
     if (loading || !activeUser) return;
@@ -32,7 +36,7 @@ export function AppShell({
     <div className="flex min-h-screen flex-col bg-slate-950 text-slate-100 md:flex-row">
       <Navigation onVoice={openVoice} />
       <div className="flex min-w-0 flex-1 flex-col pb-20 md:pb-0">{children}</div>
-      {!onVoice ? (
+      {useBuiltInVoiceModal ? (
         <VoiceLoggerModal
           isOpen={voiceOpen}
           onClose={() => setVoiceOpen(false)}

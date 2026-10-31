@@ -30,6 +30,7 @@ export interface StockLevel {
   retailPrice: number | null;
   regularRetailPrice: number | null;
   isMarkdown: boolean;
+  markdownPct?: number | null;
   daysRemaining: number;
 }
 
@@ -120,7 +121,12 @@ export function buildStockLevel(input: {
   const isMarkdown =
     regularRetailPrice !== null &&
     retailPrice !== null &&
-    retailPrice <= regularRetailPrice * 0.71;
+    retailPrice < regularRetailPrice * 0.99;
+
+  const markdownPct =
+    isMarkdown && regularRetailPrice && retailPrice
+      ? Math.max(1, Math.min(99, Math.round(((regularRetailPrice - retailPrice) / regularRetailPrice) * 100)))
+      : null;
 
   return {
     productId: input.productId,
@@ -135,6 +141,7 @@ export function buildStockLevel(input: {
     retailPrice,
     regularRetailPrice,
     isMarkdown,
+    markdownPct,
     daysRemaining: Number.isFinite(input.daysRemaining) ? Number(input.daysRemaining) : 7,
   };
 }
@@ -190,8 +197,8 @@ async function loadStockLevels(): Promise<StockLevel[]> {
       ) AS "expirationDate",
       COALESCE(SUM(
         CASE
-          WHEN t."To_Location" = 'Retail_Floor'::"InventoryLocation" AND t."Qty_Change" > 0 THEN t."Qty_Change"
-          WHEN t."From_Location" = 'Retail_Floor'::"InventoryLocation" AND t."Qty_Change" < 0 THEN t."Qty_Change"
+          WHEN t."To_Location" IN ('Retail_Floor'::"InventoryLocation", 'Deli_Grab_N_Go'::"InventoryLocation") AND t."Qty_Change" > 0 THEN t."Qty_Change"
+          WHEN t."From_Location" IN ('Retail_Floor'::"InventoryLocation", 'Deli_Grab_N_Go'::"InventoryLocation") AND t."Qty_Change" < 0 THEN t."Qty_Change"
           ELSE 0
         END
       ), 0)::float8 AS "onHand",
@@ -204,7 +211,6 @@ async function loadStockLevels(): Promise<StockLevel[]> {
       ), 0)::float8 AS "kitchenPrepQty"
     FROM products p
     LEFT JOIN "Inventory_Transactions" t ON t."Product_ID" = p.id
-    WHERE p."isManufactured" = false
     GROUP BY p.id
   `;
 
@@ -267,7 +273,8 @@ async function readStockLevel(productId: string): Promise<StockLevel> {
 
 export async function applyRetailMarkdown(
   productId: string,
-  staffId: string
+  staffId: string,
+  discountPct: number = 30
 ): Promise<{ level: StockLevel }> {
   void staffId;
   const product = await prisma.product.findUnique({ where: { id: productId } });
@@ -285,18 +292,22 @@ export async function applyRetailMarkdown(
     throw new Error('Set a retail price before applying a markdown.');
   }
 
+  const validDiscountPct = Math.max(5, Math.min(90, Math.round(discountPct || 30)));
   const regular = prices.regularRetailPrice ?? shelfPrice;
+  const targetMultiplier = (100 - validDiscountPct) / 100;
+  const targetPrice = Number((regular * targetMultiplier).toFixed(2));
+
+  // If already at or within 1 cent of the target discount, return current stock level
   if (
     prices.regularRetailPrice &&
     prices.retailPrice &&
-    prices.retailPrice <= regular * 0.71
+    Math.abs(prices.retailPrice - targetPrice) < 0.02
   ) {
     return { level: await readStockLevel(productId) };
   }
 
-  const markdownPrice = Number((regular * 0.7).toFixed(2));
   const regularToStore = prices.regularRetailPrice ?? regular;
-  await writeProductMarkdownPrices(productId, regularToStore, markdownPrice);
+  await writeProductMarkdownPrices(productId, regularToStore, targetPrice);
   invalidateInventoryCaches();
   return { level: await readStockLevel(productId) };
 }
@@ -456,6 +467,8 @@ export async function postReceipt(input: {
   yieldDivisor: number;
   retailPrice: number;
   retailUnit?: string;
+  staffId?: string;
+  targetMargin?: number;
 }): Promise<PostedReceipt | SkippedReceipt> {
   const unitsPerCase = input.yieldDivisor > 0 ? input.packSize / input.yieldDivisor : 0;
   const unitsAdded = Number((input.casesReceived * unitsPerCase).toFixed(4));
@@ -487,6 +500,8 @@ export async function postReceipt(input: {
       });
       productId = createdProduct.id;
     }
+    const yieldPct =
+      input.yieldDivisor > 0 ? Number((100 / input.yieldDivisor).toFixed(2)) : undefined;
     const product = await tx.product.update({
       where: { id: productId },
       data: {
@@ -494,6 +509,10 @@ export async function postReceipt(input: {
         unitType: unitTypeFor(input.retailUnit ?? 'units'),
         standardCost: Number(unitCost.toFixed(4)),
         ...(input.retailPrice > 0 ? { retailPrice: input.retailPrice } : {}),
+        ...(yieldPct !== undefined ? { yieldPct } : {}),
+        ...(input.targetMargin !== undefined && input.targetMargin >= 0
+          ? { targetMargin: input.targetMargin }
+          : {}),
       },
       select: { id: true, name: true, shelfLifeDays: true },
     });
@@ -501,7 +520,7 @@ export async function postReceipt(input: {
     const created = await tx.inventoryTransaction.create({
       data: {
         productId: product.id,
-        staffId: 'staff-receiver-01',
+        staffId: input.staffId?.trim() || 'staff-receiver-01',
         qtyChange: unitsAdded,
         transactionType: TransactionType.Receive,
         fromLocation: InventoryLocation.External_Vendor,

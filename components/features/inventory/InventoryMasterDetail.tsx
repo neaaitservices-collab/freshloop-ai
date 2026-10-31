@@ -423,7 +423,11 @@ export function InventoryMasterDetail({
                   <div className="flex flex-wrap items-center justify-start gap-1 sm:justify-end">
                     <DaysRemainingBadge days={row.daysRemaining} />
                     {row.low ? <Badge variant="warning">Low</Badge> : null}
-                    {row.isMarkdown ? <Badge variant="ocean">30% off</Badge> : null}
+                    {row.isMarkdown ? (
+                      <Badge variant="ocean">
+                        {row.markdownPct ? `${row.markdownPct}% off` : 'Markdown'}
+                      </Badge>
+                    ) : null}
                   </div>
                 </button>
               </li>

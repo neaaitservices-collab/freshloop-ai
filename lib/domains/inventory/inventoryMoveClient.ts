@@ -1,7 +1,7 @@
 import type { StockLevel } from '@/lib/domains/inventory/stock';
 import { formatCurrency, formatUnits, stockUnitLabel } from '@/lib/domains/receiving/yieldPricing';
 
-export type InventoryMoveAction = 'rescue' | 'waste' | 'markdown' | 'kitchen_waste';
+export type InventoryMoveAction = 'rescue' | 'waste' | 'markdown' | 'kitchen_waste' | 'sale';
 
 export interface SubInventoryTransferRow {
   productId: string;
@@ -10,6 +10,9 @@ export interface SubInventoryTransferRow {
   onHand: number;
   kitchenPrepQty: number;
   isMarkdown?: boolean;
+  markdownPct?: number | null;
+  regularRetailPrice?: number | null;
+  retailPrice?: number | null;
 }
 
 export interface InventoryMoveResult {
@@ -28,6 +31,9 @@ export function stockLevelToTransferRow(level: StockLevel): SubInventoryTransfer
     onHand: level.onHand,
     kitchenPrepQty: level.kitchenPrepQty,
     isMarkdown: level.isMarkdown,
+    markdownPct: level.markdownPct,
+    regularRetailPrice: level.regularRetailPrice,
+    retailPrice: level.retailPrice,
   };
 }
 
@@ -42,6 +48,7 @@ export async function executeInventoryMove(input: {
   action: InventoryMoveAction;
   quantity?: number;
   staffId?: string;
+  discountPct?: number;
 }): Promise<InventoryMoveResult> {
   try {
     const response = await fetch('/api/inventory/move', {
@@ -52,6 +59,7 @@ export async function executeInventoryMove(input: {
         action: input.action,
         quantity: input.quantity,
         staffId: input.staffId ?? '',
+        discountPct: input.discountPct,
       }),
     });
     const json = (await response.json()) as InventoryMoveResult & { level?: StockLevel };
@@ -95,13 +103,19 @@ export function transferSuccessMessage(
   const moved = Number.isFinite(units) && units! > 0 ? units! : row.onHand;
 
   if (action === 'markdown') {
-    return `${row.name}: ${formatCurrency(level.regularRetailPrice ?? level.retailPrice ?? 0)} → ${formatCurrency(level.retailPrice ?? 0)} (30% off)`;
+    const pct = level.markdownPct ?? (level.regularRetailPrice && level.retailPrice
+      ? Math.round(((level.regularRetailPrice - level.retailPrice) / level.regularRetailPrice) * 100)
+      : 30);
+    return `${row.name}: ${formatCurrency(level.regularRetailPrice ?? level.retailPrice ?? 0)} → ${formatCurrency(level.retailPrice ?? 0)} (${pct}% off)`;
   }
   if (action === 'kitchen_waste') {
     return `${row.name}: ${formatUnits(moved)} ${unitLabel} discarded from kitchen prep.`;
   }
   if (action === 'waste') {
     return `${row.name}: ${formatUnits(moved)} ${unitLabel} discarded from the floor.`;
+  }
+  if (action === 'sale') {
+    return `${row.name}: sold ${formatUnits(moved)} ${unitLabel} · floor now ${formatUnits(level.onHand)} ${unitLabel}.`;
   }
   return `${row.name}: ${formatUnits(moved)} ${unitLabel} sent to kitchen · floor now ${formatUnits(level.onHand)} ${unitLabel}.`;
 }

@@ -130,6 +130,8 @@ export async function POST(req: NextRequest) {
         yieldDivisor,
         retailPrice: currentRetailPrice,
         retailUnit,
+        staffId: actor.id,
+        targetMargin,
       });
     } catch (error) {
       stock = {

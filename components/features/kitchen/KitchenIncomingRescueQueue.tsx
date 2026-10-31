@@ -106,9 +106,9 @@ export function KitchenIncomingRescueQueue({
             <div className="flex items-start gap-2">
               <Package className="mt-0.5 h-4 w-4 text-slate-500" />
               <div>
-                <p className="text-sm font-bold text-slate-200">Kitchen_Prep is empty</p>
+                <p className="text-sm font-bold text-slate-200">Production prep is currently clear</p>
                 <p className="text-[11px] text-slate-500">
-                  Rescue short-dated product from the floor to feed Recipe Fusion.
+                  Transfer surplus or short-dated product from the retail floor or main inventory to supply production recipes.
                 </p>
               </div>
             </div>
@@ -133,10 +133,10 @@ export function KitchenIncomingRescueQueue({
       >
         <CardHeader className="gap-1 pb-2 pt-3">
           <CardTitle className="text-sm font-extrabold tracking-tight text-slate-100">
-            Incoming rescue queue
+            Incoming production prep inventory
           </CardTitle>
           <CardDescription className="text-[11px]">
-            Kitchen_Prep · {levels.length} ingredient{levels.length === 1 ? '' : 's'} ready to cook
+            Production Prep · {levels.length} item{levels.length === 1 ? '' : 's'} on hand for recipes and batch production
           </CardDescription>
         </CardHeader>
         <CardBody className="pt-0 pb-3">

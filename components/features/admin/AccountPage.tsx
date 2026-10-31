@@ -3,7 +3,6 @@
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { ArrowRight, ChefHat, Package, Store } from 'lucide-react';
-import { AppShell } from '@/components/layout/AppShell';
 import { PageIntro } from '@/components/layout/PageIntro';
 import { UserManagementTable } from '@/components/features/admin/UserManagementTable';
 import { useRole } from '@/components/auth/RoleProvider';
@@ -204,6 +203,20 @@ export function SettingsForm({ settings }: { settings: PlatformSettings | null }
             </select>
           </label>
           <label className="text-xs font-bold text-zinc-400">
+            Kitchen labor rate ($/hr)
+            <input
+              required
+              type="number"
+              min="0.01"
+              step="0.01"
+              value={draft.defaultLaborRatePerHour}
+              onChange={(event) =>
+                update({ defaultLaborRatePerHour: Number(event.target.value) })
+              }
+              className={FIELD}
+            />
+          </label>
+          <label className="text-xs font-bold text-zinc-400">
             Scrap bucket (L)
             <input
               required
@@ -344,7 +357,6 @@ export function AccountPage({
   const title = !activeUser && loading ? 'Account' : manager ? 'Admin' : 'Profile';
 
   return (
-    <AppShell>
       <main className="mx-auto w-full max-w-7xl px-3 py-5 pb-28 sm:px-6 sm:py-8">
         <PageIntro
           step={showControls ? 'Store dashboard' : 'Account'}
@@ -372,6 +384,5 @@ export function AccountPage({
           </>
         ) : null}
       </main>
-    </AppShell>
   );
 }
