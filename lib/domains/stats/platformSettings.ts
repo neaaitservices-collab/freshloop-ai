@@ -1,5 +1,9 @@
 import { prisma } from '@/lib/domains/inventory/ledger';
 import { invalidateStoreStats } from '@/lib/domains/stats/storeStats';
+import {
+  findLatestStoreSetting,
+  storeSettingSafeSelect,
+} from '@/lib/domains/stats/storeSettingSelect';
 
 export interface PlatformSettings {
   storeName: string;
@@ -79,7 +83,7 @@ export function parsePlatformSettings(body: unknown): { settings: PlatformSettin
 }
 
 export async function getPlatformSettings(): Promise<PlatformSettings> {
-  const row = await prisma.storeSetting.findFirst({ orderBy: { updatedAt: 'desc' } });
+  const row = await findLatestStoreSetting();
   if (!row) return { ...PLATFORM_DEFAULTS };
   return {
     storeName: row.storeName,
@@ -94,7 +98,7 @@ export async function getPlatformSettings(): Promise<PlatformSettings> {
 }
 
 export async function savePlatformSettings(settings: PlatformSettings): Promise<PlatformSettings> {
-  const existing = await prisma.storeSetting.findFirst({ orderBy: { updatedAt: 'desc' } });
+  const existing = await findLatestStoreSetting();
   const data = {
     storeName: settings.storeName,
     targetWastePct: settings.targetWastePct,
@@ -106,8 +110,12 @@ export async function savePlatformSettings(settings: PlatformSettings): Promise<
     costGuardrailVariancePct: settings.costGuardrailVariancePct,
   };
   const saved = existing
-    ? await prisma.storeSetting.update({ where: { id: existing.id }, data })
-    : await prisma.storeSetting.create({ data });
+    ? await prisma.storeSetting.update({
+        where: { id: existing.id },
+        data,
+        select: storeSettingSafeSelect,
+      })
+    : await prisma.storeSetting.create({ data, select: storeSettingSafeSelect });
   invalidateStoreStats();
   return {
     storeName: saved.storeName,

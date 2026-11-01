@@ -10,6 +10,7 @@ import {
 import { invalidateInventoryCaches } from '@/lib/domains/inventory/inventoryCache';
 import { consumeLotsFifo, LotAllocationError } from '@/lib/domains/inventory/lots';
 import { computeWastePct } from '@/lib/domains/stats/wasteKpi';
+import { findLatestStoreSetting } from '@/lib/domains/stats/storeSettingSelect';
 
 // ============================================================================
 // Prisma Singleton Instance (Strict Typed)
@@ -555,7 +556,7 @@ export async function calculateRealTimeWastePct(
             : Prisma.empty;
 
     const [storeSetting, wasteAggRows, salesTransactions] = await Promise.all([
-      prisma.storeSetting.findFirst(),
+      findLatestStoreSetting(),
       prisma.$queryRaw<Array<{ discardValue: number; bucketUnits: number }>>(Prisma.sql`
         SELECT
           COALESCE(SUM(

@@ -9,6 +9,7 @@ import {
   type FallbackRecipeCatalogEntry,
 } from '@/lib/domains/manufacturing/fallbackRecipes';
 import type { KitchenRecipeDefinition } from '@/lib/domains/manufacturing/types';
+import { findLatestStoreSetting } from '@/lib/domains/stats/storeSettingSelect';
 
 const LOC_KITCHEN_PREP = InventoryLocation.Kitchen_Prep;
 
@@ -105,7 +106,7 @@ export async function buildManufacturingRecipeCatalog(): Promise<
 
       let defaultLaborRate = 17.6;
       try {
-        const settings = await prisma.storeSetting.findFirst();
+        const settings = await findLatestStoreSetting();
         if (settings?.defaultLaborRatePerHour) {
           defaultLaborRate = settings.defaultLaborRatePerHour;
         }

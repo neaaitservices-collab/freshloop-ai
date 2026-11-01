@@ -10,6 +10,7 @@ import { generateContentWithFallback, parseModelJson, tryParseModelJson } from '
 import { authErrorResponse } from '@/lib/auth/http';
 import { requireReceivingStaff } from '@/lib/auth/guardRoute';
 import { requireSessionUser } from '@/lib/auth/session';
+import { findLatestStoreSetting } from '@/lib/domains/stats/storeSettingSelect';
 
 // ============================================================================
 // Types & Interfaces for Phase 3 Invoice OCR + Cost Guardrail (>20% Variance)
@@ -461,7 +462,7 @@ export async function POST(req: NextRequest) {
     // Load guardrail threshold from StoreSetting (defaults to 20%)
     let guardrailThresholdPct = 20.0;
     try {
-      const setting = await prisma.storeSetting.findFirst();
+      const setting = await findLatestStoreSetting();
       if (setting?.costGuardrailVariancePct) {
         guardrailThresholdPct = setting.costGuardrailVariancePct;
       }
