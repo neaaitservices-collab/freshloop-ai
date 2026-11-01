@@ -45,7 +45,7 @@ export async function POST(req: NextRequest) {
 
     if (itemsToProcess.length === 0 && itemIds && Array.isArray(itemIds) && itemIds.length > 0) {
       const [floor, prep] = await Promise.all([
-        getFloorPullFusionItems(pullThreshold),
+        getFloorPullFusionItems(pullThreshold, { productIds: itemIds }),
         getKitchenPrepFusionItems(),
       ]);
       const byId = new Map<string, InventoryItem>();
