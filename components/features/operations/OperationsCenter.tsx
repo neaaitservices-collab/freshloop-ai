@@ -268,40 +268,6 @@ export default function OperationsCenter() {
     [ledgerRows]
   );
 
-  const handleBatchRescueFlagged = async () => {
-    if (flaggedRetailItems.length === 0 || batchRescueBusy) return;
-    setBatchRescueBusy(true);
-    try {
-      let rescuedCount = 0;
-      await Promise.all(
-        flaggedRetailItems.map(async (item) => {
-          const qty = Math.min(
-            item.retailFloorQty,
-            Math.max(1, Math.round(item.retailFloorQty * 0.25))
-          );
-          if (qty <= 0) return;
-          const res = await executeInventoryMove({
-            productId: item.productId,
-            action: 'rescue',
-            quantity: qty,
-            staffId: activeUser?.id,
-          });
-          if (res.success) rescuedCount += 1;
-        })
-      );
-      notifyInventoryUpdated();
-      void fetchDashboardData();
-      setTransferToast(
-        rescuedCount > 0
-          ? `Batch rescue complete: ${rescuedCount} short-dated lot(s) (≤${pullSensitivityDays}d) sent to Kitchen_Prep.`
-          : 'Could not rescue the selected lots.'
-      );
-      setTimeout(() => setTransferToast(null), 4000);
-    } finally {
-      setBatchRescueBusy(false);
-    }
-  };
-
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans selection:bg-emerald-500 selection:text-slate-950 flex flex-col">
 
@@ -503,8 +469,8 @@ export default function OperationsCenter() {
               onPullDaysChange={setPullSensitivityDays}
               flaggedSkuCount={flaggedRetailItems.length}
               atRiskRetailValue={atRiskRetailValue}
-              batchRescueBusy={batchRescueBusy}
-              onBatchRescue={() => void handleBatchRescueFlagged()}
+              batchRescueBusy={false}
+              onBatchRescue={() => {}}
             />
           </div>
         </div>
