@@ -198,7 +198,10 @@ export async function getCurrentStock(
  *   1. Positive manufacturing/rescue inflows with a positive `unitCostAtTime`.
  *   2. The product's baseline `standardCost` in the `Product` catalog.
  */
-export async function getMovingAverageCost(productId: string): Promise<number> {
+export async function getMovingAverageCost(
+  productId: string,
+  client: Prisma.TransactionClient | PrismaClient = prisma
+): Promise<number> {
   if (!productId || typeof productId !== 'string' || !productId.trim()) {
     throw new InventoryLedgerError(
       'A valid productId is required to calculate moving average cost.',
@@ -211,7 +214,7 @@ export async function getMovingAverageCost(productId: string): Promise<number> {
 
   try {
     // Fetch historical reception logs for this product
-    const receiveLogs = await prisma.inventoryTransaction.findMany({
+    const receiveLogs = await client.inventoryTransaction.findMany({
       where: {
         productId: normalizedProductId,
         transactionType: TransactionType.Receive,
@@ -244,7 +247,7 @@ export async function getMovingAverageCost(productId: string): Promise<number> {
     }
 
     // Secondary check: positive inflows from Kitchen Manufacturing / Rescue batches
-    const positiveInflows = await prisma.inventoryTransaction.findMany({
+    const positiveInflows = await client.inventoryTransaction.findMany({
       where: {
         productId: normalizedProductId,
         qtyChange: { gt: 0 },
@@ -269,7 +272,7 @@ export async function getMovingAverageCost(productId: string): Promise<number> {
     }
 
     // Final fallback: Product catalog standardCost
-    const product = await prisma.product.findUnique({
+    const product = await client.product.findUnique({
       where: { id: normalizedProductId },
       select: { id: true, standardCost: true },
     });
@@ -403,7 +406,7 @@ export async function executeBundleSale(
         }
       }
 
-      const unitCostAtTime = await getMovingAverageCost(bundleItem.productId);
+      const unitCostAtTime = await getMovingAverageCost(bundleItem.productId, client);
       const lineCogs = Number((qtyToDeduct * unitCostAtTime).toFixed(4));
 
       componentPlans.push({

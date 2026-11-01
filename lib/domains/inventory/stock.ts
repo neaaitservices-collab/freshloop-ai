@@ -26,7 +26,7 @@ export interface StockLevel {
   unitType: string;
   casePackSize: number;
   unitCost: number;
-  /** Units on `Retail_Floor` (what shoppers see on shelf). */
+  /** Shopper-facing units: `Retail_Floor` plus `Deli_Grab_N_Go`. */
   onHand: number;
   kitchenPrepQty: number;
   parUnits: number;
@@ -89,6 +89,33 @@ export function matchProduct<T extends { name: string }>(itemName: string, produ
 
 function packSizeOf(value: number | null | undefined): number {
   return value && value > 0 ? value : 1;
+}
+
+/**
+ * How a case-count override moves shopper-facing stock.
+ * Adds land on the retail floor. Shrink comes off the floor first, then deli.
+ * Kitchen prep is left alone.
+ */
+export function planShelfAdjustment(input: {
+  targetUnits: number;
+  floorOnHand: number;
+  deliOnHand: number;
+}): { floorDelta: number; deliDelta: number } {
+  const floor = Number(input.floorOnHand.toFixed(4));
+  const deli = Number(input.deliOnHand.toFixed(4));
+  const target = Number(input.targetUnits.toFixed(4));
+  const delta = Number((target - (floor + deli)).toFixed(4));
+  if (Math.abs(delta) < 0.0001) return { floorDelta: 0, deliDelta: 0 };
+  if (delta > 0) return { floorDelta: delta, deliDelta: 0 };
+
+  let remaining = Math.abs(delta);
+  const floorTake = Number(Math.min(Math.max(0, floor), remaining).toFixed(4));
+  remaining = Number((remaining - floorTake).toFixed(4));
+  const deliTake = Number(Math.min(Math.max(0, deli), remaining).toFixed(4));
+  return {
+    floorDelta: Number((-floorTake).toFixed(4)),
+    deliDelta: Number((-deliTake).toFixed(4)),
+  };
 }
 
 export function buildStockLevel(input: {
@@ -251,10 +278,18 @@ export function getStockLevels(): Promise<StockLevel[]> {
   return rememberLedgerRead(stockCache, 'levels', STOCK_CACHE_MS, loadStockLevels);
 }
 
+async function readShelfOnHand(productId: string): Promise<{ floor: number; deli: number }> {
+  const [floor, deli] = await Promise.all([
+    getCurrentStock(productId, InventoryLocation.Retail_Floor),
+    getCurrentStock(productId, InventoryLocation.Deli_Grab_N_Go),
+  ]);
+  return { floor, deli };
+}
+
 async function readStockLevel(productId: string): Promise<StockLevel> {
   const product = await prisma.product.findUniqueOrThrow({ where: { id: productId } });
-  const [onHand, kitchenPrepQty, prices, latest] = await Promise.all([
-    getCurrentStock(productId, InventoryLocation.Retail_Floor),
+  const [shelf, kitchenPrepQty, prices, latest] = await Promise.all([
+    readShelfOnHand(productId),
     getCurrentStock(productId, InventoryLocation.Kitchen_Prep),
     readProductRetailPrices(productId),
     prisma.inventoryTransaction.findFirst({
@@ -270,7 +305,7 @@ async function readStockLevel(productId: string): Promise<StockLevel> {
     unitType: product.unitType,
     casePackSize: product.casePackSize,
     unitCost: product.standardCost,
-    onHand,
+    onHand: shelf.floor + shelf.deli,
     kitchenPrepQty,
     parCases: product.parCases,
     retailPrice: prices.retailPrice ?? product.retailPrice,
@@ -335,6 +370,41 @@ export async function applyRetailMarkdown(
   });
   invalidateInventoryCaches();
   return { level: await readStockLevel(productId) };
+}
+
+async function applyLocationDelta(
+  tx: LotTx,
+  input: {
+    productId: string;
+    location: InventoryLocation;
+    delta: number;
+    staffId: string;
+    unitCost: number;
+    referenceId: string;
+  }
+) {
+  if (Math.abs(input.delta) < 0.0001) return;
+  const shrink = input.delta < 0;
+  const created = await tx.inventoryTransaction.create({
+    data: {
+      productId: input.productId,
+      staffId: input.staffId,
+      qtyChange: input.delta,
+      transactionType: shrink ? TransactionType.Waste : TransactionType.Receive,
+      fromLocation: shrink ? input.location : InventoryLocation.External_Vendor,
+      toLocation: shrink ? InventoryLocation.Waste_Bin : input.location,
+      unitCostAtTime: input.unitCost,
+      referenceId: input.referenceId,
+      notes: shrink ? 'Admin stock override: shrink' : 'Admin stock override: add cases',
+    },
+  });
+  await alignLotsToLedger(tx, {
+    productId: input.productId,
+    location: input.location,
+    unitCost: input.unitCost,
+    receiveReferenceId: input.referenceId,
+    receiveTransactionId: created.id,
+  });
 }
 
 export async function setStockCases(productId: string, cases: number, staffId: string): Promise<StockLevel> {
