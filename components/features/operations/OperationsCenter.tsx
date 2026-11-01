@@ -13,16 +13,21 @@ import { InvoiceUploadModal } from '@/components/features/invoices/InvoiceUpload
 import { VoiceLoggerModal, ConfirmedVoiceCommitResult } from '@/components/features/voice/VoiceLoggerModal';
 import { RecipeProductionModal, ProductionBatchExecutedSummary } from '@/components/features/recipes/RecipeProductionModal';
 import { VolumetricScrapForm } from '@/components/features/operations/VolumetricScrapForm';
+import { HumanPullSettingCard } from '@/components/features/operations/HumanPullSettingCard';
 import { DeliLabelModal } from '@/components/features/recipes/DeliLabelModal';
 import { RecipeFusionResult, DepartmentType } from '@/lib/types';
 import type { WasteKpiReport } from '@/lib/domains/inventory/ledger';
+import {
+  FRESHLOOP_SETTINGS_UPDATED,
+  readSettingsUpdatedEvent,
+} from '@/lib/domains/stats/settingsEvents';
+import type { PlatformSettings } from '@/lib/domains/stats/platformSettings';
 import { OperationsLiveTransfers } from '@/components/features/operations/OperationsLiveTransfers';
 import { OperationsWasteKpiPanel } from '@/components/features/operations/OperationsWasteKpiPanel';
 import { INITIAL_INVENTORY_ITEMS } from '@/lib/legacy/mockData';
 import { mapDbRecipeToFusionResult } from '@/lib/domains/manufacturing/mapDbRecipeToFusion';
 import {
   Activity,
-  AlertOctagon,
   AlertTriangle,
   ArrowRight,
   ArrowRightLeft,
@@ -42,8 +47,6 @@ import {
   Scale,
   Search,
   ShieldAlert,
-  ShieldCheck,
-  Sliders,
   Sparkles,
   Store,
   Trash2,
@@ -147,15 +150,49 @@ export default function OperationsCenter() {
     }
   };
 
+  const syncStoreSettings = useCallback(async () => {
+    try {
+      const response = await fetch('/api/admin/settings', { cache: 'no-store' });
+      const json = (await response.json()) as { success?: boolean; settings?: PlatformSettings };
+      if (!response.ok || !json.success || !json.settings) return;
+      const days = json.settings.pullSensitivityDays;
+      if (days === 2 || days === 3 || days === 4) {
+        setPullSensitivityDays(days);
+      }
+      setWasteKpiReport((prev) =>
+        prev
+          ? { ...prev, targetWastePct: json.settings!.targetWastePct }
+          : prev
+      );
+    } catch {
+      /* keep current slider */
+    }
+  }, []);
+
   useEffect(() => {
-    fetchDashboardData();
+    void fetchDashboardData();
+    void syncStoreSettings();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pullSensitivityDays]);
 
   useEffect(() => {
-    const onUpdate = () => void fetchDashboardData();
-    window.addEventListener('freshloop-inventory-updated', onUpdate);
-    return () => window.removeEventListener('freshloop-inventory-updated', onUpdate);
+    const onInventory = () => void fetchDashboardData();
+    const onSettings = (event: Event) => {
+      const saved = readSettingsUpdatedEvent(event);
+      if (saved) {
+        setWasteKpiReport((prev) =>
+          prev ? { ...prev, targetWastePct: saved.targetWastePct } : prev
+        );
+      }
+      void fetchDashboardData();
+      void syncStoreSettings();
+    };
+    window.addEventListener('freshloop-inventory-updated', onInventory);
+    window.addEventListener(FRESHLOOP_SETTINGS_UPDATED, onSettings);
+    return () => {
+      window.removeEventListener('freshloop-inventory-updated', onInventory);
+      window.removeEventListener(FRESHLOOP_SETTINGS_UPDATED, onSettings);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pullSensitivityDays]);
 
@@ -226,32 +263,6 @@ export default function OperationsCenter() {
       ),
     [ledgerRows]
   );
-
-  const pullSensitivityOptions: Array<{
-    days: 2 | 3 | 4;
-    title: string;
-    subtitle: string;
-    badge: string;
-  }> = [
-    {
-      days: 2,
-      title: '2 Días — Retiro Estricto',
-      subtitle: 'Rotación ultra-fresca para bayas, panadería artesanal y lácteos críticos.',
-      badge: 'Alta Prioridad',
-    },
-    {
-      days: 3,
-      title: '3 Días — Estándar Operativo',
-      subtitle: 'Balance óptimo para enviar insumos a Kitchen_Prep antes de perder firmeza.',
-      badge: 'Recomendado',
-    },
-    {
-      days: 4,
-      title: '4 Días — Alerta Temprana',
-      subtitle: 'Sensibilidad preventiva para alto volumen de frutas climatéricas y paquetes POS.',
-      badge: 'Preventivo',
-    },
-  ];
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans selection:bg-emerald-500 selection:text-slate-950 flex flex-col">
@@ -342,7 +353,7 @@ export default function OperationsCenter() {
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
           {/* 1. SEMÁFORO KPI DE MERMA (Neumorphic / Glassmorphic Traffic Light Card) */}
           <div
-            className={`lg:col-span-5 relative overflow-hidden rounded-3xl p-6 transition-all duration-500 backdrop-blur-xl border ${
+            className={`lg:col-span-8 relative overflow-hidden rounded-3xl p-6 transition-all duration-500 backdrop-blur-xl border ${
               isWasteExceedingTarget
                 ? 'bg-gradient-to-br from-rose-950/75 via-slate-900/90 to-slate-950 border-rose-500/70 shadow-[0_0_40px_-5px_rgba(244,63,94,0.45)]'
                 : 'bg-gradient-to-br from-emerald-950/60 via-slate-900/90 to-slate-950 border-emerald-500/50 shadow-[0_0_35px_-8px_rgba(16,185,129,0.35)]'
@@ -378,7 +389,7 @@ export default function OperationsCenter() {
                         ? 'bg-emerald-400 shadow-[0_0_14px_3px_rgba(52,211,153,0.9)] scale-110'
                         : 'bg-emerald-950/50 border border-emerald-900/40 opacity-30'
                     }`}
-                    title="Bajo Meta (< 2.5%)"
+                    title={`Below target (≤ ${(wasteKpi?.targetWastePct ?? 2.5).toFixed(1)}%)`}
                   />
                   {/* Red Blinking Lamp */}
                   <div
@@ -387,7 +398,7 @@ export default function OperationsCenter() {
                         ? 'bg-rose-500 shadow-[0_0_16px_4px_rgba(244,63,94,0.95)] animate-ping'
                         : 'bg-rose-950/50 border border-rose-900/40 opacity-30'
                     }`}
-                    title="Alerta Crítica (> 2.5%)"
+                    title={`Critical alert (> ${(wasteKpi?.targetWastePct ?? 2.5).toFixed(1)}%)`}
                   />
                   <span
                     className={`text-[11px] font-black uppercase tracking-wider ml-1 ${
@@ -448,146 +459,15 @@ export default function OperationsCenter() {
             </div>
           </div>
 
-          {/* 2. SLIDER DE RETIRO HUMANO (2, 3 y 4 Días de Sensibilidad) */}
-          <div className="lg:col-span-7 rounded-3xl bg-gradient-to-br from-slate-900/90 via-slate-900/60 to-slate-950 border border-slate-800/90 p-6 shadow-2xl backdrop-blur-xl flex flex-col justify-between space-y-5">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div className="flex items-center gap-3">
-                <div className="p-3 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 shadow-inner">
-                  <Sliders className="w-5 h-5" />
-                </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h2 className="text-lg sm:text-xl font-black text-white">
-                      Slider de Retiro Humano
-                    </h2>
-                    <span className="text-[10px] font-extrabold uppercase px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
-                      Sensibilidad de Expiración
-                    </span>
-                  </div>
-                  <p className="text-xs text-slate-400 mt-0.5">
-                    Ajusta el umbral de días restantes (2, 3 o 4 días) para marcar lotes envejecidos en{' '}
-                    <code className="text-emerald-300">Retail_Floor</code> y transferirlos a{' '}
-                    <code className="text-amber-300">Kitchen_Prep</code>.
-                  </p>
-                </div>
-              </div>
-
-              {/* Dynamic Flagged Counter */}
-              <div className="flex items-center gap-2.5 px-4 py-2 rounded-2xl bg-amber-950/60 border border-amber-500/40 text-amber-200 shrink-0">
-                <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
-                <div className="text-xs">
-                  <span className="font-black text-amber-300 text-sm">
-                    {flaggedRetailItems.length} productos
-                  </span>{' '}
-                  <span className="text-amber-200/80">en ventana ≤{pullSensitivityDays}d</span>
-                  <span className="block text-[10px] text-amber-400/90 font-mono">
-                    Valor en riesgo: ${atRiskRetailValue.toFixed(2)}
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* Interactive Range Track (2 - 3 - 4 Days) */}
-            <div className="px-2 pt-2 space-y-3">
-              <div className="flex items-center justify-between text-xs font-bold">
-                <span className="text-slate-400 flex items-center gap-1.5">
-                  <Clock className="w-4 h-4 text-emerald-400" />
-                  Ventana Activa de Retiro Preventivo:
-                </span>
-                <span className="px-3.5 py-1 rounded-xl bg-emerald-500/20 border border-emerald-400/50 text-emerald-300 font-black text-sm">
-                  ≤ {pullSensitivityDays} Días para Expirar
-                </span>
-              </div>
-
-              <input
-                type="range"
-                min={2}
-                max={4}
-                step={1}
-                value={pullSensitivityDays}
-                onChange={(e) =>
-                  setPullSensitivityDays(
-                    Number(e.target.value) as 2 | 3 | 4
-                  )
-                }
-                aria-label="Sensibilidad de retiro humano en días"
-                className="w-full h-3 bg-slate-800 rounded-full appearance-none cursor-pointer accent-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
-              />
-
-              <div className="flex justify-between text-[11px] font-bold text-slate-500 px-1">
-                <span className={pullSensitivityDays === 2 ? 'text-emerald-400' : ''}>
-                  2 Días (Estricto)
-                </span>
-                <span className={pullSensitivityDays === 3 ? 'text-emerald-400' : ''}>
-                  3 Días (Estándar)
-                </span>
-                <span className={pullSensitivityDays === 4 ? 'text-emerald-400' : ''}>
-                  4 Días (Extendida)
-                </span>
-              </div>
-            </div>
-
-            {/* 3 Interactive Cards for 2, 3, and 4 Days */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              {pullSensitivityOptions.map((option) => {
-                const isSelected = pullSensitivityDays === option.days;
-                const countForOption = ledgerRows.filter(
-                  (r) => r.retailFloorQty > 0 && r.daysRemaining <= option.days
-                ).length;
-
-                return (
-                  <button
-                    key={option.days}
-                    type="button"
-                    onClick={() => setPullSensitivityDays(option.days)}
-                    className={`group text-left p-4 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between ${
-                      isSelected
-                        ? 'bg-emerald-950/60 border-emerald-400/70 shadow-[0_0_25px_-5px_rgba(16,185,129,0.35)] scale-[1.01]'
-                        : 'bg-slate-950/60 border-slate-800/90 hover:border-slate-700 text-slate-400'
-                    }`}
-                  >
-                    <div className="space-y-1.5">
-                      <div className="flex items-center justify-between gap-2">
-                        <span
-                          className={`text-xs font-black ${
-                            isSelected ? 'text-emerald-300' : 'text-slate-200'
-                          }`}
-                        >
-                          {option.title}
-                        </span>
-                        <span
-                          className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                            isSelected
-                              ? 'bg-emerald-400 text-slate-950'
-                              : 'bg-slate-800 text-slate-400'
-                          }`}
-                        >
-                          {countForOption} ítems
-                        </span>
-                      </div>
-                      <p className="text-[11px] text-slate-400 leading-relaxed">
-                        {option.subtitle}
-                      </p>
-                    </div>
-
-                    <div className="mt-3 pt-2 border-t border-slate-800/80 flex items-center justify-between text-[10px] font-bold">
-                      <span
-                        className={
-                          isSelected ? 'text-emerald-400' : 'text-slate-500'
-                        }
-                      >
-                        {option.badge}
-                      </span>
-                      {isSelected && (
-                        <span className="text-emerald-300 flex items-center gap-1">
-                          Activo <CheckCircle2 className="w-3.5 h-3.5" />
-                        </span>
-                      )}
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
+          <div className="lg:col-span-4">
+            <HumanPullSettingCard
+              pullDays={pullSensitivityDays}
+              onPullDaysChange={setPullSensitivityDays}
+              flaggedSkuCount={flaggedRetailItems.length}
+              atRiskRetailValue={atRiskRetailValue}
+              batchRescueBusy={false}
+              onBatchRescue={() => {}}
+            />
           </div>
         </div>
 

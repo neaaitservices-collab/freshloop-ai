@@ -9,6 +9,7 @@ import { useRole } from '@/components/auth/RoleProvider';
 import { positionForStaff } from '@/lib/utils/positions';
 import { isManager } from '@/lib/utils/roles';
 import type { PlatformSettings } from '@/lib/domains/stats/platformSettings';
+import { dispatchSettingsUpdated } from '@/lib/domains/stats/settingsEvents';
 
 const FIELD =
   'mt-1 w-full min-h-12 rounded-xl border border-slate-700 bg-slate-950 px-3 py-3 text-sm text-slate-100';
@@ -144,6 +145,7 @@ export function SettingsForm({ settings }: { settings: PlatformSettings | null }
       }
       setDraft(json.settings as PlatformSettings);
       setMessage('Store settings saved.');
+      dispatchSettingsUpdated(json.settings as PlatformSettings);
     } catch {
       setError('Settings could not be saved.');
     } finally {

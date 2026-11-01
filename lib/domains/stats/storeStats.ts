@@ -95,6 +95,7 @@ async function loadStoreStats(): Promise<StoreStats> {
     prisma.storeSetting.findFirst({
       select: {
         targetWastePct: true,
+        pullSensitivityDays: true,
         scrapBucketVolumeL: true,
         estimatedWeightPerLiterKg: true,
         defaultScrapCostPerKg: true,
@@ -120,7 +121,13 @@ async function loadStoreStats(): Promise<StoreStats> {
   let expiringWithin48h = 0;
   let pulls = 0;
   let lowCount = 0;
-  const pullHorizon = new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000);
+  const pullSensitivityDays =
+    setting?.pullSensitivityDays === 2 ||
+    setting?.pullSensitivityDays === 3 ||
+    setting?.pullSensitivityDays === 4
+      ? setting.pullSensitivityDays
+      : 3;
+  const pullHorizon = new Date(now.getTime() + pullSensitivityDays * 24 * 60 * 60 * 1000);
   const alerts = new Map<string, DepartmentAlert>();
   for (const department of Object.keys(DEPARTMENT_LABELS)) {
     alerts.set(department, { department: DEPARTMENT_LABELS[department], low: 0, expiring: 0 });
@@ -223,8 +230,9 @@ async function loadStoreStats(): Promise<StoreStats> {
     const price = typeof retail === 'number' && retail > 0 ? retail : sale.unitCostAtTime / (1 - margin);
     grossSales += unitsSold * price;
   }
-  const totalWasteValue = totalDiscardValue + volumetricScrapValue;
-  const wastePct = computeWastePct(totalWasteValue, grossSales);
+  const totalWasteValue = money(totalDiscardValue + volumetricScrapValue);
+  const grossSalesRevenue = money(grossSales);
+  const wastePct = computeWastePct(totalWasteValue, grossSalesRevenue);
 
   return {
     rescuedValue: money(rescuedValue),
@@ -232,7 +240,10 @@ async function loadStoreStats(): Promise<StoreStats> {
     inventoryValue: money(inventoryValue),
     wasteReductionPct,
     wastePct,
+    totalWasteValue,
+    grossSalesRevenue,
     targetWastePct: setting?.targetWastePct ?? 2.5,
+    pullSensitivityDays,
     pulls,
     lowCount,
     rescueVsDiscard: [

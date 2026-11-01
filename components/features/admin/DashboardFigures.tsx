@@ -7,17 +7,23 @@ import { AdminStats } from '@/components/features/admin/AdminStats';
 import { DepartmentAlertsChart } from '@/components/features/admin/DepartmentAlertsChart';
 import { Card, CardBody } from '@/components/ui/Card';
 import type { StoreStats } from '@/lib/domains/stats/storeStatsTypes';
+import { WasteRateCard } from '@/components/features/admin/WasteRateCard';
 import { cn } from '@/lib/utils/cn';
+import {
+  FRESHLOOP_SETTINGS_UPDATED,
+} from '@/lib/domains/stats/settingsEvents';
 
 export function DashboardFigures({ stats: initialStats }: { stats: StoreStats | null }) {
   const [stats, setStats] = useState<StoreStats | null>(initialStats);
+  const [statsRefreshing, setStatsRefreshing] = useState(false);
   const [alertsOpen, setAlertsOpen] = useState(false);
 
   useEffect(() => {
     setStats(initialStats);
   }, [initialStats]);
 
-  const refreshStats = useCallback(async () => {
+  const refreshStats = useCallback(async (opts?: { silent?: boolean }) => {
+    if (!opts?.silent) setStatsRefreshing(true);
     try {
       const res = await fetch('/api/admin/stats', { cache: 'no-store' });
       const json = await res.json();
@@ -26,18 +32,27 @@ export function DashboardFigures({ stats: initialStats }: { stats: StoreStats | 
       }
     } catch {
       /* keep last snapshot */
+    } finally {
+      if (!opts?.silent) setStatsRefreshing(false);
     }
   }, []);
 
   useEffect(() => {
-    window.addEventListener('freshloop-inventory-updated', refreshStats);
-    return () => window.removeEventListener('freshloop-inventory-updated', refreshStats);
+    void refreshStats({ silent: true });
   }, [refreshStats]);
 
-  const wastePct = stats?.wastePct ?? null;
-  const targetWastePct = stats?.targetWastePct ?? 2.5;
-  const wasteLabel = wastePct === null ? '—' : `${wastePct.toFixed(2)}%`;
-  const healthy = wastePct === null || wastePct <= targetWastePct;
+  useEffect(() => {
+    const onInventory = () => void refreshStats();
+    const onSettings = () => {
+      void refreshStats();
+    };
+    window.addEventListener('freshloop-inventory-updated', onInventory);
+    window.addEventListener(FRESHLOOP_SETTINGS_UPDATED, onSettings);
+    return () => {
+      window.removeEventListener('freshloop-inventory-updated', onInventory);
+      window.removeEventListener(FRESHLOOP_SETTINGS_UPDATED, onSettings);
+    };
+  }, [refreshStats]);
 
   return (
     <section
@@ -47,31 +62,7 @@ export function DashboardFigures({ stats: initialStats }: { stats: StoreStats | 
       <AdminStats stats={stats} />
 
       <div className="grid gap-2.5 sm:grid-cols-2">
-        <Card
-          className={cn(
-            healthy
-              ? 'border-emerald-800/40 bg-emerald-950/15'
-              : 'border-rose-900/50 bg-rose-950/20'
-          )}
-        >
-          <CardBody className="flex flex-wrap items-center justify-between gap-2 py-3">
-            <div>
-              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Waste KPI</p>
-              <p
-                className={cn(
-                  'font-mono text-2xl font-black',
-                  healthy ? 'text-emerald-400/90' : 'text-rose-400'
-                )}
-              >
-                {wasteLabel}
-              </p>
-              <p className="text-[11px] text-slate-500">
-                Target {targetWastePct.toFixed(1)}%
-                {stats ? ` · ${stats.pulls} pulls (3d window)` : ''}
-              </p>
-            </div>
-          </CardBody>
-        </Card>
+        <WasteRateCard stats={stats} refreshing={statsRefreshing} />
 
         <Link href="/orders" className="block h-full">
           <Card className="h-full transition hover:border-amber-800/40 hover:bg-slate-800/30">

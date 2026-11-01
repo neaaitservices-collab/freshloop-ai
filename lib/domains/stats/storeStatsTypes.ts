@@ -21,7 +21,13 @@ export interface StoreStats {
   inventoryValue: number;
   wasteReductionPct: number | null;
   wastePct: number | null;
+  /** Discard COGS + volumetric scrap $ (ledger numerator). */
+  totalWasteValue: number;
+  /** POS / sale revenue denominator for waste %. */
+  grossSalesRevenue: number;
   targetWastePct: number;
+  /** Store setting: days-to-expiry window used for the pulls count. */
+  pullSensitivityDays: number;
   pulls: number;
   lowCount: number;
   rescueVsDiscard: RescueSlice[];
