@@ -17,6 +17,8 @@ import { DeliLabelModal } from '@/components/features/recipes/DeliLabelModal';
 import { RecipeFusionResult, DepartmentType } from '@/lib/types';
 import type { WasteKpiReport } from '@/lib/domains/inventory/ledger';
 import { OperationsLiveTransfers } from '@/components/features/operations/OperationsLiveTransfers';
+import { OperationsWasteKpiPanel } from '@/components/features/operations/OperationsWasteKpiPanel';
+import { INITIAL_INVENTORY_ITEMS } from '@/lib/legacy/mockData';
 import { mapDbRecipeToFusionResult } from '@/lib/domains/manufacturing/mapDbRecipeToFusion';
 import {
   Activity,
@@ -399,73 +401,11 @@ export default function OperationsCenter() {
                 </div>
               </div>
 
-              {/* Center Row: Big Percentage Readout vs Target_Waste_Pct */}
-              <div className="flex items-baseline justify-between gap-4 py-2">
-                <div>
-                  <div className="flex items-baseline gap-2.5">
-                    <span
-                      className={`text-4xl sm:text-5xl font-black tracking-tight tabular-nums ${
-                        isWasteExceedingTarget
-                          ? 'text-rose-400 drop-shadow-[0_0_15px_rgba(244,63,94,0.6)] animate-pulse'
-                          : 'text-emerald-400 drop-shadow-[0_0_12px_rgba(52,211,153,0.45)]'
-                      }`}
-                    >
-                      {wastePctDisplay}
-                    </span>
-                    <span className="text-xs font-bold text-slate-400">
-                      / Meta{' '}
-                      <strong className="text-white">
-                        {(wasteKpi?.targetWastePct ?? 2.5).toFixed(1)}%
-                      </strong>
-                    </span>
-                  </div>
-                  <p className="text-xs text-slate-400 mt-1">
-                    {wasteKpi?.wastePct === null || wasteKpi?.wastePct === undefined ? (
-                      <span className="text-slate-400 font-medium">
-                        Ventas brutas insuficientes para calcular % de merma (ledger en vivo).
-                      </span>
-                    ) : isWasteExceedingTarget ? (
-                      <span className="text-rose-300 font-semibold flex items-center gap-1.5">
-                        <AlertOctagon className="w-4 h-4 text-rose-400 shrink-0 animate-bounce" />
-                        ¡Merma supera Target_Waste_Pct por +
-                        {(wasteKpi.wastePct - wasteKpi.targetWastePct).toFixed(2)}%!
-                        Activar rescate de cocina.
-                      </span>
-                    ) : (
-                      <span className="text-emerald-300/90 font-medium flex items-center gap-1.5">
-                        <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
-                        Merma controlada ({(wasteKpi.targetWastePct - wasteKpi.wastePct).toFixed(2)}% de margen seguro).
-                      </span>
-                    )}
-                  </p>
-                </div>
-              </div>
-
-              {/* Progress Gauge Bar */}
-              <div className="space-y-1.5">
-                <div className="h-3 w-full rounded-full bg-slate-950 border border-slate-800 overflow-hidden p-0.5">
-                  <div
-                    className={`h-full rounded-full transition-all duration-500 ${
-                      isWasteExceedingTarget
-                        ? 'bg-gradient-to-r from-amber-500 via-rose-500 to-red-600 animate-pulse'
-                        : 'bg-gradient-to-r from-emerald-500 to-teal-400'
-                    }`}
-                    style={{
-                      width:
-                        wasteKpi?.wastePct != null
-                          ? `${Math.min(100, (wasteKpi.wastePct / (wasteKpi.targetWastePct * 1.6)) * 100)}%`
-                          : '0%',
-                    }}
-                  />
-                </div>
-                <div className="flex justify-between text-[10px] font-mono text-slate-400">
-                  <span>0.0%</span>
-                  <span className="text-amber-400 font-bold">
-                    Umbral Meta: {wasteKpi?.targetWastePct ?? 2.5}%
-                  </span>
-                  <span>4.0%+</span>
-                </div>
-              </div>
+              <OperationsWasteKpiPanel
+                wasteKpi={wasteKpi}
+                wastePctDisplay={wastePctDisplay}
+                isWasteExceedingTarget={isWasteExceedingTarget}
+              />
 
               {/* Formula Breakdown & Quick Volumetric Bucket Simulator */}
               <div className="p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800/90 space-y-2.5 text-xs">

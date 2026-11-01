@@ -1,6 +1,8 @@
 import { InventoryLocation, TransactionType } from '@prisma/client';
 import { getCurrentStock, prisma } from '@/lib/domains/inventory/ledger';
 import { invalidateInventoryCaches } from '@/lib/domains/inventory/inventoryCache';
+import { consumeLotsFifo } from '@/lib/domains/inventory/lots';
+import { multiplyMoney } from '@/lib/utils/money';
 
 export type SaleLocation = 'floor' | 'deli';
 
@@ -55,6 +57,25 @@ export async function recordProductSale(input: {
           ? product.standardCost / (1 - Math.min(0.95, product.targetMargin))
           : 0;
 
+  const tx = await prisma.$transaction(async (db) => {
+    await consumeLotsFifo(db, {
+      productId: product.id,
+      location,
+      qty,
+    });
+    return db.inventoryTransaction.create({
+      data: {
+        productId: product.id,
+        staffId: input.staffId.trim() || 'staff-pos',
+        qtyChange: -Math.abs(qty),
+        transactionType: TransactionType.Sale,
+        fromLocation: location,
+        toLocation: InventoryLocation.Customer_Out,
+        unitCostAtTime: Number(unitPrice.toFixed(4)),
+        referenceId: input.referenceId ?? `SALE-${Date.now()}`,
+        notes: `Retail sale (${qty} × $${unitPrice.toFixed(2)})`,
+      },
+    });
   const tx = await prisma.inventoryTransaction.create({
     data: {
       productId: product.id,
@@ -77,6 +98,7 @@ export async function recordProductSale(input: {
     productName: product.name,
     quantitySold: qty,
     unitPrice: Number(unitPrice.toFixed(4)),
+    grossRevenue: multiplyMoney(unitPrice, qty),
     grossRevenue: Number((qty * unitPrice).toFixed(2)),
     location,
   };
