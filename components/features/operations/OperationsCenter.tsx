@@ -7,7 +7,10 @@ import { stashInvoiceForReceiving } from '@/lib/domains/receiving/receivingBridg
 import type { InvoiceOcrResult } from '@/lib/types';
 import { useRegisterAppVoice } from '@/components/layout/AppVoiceOverrideContext';
 import { useRole } from '@/components/auth/RoleProvider';
-import { notifyInventoryUpdated } from '@/lib/domains/inventory/inventoryMoveClient';
+import {
+  executeInventoryMove,
+  notifyInventoryUpdated,
+} from '@/lib/domains/inventory/inventoryMoveClient';
 import { DepartmentBadge } from '@/components/ui/DepartmentBadge';
 import { InvoiceUploadModal } from '@/components/features/invoices/InvoiceUploadModal';
 import { VoiceLoggerModal, ConfirmedVoiceCommitResult } from '@/components/features/voice/VoiceLoggerModal';
@@ -93,6 +96,7 @@ export default function OperationsCenter() {
     useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(false);
   const [wasteKpiReport, setWasteKpiReport] = useState<WasteKpiReport | null>(null);
+  const [batchRescueBusy, setBatchRescueBusy] = useState(false);
 
   // Modals state
   const [isInvoiceModalOpen, setIsInvoiceModalOpen] = useState<boolean>(false);

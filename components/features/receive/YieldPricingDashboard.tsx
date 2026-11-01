@@ -22,6 +22,7 @@ import { Button } from '@/components/ui/Button';
 import { Card, CardBody } from '@/components/ui/Card';
 import { cn } from '@/lib/utils/cn';
 import { consumeStashedReceivingScan } from '@/lib/domains/receiving/receivingBridge';
+import { readReceivingPrefs, writeReceivingPrefs } from '@/lib/domains/receiving/receivingPreferences';
 import type { ReceivingDispositionRow } from '@/lib/domains/receiving/receivingDisposition';
 
 interface LogsResponse {
@@ -66,6 +67,89 @@ function writeHiddenIds(ids: Set<string>) {
 function toPositiveNumber(raw: string): number {
   const parsed = Number(raw);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+interface LogPricing {
+  packSize: number;
+  yieldDivisor: number;
+  retailUnit: RetailUnit;
+  marginMode: MarginMode;
+  customMarginPercent: number;
+  currentRetailPrice: number;
+}
+
+function resolveLogPricing(log: ReceivingLog, live: (LogPricing & { id: string }) | null): LogPricing {
+  if (live && live.id === log.id) {
+    return {
+      packSize: live.packSize,
+      yieldDivisor: live.yieldDivisor,
+      retailUnit: live.retailUnit,
+      marginMode: live.marginMode,
+      customMarginPercent: live.customMarginPercent,
+      currentRetailPrice: live.currentRetailPrice,
+    };
+  }
+
+  const defaults = suggestPackDefaults(log.itemName);
+  const saved = readReceivingPrefs(log.itemName);
+  const packFromSheet = log.packSize && log.packSize > 0 ? log.packSize : 0;
+  const packSize = packFromSheet || toPositiveNumber(saved?.packSize ?? defaults.packSize) || toPositiveNumber(defaults.packSize);
+  const yieldDivisor = toPositiveNumber(saved?.yieldDivisor ?? defaults.yieldDivisor) || 1;
+  const retailUnit = log.retailUnit ?? saved?.retailUnit ?? defaults.retailUnit;
+  const marginMode = saved?.marginMode ?? '40';
+  const customMarginPercent = toPositiveNumber(saved?.customMarginPercent ?? '35') || 35;
+  const targetMargin = resolveTargetMargin(marginMode, customMarginPercent);
+  const quote = calculateYieldQuote({
+    caseCost: log.caseCost,
+    packSize,
+    yieldDivisor,
+    targetMargin,
+    currentRetailPrice: 0,
+  });
+
+  return {
+    packSize,
+    yieldDivisor,
+    retailUnit,
+    marginMode,
+    customMarginPercent,
+    currentRetailPrice: quote.targetSrp !== null ? Number(quote.targetSrp.toFixed(2)) : 0,
+  };
+}
+
+async function postLogToInventory(log: ReceivingLog, pricing: LogPricing) {
+  const response = await fetch('/api/receiving-logs', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      itemName: log.itemName,
+      casesReceived: log.casesReceived,
+      caseCost: log.caseCost,
+      packSize: pricing.packSize,
+      yieldDivisor: pricing.yieldDivisor,
+      retailUnit: pricing.retailUnit,
+      marginMode: pricing.marginMode,
+      customMarginPercent: pricing.customMarginPercent,
+      currentRetailPrice: pricing.currentRetailPrice,
+    }),
+  });
+  let json: {
+    success?: boolean;
+    error?: string;
+    stock?: { posted?: boolean; reason?: string; onHand?: number; productId?: string };
+  } = {};
+  try {
+    json = await response.json();
+  } catch {
+    json = {};
+  }
+  const reason = json.stock?.reason || json.error || 'Save failed.';
+  return {
+    ok: response.ok && Boolean(json.success) && Boolean(json.stock?.posted),
+    reason,
+    onHand: Number(json.stock?.onHand),
+    productId: typeof json.stock?.productId === 'string' ? json.stock.productId : undefined,
+  };
 }
 
 function MovedNoticeBanner({ notice }: { notice: string }) {
@@ -132,6 +216,9 @@ export function YieldPricingDashboard({
   const [currentRetailPrice, setCurrentRetailPrice] = useState('0.00');
 
   const [saving, setSaving] = useState(false);
+  const [savingAll, setSavingAll] = useState(false);
+  const [saveAllProgress, setSaveAllProgress] = useState<string | null>(null);
+  const [savedPrefsHint, setSavedPrefsHint] = useState<string | null>(null);
   const [savedMessage, setSavedMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [stockOnHand, setStockOnHand] = useState<number | null>(null);
@@ -222,6 +309,23 @@ export function YieldPricingDashboard({
     [visibleLogs, postedIds, hiddenLogIds]
   );
 
+  const invoiceLogIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const log of extraLogs) ids.add(log.id);
+    for (const log of stashedScanLogs) ids.add(log.id);
+    return ids;
+  }, [extraLogs, stashedScanLogs]);
+
+  const bulkLogs = useMemo(() => {
+    const invoiceOpen = openLogs.filter((log) => invoiceLogIds.has(log.id));
+    return invoiceOpen.length > 0 ? invoiceOpen : openLogs;
+  }, [openLogs, invoiceLogIds]);
+
+  const saveAllLabel =
+    invoiceLogIds.size > 0
+      ? `Save all ${bulkLogs.length} invoice items`
+      : `Save all ${bulkLogs.length} items`;
+
   const listLogs = useMemo(() => {
     const rows = [...openLogs];
     const seen = new Set(rows.map((log) => log.id));
@@ -262,23 +366,44 @@ export function YieldPricingDashboard({
   useEffect(() => {
     if (!selected) return;
     const defaults = suggestPackDefaults(selected.itemName);
-    const nextPackSize = selected.packSize && selected.packSize > 0 ? String(selected.packSize) : defaults.packSize;
-    const nextRetailUnit = selected.retailUnit ?? defaults.retailUnit;
-    const targetMargin = resolveTargetMargin('40', 35);
+    const saved = readReceivingPrefs(selected.itemName);
+    const nextPackSize =
+      selected.packSize && selected.packSize > 0
+        ? String(selected.packSize)
+        : (saved?.packSize ?? defaults.packSize);
+    const nextYieldDivisor = saved?.yieldDivisor ?? defaults.yieldDivisor;
+    const nextRetailUnit = selected.retailUnit ?? saved?.retailUnit ?? defaults.retailUnit;
+    const nextMarginMode = saved?.marginMode ?? '40';
+    const nextCustomMargin = saved?.customMarginPercent ?? '35';
+    const targetMargin = resolveTargetMargin(nextMarginMode, toPositiveNumber(nextCustomMargin));
     const quote = calculateYieldQuote({
       caseCost: selected.caseCost,
       packSize: Number(nextPackSize),
-      yieldDivisor: Number(defaults.yieldDivisor),
+      yieldDivisor: Number(nextYieldDivisor),
       targetMargin,
       currentRetailPrice: 0,
     });
     setPackSize(nextPackSize);
-    setYieldDivisor(defaults.yieldDivisor);
+    setYieldDivisor(nextYieldDivisor);
     setRetailUnit(nextRetailUnit);
-    setMarginMode('40');
+    setMarginMode(nextMarginMode);
+    setCustomMarginPercent(nextCustomMargin);
     setCurrentRetailPrice(quote.targetSrp !== null ? quote.targetSrp.toFixed(2) : '0.00');
     setSavedMessage(null);
     setErrorMessage(null);
+
+    const sheetOverridesPack = Boolean(selected.packSize && selected.packSize > 0);
+    if (!sheetOverridesPack && saved) {
+      const savedDate = new Date(saved.updatedAt);
+      const label = Number.isFinite(savedDate.getTime())
+        ? savedDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+        : 'prior session';
+      setSavedPrefsHint(
+        `Using saved defaults (pack ${saved.packSize}, yield ÷${saved.yieldDivisor}, margin ${saved.marginMode ?? '40'}%) from ${label}.`
+      );
+    } else {
+      setSavedPrefsHint(null);
+    }
   }, [selected]);
 
   useEffect(() => {
@@ -445,10 +570,34 @@ export function YieldPricingDashboard({
     }, 340);
   };
 
+  const livePricing = (): LogPricing & { id: string } | null => {
+    if (!selected) return null;
+    return {
+      id: selected.id,
+      packSize: toPositiveNumber(packSize),
+      yieldDivisor: toPositiveNumber(yieldDivisor),
+      retailUnit,
+      marginMode,
+      customMarginPercent: toPositiveNumber(customMarginPercent),
+      currentRetailPrice: priceNumber,
+    };
+  };
+
+  const rememberPricing = (itemName: string, pricing: LogPricing) => {
+    writeReceivingPrefs(itemName, {
+      packSize: String(pricing.packSize),
+      yieldDivisor: String(pricing.yieldDivisor),
+      retailUnit: pricing.retailUnit,
+      marginMode: pricing.marginMode,
+      customMarginPercent: String(pricing.customMarginPercent),
+    });
+  };
+
   const handleSave = async () => {
-    if (!selected || animatingOutIds.has(selected.id)) return;
+    if (!selected || animatingOutIds.has(selected.id) || savingAll) return;
     const savedId = selected.id;
     const savedName = selected.itemName;
+    const pricing = resolveLogPricing(selected, livePricing());
 
     setSaving(true);
     setSavedMessage(null);
@@ -456,44 +605,94 @@ export function YieldPricingDashboard({
     setMovedNotice(null);
 
     try {
-      const response = await fetch('/api/receiving-logs', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          itemName: savedName,
-          casesReceived: selected.casesReceived,
-          caseCost: selected.caseCost,
-          packSize: toPositiveNumber(packSize),
-          yieldDivisor: toPositiveNumber(yieldDivisor),
-          retailUnit,
-          marginMode,
-          customMarginPercent: toPositiveNumber(customMarginPercent),
-          currentRetailPrice: priceNumber,
-        }),
-      });
-      const json = await response.json();
-      if (!response.ok || !json.success) {
-        setErrorMessage(json.error || 'Save failed.');
-        return;
-      }
-      if (!json.stock?.posted) {
+      const result = await postLogToInventory(selected, pricing);
+      if (!result.ok) {
         setErrorMessage(
-          json.stock?.reason || 'Stock was not updated, so this case stays on the receiving list.'
+          result.reason || 'Stock was not updated, so this case stays on the receiving list.'
         );
         return;
       }
 
-      finishSavedLog(
-        savedId,
-        savedName,
-        Number(json.stock.onHand),
-        typeof json.stock.productId === 'string' ? json.stock.productId : undefined
-      );
+      rememberPricing(savedName, pricing);
+      finishSavedLog(savedId, savedName, result.onHand, result.productId);
     } catch {
       setErrorMessage('Save failed. Check the connection and try again.');
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleSaveAll = async () => {
+    const targets = bulkLogs.filter((log) => !animatingOutIds.has(log.id));
+    if (targets.length === 0 || saving || savingAll) return;
+
+    const live = livePricing();
+    setSavingAll(true);
+    setSavedMessage(null);
+    setErrorMessage(null);
+    setMovedNotice(null);
+
+    const failed: string[] = [];
+    let savedCount = 0;
+    let lastName = '';
+    let lastOnHand = 0;
+    let lastProductId: string | undefined;
+    let lastUnit: RetailUnit = 'units';
+
+    try {
+      for (let index = 0; index < targets.length; index += 1) {
+        const log = targets[index];
+        setSaveAllProgress(`${index + 1} of ${targets.length}`);
+        const pricing = resolveLogPricing(log, live);
+        try {
+          const result = await postLogToInventory(log, pricing);
+          if (!result.ok) {
+            failed.push(`${log.itemName} (${result.reason})`);
+            continue;
+          }
+          rememberPricing(log.itemName, pricing);
+          markLogPosted(log.id);
+          purgeLogFromLocalSources(log.id);
+          savedCount += 1;
+          lastName = log.itemName;
+          lastOnHand = result.onHand;
+          lastProductId = result.productId;
+          lastUnit = pricing.retailUnit;
+        } catch {
+          failed.push(`${log.itemName} (connection error)`);
+        }
+      }
+    } finally {
+      setSavingAll(false);
+      setSaveAllProgress(null);
+    }
+
+    if (savedCount > 0) {
+      stockRequest.current += 1;
+      window.dispatchEvent(new CustomEvent('freshloop-inventory-updated'));
+    }
+
+    if (savedCount === 1 && failed.length === 0) {
+      const stockHref = lastProductId
+        ? `/inventory?highlight=${encodeURIComponent(lastProductId)}`
+        : '/inventory';
+      setMovedNotice(`__STOCK__${stockHref}__${lastName}__${formatUnits(lastOnHand)}__${lastUnit}`);
+      setSavedMessage('Saved to inventory.');
+      return;
+    }
+
+    if (savedCount > 0 && failed.length === 0) {
+      setMovedNotice(`Saved ${savedCount} items to inventory.`);
+      return;
+    }
+
+    if (savedCount > 0) {
+      setMovedNotice(`Saved ${savedCount} of ${targets.length} items to inventory.`);
+      setErrorMessage(`Still on the list: ${failed.join('; ')}`);
+      return;
+    }
+
+    setErrorMessage(failed.length ? `Nothing saved. ${failed.join('; ')}` : 'Nothing saved.');
   };
 
   return (
@@ -569,7 +768,7 @@ export function YieldPricingDashboard({
       {selected && boardActive ? (
         <div
           className={cn(
-            'space-y-4 pb-40 transition-opacity duration-300',
+            'space-y-4 pb-56 transition-opacity duration-300',
             animatingOutIds.has(selected.id) && 'opacity-90'
           )}
         >
@@ -644,6 +843,11 @@ export function YieldPricingDashboard({
           <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(260px,300px)]">
           <div id="yield-editor" className="space-y-5 rounded-3xl border border-slate-800 bg-slate-900/80 p-4 sm:p-5">
             <ReceivingDetails log={selected} />
+            {savedPrefsHint ? (
+              <p className="rounded-2xl border border-blue-900/40 bg-blue-950/30 px-3.5 py-2.5 text-[11px] font-semibold leading-snug text-blue-200/95">
+                {savedPrefsHint}
+              </p>
+            ) : null}
             <div className="border-t border-slate-800" />
             <YieldBreakdown
               packSize={packSize}
@@ -688,14 +892,17 @@ export function YieldPricingDashboard({
             retailUnit={retailUnit}
             quote={quote}
             currentRetailPrice={priceNumber}
-            saving={saving}
+            saving={saving || savingAll}
             savedMessage={savedMessage}
             errorMessage={errorMessage}
             stockOnHand={stockOnHand}
             stockMatched={stockMatched}
             alreadyInInventory={postedIds.has(selected.id)}
             dispositionBusy={dispositionBusy}
+            saveAllLabel={bulkLogs.length > 1 ? saveAllLabel : null}
+            saveAllProgress={saveAllProgress}
             onSave={() => void handleSave()}
+            onSaveAll={bulkLogs.length > 1 ? () => void handleSaveAll() : undefined}
             onNotReceived={() => void postDisposition('NOT_RECEIVED')}
             onRemoveFromList={() => void postDisposition('REMOVED')}
           />

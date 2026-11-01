@@ -36,7 +36,10 @@ export function PackReceiptCard({
   stockMatched,
   alreadyInInventory = false,
   dispositionBusy = false,
+  saveAllLabel = null,
+  saveAllProgress = null,
   onSave,
+  onSaveAll,
   onNotReceived,
   onRemoveFromList,
 }: {
@@ -51,7 +54,10 @@ export function PackReceiptCard({
   stockMatched: boolean;
   alreadyInInventory?: boolean;
   dispositionBusy?: boolean;
+  saveAllLabel?: string | null;
+  saveAllProgress?: string | null;
   onSave: () => void;
+  onSaveAll?: () => void;
   onNotReceived: () => void;
   onRemoveFromList: () => void;
 }) {
@@ -125,7 +131,7 @@ export function PackReceiptCard({
 
       </div>
 
-      <div className="fixed inset-x-0 bottom-20 z-30 px-3 md:bottom-4 md:pl-64 md:pr-6">
+      <div className="fixed inset-x-0 bottom-24 z-30 px-3 md:bottom-4 md:pl-64 md:pr-6">
         <div className="mx-auto w-full max-w-3xl space-y-2 rounded-2xl border border-slate-800 bg-slate-950/95 p-2 shadow-2xl shadow-black/50 backdrop-blur">
           {savedMessage ? (
             <p className="flex items-center gap-2 px-2 text-xs font-bold text-emerald-300">
@@ -166,9 +172,21 @@ export function PackReceiptCard({
             disabled={saving || alreadyInInventory || dispositionBusy || quote.totalRetailUnits === null}
             className="flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-400 px-4 py-3 text-sm font-black text-slate-950 transition hover:bg-emerald-300 active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400"
           >
-            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-            {alreadyInInventory ? 'In inventory' : 'Save'}
+            {saving && !saveAllProgress ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+            {alreadyInInventory ? 'In inventory' : 'Save this item'}
           </button>
+          {onSaveAll && saveAllLabel ? (
+            <button
+              type="button"
+              onClick={onSaveAll}
+              disabled={saving || dispositionBusy}
+              title="The line on screen keeps the price you set. Every other line uses its pack size and saved pricing, or a 40% target."
+              className="flex w-full items-center justify-center gap-2 rounded-xl border border-emerald-400/40 bg-emerald-400/10 px-4 py-3 text-sm font-black text-emerald-200 transition hover:bg-emerald-400/20 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {saveAllProgress ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+              {saveAllProgress ? `Saving ${saveAllProgress}` : saveAllLabel}
+            </button>
+          ) : null}
         </div>
       </div>
     </aside>

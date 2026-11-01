@@ -34,7 +34,7 @@ export function ReceiveScreen({ initial }: { initial: ReceivingLogsResult }) {
         <PageIntro
           step="Step 1 · Receive"
           title="Price the delivery"
-          description="Pick a case, set the yield and the floor price, then save it into inventory."
+          description="Set the yield and floor price, then save one case or every invoice line into inventory."
           action={
             <Button variant="success" className="w-full sm:w-auto py-3" onClick={() => setInvoiceOpen(true)}>
               <FileText className="h-4 w-4" />
