@@ -76,6 +76,18 @@ export async function recordProductSale(input: {
         notes: `Retail sale (${qty} × $${unitPrice.toFixed(2)})`,
       },
     });
+  const tx = await prisma.inventoryTransaction.create({
+    data: {
+      productId: product.id,
+      staffId: input.staffId.trim() || 'staff-pos',
+      qtyChange: -Math.abs(qty),
+      transactionType: TransactionType.Sale,
+      fromLocation: location,
+      toLocation: InventoryLocation.Customer_Out,
+      unitCostAtTime: Number(unitPrice.toFixed(4)),
+      referenceId: input.referenceId ?? `SALE-${Date.now()}`,
+      notes: `Retail sale (${qty} × $${unitPrice.toFixed(2)})`,
+    },
   });
 
   invalidateInventoryCaches();
@@ -87,6 +99,7 @@ export async function recordProductSale(input: {
     quantitySold: qty,
     unitPrice: Number(unitPrice.toFixed(4)),
     grossRevenue: multiplyMoney(unitPrice, qty),
+    grossRevenue: Number((qty * unitPrice).toFixed(2)),
     location,
   };
 }

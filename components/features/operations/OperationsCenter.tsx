@@ -18,6 +18,7 @@ import { RecipeFusionResult, DepartmentType } from '@/lib/types';
 import type { WasteKpiReport } from '@/lib/domains/inventory/ledger';
 import { OperationsLiveTransfers } from '@/components/features/operations/OperationsLiveTransfers';
 import { OperationsWasteKpiPanel } from '@/components/features/operations/OperationsWasteKpiPanel';
+import { INITIAL_INVENTORY_ITEMS } from '@/lib/legacy/mockData';
 import { mapDbRecipeToFusionResult } from '@/lib/domains/manufacturing/mapDbRecipeToFusion';
 import {
   Activity,
