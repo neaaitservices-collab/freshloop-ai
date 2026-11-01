@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Department, InventoryLocation, TransactionType } from '@prisma/client';
 import { prisma, getMovingAverageCost } from '@/lib/domains/inventory/ledger';
-import { invalidateInventoryCaches } from '@/lib/domains/inventory/inventoryCache';
+import { postProductReceipt } from '@/lib/domains/inventory/stock';
 import { INITIAL_INVENTORY_ITEMS } from '@/lib/legacy/mockData';
 import { generateContentWithFallback, parseModelJson, tryParseModelJson } from '@/lib/domains/ai/gemini';
 import { authErrorResponse } from '@/lib/auth/http';
@@ -446,30 +446,29 @@ export async function POST(req: NextRequest) {
     // ------------------------------------------------------------------------
     if (confirmCommit && Array.isArray(confirmedItems) && confirmedItems.length > 0) {
       const actor = await requireReceivingStaff();
-      const createdReceipts = await prisma.$transaction(
-        confirmedItems.map((item) =>
-          prisma.inventoryTransaction.create({
-            data: {
-              productId: item.product_id,
-              staffId: actor.id,
-              qtyChange: Math.abs(Number(item.quantity) || 1),
-              transactionType: TransactionType.Receive,
-              fromLocation: InventoryLocation.External_Vendor,
-              toLocation: item.to_location || InventoryLocation.Retail_Floor,
-              unitCostAtTime: Number(item.unit_cost) || 0,
-              referenceId: confirmedInvoiceNum || `INV-OCR-${Date.now()}`,
-              notes: 'Confirmed Invoice OCR Receipt',
-            },
+      const referenceId = confirmedInvoiceNum || `INV-OCR-${Date.now()}`;
+      const receipts = [];
+      for (const item of confirmedItems) {
+        const productId = String(item.product_id ?? '').trim();
+        if (!productId) continue;
+        receipts.push(
+          await postProductReceipt({
+            productId,
+            quantityUnits: Math.abs(Number(item.quantity) || 1),
+            unitCostAtTime: Number(item.unit_cost) || 0,
+            staffId: actor.id,
+            referenceId,
+            toLocation: item.to_location || InventoryLocation.Retail_Floor,
+            notes: 'Confirmed Invoice OCR Receipt',
           })
-        )
-      );
-      invalidateInventoryCaches();
+        );
+      }
 
       return NextResponse.json({
         success: true,
         committed: true,
-        transactionsCreated: createdReceipts.length,
-        transactions: createdReceipts,
+        transactionsCreated: receipts.length,
+        receipts,
         timestamp: new Date().toISOString(),
       });
     }
