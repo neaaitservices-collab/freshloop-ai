@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getInventoryItems } from '@/lib/legacy/db';
 import {
   prisma,
   calculateRealTimeWastePct,
 } from '@/lib/domains/inventory/ledger';
+import { getLedgerInventoryItems } from '@/lib/domains/inventory/fusionInventoryView';
 import { getStockLevels } from '@/lib/domains/inventory/stock';
 import { rememberLedgerRead } from '@/lib/domains/inventory/ledgerCache';
 import { authErrorResponse } from '@/lib/auth/http';
@@ -15,7 +15,7 @@ const inventoryReads = new Map<string, { at: number; gen: number; value: Promise
 interface InventoryPayload {
   success: true;
   count: number;
-  items: Awaited<ReturnType<typeof getInventoryItems>>;
+  items: Awaited<ReturnType<typeof getLedgerInventoryItems>>;
   liveLedger: {
     wasteKpi: Awaited<ReturnType<typeof calculateRealTimeWastePct>>;
     subInventoryRows: Array<Record<string, unknown>>;
@@ -27,7 +27,7 @@ async function loadInventoryPayload(
   pullDays: number,
   additionalScrapBuckets: number
 ): Promise<InventoryPayload> {
-  const itemsPromise = getInventoryItems({
+  const itemsPromise = getLedgerInventoryItems({
     status,
     pullThresholdDays: pullDays,
   });

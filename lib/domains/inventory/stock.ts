@@ -546,6 +546,66 @@ export async function postReceipt(input: {
   };
 }
 
+/** Receive known catalog SKUs (invoice OCR confirm, POS backfill). Sets cost, expiration, and optional retail price. */
+export async function postProductReceipt(input: {
+  productId: string;
+  quantityUnits: number;
+  unitCostAtTime: number;
+  staffId: string;
+  referenceId?: string;
+  toLocation?: InventoryLocation;
+  notes?: string;
+  retailPrice?: number;
+}): Promise<{ transactionId: string; productId: string; unitsAdded: number; onHand: number }> {
+  const productId = input.productId?.trim();
+  if (!productId) throw new Error('productId is required.');
+  const unitsAdded = Number(Math.abs(input.quantityUnits).toFixed(4));
+  if (!(unitsAdded > 0)) throw new Error('Receive quantity must be greater than zero.');
+
+  const product = await prisma.product.findUnique({ where: { id: productId } });
+  if (!product) throw new Error('Product was not found.');
+
+  const unitCost = Number(Math.max(0, input.unitCostAtTime).toFixed(4));
+  const shelfDays = product.shelfLifeDays > 0 ? product.shelfLifeDays : 7;
+  const actor = input.staffId.trim() || 'staff-receiver-01';
+  const toLocation = input.toLocation ?? InventoryLocation.Retail_Floor;
+
+  const created = await prisma.$transaction(async (tx) => {
+    await tx.product.update({
+      where: { id: productId },
+      data: {
+        ...(unitCost > 0 ? { standardCost: unitCost } : {}),
+        ...(input.retailPrice !== undefined && input.retailPrice > 0
+          ? { retailPrice: input.retailPrice }
+          : {}),
+      },
+    });
+    return tx.inventoryTransaction.create({
+      data: {
+        productId,
+        staffId: actor,
+        qtyChange: unitsAdded,
+        transactionType: TransactionType.Receive,
+        fromLocation: InventoryLocation.External_Vendor,
+        toLocation,
+        unitCostAtTime: unitCost,
+        referenceId: input.referenceId?.trim() || `RCV-PROD-${Date.now()}`,
+        expirationDate: new Date(Date.now() + shelfDays * 24 * 60 * 60 * 1000),
+        notes: input.notes?.trim() || 'Product receipt',
+      },
+    });
+  });
+
+  invalidateInventoryCaches();
+  const onHand = await getCurrentStock(productId, toLocation);
+  return {
+    transactionId: created.id,
+    productId,
+    unitsAdded,
+    onHand,
+  };
+}
+
 export async function moveRetailStock(
   productId: string,
   action: 'waste' | 'rescue',
