@@ -12,6 +12,7 @@ import {
   InventoryLedgerError,
 } from '@/lib/domains/inventory/ledger';
 import { invalidateInventoryCaches } from '@/lib/domains/inventory/inventoryCache';
+import { consumeLotsFifo, createLotOnReceive } from '@/lib/domains/inventory/lots';
 import { authErrorResponse } from '@/lib/auth/http';
 import { requireRoles } from '@/lib/auth/session';
 import { MANUFACTURING_ROLES } from '@/lib/auth/permissions';
@@ -363,25 +364,39 @@ export async function POST(req: NextRequest) {
     let outputTransaction: InventoryTransaction;
 
     try {
-      const ledgerResults = await prisma.$transaction([
-        ...consumptionPlan.map((item) =>
-          prisma.inventoryTransaction.create({
-            data: {
+      const recipeForBatch = resolvedRecipe;
+      const ledgerResults = await prisma.$transaction(async (tx) => {
+        const ingredientRows: InventoryTransaction[] = [];
+        for (const item of consumptionPlan) {
+          const qty = Number(Math.abs(item.actualQtyToDeduct).toFixed(4));
+          if (qty > 0) {
+            await consumeLotsFifo(tx, {
               productId: item.ingredientProductId,
-              staffId,
-              qtyChange: -Math.abs(item.actualQtyToDeduct),
-              transactionType: TX_RESCUE,
-              fromLocation: LOC_KITCHEN_PREP,
-              toLocation: LOC_KITCHEN_PREP,
-              unitCostAtTime: item.unitMovingAvgCost,
-              referenceId: batchReferenceId,
-              notes: `BOM Consumption for "${resolvedRecipe.name}" (${item.actualQtyToDeduct} ${item.unit})`,
-            },
-          })
-        ),
-        prisma.inventoryTransaction.create({
+              location: LOC_KITCHEN_PREP,
+              qty,
+              allowShort: true,
+            });
+          }
+          ingredientRows.push(
+            await tx.inventoryTransaction.create({
+              data: {
+                productId: item.ingredientProductId,
+                staffId,
+                qtyChange: -Math.abs(item.actualQtyToDeduct),
+                transactionType: TX_RESCUE,
+                fromLocation: LOC_KITCHEN_PREP,
+                toLocation: LOC_KITCHEN_PREP,
+                unitCostAtTime: item.unitMovingAvgCost,
+                referenceId: batchReferenceId,
+                notes: `BOM Consumption for "${recipeForBatch.name}" (${item.actualQtyToDeduct} ${item.unit})`,
+              },
+            })
+          );
+        }
+
+        const outputRow = await tx.inventoryTransaction.create({
           data: {
-            productId: resolvedRecipe.outputProductId,
+            productId: recipeForBatch.outputProductId,
             staffId,
             qtyChange: Math.abs(batchOutput),
             transactionType: TX_RECEIVE,
@@ -392,26 +407,36 @@ export async function POST(req: NextRequest) {
             expirationDate,
             notes:
               body.notes ||
-              `Manufactured ${batchOutput} units of "${resolvedRecipe.outputProductName}" → Deli Grab-n-Go (Batch: $${totalBatchCost.toFixed(
+              `Manufactured ${batchOutput} units of "${recipeForBatch.outputProductName}" → Deli Grab-n-Go (Batch: $${totalBatchCost.toFixed(
                 2
               )}, labor $${costBreakdown.laborCost.toFixed(2)}, packaging $${costBreakdown.packagingCost.toFixed(2)})`,
           },
-        }),
-        prisma.product.update({
-          where: { id: resolvedRecipe.outputProductId },
+        });
+        await createLotOnReceive(tx, {
+          productId: recipeForBatch.outputProductId,
+          location: LOC_DELI,
+          qty: Math.abs(batchOutput),
+          unitCostAtTime: unitOutputCost,
+          expirationDate,
+          receiveReferenceId: batchReferenceId,
+          receiveTransactionId: outputRow.id,
+        });
+        await tx.product.update({
+          where: { id: recipeForBatch.outputProductId },
           data: {
             isManufactured: true,
             department: 'DELI_KITCHEN',
             standardCost: unitOutputCost,
-            ...(resolvedRecipe.targetRetailPrice > 0
-              ? { retailPrice: resolvedRecipe.targetRetailPrice }
+            ...(recipeForBatch.targetRetailPrice > 0
+              ? { retailPrice: recipeForBatch.targetRetailPrice }
               : {}),
           },
-        }),
-      ]);
+        });
+        return { ingredientRows, outputRow };
+      });
 
-      ingredientTransactions = ledgerResults.slice(0, consumptionPlan.length) as InventoryTransaction[];
-      outputTransaction = ledgerResults[consumptionPlan.length] as InventoryTransaction;
+      ingredientTransactions = ledgerResults.ingredientRows;
+      outputTransaction = ledgerResults.outputRow;
       invalidateInventoryCaches();
     } catch (ledgerError) {
       throw new InventoryLedgerError(

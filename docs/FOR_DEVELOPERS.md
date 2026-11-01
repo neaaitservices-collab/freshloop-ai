@@ -62,7 +62,7 @@ npm run build                # prisma generate + next build
 | `/inventory/floor` | all operational roles |
 | `/admin` (profile) | any signed-in staff |
 
-**API writes** must use `await requireSessionUser()` (or role helpers)—never trust `staffId` / `role` from the JSON body. Middleware returns **401** for unsigned `/api/*` (except `/api/auth/*`).
+**API writes** must use `await requireSessionUser()` (or role helpers)—never trust `staffId` / `role` from the JSON body. Middleware returns **401** for unsigned `/api/*` except `/api/auth/*`, `/api/health`, and `/api/pos/webhook` (Bearer `POS_WEBHOOK_SECRET`, required).
 
 ---
 
@@ -158,11 +158,11 @@ Bridge from invoice OCR: `lib/domains/receiving/receivingBridge.ts` (`receivingL
 | `GET`/`POST` | `/api/recipe-fusion` | List / generate fusion recipes (DB + legacy memory) |
 | `POST` | `/api/manufacturing` | BOM execution / production batch (see route for payload) |
 | `GET` | `/api/admin/markdown-suggestions` | Short-dated floor SKUs + suggested discount % |
-| `POST` | `/api/pos/webhook` | Batch POS sales (optional `POS_WEBHOOK_SECRET` Bearer) |
+| `POST` | `/api/pos/webhook` | Batch POS sales. Requires `Authorization: Bearer $POS_WEBHOOK_SECRET` and `externalRef` (idempotent). Body `staffId` is ignored. |
 
 Gemini helpers: `lib/domains/ai/gemini.ts`.
 
-**Invoice OCR commit:** `confirmCommit` payloads use `quantity_kind`: `'units'` (default) or `'cases'`. Optional `invoiceMeta` creates `VendorInvoice` + line items via `commitInvoiceOcrReceipts`.
+**Invoice OCR commit:** `confirmCommit` payloads use `quantity_kind`: `'units'` (default) or `'cases'`. A case line's `unit_cost` is the case price and is stored per retail unit. The invoice header, lines, and lot receipts commit in one transaction. Optional `invoiceMeta` creates `VendorInvoice` + line items via `commitInvoiceOcrReceipts`.
 
 ---
 

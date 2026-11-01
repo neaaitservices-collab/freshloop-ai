@@ -1,9 +1,13 @@
+import { timingSafeEqual } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
+import { TransactionType } from '@prisma/client';
+import { executeBundleSale, prisma } from '@/lib/domains/inventory/ledger';
+import { invalidateInventoryCaches } from '@/lib/domains/inventory/inventoryCache';
 import { recordProductSale } from '@/lib/domains/inventory/recordSale';
-import { executeBundleSale } from '@/lib/domains/inventory/ledger';
-import { prisma } from '@/lib/domains/inventory/ledger';
 
 export const dynamic = 'force-dynamic';
+
+const POS_WEBHOOK_ACTOR = 'pos-webhook';
 
 type PosWebhookLine = {
   externalSku?: string;
@@ -14,72 +18,116 @@ type PosWebhookLine = {
   location?: 'floor' | 'deli';
 };
 
+function webhookAuthorized(header: string | null, secret: string): boolean {
+  const expected = Buffer.from(`Bearer ${secret}`);
+  const actual = Buffer.from(header ?? '');
+  if (expected.length !== actual.length) return false;
+  return timingSafeEqual(expected, actual);
+}
+
 /**
  * Batch POS ingest — maps `POSMapping.externalSku` when `productId` is omitted.
- * Protect with `POS_WEBHOOK_SECRET` (Bearer token) in production.
+ * Middleware does not require a session. `POS_WEBHOOK_SECRET` is required.
+ * `externalRef` identifies this webhook batch so a retry does not post twice.
+ * Matches only sales this webhook posted, not other documents that reuse the string.
+ * Staff is always `pos-webhook` — the JSON body cannot set `staffId`.
  */
 export async function POST(req: NextRequest) {
   const secret = process.env.POS_WEBHOOK_SECRET?.trim();
-  if (secret) {
-    const auth = req.headers.get('authorization') ?? '';
-    if (auth !== `Bearer ${secret}`) {
-      return NextResponse.json({ success: false, error: 'Unauthorized POS webhook.' }, { status: 401 });
-    }
+  if (!secret) {
+    return NextResponse.json(
+      { success: false, error: 'POS webhook secret is not configured.' },
+      { status: 503 }
+    );
+  }
+  if (!webhookAuthorized(req.headers.get('authorization'), secret)) {
+    return NextResponse.json({ success: false, error: 'Unauthorized POS webhook.' }, { status: 401 });
   }
 
   try {
     const body = (await req.json()) as {
       externalRef?: string;
-      staffId?: string;
       lines?: PosWebhookLine[];
     };
+
+    const externalRef = body.externalRef?.trim() ?? '';
+    if (!externalRef) {
+      return NextResponse.json({ success: false, error: 'externalRef is required.' }, { status: 400 });
+    }
 
     const lines = Array.isArray(body.lines) ? body.lines : [];
     if (lines.length === 0) {
       return NextResponse.json({ success: false, error: 'lines array is required.' }, { status: 400 });
     }
 
-    const actorId = body.staffId?.trim() || 'pos-webhook';
-    const results: unknown[] = [];
-
-    for (const line of lines) {
-      if (line.bundleSku) {
-        results.push(
-          await executeBundleSale(line.bundleSku, body.externalRef ?? `POS-${Date.now()}`, {
-            staffId: actorId,
-            quantitySold: line.quantity,
-          })
-        );
-        continue;
-      }
-
-      let productId = line.productId?.trim() ?? '';
-      if (!productId && line.externalSku) {
-        const mapping = await prisma.pOSMapping.findFirst({
-          where: { externalSku: line.externalSku, isActive: true },
-          select: { productId: true },
+    const outcome = await prisma.$transaction(
+      async (db) => {
+        await db.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${externalRef}, 0))`;
+        const existing = await db.inventoryTransaction.findFirst({
+          where: {
+            referenceId: externalRef,
+            staffId: POS_WEBHOOK_ACTOR,
+            transactionType: { in: [TransactionType.Sale, TransactionType.POS_Sale] },
+          },
+          select: { id: true },
         });
-        productId = mapping?.productId ?? '';
-      }
+        if (existing) {
+          return { idempotent: true as const, results: [] as unknown[] };
+        }
 
-      if (!productId) {
-        results.push({ skipped: true, reason: 'Unmapped SKU', line });
-        continue;
-      }
+        const results: unknown[] = [];
+        for (const line of lines) {
+          if (line.bundleSku) {
+            results.push(
+              await executeBundleSale(line.bundleSku, externalRef, {
+                staffId: POS_WEBHOOK_ACTOR,
+                quantitySold: line.quantity,
+                db,
+              })
+            );
+            continue;
+          }
 
-      results.push(
-        await recordProductSale({
-          productId,
-          quantity: Number(line.quantity) || 1,
-          staffId: actorId,
-          location: line.location,
-          unitPriceOverride: line.unitPrice,
-          referenceId: body.externalRef,
-        })
-      );
-    }
+          let productId = line.productId?.trim() ?? '';
+          if (!productId && line.externalSku) {
+            const mapping = await db.pOSMapping.findFirst({
+              where: { externalSku: line.externalSku, isActive: true },
+              select: { productId: true },
+            });
+            productId = mapping?.productId ?? '';
+          }
 
-    return NextResponse.json({ success: true, processed: results.length, results });
+          if (!productId) {
+            results.push({ skipped: true, reason: 'Unmapped SKU', line });
+            continue;
+          }
+
+          results.push(
+            await recordProductSale({
+              productId,
+              quantity: Number(line.quantity) || 1,
+              staffId: POS_WEBHOOK_ACTOR,
+              location: line.location,
+              unitPriceOverride: line.unitPrice,
+              referenceId: externalRef,
+              db,
+            })
+          );
+        }
+
+        return { idempotent: false as const, results };
+      },
+      { timeout: 20_000 }
+    );
+
+    if (!outcome.idempotent) invalidateInventoryCaches();
+
+    return NextResponse.json({
+      success: true,
+      idempotent: outcome.idempotent,
+      processed: outcome.results.length,
+      results: outcome.results,
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'POS webhook failed.';
     return NextResponse.json({ success: false, error: message }, { status: 500 });

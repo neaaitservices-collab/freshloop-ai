@@ -18,6 +18,7 @@ function departmentFromPrisma(value: Department): InventoryItem['department'] {
 function statusForLevel(level: StockLevel, pullDays: number): InventoryStatusType {
   if (level.daysRemaining <= 0) return 'DISCARDED';
   if (level.daysRemaining <= pullDays) return 'PULL_RESCUE';
+  if (level.isMarkdown) return 'MARKDOWN';
   if (level.daysRemaining <= pullDays + 1) return 'WARNING';
   return 'FRESH';
 }
@@ -37,10 +38,24 @@ function levelToFloorItem(
   };
 }
 
-/** Short-dated / at-risk retail floor rows for fusion and legacy API consumers. */
-export async function getFloorPullFusionItems(pullDays = 3): Promise<InventoryItem[]> {
+/**
+ * Retail floor rows for fusion.
+ * Default: pull-window, next-day warning, and markdown SKUs.
+ * Pass `productIds` to resolve an explicit selection, including SKUs outside that window.
+ */
+export async function getFloorPullFusionItems(
+  pullDays = 3,
+  options?: { productIds?: string[] }
+): Promise<InventoryItem[]> {
+  const requested =
+    options?.productIds && options.productIds.length > 0 ? new Set(options.productIds) : null;
   const levels = await getStockLevels().then((rows) =>
-    rows.filter((row) => row.onHand > 0 && row.daysRemaining <= pullDays)
+    rows.filter((row) => {
+      if (!(row.onHand > 0)) return false;
+      if (requested) return requested.has(row.productId);
+      if (row.isMarkdown) return true;
+      return row.daysRemaining <= pullDays + 1;
+    })
   );
   if (levels.length === 0) return [];
 
