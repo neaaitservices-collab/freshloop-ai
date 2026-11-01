@@ -352,9 +352,10 @@ export function AccountPage({
   children?: React.ReactNode;
 }) {
   const { activeUser, loading } = useRole();
-  const manager = activeUser ? isManager(activeUser.role) : false;
-  const showControls = !activeUser || manager;
-  const title = !activeUser && loading ? 'Account' : manager ? 'Admin' : 'Profile';
+  const manager = Boolean(activeUser && isManager(activeUser.role));
+  // Wait for Auth.js session before showing manager-only dashboard controls.
+  const showControls = !loading && manager;
+  const title = loading ? 'Account' : manager ? 'Admin' : 'Profile';
 
   return (
       <main className="mx-auto w-full max-w-7xl px-3 py-5 pb-28 sm:px-6 sm:py-8">
