@@ -1,6 +1,5 @@
 import { timingSafeEqual } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
-import { TransactionType } from '@prisma/client';
 import { executeBundleSale, prisma } from '@/lib/domains/inventory/ledger';
 import { invalidateInventoryCaches } from '@/lib/domains/inventory/inventoryCache';
 import { recordProductSale } from '@/lib/domains/inventory/recordSale';
@@ -28,8 +27,7 @@ function webhookAuthorized(header: string | null, secret: string): boolean {
 /**
  * Batch POS ingest — maps `POSMapping.externalSku` when `productId` is omitted.
  * Middleware does not require a session. `POS_WEBHOOK_SECRET` is required.
- * `externalRef` identifies this webhook batch so a retry does not post twice.
- * Matches only sales this webhook posted, not other documents that reuse the string.
+ * `externalRef` identifies the batch so a retry does not post twice.
  * Staff is always `pos-webhook` — the JSON body cannot set `staffId`.
  */
 export async function POST(req: NextRequest) {
@@ -62,13 +60,9 @@ export async function POST(req: NextRequest) {
 
     const outcome = await prisma.$transaction(
       async (db) => {
-        await db.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${externalRef}, 0))`;
+        await db.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${externalRef}))`;
         const existing = await db.inventoryTransaction.findFirst({
-          where: {
-            referenceId: externalRef,
-            staffId: POS_WEBHOOK_ACTOR,
-            transactionType: { in: [TransactionType.Sale, TransactionType.POS_Sale] },
-          },
+          where: { referenceId: externalRef },
           select: { id: true },
         });
         if (existing) {

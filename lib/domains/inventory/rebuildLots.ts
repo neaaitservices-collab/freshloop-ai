@@ -34,7 +34,7 @@ export async function rebuildLotsFromLedger(options?: {
       await tx.inventoryLot.deleteMany({ where: { productId: product.id } });
       let count = 0;
       for (const location of LOT_LOCATIONS) {
-        const qty = await getCurrentStock(product.id, location, tx);
+        const qty = await getCurrentStock(product.id, location);
         if (!(qty > 0)) continue;
         const latestReceive = await tx.inventoryTransaction.findFirst({
           where: {

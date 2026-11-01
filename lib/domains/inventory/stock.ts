@@ -415,32 +415,32 @@ export async function setStockCases(productId: string, cases: number, staffId: s
   if (!product) throw new Error('Item was not found.');
   const pack = product.casePackSize && product.casePackSize > 0 ? product.casePackSize : 1;
   const targetUnits = Number((cases * pack).toFixed(4));
-  const shelf = await readShelfOnHand(productId);
-  const plan = planShelfAdjustment({
-    targetUnits,
-    floorOnHand: shelf.floor,
-    deliOnHand: shelf.deli,
-  });
-  if (plan.floorDelta !== 0 || plan.deliDelta !== 0) {
+  const onHand = await getCurrentStock(productId);
+  const delta = Number((targetUnits - onHand).toFixed(4));
+  if (Math.abs(delta) >= 0.0001) {
+    const shrink = delta < 0;
     const unitCost = product.standardCost && product.standardCost > 0 ? product.standardCost : 0;
     const referenceId = `ADJ-${Date.now()}`;
-    const actor = staffId.trim() || 'staff-admin';
     await prisma.$transaction(async (tx) => {
-      await applyLocationDelta(tx, {
+      const created = await tx.inventoryTransaction.create({
+        data: {
+          productId,
+          staffId: staffId.trim() || 'staff-admin',
+          qtyChange: delta,
+          transactionType: shrink ? TransactionType.Waste : TransactionType.Receive,
+          fromLocation: shrink ? InventoryLocation.Retail_Floor : InventoryLocation.External_Vendor,
+          toLocation: shrink ? InventoryLocation.Waste_Bin : InventoryLocation.Retail_Floor,
+          unitCostAtTime: unitCost,
+          referenceId,
+          notes: shrink ? 'Admin stock override: shrink' : 'Admin stock override: add cases',
+        },
+      });
+      await alignLotsToLedger(tx, {
         productId,
         location: InventoryLocation.Retail_Floor,
-        delta: plan.floorDelta,
-        staffId: actor,
         unitCost,
-        referenceId,
-      });
-      await applyLocationDelta(tx, {
-        productId,
-        location: InventoryLocation.Deli_Grab_N_Go,
-        delta: plan.deliDelta,
-        staffId: actor,
-        unitCost,
-        referenceId,
+        receiveReferenceId: referenceId,
+        receiveTransactionId: created.id,
       });
     });
   }
@@ -682,16 +682,18 @@ export async function postProductReceipt(
   const unitsAdded = Number(Math.abs(input.quantityUnits).toFixed(4));
   if (!(unitsAdded > 0)) throw new Error('Receive quantity must be greater than zero.');
 
+  const product = await prisma.product.findUnique({ where: { id: productId } });
+  if (!product) throw new Error('Product was not found.');
+
   const unitCost = Number(Math.max(0, input.unitCostAtTime).toFixed(4));
+  const shelfDays = product.shelfLifeDays > 0 ? product.shelfLifeDays : 7;
   const actor = input.staffId.trim() || 'staff-receiver-01';
   const toLocation = input.toLocation ?? InventoryLocation.Retail_Floor;
+
+  const expirationDate = new Date(Date.now() + shelfDays * 24 * 60 * 60 * 1000);
   const referenceId = input.referenceId?.trim() || `RCV-PROD-${Date.now()}`;
 
   const write = async (tx: LotTx) => {
-    const product = await tx.product.findUnique({ where: { id: productId } });
-    if (!product) throw new Error('Product was not found.');
-    const shelfDays = product.shelfLifeDays > 0 ? product.shelfLifeDays : 7;
-    const expirationDate = new Date(Date.now() + shelfDays * 24 * 60 * 60 * 1000);
     await tx.product.update({
       where: { id: productId },
       data: {

@@ -161,7 +161,6 @@ export async function consumeLotsFifo(
     /**
      * Consume no more than current on-hand and do not throw when the ledger is short.
      * Used by writers that still post a negative ledger row (bundle explode, manufacturing).
-     * Alignment still runs when on-hand is already zero so leftover layers are trimmed.
      */
     allowShort?: boolean;
   }
@@ -173,6 +172,7 @@ export async function consumeLotsFifo(
   const onHand = Math.max(0, await readLocationOnHand(tx, input.productId, input.location));
   if (input.allowShort) {
     need = Number(Math.min(need, onHand).toFixed(4));
+    if (!(need > 0)) return [];
   } else if (need > onHand + 0.0001) {
     const short = Number((need - onHand).toFixed(4));
     throw new LotAllocationError(
@@ -184,8 +184,6 @@ export async function consumeLotsFifo(
     productId: input.productId,
     location: input.location,
   });
-
-  if (!(need > 0)) return [];
 
   const lots = await tx.inventoryLot.findMany({
     where: {
