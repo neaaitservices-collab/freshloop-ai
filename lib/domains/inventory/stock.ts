@@ -8,7 +8,13 @@ import {
   readProductRetailPrices,
   writeProductMarkdownPrices,
 } from '@/lib/domains/inventory/productMarkdownColumn';
-import { consumeLotsFifo, createLotOnReceive, transferLotsFifo } from '@/lib/domains/inventory/lots';
+import {
+  alignLotsToLedger,
+  consumeLotsFifo,
+  createLotOnReceive,
+  transferLotsFifo,
+  type LotTx,
+} from '@/lib/domains/inventory/lots';
 import { markdownRevenueImpact } from '@/lib/utils/money';
 
 export const PAR_CASES = DEFAULT_PAR_CASES;
@@ -20,7 +26,7 @@ export interface StockLevel {
   unitType: string;
   casePackSize: number;
   unitCost: number;
-  /** Units on `Retail_Floor` (what shoppers see on shelf). */
+  /** Shopper-facing units: `Retail_Floor` plus `Deli_Grab_N_Go`. */
   onHand: number;
   kitchenPrepQty: number;
   parUnits: number;
@@ -83,6 +89,33 @@ export function matchProduct<T extends { name: string }>(itemName: string, produ
 
 function packSizeOf(value: number | null | undefined): number {
   return value && value > 0 ? value : 1;
+}
+
+/**
+ * How a case-count override moves shopper-facing stock.
+ * Adds land on the retail floor. Shrink comes off the floor first, then deli.
+ * Kitchen prep is left alone.
+ */
+export function planShelfAdjustment(input: {
+  targetUnits: number;
+  floorOnHand: number;
+  deliOnHand: number;
+}): { floorDelta: number; deliDelta: number } {
+  const floor = Number(input.floorOnHand.toFixed(4));
+  const deli = Number(input.deliOnHand.toFixed(4));
+  const target = Number(input.targetUnits.toFixed(4));
+  const delta = Number((target - (floor + deli)).toFixed(4));
+  if (Math.abs(delta) < 0.0001) return { floorDelta: 0, deliDelta: 0 };
+  if (delta > 0) return { floorDelta: delta, deliDelta: 0 };
+
+  let remaining = Math.abs(delta);
+  const floorTake = Number(Math.min(Math.max(0, floor), remaining).toFixed(4));
+  remaining = Number((remaining - floorTake).toFixed(4));
+  const deliTake = Number(Math.min(Math.max(0, deli), remaining).toFixed(4));
+  return {
+    floorDelta: Number((-floorTake).toFixed(4)),
+    deliDelta: Number((-deliTake).toFixed(4)),
+  };
 }
 
 export function buildStockLevel(input: {
@@ -245,10 +278,18 @@ export function getStockLevels(): Promise<StockLevel[]> {
   return rememberLedgerRead(stockCache, 'levels', STOCK_CACHE_MS, loadStockLevels);
 }
 
+async function readShelfOnHand(productId: string): Promise<{ floor: number; deli: number }> {
+  const [floor, deli] = await Promise.all([
+    getCurrentStock(productId, InventoryLocation.Retail_Floor),
+    getCurrentStock(productId, InventoryLocation.Deli_Grab_N_Go),
+  ]);
+  return { floor, deli };
+}
+
 async function readStockLevel(productId: string): Promise<StockLevel> {
   const product = await prisma.product.findUniqueOrThrow({ where: { id: productId } });
-  const [onHand, kitchenPrepQty, prices, latest] = await Promise.all([
-    getCurrentStock(productId, InventoryLocation.Retail_Floor),
+  const [shelf, kitchenPrepQty, prices, latest] = await Promise.all([
+    readShelfOnHand(productId),
     getCurrentStock(productId, InventoryLocation.Kitchen_Prep),
     readProductRetailPrices(productId),
     prisma.inventoryTransaction.findFirst({
@@ -264,7 +305,7 @@ async function readStockLevel(productId: string): Promise<StockLevel> {
     unitType: product.unitType,
     casePackSize: product.casePackSize,
     unitCost: product.standardCost,
-    onHand,
+    onHand: shelf.floor + shelf.deli,
     kitchenPrepQty,
     parCases: product.parCases,
     retailPrice: prices.retailPrice ?? product.retailPrice,
@@ -312,8 +353,8 @@ export async function applyRetailMarkdown(
   const referenceId = `MD-${Date.now()}`;
   const revenueImpact = markdownRevenueImpact(floorQty, regularToStore, targetPrice);
 
-  await prisma.$transaction([
-    prisma.markdownEvent.create({
+  await prisma.$transaction(async (tx) => {
+    await tx.markdownEvent.create({
       data: {
         productId,
         staffId: actor,
@@ -324,11 +365,46 @@ export async function applyRetailMarkdown(
         revenueImpact,
         referenceId,
       },
-    }),
-  ]);
-  await writeProductMarkdownPrices(productId, regularToStore, targetPrice);
+    });
+    await writeProductMarkdownPrices(productId, regularToStore, targetPrice, tx);
+  });
   invalidateInventoryCaches();
   return { level: await readStockLevel(productId) };
+}
+
+async function applyLocationDelta(
+  tx: LotTx,
+  input: {
+    productId: string;
+    location: InventoryLocation;
+    delta: number;
+    staffId: string;
+    unitCost: number;
+    referenceId: string;
+  }
+) {
+  if (Math.abs(input.delta) < 0.0001) return;
+  const shrink = input.delta < 0;
+  const created = await tx.inventoryTransaction.create({
+    data: {
+      productId: input.productId,
+      staffId: input.staffId,
+      qtyChange: input.delta,
+      transactionType: shrink ? TransactionType.Waste : TransactionType.Receive,
+      fromLocation: shrink ? input.location : InventoryLocation.External_Vendor,
+      toLocation: shrink ? InventoryLocation.Waste_Bin : input.location,
+      unitCostAtTime: input.unitCost,
+      referenceId: input.referenceId,
+      notes: shrink ? 'Admin stock override: shrink' : 'Admin stock override: add cases',
+    },
+  });
+  await alignLotsToLedger(tx, {
+    productId: input.productId,
+    location: input.location,
+    unitCost: input.unitCost,
+    receiveReferenceId: input.referenceId,
+    receiveTransactionId: created.id,
+  });
 }
 
 export async function setStockCases(productId: string, cases: number, staffId: string): Promise<StockLevel> {
@@ -339,22 +415,33 @@ export async function setStockCases(productId: string, cases: number, staffId: s
   if (!product) throw new Error('Item was not found.');
   const pack = product.casePackSize && product.casePackSize > 0 ? product.casePackSize : 1;
   const targetUnits = Number((cases * pack).toFixed(4));
-  const onHand = await getCurrentStock(productId);
-  const delta = Number((targetUnits - onHand).toFixed(4));
-  if (Math.abs(delta) >= 0.0001) {
-    const shrink = delta < 0;
-    await prisma.inventoryTransaction.create({
-      data: {
+  const shelf = await readShelfOnHand(productId);
+  const plan = planShelfAdjustment({
+    targetUnits,
+    floorOnHand: shelf.floor,
+    deliOnHand: shelf.deli,
+  });
+  if (plan.floorDelta !== 0 || plan.deliDelta !== 0) {
+    const unitCost = product.standardCost && product.standardCost > 0 ? product.standardCost : 0;
+    const referenceId = `ADJ-${Date.now()}`;
+    const actor = staffId.trim() || 'staff-admin';
+    await prisma.$transaction(async (tx) => {
+      await applyLocationDelta(tx, {
         productId,
-        staffId: staffId.trim() || 'staff-admin',
-        qtyChange: delta,
-        transactionType: shrink ? TransactionType.Waste : TransactionType.Receive,
-        fromLocation: shrink ? InventoryLocation.Retail_Floor : InventoryLocation.External_Vendor,
-        toLocation: shrink ? InventoryLocation.Waste_Bin : InventoryLocation.Retail_Floor,
-        unitCostAtTime: product.standardCost && product.standardCost > 0 ? product.standardCost : 0,
-        referenceId: `ADJ-${Date.now()}`,
-        notes: shrink ? 'Admin stock override: shrink' : 'Admin stock override: add cases',
-      },
+        location: InventoryLocation.Retail_Floor,
+        delta: plan.floorDelta,
+        staffId: actor,
+        unitCost,
+        referenceId,
+      });
+      await applyLocationDelta(tx, {
+        productId,
+        location: InventoryLocation.Deli_Grab_N_Go,
+        delta: plan.deliDelta,
+        staffId: actor,
+        unitCost,
+        referenceId,
+      });
     });
   }
   invalidateInventoryCaches();
@@ -577,33 +664,34 @@ export async function postReceipt(input: {
 }
 
 /** Receive known catalog SKUs (invoice OCR confirm, POS backfill). Sets cost, expiration, and optional retail price. */
-export async function postProductReceipt(input: {
-  productId: string;
-  quantityUnits: number;
-  unitCostAtTime: number;
-  staffId: string;
-  referenceId?: string;
-  toLocation?: InventoryLocation;
-  notes?: string;
-  retailPrice?: number;
-}): Promise<{ transactionId: string; productId: string; unitsAdded: number; onHand: number }> {
+export async function postProductReceipt(
+  input: {
+    productId: string;
+    quantityUnits: number;
+    unitCostAtTime: number;
+    staffId: string;
+    referenceId?: string;
+    toLocation?: InventoryLocation;
+    notes?: string;
+    retailPrice?: number;
+  },
+  db?: LotTx
+): Promise<{ transactionId: string; productId: string; unitsAdded: number; onHand: number }> {
   const productId = input.productId?.trim();
   if (!productId) throw new Error('productId is required.');
   const unitsAdded = Number(Math.abs(input.quantityUnits).toFixed(4));
   if (!(unitsAdded > 0)) throw new Error('Receive quantity must be greater than zero.');
 
-  const product = await prisma.product.findUnique({ where: { id: productId } });
-  if (!product) throw new Error('Product was not found.');
-
   const unitCost = Number(Math.max(0, input.unitCostAtTime).toFixed(4));
-  const shelfDays = product.shelfLifeDays > 0 ? product.shelfLifeDays : 7;
   const actor = input.staffId.trim() || 'staff-receiver-01';
   const toLocation = input.toLocation ?? InventoryLocation.Retail_Floor;
-
-  const expirationDate = new Date(Date.now() + shelfDays * 24 * 60 * 60 * 1000);
   const referenceId = input.referenceId?.trim() || `RCV-PROD-${Date.now()}`;
 
-  const created = await prisma.$transaction(async (tx) => {
+  const write = async (tx: LotTx) => {
+    const product = await tx.product.findUnique({ where: { id: productId } });
+    if (!product) throw new Error('Product was not found.');
+    const shelfDays = product.shelfLifeDays > 0 ? product.shelfLifeDays : 7;
+    const expirationDate = new Date(Date.now() + shelfDays * 24 * 60 * 60 * 1000);
     await tx.product.update({
       where: { id: productId },
       data: {
@@ -636,17 +724,20 @@ export async function postProductReceipt(input: {
       receiveReferenceId: referenceId,
       receiveTransactionId: row.id,
     });
-    return row;
-  });
-
-  invalidateInventoryCaches();
-  const onHand = await getCurrentStock(productId, toLocation);
-  return {
-    transactionId: created.id,
-    productId,
-    unitsAdded,
-    onHand,
+    const onHand = await getCurrentStock(productId, toLocation, tx);
+    return {
+      transactionId: row.id,
+      productId,
+      unitsAdded,
+      onHand,
+    };
   };
+
+  if (db) return write(db);
+
+  const result = await prisma.$transaction(write);
+  invalidateInventoryCaches();
+  return result;
 }
 
 export async function moveRetailStock(

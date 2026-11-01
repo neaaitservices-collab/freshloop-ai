@@ -8,6 +8,7 @@ import {
   InventoryTransaction,
 } from '@prisma/client';
 import { invalidateInventoryCaches } from '@/lib/domains/inventory/inventoryCache';
+import { consumeLotsFifo, LotAllocationError } from '@/lib/domains/inventory/lots';
 import { computeWastePct } from '@/lib/domains/stats/wasteKpi';
 
 // ============================================================================
@@ -53,6 +54,8 @@ export interface ExecuteBundleSaleOptions {
   staffId?: string;
   fromLocation?: InventoryLocation;
   allowNegativeStock?: boolean;
+  /** Join a caller-owned transaction. Caller invalidates caches after commit. */
+  db?: Prisma.TransactionClient;
 }
 
 export interface ExplodedComponentDeduction {
@@ -134,7 +137,8 @@ export const VOLUMETRIC_SCRAP_REF_PREFIX = 'VOL-SCRAP-BUCKET';
  */
 export async function getCurrentStock(
   productId: string,
-  location?: InventoryLocation
+  location?: InventoryLocation,
+  client: Prisma.TransactionClient | PrismaClient = prisma
 ): Promise<number> {
   if (!productId || typeof productId !== 'string' || !productId.trim()) {
     throw new InventoryLedgerError(
@@ -145,7 +149,7 @@ export async function getCurrentStock(
   }
 
   try {
-    const aggregation = await prisma.inventoryTransaction.aggregate({
+    const aggregation = await client.inventoryTransaction.aggregate({
       where: location
         ? {
             productId: productId.trim(),
@@ -194,7 +198,10 @@ export async function getCurrentStock(
  *   1. Positive manufacturing/rescue inflows with a positive `unitCostAtTime`.
  *   2. The product's baseline `standardCost` in the `Product` catalog.
  */
-export async function getMovingAverageCost(productId: string): Promise<number> {
+export async function getMovingAverageCost(
+  productId: string,
+  client: Prisma.TransactionClient | PrismaClient = prisma
+): Promise<number> {
   if (!productId || typeof productId !== 'string' || !productId.trim()) {
     throw new InventoryLedgerError(
       'A valid productId is required to calculate moving average cost.',
@@ -207,7 +214,7 @@ export async function getMovingAverageCost(productId: string): Promise<number> {
 
   try {
     // Fetch historical reception logs for this product
-    const receiveLogs = await prisma.inventoryTransaction.findMany({
+    const receiveLogs = await client.inventoryTransaction.findMany({
       where: {
         productId: normalizedProductId,
         transactionType: TransactionType.Receive,
@@ -240,7 +247,7 @@ export async function getMovingAverageCost(productId: string): Promise<number> {
     }
 
     // Secondary check: positive inflows from Kitchen Manufacturing / Rescue batches
-    const positiveInflows = await prisma.inventoryTransaction.findMany({
+    const positiveInflows = await client.inventoryTransaction.findMany({
       where: {
         productId: normalizedProductId,
         qtyChange: { gt: 0 },
@@ -265,7 +272,7 @@ export async function getMovingAverageCost(productId: string): Promise<number> {
     }
 
     // Final fallback: Product catalog standardCost
-    const product = await prisma.product.findUnique({
+    const product = await client.product.findUnique({
       where: { id: normalizedProductId },
       select: { id: true, standardCost: true },
     });
@@ -331,10 +338,11 @@ export async function executeBundleSale(
 
   const sourceLocation = options?.fromLocation ?? InventoryLocation.Retail_Floor;
   const staffId = options?.staffId ?? 'POS_VIRTUAL_KITTING';
+  const client = options?.db ?? prisma;
 
   try {
     // 1. Lookup Bundle by ID or SKU along with its component items
-    const bundle = await prisma.bundle.findFirst({
+    const bundle = await client.bundle.findFirst({
       where: {
         OR: [{ id: normalizedIdentifier }, { bundleSku: normalizedIdentifier }],
       },
@@ -388,8 +396,8 @@ export async function executeBundleSale(
       const qtyToDeduct = Number((bundleItem.quantity * quantitySold).toFixed(4));
 
       if (options?.allowNegativeStock === false) {
-        const availableStock = await getCurrentStock(bundleItem.productId, sourceLocation);
-        if (availableStock < qtyToDeduct) {
+        const availableStock = await getCurrentStock(bundleItem.productId, sourceLocation, client);
+        if (availableStock + 0.0001 < qtyToDeduct) {
           throw new InventoryLedgerError(
             `Insufficient stock for component "${bundleItem.product.name}" at ${sourceLocation}: required ${qtyToDeduct}, available ${availableStock}.`,
             'INSUFFICIENT_COMPONENT_STOCK',
@@ -398,7 +406,7 @@ export async function executeBundleSale(
         }
       }
 
-      const unitCostAtTime = await getMovingAverageCost(bundleItem.productId);
+      const unitCostAtTime = await getMovingAverageCost(bundleItem.productId, client);
       const lineCogs = Number((qtyToDeduct * unitCostAtTime).toFixed(4));
 
       componentPlans.push({
@@ -411,25 +419,49 @@ export async function executeBundleSale(
       });
     }
 
-    // 3. Execute atomic ledger write for all exploded components
-    const createdTransactions = await prisma.$transaction(
-      componentPlans.map((plan) =>
-        prisma.inventoryTransaction.create({
-          data: {
-            productId: plan.productId,
-            staffId,
-            qtyChange: -Math.abs(plan.qtyToDeduct),
-            transactionType: TransactionType.POS_Sale,
-            fromLocation: sourceLocation,
-            toLocation: InventoryLocation.Customer_Out,
-            unitCostAtTime: plan.unitCostAtTime,
-            referenceId: referenceCode,
-            notes: `Virtual Kitting Explode [${bundle.bundleSku}]: ${bundle.name} (x${quantitySold})`,
-          },
-        })
-      )
-    );
-    invalidateInventoryCaches();
+    // 3. Execute atomic ledger + FIFO lot write for all exploded components
+    const writeBundle = async (tx: Prisma.TransactionClient) => {
+      const rows: InventoryTransaction[] = [];
+      for (const plan of componentPlans) {
+        if (options?.allowNegativeStock === false) {
+          const availableStock = await getCurrentStock(plan.productId, sourceLocation, tx);
+          if (availableStock + 0.0001 < plan.qtyToDeduct) {
+            throw new InventoryLedgerError(
+              `Insufficient stock for component "${plan.productName}" at ${sourceLocation}: required ${plan.qtyToDeduct}, available ${availableStock}.`,
+              'INSUFFICIENT_COMPONENT_STOCK',
+              409
+            );
+          }
+        }
+        await consumeLotsFifo(tx, {
+          productId: plan.productId,
+          location: sourceLocation,
+          qty: plan.qtyToDeduct,
+          allowShort: options?.allowNegativeStock !== false,
+        });
+        rows.push(
+          await tx.inventoryTransaction.create({
+            data: {
+              productId: plan.productId,
+              staffId,
+              qtyChange: -Math.abs(plan.qtyToDeduct),
+              transactionType: TransactionType.POS_Sale,
+              fromLocation: sourceLocation,
+              toLocation: InventoryLocation.Customer_Out,
+              unitCostAtTime: plan.unitCostAtTime,
+              referenceId: referenceCode,
+              notes: `Virtual Kitting Explode [${bundle.bundleSku}]: ${bundle.name} (x${quantitySold})`,
+            },
+          })
+        );
+      }
+      return rows;
+    };
+
+    const createdTransactions = options?.db
+      ? await writeBundle(options.db)
+      : await prisma.$transaction(writeBundle);
+    if (!options?.db) invalidateInventoryCaches();
 
     // 4. Build execution summary
     const deductions: ExplodedComponentDeduction[] = componentPlans.map((plan, index) => ({
@@ -468,6 +500,9 @@ export async function executeBundleSale(
     };
   } catch (error) {
     if (error instanceof InventoryLedgerError) throw error;
+    if (error instanceof LotAllocationError) {
+      throw new InventoryLedgerError(error.message, 'INSUFFICIENT_COMPONENT_STOCK', 409);
+    }
     throw new InventoryLedgerError(
       `Failed to execute Virtual Kitting sale for bundle "${normalizedIdentifier}": ${
         error instanceof Error ? error.message : String(error)
