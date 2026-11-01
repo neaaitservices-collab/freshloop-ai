@@ -8,6 +8,8 @@ import {
   readProductRetailPrices,
   writeProductMarkdownPrices,
 } from '@/lib/domains/inventory/productMarkdownColumn';
+import { consumeLotsFifo, createLotOnReceive, transferLotsFifo } from '@/lib/domains/inventory/lots';
+import { markdownRevenueImpact } from '@/lib/utils/money';
 
 export const PAR_CASES = DEFAULT_PAR_CASES;
 
@@ -276,7 +278,7 @@ export async function applyRetailMarkdown(
   staffId: string,
   discountPct: number = 30
 ): Promise<{ level: StockLevel }> {
-  void staffId;
+  const actor = staffId.trim() || 'staff-floor';
   const product = await prisma.product.findUnique({ where: { id: productId } });
   if (!product) throw new Error('Item was not found.');
 
@@ -307,6 +309,23 @@ export async function applyRetailMarkdown(
   }
 
   const regularToStore = prices.regularRetailPrice ?? regular;
+  const referenceId = `MD-${Date.now()}`;
+  const revenueImpact = markdownRevenueImpact(floorQty, regularToStore, targetPrice);
+
+  await prisma.$transaction([
+    prisma.markdownEvent.create({
+      data: {
+        productId,
+        staffId: actor,
+        quantityUnits: floorQty,
+        regularPrice: regularToStore,
+        markdownPrice: targetPrice,
+        discountPct: validDiscountPct,
+        revenueImpact,
+        referenceId,
+      },
+    }),
+  ]);
   await writeProductMarkdownPrices(productId, regularToStore, targetPrice);
   invalidateInventoryCaches();
   return { level: await readStockLevel(productId) };
@@ -517,6 +536,8 @@ export async function postReceipt(input: {
       select: { id: true, name: true, shelfLifeDays: true },
     });
     const shelfDays = product.shelfLifeDays > 0 ? product.shelfLifeDays : 7;
+    const expirationDate = new Date(Date.now() + shelfDays * 24 * 60 * 60 * 1000);
+    const referenceId = `RCV-${Date.now()}`;
     const created = await tx.inventoryTransaction.create({
       data: {
         productId: product.id,
@@ -526,10 +547,19 @@ export async function postReceipt(input: {
         fromLocation: InventoryLocation.External_Vendor,
         toLocation: InventoryLocation.Retail_Floor,
         unitCostAtTime: Number(unitCost.toFixed(4)),
-        referenceId: `RCV-${Date.now()}`,
-        expirationDate: new Date(Date.now() + shelfDays * 24 * 60 * 60 * 1000),
+        referenceId,
+        expirationDate,
         notes: `Received ${input.casesReceived} cases of ${input.itemName}`,
       },
+    });
+    await createLotOnReceive(tx, {
+      productId: product.id,
+      location: InventoryLocation.Retail_Floor,
+      qty: unitsAdded,
+      unitCostAtTime: Number(unitCost.toFixed(4)),
+      expirationDate,
+      receiveReferenceId: referenceId,
+      receiveTransactionId: created.id,
     });
     return { product, created };
   });
@@ -543,6 +573,79 @@ export async function postReceipt(input: {
     unitsAdded,
     onHand,
     transactionId: posted.created.id,
+  };
+}
+
+/** Receive known catalog SKUs (invoice OCR confirm, POS backfill). Sets cost, expiration, and optional retail price. */
+export async function postProductReceipt(input: {
+  productId: string;
+  quantityUnits: number;
+  unitCostAtTime: number;
+  staffId: string;
+  referenceId?: string;
+  toLocation?: InventoryLocation;
+  notes?: string;
+  retailPrice?: number;
+}): Promise<{ transactionId: string; productId: string; unitsAdded: number; onHand: number }> {
+  const productId = input.productId?.trim();
+  if (!productId) throw new Error('productId is required.');
+  const unitsAdded = Number(Math.abs(input.quantityUnits).toFixed(4));
+  if (!(unitsAdded > 0)) throw new Error('Receive quantity must be greater than zero.');
+
+  const product = await prisma.product.findUnique({ where: { id: productId } });
+  if (!product) throw new Error('Product was not found.');
+
+  const unitCost = Number(Math.max(0, input.unitCostAtTime).toFixed(4));
+  const shelfDays = product.shelfLifeDays > 0 ? product.shelfLifeDays : 7;
+  const actor = input.staffId.trim() || 'staff-receiver-01';
+  const toLocation = input.toLocation ?? InventoryLocation.Retail_Floor;
+
+  const expirationDate = new Date(Date.now() + shelfDays * 24 * 60 * 60 * 1000);
+  const referenceId = input.referenceId?.trim() || `RCV-PROD-${Date.now()}`;
+
+  const created = await prisma.$transaction(async (tx) => {
+    await tx.product.update({
+      where: { id: productId },
+      data: {
+        ...(unitCost > 0 ? { standardCost: unitCost } : {}),
+        ...(input.retailPrice !== undefined && input.retailPrice > 0
+          ? { retailPrice: input.retailPrice }
+          : {}),
+      },
+    });
+    const row = await tx.inventoryTransaction.create({
+      data: {
+        productId,
+        staffId: actor,
+        qtyChange: unitsAdded,
+        transactionType: TransactionType.Receive,
+        fromLocation: InventoryLocation.External_Vendor,
+        toLocation,
+        unitCostAtTime: unitCost,
+        referenceId,
+        expirationDate,
+        notes: input.notes?.trim() || 'Product receipt',
+      },
+    });
+    await createLotOnReceive(tx, {
+      productId,
+      location: toLocation,
+      qty: unitsAdded,
+      unitCostAtTime: unitCost,
+      expirationDate,
+      receiveReferenceId: referenceId,
+      receiveTransactionId: row.id,
+    });
+    return row;
+  });
+
+  invalidateInventoryCaches();
+  const onHand = await getCurrentStock(productId, toLocation);
+  return {
+    transactionId: created.id,
+    productId,
+    unitsAdded,
+    onHand,
   };
 }
 
@@ -573,38 +676,51 @@ export async function moveRetailStock(
     fromLocation: InventoryLocation.Retail_Floor,
   };
 
-  if (action === 'waste') {
-    await prisma.inventoryTransaction.create({
-      data: {
-        ...shared,
-        qtyChange: -qty,
-        transactionType: TransactionType.Waste,
-        toLocation: InventoryLocation.Waste_Bin,
-        notes: 'Discarded from inventory to waste',
-      },
-    });
-  } else {
-    await prisma.$transaction([
-      prisma.inventoryTransaction.create({
+  await prisma.$transaction(async (tx) => {
+    if (action === 'waste') {
+      await consumeLotsFifo(tx, {
+        productId,
+        location: InventoryLocation.Retail_Floor,
+        qty,
+      });
+      await tx.inventoryTransaction.create({
         data: {
           ...shared,
           qtyChange: -qty,
-          transactionType: TransactionType.Rescue,
-          toLocation: InventoryLocation.Kitchen_Prep,
-          notes: 'Transferred from the retail floor to kitchen rescue',
+          transactionType: TransactionType.Waste,
+          toLocation: InventoryLocation.Waste_Bin,
+          notes: 'Discarded from inventory to waste',
         },
-      }),
-      prisma.inventoryTransaction.create({
-        data: {
-          ...shared,
-          qtyChange: qty,
-          transactionType: TransactionType.Rescue,
-          toLocation: InventoryLocation.Kitchen_Prep,
-          notes: 'Received in kitchen rescue from the retail floor',
-        },
-      }),
-    ]);
-  }
+      });
+      return;
+    }
+
+    await transferLotsFifo(tx, {
+      productId,
+      fromLocation: InventoryLocation.Retail_Floor,
+      toLocation: InventoryLocation.Kitchen_Prep,
+      qty,
+      receiveReferenceId: referenceId,
+    });
+    await tx.inventoryTransaction.create({
+      data: {
+        ...shared,
+        qtyChange: -qty,
+        transactionType: TransactionType.Rescue,
+        toLocation: InventoryLocation.Kitchen_Prep,
+        notes: 'Transferred from the retail floor to kitchen rescue',
+      },
+    });
+    await tx.inventoryTransaction.create({
+      data: {
+        ...shared,
+        qtyChange: qty,
+        transactionType: TransactionType.Rescue,
+        toLocation: InventoryLocation.Kitchen_Prep,
+        notes: 'Received in kitchen rescue from the retail floor',
+      },
+    });
+  });
 
   invalidateInventoryCaches();
   return { level: await readStockLevel(productId), units: qty };
@@ -625,18 +741,25 @@ export async function moveKitchenPrepToWaste(
   const qty = Number(Math.min(prepQty, Math.max(0, requested)).toFixed(4));
   if (!(qty > 0)) throw new Error('Transfer quantity must be greater than zero.');
   const cost = product.standardCost && product.standardCost > 0 ? product.standardCost : 0;
-  await prisma.inventoryTransaction.create({
-    data: {
+  await prisma.$transaction(async (tx) => {
+    await consumeLotsFifo(tx, {
       productId,
-      staffId: staffId.trim() || 'staff-kitchen',
-      qtyChange: -qty,
-      transactionType: TransactionType.Waste,
-      fromLocation: InventoryLocation.Kitchen_Prep,
-      toLocation: InventoryLocation.Waste_Bin,
-      unitCostAtTime: cost,
-      referenceId: `KITCHEN-WASTE-${Date.now()}`,
-      notes: 'Discarded from kitchen prep to waste',
-    },
+      location: InventoryLocation.Kitchen_Prep,
+      qty,
+    });
+    await tx.inventoryTransaction.create({
+      data: {
+        productId,
+        staffId: staffId.trim() || 'staff-kitchen',
+        qtyChange: -qty,
+        transactionType: TransactionType.Waste,
+        fromLocation: InventoryLocation.Kitchen_Prep,
+        toLocation: InventoryLocation.Waste_Bin,
+        unitCostAtTime: cost,
+        referenceId: `KITCHEN-WASTE-${Date.now()}`,
+        notes: 'Discarded from kitchen prep to waste',
+      },
+    });
   });
   invalidateInventoryCaches();
   return { level: await readStockLevel(productId), units: qty };

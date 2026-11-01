@@ -157,8 +157,12 @@ Bridge from invoice OCR: `lib/domains/receiving/receivingBridge.ts` (`receivingL
 | `POST` | `/api/voice-logger` | Audio/text → parsed transfer + `TargetAction` |
 | `GET`/`POST` | `/api/recipe-fusion` | List / generate fusion recipes (DB + legacy memory) |
 | `POST` | `/api/manufacturing` | BOM execution / production batch (see route for payload) |
+| `GET` | `/api/admin/markdown-suggestions` | Short-dated floor SKUs + suggested discount % |
+| `POST` | `/api/pos/webhook` | Batch POS sales (optional `POS_WEBHOOK_SECRET` Bearer) |
 
 Gemini helpers: `lib/domains/ai/gemini.ts`.
+
+**Invoice OCR commit:** `confirmCommit` payloads use `quantity_kind`: `'units'` (default) or `'cases'`. Optional `invoiceMeta` creates `VendorInvoice` + line items via `commitInvoiceOcrReceipts`.
 
 ---
 
@@ -246,13 +250,11 @@ npx prisma generate
 
 ### Role context
 
-`components/auth/RoleProvider.tsx`:
+`components/auth/RoleProvider.tsx` wraps **Auth.js** (`useSession`). The signed-in user id and role come from the JWT session — not a browser “acting as” switcher.
 
-- Fetches `GET /api/users`.
-- Stores active user id in **`localStorage`** key `freshloop-active-user`.
-- **`staffId`** on API calls usually comes from `activeUser.id` (fallback strings like `staff-operations` in places).
-
-Authorization is **partial**: some PATCH routes check `isManager(role)` from body; there is **no** middleware JWT. Treat as **prototype security**.
+- Managers can load the staff directory via `GET /api/users`.
+- **`middleware.ts`** returns **401** for unsigned `/api/*` (except `/api/auth/*` and `/api/health`).
+- Route handlers must call `requireSessionUser()` / `requireRoles()` — never trust `staffId` or `role` from JSON bodies.
 
 ### Imports
 
@@ -271,11 +273,12 @@ See repo `AGENTS.md` — this Next version may differ from older docs; check `no
 
 ## Legacy vs live (important)
 
-| Live (Prisma ledger) | Legacy / demo |
-|----------------------|----------------|
-| `/api/inventory/levels`, `/move`, receive POST → `postReceipt` | `lib/legacy/mockData.ts` seeds |
-| `getStockLevels`, admin stats (when DB up) | `lib/legacy/db.ts` in-memory inventory + fusion fallback |
-| OperationsLiveTransfers, SubInventoryWorkspace | OperationsCenter table rows from `INITIAL_*` mock |
+| Live (Prisma ledger + lots) | Legacy / demo |
+|-----------------------------|----------------|
+| `/api/inventory/levels`, `/move`, receive POST → `postReceipt` / `postProductReceipt` | `lib/legacy/mockData.ts` (avoid for new features) |
+| `InventoryLot` FIFO + `MarkdownEvent` audit | `lib/legacy/db.ts` in-memory helpers (deprecated) |
+| Recipe fusion → `RecipeFusion` table | — |
+| Voice / invoice catalog matching | `loadProductCatalog()` → `Product` rows only |
 
 When extending features, **wire new UI to domain functions** that write `InventoryTransaction`. Avoid adding new dependencies on in-memory stores.
 

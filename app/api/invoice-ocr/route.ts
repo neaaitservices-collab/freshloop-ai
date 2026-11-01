@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Department, InventoryLocation, TransactionType } from '@prisma/client';
 import { prisma, getMovingAverageCost } from '@/lib/domains/inventory/ledger';
-import { invalidateInventoryCaches } from '@/lib/domains/inventory/inventoryCache';
-import { INITIAL_INVENTORY_ITEMS } from '@/lib/legacy/mockData';
+import { loadProductCatalog } from '@/lib/domains/catalog/productCatalog';
+import {
+  commitInvoiceOcrReceipts,
+  type OcrInvoiceMeta,
+} from '@/lib/domains/receiving/invoiceOcrCommit';
 import { generateContentWithFallback, parseModelJson, tryParseModelJson } from '@/lib/domains/ai/gemini';
 import { authErrorResponse } from '@/lib/auth/http';
 import { requireReceivingStaff } from '@/lib/auth/guardRoute';
@@ -99,37 +102,15 @@ function normalizeItemKey(text: string): string {
 }
 
 async function loadCatalogForCostComparison(): Promise<CatalogLookupEntry[]> {
-  try {
-    const dbProducts = await prisma.product.findMany();
-    if (dbProducts.length > 0) {
-      return dbProducts.map((p) => {
-        const pack = p.casePackSize && p.casePackSize > 0 ? p.casePackSize : 1;
-        const unitStd = p.standardCost ?? 2.0;
-        return {
-          id: p.id,
-          name: p.name,
-          department: p.department,
-          casePackSize: pack,
-          standardCostPerUnit: unitStd,
-          standardCostPerCase: Number((unitStd * pack).toFixed(2)),
-        };
-      });
-    }
-  } catch {
-    // Fallback to mock catalog when DB is unavailable
-  }
-
-  return INITIAL_INVENTORY_ITEMS.map((item) => {
-    const pack = item.casePackSize && item.casePackSize > 0 ? item.casePackSize : 1;
-    return {
-      id: item.id,
-      name: item.name,
-      department: item.department as Department,
-      casePackSize: pack,
-      standardCostPerUnit: Number((item.receivedCost / pack).toFixed(2)),
-      standardCostPerCase: item.receivedCost,
-    };
-  });
+  const rows = await loadProductCatalog();
+  return rows.map((p) => ({
+    id: p.id,
+    name: p.name,
+    department: p.department,
+    casePackSize: p.casePackSize,
+    standardCostPerUnit: p.standardCostPerUnit,
+    standardCostPerCase: p.standardCostPerCase,
+  }));
 }
 
 function findBestCatalogProduct(
@@ -424,6 +405,7 @@ export async function POST(req: NextRequest) {
       confirmedItems,
       invoiceNumber: confirmedInvoiceNum,
       staffId,
+      invoiceMeta,
     } = body as {
       imageBase64?: string;
       mimeType?: string;
@@ -432,11 +414,16 @@ export async function POST(req: NextRequest) {
       confirmedItems?: Array<{
         product_id: string;
         quantity: number;
+        quantity_kind?: 'units' | 'cases';
         unit_cost: number;
         to_location?: InventoryLocation;
+        line_name?: string;
+        department?: Department;
+        case_pack_size?: number;
       }>;
       invoiceNumber?: string;
       staffId?: string;
+      invoiceMeta?: OcrInvoiceMeta;
     };
 
     // ------------------------------------------------------------------------
@@ -446,30 +433,20 @@ export async function POST(req: NextRequest) {
     // ------------------------------------------------------------------------
     if (confirmCommit && Array.isArray(confirmedItems) && confirmedItems.length > 0) {
       const actor = await requireReceivingStaff();
-      const createdReceipts = await prisma.$transaction(
-        confirmedItems.map((item) =>
-          prisma.inventoryTransaction.create({
-            data: {
-              productId: item.product_id,
-              staffId: actor.id,
-              qtyChange: Math.abs(Number(item.quantity) || 1),
-              transactionType: TransactionType.Receive,
-              fromLocation: InventoryLocation.External_Vendor,
-              toLocation: item.to_location || InventoryLocation.Retail_Floor,
-              unitCostAtTime: Number(item.unit_cost) || 0,
-              referenceId: confirmedInvoiceNum || `INV-OCR-${Date.now()}`,
-              notes: 'Confirmed Invoice OCR Receipt',
-            },
-          })
-        )
-      );
-      invalidateInventoryCaches();
+      const referenceId = confirmedInvoiceNum || `INV-OCR-${Date.now()}`;
+      const committed = await commitInvoiceOcrReceipts({
+        staffId: actor.id,
+        referenceId,
+        confirmedItems,
+        invoiceMeta: invoiceMeta ?? null,
+      });
 
       return NextResponse.json({
         success: true,
         committed: true,
-        transactionsCreated: createdReceipts.length,
-        transactions: createdReceipts,
+        invoiceId: committed.invoiceId,
+        transactionsCreated: committed.transactionsCreated,
+        receipts: committed.receipts,
         timestamp: new Date().toISOString(),
       });
     }

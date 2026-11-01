@@ -14,9 +14,10 @@ import { VoiceLoggerModal, ConfirmedVoiceCommitResult } from '@/components/featu
 import { RecipeProductionModal, ProductionBatchExecutedSummary } from '@/components/features/recipes/RecipeProductionModal';
 import { VolumetricScrapForm } from '@/components/features/operations/VolumetricScrapForm';
 import { DeliLabelModal } from '@/components/features/recipes/DeliLabelModal';
-import { InventoryItem, RecipeFusionResult, DepartmentType } from '@/lib/types';
+import { RecipeFusionResult, DepartmentType } from '@/lib/types';
 import type { WasteKpiReport } from '@/lib/domains/inventory/ledger';
 import { OperationsLiveTransfers } from '@/components/features/operations/OperationsLiveTransfers';
+import { OperationsWasteKpiPanel } from '@/components/features/operations/OperationsWasteKpiPanel';
 import { INITIAL_INVENTORY_ITEMS } from '@/lib/legacy/mockData';
 import { mapDbRecipeToFusionResult } from '@/lib/domains/manufacturing/mapDbRecipeToFusion';
 import {
@@ -74,221 +75,10 @@ interface SubInventoryLedgerRow {
   isManufactured: boolean;
 }
 
-// ============================================================================
-// Initial Ledger Seed Snapshot (Mirrors Phase 1 & 2 Ledger when DB is offline)
-// ============================================================================
-
-const DEFAULT_LEDGER_ROWS: SubInventoryLedgerRow[] = [
-  {
-    productId: 'prod-avocado-hass',
-    barcode: '4225',
-    name: 'Avocados Hass (Mexico)',
-    department: 'PRODUCE',
-    unitType: 'UNIT',
-    retailFloorQty: 88, // 144 received - 36 rescued to kitchen - 20 sold
-    kitchenPrepQty: 36, // 36 transferred via Rescue
-    movingAvgCost: 1.81,
-    retailPrice: 3.49,
-    targetMarginPct: 48,
-    yieldPct: 75,
-    daysRemaining: 2,
-    expirationDate: '2026-10-22',
-    supplier: 'Tony Deodato & Sons',
-    isManufactured: false,
-  },
-  {
-    productId: 'prod-tomato-hothouse',
-    barcode: '4799',
-    name: 'Hot House Tomatoes (Ontario)',
-    department: 'PRODUCE',
-    unitType: 'LBS',
-    retailFloorQty: 46, // 64 received - 15 rescued - 3 wasted
-    kitchenPrepQty: 15, // 15 lbs in Kitchen_Prep for Panzanella
-    movingAvgCost: 2.5,
-    retailPrice: 4.49,
-    targetMarginPct: 44,
-    yieldPct: 95,
-    daysRemaining: 3,
-    expirationDate: '2026-10-23',
-    supplier: 'Casteels Greenhouse',
-    isManufactured: false,
-  },
-  {
-    productId: 'prod-sourdough-boule',
-    barcode: '8001039001',
-    name: 'Artisanal Sourdough Boule',
-    department: 'BAKERY',
-    unitType: 'LOAF',
-    retailFloorQty: 19, // 27 received - 8 rescued
-    kitchenPrepQty: 8, // 8 loaves in Kitchen_Prep for Croutons/Panzanella
-    movingAvgCost: 2.1,
-    retailPrice: 4.99,
-    targetMarginPct: 44,
-    yieldPct: 100,
-    daysRemaining: 2,
-    expirationDate: '2026-10-22',
-    supplier: 'Moores Artisan Bakery',
-    isManufactured: false,
-  },
-  {
-    productId: 'prod-apple-honeycrisp',
-    barcode: '19906',
-    name: 'Honey Crisp Apples',
-    department: 'PRODUCE',
-    unitType: 'LBS',
-    retailFloorQty: 62, // 80 received - 18 sold
-    kitchenPrepQty: 20, // Prepped for Spiced Apple Parfait
-    movingAvgCost: 2.62,
-    retailPrice: 4.49,
-    targetMarginPct: 40,
-    yieldPct: 92,
-    daysRemaining: 4,
-    expirationDate: '2026-10-24',
-    supplier: 'Tony Deodato & Sons',
-    isManufactured: false,
-  },
-  {
-    productId: 'prod-heavy-cream',
-    barcode: '068700100402',
-    name: 'Whole Heavy Cream 40%',
-    department: 'DAIRY',
-    unitType: 'LITER',
-    retailFloorQty: 10,
-    kitchenPrepQty: 6,
-    movingAvgCost: 3.8,
-    retailPrice: 6.49,
-    targetMarginPct: 38,
-    yieldPct: 100,
-    daysRemaining: 3,
-    expirationDate: '2026-10-23',
-    supplier: 'Golden State Dairy',
-    isManufactured: false,
-  },
-  {
-    productId: 'prod-greek-yogurt',
-    barcode: '068700200911',
-    name: 'Greek Whole Milk Yogurt (750g)',
-    department: 'DAIRY',
-    unitType: 'TUB',
-    retailFloorQty: 16,
-    kitchenPrepQty: 24,
-    movingAvgCost: 2.2,
-    retailPrice: 4.29,
-    targetMarginPct: 40,
-    yieldPct: 100,
-    daysRemaining: 6,
-    expirationDate: '2026-10-26',
-    supplier: 'Golden State Dairy',
-    isManufactured: false,
-  },
-  {
-    productId: 'prod-tomato-cocktail',
-    barcode: '011067950807',
-    name: 'Cocktail Tomatoes',
-    department: 'PRODUCE',
-    unitType: 'LBS',
-    retailFloorQty: 20,
-    kitchenPrepQty: 4,
-    movingAvgCost: 3.5,
-    retailPrice: 5.99,
-    targetMarginPct: 42,
-    yieldPct: 98,
-    daysRemaining: 3,
-    expirationDate: '2026-10-23',
-    supplier: 'Casteels Greenhouse',
-    isManufactured: false,
-  },
-  {
-    productId: 'prod-cilantro',
-    barcode: '4889',
-    name: 'Fresh Cilantro Bunch',
-    department: 'PRODUCE',
-    unitType: 'BUNCH',
-    retailFloorQty: 18,
-    kitchenPrepQty: 6,
-    movingAvgCost: 1.38,
-    retailPrice: 2.99,
-    targetMarginPct: 54,
-    yieldPct: 75,
-    daysRemaining: 3,
-    expirationDate: '2026-10-23',
-    supplier: 'Tony Deodato & Sons',
-    isManufactured: false,
-  },
-  {
-    productId: 'prod-jalapeno',
-    barcode: '4693',
-    name: 'Jalapeno Peppers',
-    department: 'PRODUCE',
-    unitType: 'LBS',
-    retailFloorQty: 16,
-    kitchenPrepQty: 4,
-    movingAvgCost: 1.9,
-    retailPrice: 3.99,
-    targetMarginPct: 53,
-    yieldPct: 85,
-    daysRemaining: 8,
-    expirationDate: '2026-10-28',
-    supplier: 'Tony Deodato & Sons',
-    isManufactured: false,
-  },
-  {
-    productId: 'prod-evoo-5l',
-    barcode: '841001005000',
-    name: 'Extra Virgin Olive Oil (Bulk Kitchen)',
-    department: 'PANTRY',
-    unitType: 'LITER',
-    retailFloorQty: 0,
-    kitchenPrepQty: 19.5,
-    movingAvgCost: 5.7,
-    retailPrice: 10.99,
-    targetMarginPct: 45,
-    yieldPct: 100,
-    daysRemaining: 120,
-    expirationDate: '2027-02-17',
-    supplier: 'Mediterranean Imports',
-    isManufactured: false,
-  },
-  {
-    productId: 'prod-deli-panzanella',
-    barcode: '290001000018',
-    name: 'Roasted Tomato & Sourdough Panzanella (12 oz)',
-    department: 'DELI_KITCHEN',
-    unitType: 'TUB',
-    retailFloorQty: 12,
-    kitchenPrepQty: 20,
-    movingAvgCost: 1.98,
-    retailPrice: 8.99,
-    targetMarginPct: 78,
-    yieldPct: 100,
-    daysRemaining: 3,
-    expirationDate: '2026-10-23',
-    supplier: 'FreshLoop Kitchen',
-    isManufactured: true,
-  },
-  {
-    productId: 'prod-deli-guacamole',
-    barcode: '290001000032',
-    name: 'Fresh Kitchen Rescue Guacamole Cup (6 oz)',
-    department: 'DELI_KITCHEN',
-    unitType: 'TUB',
-    retailFloorQty: 15,
-    kitchenPrepQty: 30,
-    movingAvgCost: 1.82,
-    retailPrice: 4.99,
-    targetMarginPct: 64,
-    yieldPct: 100,
-    daysRemaining: 2,
-    expirationDate: '2026-10-22',
-    supplier: 'FreshLoop Kitchen',
-    isManufactured: true,
-  },
-];
-
 export default function OperationsCenter() {
   const router = useRouter();
   const { activeUser } = useRole();
-  // Core state — live ledger from API; mock seed only when DB is offline
+  // Core state — live ledger from API only
   const [ledgerRows, setLedgerRows] = useState<SubInventoryLedgerRow[]>([]);
   const [recipes, setRecipes] = useState<RecipeFusionResult[]>([]);
   const [pullSensitivityDays, setPullSensitivityDays] = useState<2 | 3 | 4>(3);
@@ -351,9 +141,7 @@ export default function OperationsCenter() {
         }
       }
     } catch {
-      setLedgerRows((current) =>
-        current.length === 0 ? DEFAULT_LEDGER_ROWS : current
-      );
+      setLedgerRows([]);
     } finally {
       setLoading(false);
     }
@@ -613,73 +401,11 @@ export default function OperationsCenter() {
                 </div>
               </div>
 
-              {/* Center Row: Big Percentage Readout vs Target_Waste_Pct */}
-              <div className="flex items-baseline justify-between gap-4 py-2">
-                <div>
-                  <div className="flex items-baseline gap-2.5">
-                    <span
-                      className={`text-4xl sm:text-5xl font-black tracking-tight tabular-nums ${
-                        isWasteExceedingTarget
-                          ? 'text-rose-400 drop-shadow-[0_0_15px_rgba(244,63,94,0.6)] animate-pulse'
-                          : 'text-emerald-400 drop-shadow-[0_0_12px_rgba(52,211,153,0.45)]'
-                      }`}
-                    >
-                      {wastePctDisplay}
-                    </span>
-                    <span className="text-xs font-bold text-slate-400">
-                      / Meta{' '}
-                      <strong className="text-white">
-                        {(wasteKpi?.targetWastePct ?? 2.5).toFixed(1)}%
-                      </strong>
-                    </span>
-                  </div>
-                  <p className="text-xs text-slate-400 mt-1">
-                    {wasteKpi?.wastePct === null || wasteKpi?.wastePct === undefined ? (
-                      <span className="text-slate-400 font-medium">
-                        Ventas brutas insuficientes para calcular % de merma (ledger en vivo).
-                      </span>
-                    ) : isWasteExceedingTarget ? (
-                      <span className="text-rose-300 font-semibold flex items-center gap-1.5">
-                        <AlertOctagon className="w-4 h-4 text-rose-400 shrink-0 animate-bounce" />
-                        ¡Merma supera Target_Waste_Pct por +
-                        {(wasteKpi.wastePct - wasteKpi.targetWastePct).toFixed(2)}%!
-                        Activar rescate de cocina.
-                      </span>
-                    ) : (
-                      <span className="text-emerald-300/90 font-medium flex items-center gap-1.5">
-                        <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
-                        Merma controlada ({(wasteKpi.targetWastePct - wasteKpi.wastePct).toFixed(2)}% de margen seguro).
-                      </span>
-                    )}
-                  </p>
-                </div>
-              </div>
-
-              {/* Progress Gauge Bar */}
-              <div className="space-y-1.5">
-                <div className="h-3 w-full rounded-full bg-slate-950 border border-slate-800 overflow-hidden p-0.5">
-                  <div
-                    className={`h-full rounded-full transition-all duration-500 ${
-                      isWasteExceedingTarget
-                        ? 'bg-gradient-to-r from-amber-500 via-rose-500 to-red-600 animate-pulse'
-                        : 'bg-gradient-to-r from-emerald-500 to-teal-400'
-                    }`}
-                    style={{
-                      width:
-                        wasteKpi?.wastePct != null
-                          ? `${Math.min(100, (wasteKpi.wastePct / (wasteKpi.targetWastePct * 1.6)) * 100)}%`
-                          : '0%',
-                    }}
-                  />
-                </div>
-                <div className="flex justify-between text-[10px] font-mono text-slate-400">
-                  <span>0.0%</span>
-                  <span className="text-amber-400 font-bold">
-                    Umbral Meta: {wasteKpi?.targetWastePct ?? 2.5}%
-                  </span>
-                  <span>4.0%+</span>
-                </div>
-              </div>
+              <OperationsWasteKpiPanel
+                wasteKpi={wasteKpi}
+                wastePctDisplay={wastePctDisplay}
+                isWasteExceedingTarget={isWasteExceedingTarget}
+              />
 
               {/* Formula Breakdown & Quick Volumetric Bucket Simulator */}
               <div className="p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800/90 space-y-2.5 text-xs">

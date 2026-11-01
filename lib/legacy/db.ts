@@ -1,9 +1,9 @@
 /**
- * Legacy demo helpers (`getInventoryItems`, fusion memory store). Production floor
- * stock and KPIs use `lib/inventory.ts` + `lib/stock.ts` (Prisma ledger).
+ * Legacy demo helpers for OCR/voice prototypes. Floor stock and KPIs use
+ * `lib/domains/inventory/*`; recipe fusion persistence uses `recipeFusionStore.ts`.
  */
 import { PrismaClient } from '@prisma/client';
-import { INITIAL_INVENTORY_ITEMS, INITIAL_FUSION_RECIPES } from '@/lib/legacy/mockData';
+import { INITIAL_INVENTORY_ITEMS } from '@/lib/legacy/mockData';
 import {
   InventoryItem,
   RecipeFusionResult,
@@ -35,7 +35,6 @@ export const prisma = prismaInstance;
 
 // In-Memory store fallback when database is not configured
 let inMemoryInventory: InventoryItem[] = [...INITIAL_INVENTORY_ITEMS];
-let inMemoryRecipes: RecipeFusionResult[] = [...INITIAL_FUSION_RECIPES];
 
 /**
  * Fetch Inventory items filtered by optional status and max days remaining
@@ -174,21 +173,16 @@ export async function addVoiceLogItemToInventory(voiceResult: VoiceLoggerResult)
 /**
  * Save Fusion Recipe
  */
+/** @deprecated Use `@/lib/domains/kitchen/recipeFusionStore` */
 export async function saveFusionRecipe(recipe: RecipeFusionResult): Promise<RecipeFusionResult> {
-  const existingIdx = inMemoryRecipes.findIndex((r) => r.id === recipe.id);
-  if (existingIdx !== -1) {
-    inMemoryRecipes[existingIdx] = recipe;
-  } else {
-    inMemoryRecipes = [recipe, ...inMemoryRecipes];
-  }
-  return recipe;
+  const { saveFusionRecipe: persist } = await import('@/lib/domains/kitchen/recipeFusionStore');
+  return persist(recipe);
 }
 
-/**
- * Fetch Fusion Recipes
- */
+/** @deprecated Use `@/lib/domains/kitchen/recipeFusionStore` */
 export async function getFusionRecipes(): Promise<RecipeFusionResult[]> {
-  return inMemoryRecipes;
+  const { listFusionRecipes } = await import('@/lib/domains/kitchen/recipeFusionStore');
+  return listFusionRecipes();
 }
 
 /**
