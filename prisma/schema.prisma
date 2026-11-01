@@ -107,10 +107,60 @@ model Product {
   bundleItems    BundleItem[]
   posMappings    POSMapping[]
   inventoryItems InventoryItem[]
+  inventoryLots  InventoryLot[]
+  markdownEvents MarkdownEvent[]
 
   @@index([department])
   @@index([name])
   @@map("products")
+}
+
+/// FIFO lot balances per location (receive creates lots; moves/sales consume oldest first).
+model InventoryLot {
+  id                   String            @id @default(uuid())
+  productId            String            @map("product_id")
+  product              Product           @relation(fields: [productId], references: [id], onDelete: Restrict)
+  location             InventoryLocation
+  qtyRemaining         Float             @map("qty_remaining")
+  unitCostAtTime       Float             @map("unit_cost_at_time")
+  receivedAt           DateTime          @default(now()) @map("received_at")
+  expirationDate       DateTime?         @map("expiration_date")
+  receiveReferenceId   String?           @map("receive_reference_id")
+  receiveTransactionId String?           @map("receive_transaction_id")
+
+  @@index([productId, location, expirationDate, receivedAt])
+  @@map("inventory_lots")
+}
+
+/// Commercial markdown audit (revenue given up at time of discount).
+model MarkdownEvent {
+  id            String   @id @default(uuid())
+  productId     String   @map("product_id")
+  product       Product  @relation(fields: [productId], references: [id], onDelete: Restrict)
+  staffId       String   @map("staff_id")
+  quantityUnits Float    @map("quantity_units")
+  regularPrice  Float    @map("regular_price")
+  markdownPrice Float    @map("markdown_price")
+  discountPct   Float    @map("discount_pct")
+  revenueImpact Float    @map("revenue_impact")
+  referenceId   String?  @map("reference_id")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@index([productId, createdAt])
+  @@map("markdown_events")
+}
+
+model Store {
+  id        String   @id @default(uuid())
+  slug      String   @unique
+  name      String
+  timezone  String   @default("America/Toronto")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  settings StoreSetting[]
+
+  @@map("stores")
 }
 
 model InventoryTransaction {
@@ -138,6 +188,8 @@ model InventoryTransaction {
 
 model StoreSetting {
   id                        String   @id @default(uuid())
+  storeId                   String?  @map("store_id")
+  store                     Store?   @relation(fields: [storeId], references: [id], onDelete: SetNull)
   storeName                 String   @default("FreshLoop Independent Market")
   targetWastePct            Float    @default(2.5) @map("Target_Waste_Pct")
   scrapBucketVolumeL        Float    @default(20.0) @map("Scrap_Bucket_Volume_L")
