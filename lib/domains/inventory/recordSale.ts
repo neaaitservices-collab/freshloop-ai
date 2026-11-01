@@ -1,7 +1,7 @@
-import { InventoryLocation, TransactionType } from '@prisma/client';
+import { InventoryLocation, Prisma, TransactionType } from '@prisma/client';
 import { getCurrentStock, prisma } from '@/lib/domains/inventory/ledger';
 import { invalidateInventoryCaches } from '@/lib/domains/inventory/inventoryCache';
-import { consumeLotsFifo } from '@/lib/domains/inventory/lots';
+import { consumeLotsFifo, lockProductInventory } from '@/lib/domains/inventory/lots';
 import { multiplyMoney } from '@/lib/utils/money';
 
 export type SaleLocation = 'floor' | 'deli';
@@ -23,6 +23,7 @@ export interface RecordSaleResult {
 
 /**
  * POS / floor sale — negative qty on ledger for waste KPI denominator (gross sales).
+ * Lot consumption and the ledger row commit together.
  */
 export async function recordProductSale(input: {
   productId: string;
@@ -31,22 +32,19 @@ export async function recordProductSale(input: {
   location?: SaleLocation;
   unitPriceOverride?: number;
   referenceId?: string;
+  /** Join a caller-owned transaction (POS webhook batch). Caller invalidates caches after commit. */
+  db?: Prisma.TransactionClient;
 }): Promise<RecordSaleResult> {
   const qty = Number(input.quantity);
   if (!Number.isFinite(qty) || qty <= 0) {
     throw new Error('Sale quantity must be greater than zero.');
   }
 
-  const product = await prisma.product.findUnique({ where: { id: input.productId } });
+  const client = input.db ?? prisma;
+  const product = await client.product.findUnique({ where: { id: input.productId } });
   if (!product) throw new Error('Product not found.');
 
   const location = LOC[input.location ?? (product.isManufactured ? 'deli' : 'floor')];
-  const available = await getCurrentStock(product.id, location);
-  if (available < qty) {
-    throw new Error(
-      `Insufficient stock at ${location.replace(/_/g, ' ')}: need ${qty}, have ${available}.`
-    );
-  }
 
   const unitPrice =
     input.unitPriceOverride && input.unitPriceOverride > 0
@@ -57,7 +55,14 @@ export async function recordProductSale(input: {
           ? product.standardCost / (1 - Math.min(0.95, product.targetMargin))
           : 0;
 
-  const tx = await prisma.$transaction(async (db) => {
+  const writeSale = async (db: Prisma.TransactionClient) => {
+    await lockProductInventory(db, product.id);
+    const available = await getCurrentStock(product.id, location, db);
+    if (available + 0.0001 < qty) {
+      throw new Error(
+        `Insufficient stock at ${location.replace(/_/g, ' ')}: need ${qty}, have ${available}.`
+      );
+    }
     await consumeLotsFifo(db, {
       productId: product.id,
       location,
@@ -76,21 +81,11 @@ export async function recordProductSale(input: {
         notes: `Retail sale (${qty} × $${unitPrice.toFixed(2)})`,
       },
     });
-  const tx = await prisma.inventoryTransaction.create({
-    data: {
-      productId: product.id,
-      staffId: input.staffId.trim() || 'staff-pos',
-      qtyChange: -Math.abs(qty),
-      transactionType: TransactionType.Sale,
-      fromLocation: location,
-      toLocation: InventoryLocation.Customer_Out,
-      unitCostAtTime: Number(unitPrice.toFixed(4)),
-      referenceId: input.referenceId ?? `SALE-${Date.now()}`,
-      notes: `Retail sale (${qty} × $${unitPrice.toFixed(2)})`,
-    },
-  });
+  };
 
-  invalidateInventoryCaches();
+  const tx = input.db ? await writeSale(input.db) : await prisma.$transaction(writeSale);
+
+  if (!input.db) invalidateInventoryCaches();
 
   return {
     transactionId: tx.id,
@@ -99,7 +94,6 @@ export async function recordProductSale(input: {
     quantitySold: qty,
     unitPrice: Number(unitPrice.toFixed(4)),
     grossRevenue: multiplyMoney(unitPrice, qty),
-    grossRevenue: Number((qty * unitPrice).toFixed(2)),
     location,
   };
 }

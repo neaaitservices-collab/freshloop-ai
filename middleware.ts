@@ -18,8 +18,13 @@ function isAuthApi(pathname: string): boolean {
   return pathname.startsWith('/api/auth');
 }
 
+function isPosWebhook(pathname: string): boolean {
+  return pathname === '/api/pos/webhook' || pathname.startsWith('/api/pos/webhook/');
+}
+
 function isPublicApi(pathname: string): boolean {
-  return isAuthApi(pathname) || pathname === '/api/health';
+  // POS ingest authenticates with a required Bearer secret, not a browser session.
+  return isAuthApi(pathname) || pathname === '/api/health' || isPosWebhook(pathname);
 }
 
 type MiddlewareSession = {

@@ -5,7 +5,11 @@ import { getCurrentStock, prisma } from '@/lib/domains/inventory/ledger';
 import { moveRetailStock, postProductReceipt } from '@/lib/domains/inventory/stock';
 import { rebuildLotsFromLedger } from '@/lib/domains/inventory/rebuildLots';
 
-const hasDb = Boolean(process.env.DATABASE_URL?.trim());
+const databaseUrl = process.env.DATABASE_URL?.trim() ?? '';
+const hasDb =
+  Boolean(databaseUrl) &&
+  process.env.FRESHLOOP_DB_TESTS !== '0' &&
+  !databaseUrl.includes('freshloop_ci');
 
 test('ledger integration (requires DATABASE_URL)', { skip: !hasDb }, async (t) => {
   const stamp = `test-${Date.now()}`;
@@ -37,7 +41,7 @@ test('ledger integration (requires DATABASE_URL)', { skip: !hasDb }, async (t) =
   const afterReceive = await getCurrentStock(product.id, InventoryLocation.Retail_Floor);
   assert.equal(afterReceive, 10);
 
-  await rebuildLotsFromLedger();
+  await rebuildLotsFromLedger({ productIds: [product.id] });
 
   const storeTotalBefore = await getCurrentStock(product.id);
   await moveRetailStock(product.id, 'rescue', 'test-staff', 4);

@@ -1,3 +1,4 @@
+import type { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/domains/inventory/ledger';
 
 let markdownColumnReady: Promise<void> | null = null;
@@ -40,10 +41,12 @@ export async function readProductRetailPrices(
 export async function writeProductMarkdownPrices(
   productId: string,
   regularRetailPrice: number,
-  retailPrice: number
+  retailPrice: number,
+  db?: Prisma.TransactionClient
 ): Promise<void> {
   await ensureProductMarkdownColumn();
-  await prisma.$executeRaw`
+  const client = db ?? prisma;
+  await client.$executeRaw`
     UPDATE products
     SET
       "regularRetailPrice" = ${regularRetailPrice},

@@ -8,7 +8,13 @@ import {
   readProductRetailPrices,
   writeProductMarkdownPrices,
 } from '@/lib/domains/inventory/productMarkdownColumn';
-import { consumeLotsFifo, createLotOnReceive, transferLotsFifo } from '@/lib/domains/inventory/lots';
+import {
+  alignLotsToLedger,
+  consumeLotsFifo,
+  createLotOnReceive,
+  transferLotsFifo,
+  type LotTx,
+} from '@/lib/domains/inventory/lots';
 import { markdownRevenueImpact } from '@/lib/utils/money';
 
 export const PAR_CASES = DEFAULT_PAR_CASES;
@@ -312,8 +318,8 @@ export async function applyRetailMarkdown(
   const referenceId = `MD-${Date.now()}`;
   const revenueImpact = markdownRevenueImpact(floorQty, regularToStore, targetPrice);
 
-  await prisma.$transaction([
-    prisma.markdownEvent.create({
+  await prisma.$transaction(async (tx) => {
+    await tx.markdownEvent.create({
       data: {
         productId,
         staffId: actor,
@@ -324,9 +330,9 @@ export async function applyRetailMarkdown(
         revenueImpact,
         referenceId,
       },
-    }),
-  ]);
-  await writeProductMarkdownPrices(productId, regularToStore, targetPrice);
+    });
+    await writeProductMarkdownPrices(productId, regularToStore, targetPrice, tx);
+  });
   invalidateInventoryCaches();
   return { level: await readStockLevel(productId) };
 }
@@ -343,18 +349,29 @@ export async function setStockCases(productId: string, cases: number, staffId: s
   const delta = Number((targetUnits - onHand).toFixed(4));
   if (Math.abs(delta) >= 0.0001) {
     const shrink = delta < 0;
-    await prisma.inventoryTransaction.create({
-      data: {
+    const unitCost = product.standardCost && product.standardCost > 0 ? product.standardCost : 0;
+    const referenceId = `ADJ-${Date.now()}`;
+    await prisma.$transaction(async (tx) => {
+      const created = await tx.inventoryTransaction.create({
+        data: {
+          productId,
+          staffId: staffId.trim() || 'staff-admin',
+          qtyChange: delta,
+          transactionType: shrink ? TransactionType.Waste : TransactionType.Receive,
+          fromLocation: shrink ? InventoryLocation.Retail_Floor : InventoryLocation.External_Vendor,
+          toLocation: shrink ? InventoryLocation.Waste_Bin : InventoryLocation.Retail_Floor,
+          unitCostAtTime: unitCost,
+          referenceId,
+          notes: shrink ? 'Admin stock override: shrink' : 'Admin stock override: add cases',
+        },
+      });
+      await alignLotsToLedger(tx, {
         productId,
-        staffId: staffId.trim() || 'staff-admin',
-        qtyChange: delta,
-        transactionType: shrink ? TransactionType.Waste : TransactionType.Receive,
-        fromLocation: shrink ? InventoryLocation.Retail_Floor : InventoryLocation.External_Vendor,
-        toLocation: shrink ? InventoryLocation.Waste_Bin : InventoryLocation.Retail_Floor,
-        unitCostAtTime: product.standardCost && product.standardCost > 0 ? product.standardCost : 0,
-        referenceId: `ADJ-${Date.now()}`,
-        notes: shrink ? 'Admin stock override: shrink' : 'Admin stock override: add cases',
-      },
+        location: InventoryLocation.Retail_Floor,
+        unitCost,
+        receiveReferenceId: referenceId,
+        receiveTransactionId: created.id,
+      });
     });
   }
   invalidateInventoryCaches();
@@ -577,16 +594,19 @@ export async function postReceipt(input: {
 }
 
 /** Receive known catalog SKUs (invoice OCR confirm, POS backfill). Sets cost, expiration, and optional retail price. */
-export async function postProductReceipt(input: {
-  productId: string;
-  quantityUnits: number;
-  unitCostAtTime: number;
-  staffId: string;
-  referenceId?: string;
-  toLocation?: InventoryLocation;
-  notes?: string;
-  retailPrice?: number;
-}): Promise<{ transactionId: string; productId: string; unitsAdded: number; onHand: number }> {
+export async function postProductReceipt(
+  input: {
+    productId: string;
+    quantityUnits: number;
+    unitCostAtTime: number;
+    staffId: string;
+    referenceId?: string;
+    toLocation?: InventoryLocation;
+    notes?: string;
+    retailPrice?: number;
+  },
+  db?: LotTx
+): Promise<{ transactionId: string; productId: string; unitsAdded: number; onHand: number }> {
   const productId = input.productId?.trim();
   if (!productId) throw new Error('productId is required.');
   const unitsAdded = Number(Math.abs(input.quantityUnits).toFixed(4));
@@ -603,7 +623,7 @@ export async function postProductReceipt(input: {
   const expirationDate = new Date(Date.now() + shelfDays * 24 * 60 * 60 * 1000);
   const referenceId = input.referenceId?.trim() || `RCV-PROD-${Date.now()}`;
 
-  const created = await prisma.$transaction(async (tx) => {
+  const write = async (tx: LotTx) => {
     await tx.product.update({
       where: { id: productId },
       data: {
@@ -636,17 +656,20 @@ export async function postProductReceipt(input: {
       receiveReferenceId: referenceId,
       receiveTransactionId: row.id,
     });
-    return row;
-  });
-
-  invalidateInventoryCaches();
-  const onHand = await getCurrentStock(productId, toLocation);
-  return {
-    transactionId: created.id,
-    productId,
-    unitsAdded,
-    onHand,
+    const onHand = await getCurrentStock(productId, toLocation, tx);
+    return {
+      transactionId: row.id,
+      productId,
+      unitsAdded,
+      onHand,
+    };
   };
+
+  if (db) return write(db);
+
+  const result = await prisma.$transaction(write);
+  invalidateInventoryCaches();
+  return result;
 }
 
 export async function moveRetailStock(

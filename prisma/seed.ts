@@ -592,7 +592,7 @@ async function main() {
   });
 
   const { rebuildLotsFromLedger } = await import("../lib/domains/inventory/rebuildLots");
-  const lotRebuild = await rebuildLotsFromLedger();
+  const lotRebuild = await rebuildLotsFromLedger({ allProducts: true });
 
   console.log("Seed complete", {
     products: PRODUCTS.length,
