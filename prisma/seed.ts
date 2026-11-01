@@ -307,8 +307,13 @@ async function main() {
   await prisma.bundle.deleteMany();
   await prisma.recipeBOM.deleteMany();
   await prisma.recipe.deleteMany();
+  await prisma.inventoryLot.deleteMany();
+  await prisma.markdownEvent.deleteMany();
+  await prisma.invoiceLineItem.deleteMany();
+  await prisma.vendorInvoice.deleteMany();
   await prisma.inventoryTransaction.deleteMany();
   await prisma.storeSetting.deleteMany();
+  await prisma.store.deleteMany();
   await prisma.product.deleteMany();
 
   const productIds: Record<string, string> = {};
@@ -355,8 +360,16 @@ async function main() {
     }
   }
 
+  const demoStore = await prisma.store.create({
+    data: {
+      slug: "cobourg-demo",
+      name: "FreshLoop Artisanal Market - Cobourg",
+    },
+  });
+
   await prisma.storeSetting.create({
     data: {
+      storeId: demoStore.id,
       storeName: "FreshLoop Demo Store",
       targetWastePct: 2.5,
       scrapBucketVolumeL: 20,
@@ -578,11 +591,15 @@ async function main() {
     },
   });
 
+  const { rebuildLotsFromLedger } = await import("../lib/domains/inventory/rebuildLots");
+  const lotRebuild = await rebuildLotsFromLedger();
+
   console.log("Seed complete", {
     products: PRODUCTS.length,
     recipes: [panzanella.name, parfait.name],
     bundles: 1,
     demoLedger: "Sale, Waste, Rescue",
+    inventoryLots: lotRebuild.lotsCreated,
   });
 }
 

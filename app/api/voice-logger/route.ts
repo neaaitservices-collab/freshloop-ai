@@ -3,7 +3,7 @@ import { Department, TargetAction } from '@prisma/client';
 import { generateContentWithFallback, parseModelJson } from '@/lib/domains/ai/gemini';
 import { prisma } from '@/lib/domains/inventory/ledger';
 import { moveRetailStock } from '@/lib/domains/inventory/stock';
-import { INITIAL_INVENTORY_ITEMS } from '@/lib/legacy/mockData';
+import { loadProductCatalog as loadCatalogProducts } from '@/lib/domains/catalog/productCatalog';
 import { authErrorResponse } from '@/lib/auth/http';
 import { requireSessionUser } from '@/lib/auth/session';
 
@@ -159,37 +159,14 @@ function calculateSimilarityScore(spokenName: string, catalogName: string): numb
   return Number(combined.toFixed(2));
 }
 
-async function loadProductCatalog(): Promise<CatalogProductCandidate[]> {
-  try {
-    const dbProducts = await prisma.product.findMany({
-      select: {
-        id: true,
-        name: true,
-        barcode: true,
-        department: true,
-        standardCost: true,
-      },
-    });
-
-    if (dbProducts.length > 0) {
-      return dbProducts.map((p) => ({
-        id: p.id,
-        name: p.name,
-        barcode: p.barcode,
-        department: p.department,
-        standardCost: p.standardCost ?? 2.5,
-      }));
-    }
-  } catch {
-    // Fallback to mock catalog when DB is offline
-  }
-
-  return INITIAL_INVENTORY_ITEMS.map((item) => ({
-    id: item.id,
-    name: item.name,
-    barcode: item.barcode ?? null,
-    department: item.department as Department,
-    standardCost: Number((item.receivedCost / (item.casePackSize || 1)).toFixed(2)),
+async function loadVoiceProductCatalog(): Promise<CatalogProductCandidate[]> {
+  const catalog = await loadCatalogProducts();
+  return catalog.map((p) => ({
+    id: p.id,
+    name: p.name,
+    barcode: p.barcode,
+    department: p.department,
+    standardCost: p.standardCostPerUnit > 0 ? p.standardCostPerUnit : 2.5,
   }));
 }
 
@@ -492,7 +469,7 @@ export async function POST(req: NextRequest) {
     // ------------------------------------------------------------------------
     const [aiParsed, catalog] = await Promise.all([
       parseVoiceWithGemini15Flash(audioBase64, mimeType || 'audio/webm', spokenText),
-      loadProductCatalog(),
+      loadVoiceProductCatalog(),
     ]);
 
     const structuredItems: StructuredVoiceLogItem[] = aiParsed.items.map((item) => {
