@@ -16,6 +16,7 @@ import {
   type LotTx,
 } from '@/lib/domains/inventory/lots';
 import { markdownRevenueImpact } from '@/lib/utils/money';
+import { findLatestStoreSetting } from '@/lib/domains/stats/storeSettingSelect';
 
 export const PAR_CASES = DEFAULT_PAR_CASES;
 
@@ -872,7 +873,7 @@ export async function logVolumetricScrapBuckets(
     orderBy: { name: 'asc' },
   });
   if (!anchor) throw new Error('No catalog product available to anchor scrap ledger rows.');
-  const settings = await prisma.storeSetting.findFirst();
+  const settings = await findLatestStoreSetting();
   const scrapBucketVolumeL = settings?.scrapBucketVolumeL ?? 20;
   const qty = Number(buckets.toFixed(4));
   const referenceId = `${VOLUMETRIC_SCRAP_REF_PREFIX}-${Date.now()}`;

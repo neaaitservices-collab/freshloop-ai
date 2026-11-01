@@ -17,6 +17,7 @@ import { authErrorResponse } from '@/lib/auth/http';
 import { requireRoles } from '@/lib/auth/session';
 import { MANUFACTURING_ROLES } from '@/lib/auth/permissions';
 import { buildManufacturingRecipeCatalog } from '@/lib/domains/manufacturing/buildCatalog';
+import { findLatestStoreSetting } from '@/lib/domains/stats/storeSettingSelect';
 import { computeScaledBatchCost } from '@/lib/domains/manufacturing/batchCost';
 import {
   FALLBACK_RECIPES,
@@ -160,7 +161,7 @@ export async function POST(req: NextRequest) {
         },
       });
       if (dbRecipe) {
-        const storeSetting = await prisma.storeSetting.findFirst();
+        const storeSetting = await findLatestStoreSetting();
         recipeLaborHours = Number(dbRecipe.laborHours ?? 0);
         recipeLaborRate = Number(
           dbRecipe.laborRate ?? storeSetting?.defaultLaborRatePerHour ?? 17.6

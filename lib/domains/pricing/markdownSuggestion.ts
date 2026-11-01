@@ -1,5 +1,5 @@
 import { getStockLevels } from '@/lib/domains/inventory/stock';
-import { prisma } from '@/lib/domains/inventory/ledger';
+import { findLatestStoreSetting } from '@/lib/domains/stats/storeSettingSelect';
 
 export interface MarkdownSuggestion {
   productId: string;
@@ -21,7 +21,7 @@ function suggestDiscount(daysRemaining: number, pullDays: number): number {
 }
 
 export async function listMarkdownSuggestions(limit = 12): Promise<MarkdownSuggestion[]> {
-  const setting = await prisma.storeSetting.findFirst();
+  const setting = await findLatestStoreSetting();
   const pullDays = setting?.pullSensitivityDays ?? 3;
   const levels = await getStockLevels();
 
