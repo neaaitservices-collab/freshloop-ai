@@ -11,6 +11,7 @@ import { WasteRateCard } from '@/components/features/admin/WasteRateCard';
 import { cn } from '@/lib/utils/cn';
 import {
   FRESHLOOP_SETTINGS_UPDATED,
+  readSettingsUpdatedEvent,
 } from '@/lib/domains/stats/settingsEvents';
 
 export function DashboardFigures({ stats: initialStats }: { stats: StoreStats | null }) {
@@ -43,7 +44,19 @@ export function DashboardFigures({ stats: initialStats }: { stats: StoreStats | 
 
   useEffect(() => {
     const onInventory = () => void refreshStats();
-    const onSettings = () => {
+    const onSettings = (event: Event) => {
+      const saved = readSettingsUpdatedEvent(event);
+      if (saved) {
+        setStats((prev) =>
+          prev
+            ? {
+                ...prev,
+                targetWastePct: saved.targetWastePct,
+                pullSensitivityDays: saved.pullSensitivityDays,
+              }
+            : prev
+        );
+      }
       void refreshStats();
     };
     window.addEventListener('freshloop-inventory-updated', onInventory);
