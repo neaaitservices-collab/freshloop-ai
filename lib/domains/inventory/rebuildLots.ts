@@ -2,6 +2,9 @@ import { InventoryLocation } from '@prisma/client';
 import { getCurrentStock, prisma } from '@/lib/domains/inventory/ledger';
 import { createLotOnReceive } from '@/lib/domains/inventory/lots';
 
+/** Remote DB lot rebuild can exceed Prisma's default 5s interactive tx timeout. */
+const REBUILD_LOTS_TX = { maxWait: 15_000, timeout: 30_000 } as const;
+
 const LOT_LOCATIONS: InventoryLocation[] = [
   InventoryLocation.Retail_Floor,
   InventoryLocation.Kitchen_Prep,
@@ -62,7 +65,7 @@ export async function rebuildLotsFromLedger(options?: {
         count += 1;
       }
       return count;
-    });
+    }, REBUILD_LOTS_TX);
     lotsCreated += created;
   }
 

@@ -14,6 +14,7 @@ export interface CatalogProductRow {
 /** Live product catalog for OCR/voice matching (no in-memory demo fallback). */
 export async function loadProductCatalog(): Promise<CatalogProductRow[]> {
   const dbProducts = await prisma.product.findMany({
+    where: { isManufactured: false, catalogActive: true },
     orderBy: { name: 'asc' },
   });
   return dbProducts.map((p) => {

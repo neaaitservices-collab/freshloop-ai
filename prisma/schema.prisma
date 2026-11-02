@@ -98,6 +98,8 @@ model Product {
   retailPrice        Float?
   regularRetailPrice Float?
   isManufactured    Boolean                @default(false)
+  /** When false, hidden from admin/receiving catalog until re-added; ledger history kept. */
+  catalogActive      Boolean                @default(true)
   createdAt          DateTime               @default(now())
   updatedAt          DateTime               @updatedAt
 

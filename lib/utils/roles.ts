@@ -81,6 +81,8 @@ export function canVisit(role: RoleName, pathname: string): boolean {
   }
   if (role === 'DELI_CHEF') {
     return (
+      path === '/production' ||
+      path.startsWith('/production/') ||
       path === '/kitchen' ||
       path.startsWith('/kitchen/') ||
       path === '/inventory' ||

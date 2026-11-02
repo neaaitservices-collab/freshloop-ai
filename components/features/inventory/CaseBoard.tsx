@@ -20,6 +20,7 @@ import {
   type YieldQuote,
 } from "@/lib/domains/receiving/yieldPricing";
 import type { StockLevel } from "@/lib/domains/inventory/stock";
+import { AdminInventoryWorkspace } from "@/components/features/inventory/AdminInventoryWorkspace";
 
 function casesLabel(value: number): string {
   return Number.isInteger(value) ? String(value) : value.toFixed(2);
@@ -101,7 +102,10 @@ export function CaseBoard({
     selected ? String(selected.casePackSize) : "1",
   );
   const [yieldDivisor, setYieldDivisor] = useState("1");
-  const [retailUnit, setRetailUnit] = useState<RetailUnit>(() =>
+  const [packUnit, setPackUnit] = useState<RetailUnit>(() =>
+    selected ? retailUnitFor(selected.unitType) : "units",
+  );
+  const [yieldUnit, setYieldUnit] = useState<RetailUnit>(() =>
     selected ? retailUnitFor(selected.unitType) : "units",
   );
   const [marginMode, setMarginMode] = useState<MarginMode>("40");
@@ -138,7 +142,9 @@ export function CaseBoard({
     if (!selected) return;
     setPackSize(String(selected.casePackSize));
     setYieldDivisor("1");
-    setRetailUnit(retailUnitFor(selected.unitType));
+    const unit = retailUnitFor(selected.unitType);
+    setPackUnit(unit);
+    setYieldUnit(unit);
     setMarginMode("40");
     setCurrentRetailPrice(
       selected.retailPrice !== null ? selected.retailPrice.toFixed(2) : "0.00",
@@ -191,7 +197,7 @@ export function CaseBoard({
           productId: selected.productId,
           packSize: pack,
           yieldDivisor: divisor,
-          retailUnit,
+          retailUnit: yieldUnit,
           retailPrice: priceNumber,
         }),
       });
@@ -259,7 +265,7 @@ export function CaseBoard({
           title="What is in stock"
           description="Pick a case from the list. Yield, floor price, and the receipt stay on screen. Saving does not receive more product."
         />
-      ) : (
+      ) : showReceipt ? null : (
         <div>
           <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-emerald-300">
             Inventory
@@ -290,7 +296,8 @@ export function CaseBoard({
               <EditorPanel
                 packSize={packSize}
                 yieldDivisor={yieldDivisor}
-                retailUnit={retailUnit}
+                packUnit={packUnit}
+                yieldUnit={yieldUnit}
                 quote={quote}
                 marginMode={marginMode}
                 customMarginPercent={customMarginPercent}
@@ -307,8 +314,12 @@ export function CaseBoard({
                   setYieldDivisor(value);
                   setSavedMessage(null);
                 }}
-                onRetailUnit={(value) => {
-                  setRetailUnit(value);
+                onPackUnit={(value) => {
+                  setPackUnit(value);
+                  setSavedMessage(null);
+                }}
+                onYieldUnit={(value) => {
+                  setYieldUnit(value);
                   setSavedMessage(null);
                 }}
                 onMarginMode={setMarginMode}
@@ -326,7 +337,7 @@ export function CaseBoard({
               <ReceiptPanel
                 name={selected.name}
                 supplier={selected.supplier}
-                retailUnit={retailUnit}
+                retailUnit={yieldUnit}
                 unitsPerCase={quote.totalRetailUnits}
                 caseCost={caseCost}
                 unitCost={quote.unitCost}
@@ -353,7 +364,11 @@ export function CaseBoard({
         />
       ) : null}
 
-      {focused ? null : (
+      {focused ? null : showReceipt ? (
+        <div className="mt-4">
+          <AdminInventoryWorkspace levels={initialLevels} />
+        </div>
+      ) : (
         <>
           <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-sm text-zinc-300">
@@ -460,7 +475,8 @@ export function CaseBoard({
                 <YieldBreakdown
                   packSize={packSize}
                   yieldDivisor={yieldDivisor}
-                  retailUnit={retailUnit}
+                  packUnit={packUnit}
+                  yieldUnit={yieldUnit}
                   onPackSize={(value) => {
                     setPackSize(value);
                     setSavedMessage(null);
@@ -469,8 +485,12 @@ export function CaseBoard({
                     setYieldDivisor(value);
                     setSavedMessage(null);
                   }}
-                  onRetailUnit={(value) => {
-                    setRetailUnit(value);
+                  onPackUnit={(value) => {
+                    setPackUnit(value);
+                    setSavedMessage(null);
+                  }}
+                  onYieldUnit={(value) => {
+                    setYieldUnit(value);
                     setSavedMessage(null);
                   }}
                 />
@@ -531,7 +551,7 @@ export function CaseBoard({
                     </h3>
                     <p className="mt-1 text-sm text-zinc-300">
                       1 case = {formatUnits(quote.totalRetailUnits)}{" "}
-                      {retailUnit}
+                      {yieldUnit}
                     </p>
                     <p className="text-xs text-zinc-500">{selected.supplier}</p>
                   </div>
@@ -604,6 +624,8 @@ export function CaseBoard({
     </section>
   );
 }
+
+/* Legacy inline editor retained for non-admin CaseBoard routes (showReceipt=false). */
 
 function StockOverride({
   casesOnHand,
@@ -800,7 +822,8 @@ function FocusedEditor({
 function EditorPanel({
   packSize,
   yieldDivisor,
-  retailUnit,
+  packUnit,
+  yieldUnit,
   quote,
   marginMode,
   customMarginPercent,
@@ -811,7 +834,8 @@ function EditorPanel({
   canSave,
   onPackSize,
   onYieldDivisor,
-  onRetailUnit,
+  onPackUnit,
+  onYieldUnit,
   onMarginMode,
   onCustomMargin,
   onCurrentRetailPrice,
@@ -819,7 +843,8 @@ function EditorPanel({
 }: {
   packSize: string;
   yieldDivisor: string;
-  retailUnit: RetailUnit;
+  packUnit: RetailUnit;
+  yieldUnit: RetailUnit;
   quote: YieldQuote;
   marginMode: MarginMode;
   customMarginPercent: string;
@@ -830,7 +855,8 @@ function EditorPanel({
   canSave: boolean;
   onPackSize: (value: string) => void;
   onYieldDivisor: (value: string) => void;
-  onRetailUnit: (value: RetailUnit) => void;
+  onPackUnit: (value: RetailUnit) => void;
+  onYieldUnit: (value: RetailUnit) => void;
   onMarginMode: (value: MarginMode) => void;
   onCustomMargin: (value: string) => void;
   onCurrentRetailPrice: (value: string) => void;
@@ -841,10 +867,12 @@ function EditorPanel({
       <YieldBreakdown
         packSize={packSize}
         yieldDivisor={yieldDivisor}
-        retailUnit={retailUnit}
+        packUnit={packUnit}
+        yieldUnit={yieldUnit}
         onPackSize={onPackSize}
         onYieldDivisor={onYieldDivisor}
-        onRetailUnit={onRetailUnit}
+        onPackUnit={onPackUnit}
+        onYieldUnit={onYieldUnit}
       />
       <div className="border-t border-zinc-800" />
       <PricingStrategy

@@ -13,6 +13,8 @@ export interface SubInventoryTransferRow {
   markdownPct?: number | null;
   regularRetailPrice?: number | null;
   retailPrice?: number | null;
+  posSoldInWindow?: number;
+  posSalesDays?: number;
 }
 
 export interface InventoryMoveResult {
@@ -34,12 +36,21 @@ export function stockLevelToTransferRow(level: StockLevel): SubInventoryTransfer
     markdownPct: level.markdownPct,
     regularRetailPrice: level.regularRetailPrice,
     retailPrice: level.retailPrice,
+    posSoldInWindow: level.posSoldInWindow,
+    posSalesDays: level.posSalesDays,
   };
 }
 
-export function notifyInventoryUpdated(): void {
+export type InventoryUpdatedDetail = {
+  level?: StockLevel;
+  productId?: string;
+  /** List already patched this level (skip duplicate merges in listeners). */
+  source?: 'level-patch';
+};
+
+export function notifyInventoryUpdated(detail?: InventoryUpdatedDetail): void {
   if (typeof window !== 'undefined') {
-    window.dispatchEvent(new CustomEvent('freshloop-inventory-updated'));
+    window.dispatchEvent(new CustomEvent('freshloop-inventory-updated', { detail }));
   }
 }
 
@@ -49,6 +60,8 @@ export async function executeInventoryMove(input: {
   quantity?: number;
   staffId?: string;
   discountPct?: number;
+  /** When false, caller owns `freshloop-inventory-updated` (avoids double UI patches). */
+  broadcast?: boolean;
 }): Promise<InventoryMoveResult> {
   try {
     const response = await fetch('/api/inventory/move', {
@@ -70,13 +83,15 @@ export async function executeInventoryMove(input: {
         error: json.error ?? 'The transfer could not be saved.',
       };
     }
-    notifyInventoryUpdated();
-    if (input.action === 'rescue' && typeof window !== 'undefined') {
-      window.dispatchEvent(
-        new CustomEvent('freshloop-kitchen-inbox', {
-          detail: { productId: input.productId, units: json.units },
-        })
-      );
+    if (input.broadcast !== false) {
+      notifyInventoryUpdated({ level: json.level, productId: input.productId });
+      if (input.action === 'rescue' && typeof window !== 'undefined') {
+        window.dispatchEvent(
+          new CustomEvent('freshloop-kitchen-inbox', {
+            detail: { productId: input.productId, units: json.units },
+          })
+        );
+      }
     }
     return {
       success: true,

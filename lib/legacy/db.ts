@@ -1,8 +1,8 @@
 /**
- * Legacy demo helpers for OCR/voice prototypes. Floor stock and KPIs use
- * `lib/domains/inventory/*`; recipe fusion persistence uses `recipeFusionStore.ts`.
+ * @deprecated Do not use for new features. Floor stock and KPIs use
+ * `lib/domains/inventory/*`; use `@/lib/db/prisma` if Prisma is required.
  */
-import { PrismaClient } from '@prisma/client';
+import { prisma as sharedPrisma } from '@/lib/db/prisma';
 import { INITIAL_INVENTORY_ITEMS } from '@/lib/legacy/mockData';
 import {
   InventoryItem,
@@ -11,27 +11,7 @@ import {
   VoiceLoggerResult,
 } from '@/lib/types';
 
-// Global Prisma instance for Next.js hot reload prevention with fallback mock
-const globalForPrisma = global as unknown as { prisma: any };
-
-let prismaInstance: any;
-try {
-  prismaInstance = globalForPrisma.prisma || new PrismaClient();
-  if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prismaInstance;
-} catch {
-  console.warn('[AI Studio] Database not connected — using mock');
-  const noOp = {
-    findMany: async () => [],
-    findFirst: async () => null,
-    findUnique: async () => null,
-    create: async (d: any) => d?.data ?? {},
-    update: async (d: any) => d?.data ?? {},
-    delete: async () => ({})
-  };
-  prismaInstance = new Proxy({}, { get: () => noOp });
-}
-
-export const prisma = prismaInstance;
+export const prisma = sharedPrisma;
 
 // In-Memory store fallback when database is not configured
 let inMemoryInventory: InventoryItem[] = [...INITIAL_INVENTORY_ITEMS];

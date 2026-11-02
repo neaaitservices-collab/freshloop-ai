@@ -1,7 +1,7 @@
 import { Department, InventoryLocation } from '@prisma/client';
 import { prisma } from '@/lib/domains/inventory/ledger';
 import { invalidateInventoryCaches } from '@/lib/domains/inventory/inventoryCache';
-import { postProductReceipt } from '@/lib/domains/inventory/stock';
+import { findOrCreatePurchaseProduct, postProductReceipt } from '@/lib/domains/inventory/stock';
 
 export type OcrQuantityKind = 'units' | 'cases';
 
@@ -83,9 +83,22 @@ export async function commitInvoiceOcrReceipts(input: {
 
       const receipts = [];
       for (const item of input.confirmedItems) {
-        const productId = String(item.product_id ?? '').trim();
+        let productId = String(item.product_id ?? '').trim();
         if (!productId) {
-          throw new Error('Each confirmed invoice line requires a product_id.');
+          const lineName = item.line_name?.trim();
+          if (!lineName) {
+            throw new Error('Each invoice line needs a catalog match or a line name to create a product.');
+          }
+          const ensured = await findOrCreatePurchaseProduct(
+            {
+              itemName: lineName,
+              department: item.department,
+              casePackSize: item.case_pack_size,
+              unitCost: Number(item.unit_cost) > 0 ? Number(item.unit_cost) : undefined,
+            },
+            tx
+          );
+          productId = ensured.id;
         }
 
         const product = await tx.product.findUnique({

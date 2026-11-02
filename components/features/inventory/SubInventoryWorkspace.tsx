@@ -25,6 +25,12 @@ export interface SubInventoryWorkspaceProps {
   /** Retail tab: show only pull-flagged SKUs (action board). */
   retailPriorityOnly?: boolean;
   showRetailCatalog?: boolean;
+  layoutVariant?: 'default' | 'operations';
+  /** Controlled tab (e.g. operations metric cards). */
+  activeTab?: SubInventoryTab;
+  onActiveTabChange?: (tab: SubInventoryTab) => void;
+  hideTabSwitcher?: boolean;
+  listDensity?: 'default' | 'compact';
   onSuccess: (message: string, level: StockLevel) => void;
   onError: (message: string) => void;
   performMove?: PerformInventoryMove;
@@ -39,6 +45,11 @@ export function SubInventoryWorkspace({
   departmentFilter,
   retailPriorityOnly = true,
   showRetailCatalog = true,
+  layoutVariant = 'default',
+  activeTab: activeTabProp,
+  onActiveTabChange,
+  hideTabSwitcher = false,
+  listDensity = 'default',
   onSuccess,
   onError,
   performMove,
@@ -48,13 +59,17 @@ export function SubInventoryWorkspace({
     () => subInventoryTabsForRole(activeUser?.role),
     [activeUser?.role]
   );
-  const [activeTab, setActiveTab] = useState<SubInventoryTab>(() =>
+  const [internalTab, setInternalTab] = useState<SubInventoryTab>(() =>
     defaultSubInventoryTab(activeUser?.role)
   );
 
+  const activeTab = activeTabProp ?? internalTab;
+  const setActiveTab = (tab: SubInventoryTab) => {
+    setInternalTab(tab);
+    onActiveTabChange?.(tab);
+  };
+
   const safeTab = tabs.includes(activeTab) ? activeTab : tabs[0] ?? 'retail_floor';
-  const floorUnits = retailFloorBalance(levels);
-  const kitchenUnits = kitchenPrepBalance(levels);
 
   if (loading) {
     return (
@@ -67,8 +82,8 @@ export function SubInventoryWorkspace({
   }
 
   return (
-    <div className="space-y-4">
-      {tabs.length > 1 ? (
+    <div className="min-w-0 w-full space-y-4">
+      {!hideTabSwitcher && tabs.length > 1 ? (
         <div
           className="flex flex-wrap gap-2 rounded-2xl border border-slate-800 bg-slate-900/80 p-1.5"
           role="tablist"
@@ -92,13 +107,13 @@ export function SubInventoryWorkspace({
               {SUB_INVENTORY_TAB_LABELS[tab]}
               <span className="mt-0.5 block font-mono text-[10px] opacity-80">
                 {tab === 'retail_floor'
-                  ? `${floorUnits.toFixed(1)} u on floor`
-                  : `${kitchenUnits.toFixed(1)} u in prep`}
+                  ? `${retailFloorBalance(levels).toFixed(1)} u on floor`
+                  : `${kitchenPrepBalance(levels).toFixed(1)} u in prep`}
               </span>
             </button>
           ))}
         </div>
-      ) : (
+      ) : hideTabSwitcher ? null : (
         <p className="text-[11px] font-semibold uppercase tracking-wider text-emerald-500/90">
           Retail floor transfers
         </p>
@@ -113,6 +128,8 @@ export function SubInventoryWorkspace({
             priorityOnly={retailPriorityOnly}
             query={query}
             departmentFilter={departmentFilter}
+            layoutVariant={layoutVariant}
+            listDensity={listDensity}
             onSuccess={onSuccess}
             onError={onError}
             performMove={performMove}
@@ -130,6 +147,8 @@ export function SubInventoryWorkspace({
                 query={query}
                 departmentFilter={departmentFilter}
                 compact
+                layoutVariant={layoutVariant}
+                listDensity={listDensity}
                 onSuccess={onSuccess}
                 onError={onError}
                 performMove={performMove}
@@ -145,6 +164,8 @@ export function SubInventoryWorkspace({
           staffId={staffId}
           query={query}
           departmentFilter={departmentFilter}
+          layoutVariant={layoutVariant}
+          listDensity={listDensity}
           onSuccess={onSuccess}
           onError={onError}
           performMove={performMove}

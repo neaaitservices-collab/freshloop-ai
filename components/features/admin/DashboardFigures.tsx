@@ -3,43 +3,65 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { AlertTriangle, ArrowRight, ChevronDown } from 'lucide-react';
-import { AdminStats } from '@/components/features/admin/AdminStats';
+import { AdminChartGrid, AdminMetricGrid } from '@/components/features/admin/AdminStats';
 import { DepartmentAlertsChart } from '@/components/features/admin/DepartmentAlertsChart';
 import { Card, CardBody } from '@/components/ui/Card';
 import type { StoreStats } from '@/lib/domains/stats/storeStatsTypes';
-import { WasteRateCard } from '@/components/features/admin/WasteRateCard';
+import { WasteSemaphoreCard } from '@/components/features/admin/WasteSemaphoreCard';
+import type { WasteKpiReport } from '@/lib/domains/inventory/ledger';
 import { cn } from '@/lib/utils/cn';
 import {
   FRESHLOOP_SETTINGS_UPDATED,
 } from '@/lib/domains/stats/settingsEvents';
 
-export function DashboardFigures({ stats: initialStats }: { stats: StoreStats | null }) {
+export function DashboardFigures({
+  stats: initialStats,
+  initialWasteKpi = null,
+}: {
+  stats: StoreStats | null;
+  initialWasteKpi?: WasteKpiReport | null;
+}) {
   const [stats, setStats] = useState<StoreStats | null>(initialStats);
+  const [wasteKpi, setWasteKpi] = useState<WasteKpiReport | null>(initialWasteKpi);
   const [statsRefreshing, setStatsRefreshing] = useState(false);
+  const [statsError, setStatsError] = useState<string | null>(null);
   const [alertsOpen, setAlertsOpen] = useState(false);
 
   useEffect(() => {
     setStats(initialStats);
   }, [initialStats]);
 
+  useEffect(() => {
+    setWasteKpi(initialWasteKpi);
+  }, [initialWasteKpi]);
+
   const refreshStats = useCallback(async (opts?: { silent?: boolean }) => {
     if (!opts?.silent) setStatsRefreshing(true);
+    setStatsError(null);
     try {
       const res = await fetch('/api/admin/stats', { cache: 'no-store' });
       const json = await res.json();
-      if (json.success && json.stats) {
+      if (!res.ok || !json.success) {
+        setStatsError(json.error || 'Could not refresh dashboard stats.');
+        return;
+      }
+      if (json.stats) {
         setStats(json.stats as StoreStats);
       }
+      if (json.wasteKpi) {
+        setWasteKpi(json.wasteKpi as WasteKpiReport);
+      }
     } catch {
-      /* keep last snapshot */
+      setStatsError('Network error — showing last loaded stats.');
     } finally {
       if (!opts?.silent) setStatsRefreshing(false);
     }
   }, []);
 
   useEffect(() => {
+    if (initialStats && initialWasteKpi) return;
     void refreshStats({ silent: true });
-  }, [refreshStats]);
+  }, [refreshStats, initialStats, initialWasteKpi]);
 
   useEffect(() => {
     const onInventory = () => void refreshStats();
@@ -55,14 +77,44 @@ export function DashboardFigures({ stats: initialStats }: { stats: StoreStats | 
   }, [refreshStats]);
 
   return (
-    <section
-      className="space-y-3"
-      aria-label="Executive dashboard"
-    >
-      <AdminStats stats={stats} />
+    <section className="space-y-2.5" aria-label="Store KPI dashboard">
+      {statsError ? (
+        <p className="rounded-xl border border-amber-900/50 bg-amber-950/30 px-3 py-2 text-sm text-amber-200">
+          {statsError}
+        </p>
+      ) : null}
+
+      <AdminMetricGrid stats={stats} />
+
+      <WasteSemaphoreCard
+        wasteKpi={wasteKpi}
+        goalPct={stats?.targetWastePct}
+        refreshing={statsRefreshing}
+      />
+
+      <AdminChartGrid stats={stats} />
 
       <div className="grid gap-2.5 sm:grid-cols-2">
-        <WasteRateCard stats={stats} refreshing={statsRefreshing} />
+        <Link href="/operations" className="block h-full">
+          <Card className="h-full transition hover:border-emerald-800/40 hover:bg-slate-800/30">
+            <CardBody className="flex h-full items-center justify-between gap-3 py-3">
+              <span>
+                <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-400/90">
+                  Pull window (floor)
+                </span>
+                <span className="mt-0.5 block text-xs text-slate-300">
+                  {stats === null
+                    ? 'Loading…'
+                    : `${stats.pulls} SKUs within ${stats.pullSensitivityDays}d — rescue on Operations.`}
+                </span>
+              </span>
+              <span className="inline-flex shrink-0 items-center gap-1 text-xs font-bold text-emerald-300">
+                Operations
+                <ArrowRight className="h-3.5 w-3.5" />
+              </span>
+            </CardBody>
+          </Card>
+        </Link>
 
         <Link href="/orders" className="block h-full">
           <Card className="h-full transition hover:border-amber-800/40 hover:bg-slate-800/30">

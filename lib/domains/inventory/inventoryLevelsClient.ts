@@ -20,7 +20,7 @@ export async function patchInventoryLevel(
     if (!response.ok || !json.success || !json.level) {
       return { success: false, error: json.error ?? 'Could not update inventory.' };
     }
-    notifyInventoryUpdated();
+    notifyInventoryUpdated({ level: json.level, productId: body.productId as string | undefined });
     return { success: true, level: json.level };
   } catch {
     return { success: false, error: 'Could not reach the inventory server.' };

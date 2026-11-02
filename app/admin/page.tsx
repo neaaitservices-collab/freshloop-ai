@@ -1,21 +1,16 @@
 import { Suspense } from 'react';
-import { AccountPage, SettingsForm } from '@/components/features/admin/AccountPage';
+import { AccountPage } from '@/components/features/admin/AccountPage';
+import { StoreSettingsEntryCard } from '@/components/features/admin/StoreSettingsEntryCard';
 import { CaseBoard } from '@/components/features/inventory/CaseBoard';
 import { DashboardFigures } from '@/components/features/admin/DashboardFigures';
-import { getPlatformSettings } from '@/lib/domains/stats/platformSettings';
 import { getStockLevels } from '@/lib/domains/inventory/stock';
-import { getStoreStats } from '@/lib/domains/stats/storeStats';
+import { getAdminStoreStatsBundle } from '@/lib/domains/stats/storeStats';
 
 export const dynamic = 'force-dynamic';
 
-async function LiveSettings() {
-  const settings = await getPlatformSettings();
-  return <SettingsForm settings={settings} />;
-}
-
 async function LiveFigures() {
-  const stats = await getStoreStats();
-  return <DashboardFigures stats={stats} />;
+  const { stats, wasteKpi } = await getAdminStoreStatsBundle();
+  return <DashboardFigures stats={stats} initialWasteKpi={wasteKpi} />;
 }
 
 async function LiveCases() {
@@ -26,11 +21,7 @@ async function LiveCases() {
 export default function AdminPage() {
   return (
     <AccountPage
-      settings={
-        <Suspense fallback={<SettingsForm settings={null} />}>
-          <LiveSettings />
-        </Suspense>
-      }
+      settings={<StoreSettingsEntryCard />}
       figures={
         <Suspense fallback={<DashboardFigures stats={null} />}>
           <LiveFigures />

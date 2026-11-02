@@ -48,7 +48,10 @@ export function SlateInventory({
 
   useEffect(() => {
     const syncFromServer = () => {
-      void fetch('/api/inventory/levels', { cache: 'no-store' })
+      void fetch(
+        `/api/inventory/levels?includePosSales=1&salesDays=${encodeURIComponent(String(pullDays))}`,
+        { cache: 'no-store' }
+      )
         .then((response) => response.json())
         .then((json) => {
           if (json.success && Array.isArray(json.levels)) {
@@ -59,7 +62,7 @@ export function SlateInventory({
     };
     window.addEventListener('freshloop-inventory-updated', syncFromServer);
     return () => window.removeEventListener('freshloop-inventory-updated', syncFromServer);
-  }, [setLevels]);
+  }, [setLevels, pullDays]);
 
   const departmentFilter = useCallback(
     (row: StockLevel) => {
@@ -102,7 +105,7 @@ export function SlateInventory({
             <ArrowRight className="h-4 w-4 rotate-180" />
             Ledger
           </Button>
-          <Button variant="success" className="h-10 px-3 text-xs" onClick={() => router.push('/kitchen')}>
+          <Button variant="success" className="h-10 px-3 text-xs" onClick={() => router.push('/production')}>
             <Sparkles className="h-4 w-4" />
             Recipes
           </Button>

@@ -1,0 +1,32 @@
+# FreshLoop AI — Cursor rules
+
+## Architecture
+- Monolithic Next.js App Router. Routes live under `app/`; business logic under `lib/domains/*`.
+- Keep `app/api/**/route.ts` thin: parse request → call domain → JSON response.
+- Do not add new dependencies on `lib/legacy/*` or in-memory demo data.
+- Canonical inventory truth: Prisma `InventoryTransaction` via `lib/domains/inventory/ledger.ts` and `stock.ts`.
+- Database client: import `prisma` from `@/lib/db/prisma` (re-export from ledger is OK for compatibility).
+
+## File layout
+- UI: `components/features/<area>/`, kit: `components/ui/`, shell: `components/layout/`.
+- Shared types: `@/types`. Domain imports: `@/lib/domains/...`.
+
+## Auth & API
+- Middleware requires login on `/api/*` except `/api/auth/*`, `/api/health`, `/api/pos/webhook`.
+- Every mutating handler must call `requireSessionUser()` and role helpers from `lib/auth/guardRoute.ts`.
+- Never trust `staffId` or `role` from JSON bodies.
+- Prefer `apiErrorFromUnknown` from `lib/domains/ai/apiError.ts` for consistent errors.
+
+## Waste KPI
+- Waste % = (discard $ + volumetric scrap $) ÷ gross POS sales; use `scrapBucketEconomics` + `calculateRealTimeWastePct`.
+- Admin stats merge via `getAdminStoreStatsBundle()` — do not duplicate waste math in `storeStats`.
+- Default KPI window: `DEFAULT_KPI_LOOKBACK_DAYS` in `wasteKpi.ts`.
+
+## Quality
+- Match existing naming and patterns; minimal diffs.
+- Run `npm run typecheck` and `npm run test` before pushing.
+- Store settings: use `findLatestStoreSetting()` / `storeSettingSafeSelect` (avoid unscoped Prisma selects).
+
+## Deploy
+- After schema changes: `npx prisma migrate deploy` on production.
+- See `docs/FOR_DEVELOPERS.md` and `docs/PROJECT_STRUCTURE.md`.

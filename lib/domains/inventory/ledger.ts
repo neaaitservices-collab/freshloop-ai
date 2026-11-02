@@ -9,30 +9,23 @@ import {
 } from '@prisma/client';
 import { invalidateInventoryCaches } from '@/lib/domains/inventory/inventoryCache';
 import { consumeLotsFifo, LotAllocationError } from '@/lib/domains/inventory/lots';
-import { computeWastePct } from '@/lib/domains/stats/wasteKpi';
+import {
+  computeWastePct,
+  kpiLookbackRange,
+  MIN_GROSS_SALES_FOR_WASTE_RATIO,
+} from '@/lib/domains/stats/wasteKpi';
 import { findLatestStoreSetting } from '@/lib/domains/stats/storeSettingSelect';
+import {
+  describeWasteFormulaBreakdown,
+  scrapBucketInputsFromSettings,
+  scrapDollarsPerBucket,
+  scrapTotalsForBucketCount,
+  wasteNumeratorDollars,
+} from '@/lib/domains/stats/scrapBucketEconomics';
 
-// ============================================================================
-// Prisma Singleton Instance (Strict Typed)
-// ============================================================================
+import { prisma } from '@/lib/db/prisma';
 
-const globalForPrisma = globalThis as unknown as {
-  prismaClientV2?: PrismaClient;
-};
-
-function clientHasCurrentModels(client: PrismaClient | undefined): client is PrismaClient {
-  const record = client as unknown as Record<string, unknown> | undefined;
-  return Boolean(record?.recipe && record?.user);
-}
-
-export const prisma: PrismaClient = clientHasCurrentModels(globalForPrisma.prismaClientV2)
-  ? globalForPrisma.prismaClientV2
-  : new PrismaClient({
-      log: process.env.NODE_ENV === 'development' ? ['error', 'warn'] : ['error'],
-    });
-
-// Reuse one client per serverless instance (Vercel / Node).
-globalForPrisma.prismaClientV2 = prisma;
+export { prisma } from '@/lib/db/prisma';
 
 // ============================================================================
 // Custom Domain Error & Strict Interfaces
@@ -116,6 +109,14 @@ export interface WasteKpiReport {
   grossSalesRevenue: number;
   /** Human-readable mathematical audit string */
   formulaBreakdown: string;
+  /** Store defaults used to price each volumetric bucket log */
+  scrapBucketInputs: {
+    volumeL: number;
+    densityKgPerL: number;
+    costPerKg: number;
+    kgPerBucket: number;
+    dollarsPerBucket: number;
+  };
 }
 
 // Prefix used in `referenceId` to distinguish volumetric kitchen scrap bucket logs
@@ -534,26 +535,15 @@ export async function calculateRealTimeWastePct(
   options?: WasteCalculationOptions
 ): Promise<WasteKpiReport> {
   try {
-    // Optional date range filter
-    const timestampFilter =
-      options?.startDate || options?.endDate
-        ? {
-            timestamp: {
-              ...(options.startDate ? { gte: options.startDate } : {}),
-              ...(options.endDate ? { lte: options.endDate } : {}),
-            },
-          }
-        : {};
+    const defaultRange = kpiLookbackRange();
+    const startDate = options?.startDate ?? defaultRange.startDate;
+    const endDate = options?.endDate ?? defaultRange.endDate;
+    const timestampFilter = {
+      timestamp: { gte: startDate, lte: endDate },
+    };
 
     const volumetricPrefix = `${VOLUMETRIC_SCRAP_REF_PREFIX}%`;
-    const wasteTimeSql =
-      options?.startDate && options?.endDate
-        ? Prisma.sql`AND "timestamp" >= ${options.startDate} AND "timestamp" <= ${options.endDate}`
-        : options?.startDate
-          ? Prisma.sql`AND "timestamp" >= ${options.startDate}`
-          : options?.endDate
-            ? Prisma.sql`AND "timestamp" <= ${options.endDate}`
-            : Prisma.empty;
+    const wasteTimeSql = Prisma.sql`AND "timestamp" >= ${startDate} AND "timestamp" <= ${endDate}`;
 
     const [storeSetting, wasteAggRows, salesTransactions] = await Promise.all([
       findLatestStoreSetting(),
@@ -601,25 +591,27 @@ export async function calculateRealTimeWastePct(
     ]);
 
     const targetWastePct = storeSetting?.targetWastePct ?? 2.5;
-    const scrapBucketVolumeL = storeSetting?.scrapBucketVolumeL ?? 20.0;
-    const estimatedWeightPerLiterKg = storeSetting?.estimatedWeightPerLiterKg ?? 0.65;
-    const defaultScrapCostPerKg = storeSetting?.defaultScrapCostPerKg ?? 3.5;
-
-    // Cost of 1 standard volumetric scrap bucket (e.g. 20L * 0.65 kg/L * $3.50/kg = $45.50)
-    const costPerScrapBucket =
-      scrapBucketVolumeL * estimatedWeightPerLiterKg * defaultScrapCostPerKg;
+    const scrapInputs = scrapBucketInputsFromSettings({
+      scrapBucketVolumeL: storeSetting?.scrapBucketVolumeL ?? 20,
+      estimatedWeightPerLiterKg: storeSetting?.estimatedWeightPerLiterKg ?? 0.65,
+      defaultScrapCostPerKg: storeSetting?.defaultScrapCostPerKg ?? 3.5,
+    });
+    const costPerScrapBucket = scrapDollarsPerBucket(scrapInputs);
 
     const wasteAgg = wasteAggRows[0];
     const totalDiscardValue = Number((wasteAgg?.discardValue ?? 0).toFixed(2));
     let volumetricScrapBucketsCount = Number((wasteAgg?.bucketUnits ?? 0).toFixed(2));
-    let volumetricScrapValue = Number(
-      (volumetricScrapBucketsCount * costPerScrapBucket).toFixed(2)
-    );
+    let volumetricScrapValue = scrapTotalsForBucketCount(
+      volumetricScrapBucketsCount,
+      scrapInputs
+    ).totalDollars;
 
-    // Include any additional volumetric scrap buckets passed in options
     if (options?.additionalScrapBuckets && options.additionalScrapBuckets > 0) {
       volumetricScrapBucketsCount += options.additionalScrapBuckets;
-      volumetricScrapValue += options.additionalScrapBuckets * costPerScrapBucket;
+      volumetricScrapValue = scrapTotalsForBucketCount(
+        volumetricScrapBucketsCount,
+        scrapInputs
+      ).totalDollars;
     }
 
     let grossSalesRevenue = 0;
@@ -643,7 +635,7 @@ export async function calculateRealTimeWastePct(
     // 4. Apply Master Plan Formula: (Valor Total Descarte + Valor Scraps Volumétricos) / Ventas Brutas Totales
     const roundedDiscardValue = Number(totalDiscardValue.toFixed(2));
     const roundedVolumetricValue = Number(volumetricScrapValue.toFixed(2));
-    const totalWasteValue = Number((roundedDiscardValue + roundedVolumetricValue).toFixed(2));
+    const totalWasteValue = wasteNumeratorDollars(roundedDiscardValue, roundedVolumetricValue);
     const roundedGrossSales = Number(grossSalesRevenue.toFixed(2));
 
     const wastePct = computeWastePct(totalWasteValue, roundedGrossSales);
@@ -655,18 +647,16 @@ export async function calculateRealTimeWastePct(
       ? 'RED_BLINKING'
       : 'GREEN';
 
-    const formulaBreakdown =
-      wastePct === null
-        ? `($${roundedDiscardValue.toFixed(2)} Descarte + $${roundedVolumetricValue.toFixed(
-            2
-          )} Scraps) — ventas brutas insuficientes ($${roundedGrossSales.toFixed(
-            2
-          )}) para calcular % (meta: ${targetWastePct.toFixed(2)}%)`
-        : `($${roundedDiscardValue.toFixed(2)} Descarte + $${roundedVolumetricValue.toFixed(
-            2
-          )} Scraps Volumétricos) / $${roundedGrossSales.toFixed(2)} Ventas Brutas = ${wastePct.toFixed(
-            2
-          )}% (Meta: ${targetWastePct.toFixed(2)}%)`;
+    const formulaBreakdown = describeWasteFormulaBreakdown({
+      discard: roundedDiscardValue,
+      scrap: roundedVolumetricValue,
+      sales: roundedGrossSales,
+      wastePct,
+      targetPct: targetWastePct,
+      minSalesForRatio: MIN_GROSS_SALES_FOR_WASTE_RATIO,
+    });
+
+    const econ = scrapTotalsForBucketCount(1, scrapInputs);
 
     return {
       wastePct,
@@ -680,6 +670,13 @@ export async function calculateRealTimeWastePct(
       totalWasteValue,
       grossSalesRevenue: roundedGrossSales,
       formulaBreakdown,
+      scrapBucketInputs: {
+        volumeL: scrapInputs.volumeL,
+        densityKgPerL: scrapInputs.densityKgPerL,
+        costPerKg: scrapInputs.costPerKg,
+        kgPerBucket: econ.totalKg,
+        dollarsPerBucket: costPerScrapBucket,
+      },
     };
   } catch (error) {
     if (error instanceof InventoryLedgerError) throw error;

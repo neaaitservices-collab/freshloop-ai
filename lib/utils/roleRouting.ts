@@ -13,7 +13,7 @@ export function homePathForRole(role: string | undefined | null): string {
     case 'FLOOR_STAFF':
       return '/inventory/floor';
     case 'DELI_CHEF':
-      return '/kitchen';
+      return '/production';
     default:
       return '/admin';
   }

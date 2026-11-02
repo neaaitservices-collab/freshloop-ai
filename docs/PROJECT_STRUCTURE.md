@@ -6,6 +6,8 @@ Monolithic **Next.js App Router** app. URLs unchanged; code lives under feature 
 
 Route segments only: `page.tsx`, `layout.tsx`, `route.ts` under `app/api/`.
 
+Legacy URLs redirect: `/dashboard` → `/admin`, `/floor` → `/inventory/floor`, `/recipes` → `/kitchen`, `/rescue` → `/inventory`.
+
 ## `components/`
 
 | Path | Purpose |
@@ -18,7 +20,8 @@ Route segments only: `page.tsx`, `layout.tsx`, `route.ts` under `app/api/`.
 | `features/orders/` | Buy list, PO email |
 | `features/operations/` | Operations center, live transfers, volumetric scrap |
 | `features/kitchen/` | Kitchen sub-inventory panel |
-| `features/admin/` | Dashboard figures, charts, account, users |
+| `features/admin/` | Dashboard figures, charts, account, users, waste semáforo |
+| `features/executive/` | Executive ROI dashboard (MetricCard, cost variance, scenario sliders) |
 | `features/voice/` | Voice logger / recorder modals |
 | `features/invoices/` | Invoice OCR upload |
 | `features/recipes/` | Recipe fusion card, production, deli label |
@@ -27,12 +30,18 @@ Route segments only: `page.tsx`, `layout.tsx`, `route.ts` under `app/api/`.
 
 | Path | Purpose |
 | --- | --- |
-| `domains/inventory/` | Ledger, stock, caches, moves, par, markdown |
-| `domains/receiving/` | Yield math, receiving sheet, dispositions |
-| `domains/stats/` | Store stats, waste KPI, platform settings |
+| `db/` | Prisma singleton (`prisma.ts`) |
+| `domains/inventory/` | Ledger, stock, caches, moves, par, markdown, kitchen inbox |
+| `domains/receiving/` | Yield math, receiving sheet, dispositions, invoice OCR commit |
+| `domains/stats/` | Store stats, waste KPI, scrap bucket economics, platform settings |
+| `domains/executive/` | ROI projections, cost variance series, executive insights |
+| `domains/manufacturing/` | BOM catalog, batch cost, recipe mapping |
+| `domains/kitchen/` | Recipe fusion store, prep → fusion items |
+| `domains/catalog/` | Product catalog loaders |
+| `domains/pricing/` | Markdown suggestions |
 | `domains/ai/` | Gemini helpers, API errors |
-| `legacy/` | In-memory demo DB + mock catalog (legacy APIs) |
-| `utils/` | Roles, units |
+| `legacy/` | In-memory demo DB + mock catalog (do not use for new features) |
+| `utils/` | Roles, units, money |
 | `lib/types.ts` | Re-export of `@/types` for backward-compatible imports |
 
 ## `types/`

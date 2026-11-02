@@ -35,7 +35,10 @@ export function FloorTransferPage({ levels: initialLevels }: { levels: StockLeve
 
   useEffect(() => {
     const sync = () => {
-      void fetch('/api/inventory/levels', { cache: 'no-store' })
+      void fetch(
+        `/api/inventory/levels?includePosSales=1&salesDays=${encodeURIComponent(String(pullDays))}`,
+        { cache: 'no-store' }
+      )
         .then((r) => r.json())
         .then((json) => {
           if (json.success && Array.isArray(json.levels)) {
@@ -45,7 +48,7 @@ export function FloorTransferPage({ levels: initialLevels }: { levels: StockLeve
     };
     window.addEventListener('freshloop-inventory-updated', sync);
     return () => window.removeEventListener('freshloop-inventory-updated', sync);
-  }, [setLevels]);
+  }, [setLevels, pullDays]);
 
   const departmentFilter = useCallback(
     (row: StockLevel) => department === 'ALL' || departmentForName(row.name) === department,
@@ -82,17 +85,17 @@ export function FloorTransferPage({ levels: initialLevels }: { levels: StockLeve
           <p className="mt-1 max-w-lg text-xs text-slate-400">
             Send to production, mark down, or waste — pick the amount in lbs or units. Production prep is
             managed on{' '}
-            <Link href="/kitchen" className="text-amber-300 underline">
+            <Link href="/production" className="text-amber-300 underline">
               Production
             </Link>
             .
           </p>
         </div>
         <Link
-          href="/kitchen?inbox=1"
+          href="/production"
           className="inline-flex min-h-12 items-center gap-1.5 rounded-xl border border-blue-900/50 bg-blue-950/30 px-4 py-3 text-xs font-bold text-blue-200"
         >
-          Production inbox
+          Production
           <ArrowRight className="h-4 w-4" />
         </Link>
       </div>
@@ -142,6 +145,7 @@ export function FloorTransferPage({ levels: initialLevels }: { levels: StockLeve
             priorityOnly
             query={query}
             departmentFilter={departmentFilter}
+            layoutVariant="operations"
             performMove={performMove}
             onSuccess={handleSuccess}
             onError={setErrorMessage}
@@ -158,6 +162,7 @@ export function FloorTransferPage({ levels: initialLevels }: { levels: StockLeve
               query={query}
               departmentFilter={departmentFilter}
               compact
+              layoutVariant="operations"
               performMove={performMove}
               onSuccess={handleSuccess}
               onError={setErrorMessage}
@@ -177,10 +182,10 @@ export function FloorTransferPage({ levels: initialLevels }: { levels: StockLeve
           <p>{toast.text}</p>
           {toast.kitchen ? (
             <Link
-              href="/kitchen?inbox=1"
+              href="/production"
               className="mt-2 inline-flex min-h-11 items-center text-xs font-bold text-blue-300 underline-offset-2 hover:underline"
             >
-              Open kitchen inbox
+              Open production
             </Link>
           ) : null}
         </div>

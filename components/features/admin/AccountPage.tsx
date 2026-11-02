@@ -4,7 +4,9 @@ import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { ArrowRight, ChefHat, Package, Store } from 'lucide-react';
 import { PageIntro } from '@/components/layout/PageIntro';
+import { AdminViewTabs } from '@/components/features/admin/AdminViewTabs';
 import { UserManagementTable } from '@/components/features/admin/UserManagementTable';
+import { CollapsibleSection } from '@/components/ui/CollapsibleSection';
 import { useRole } from '@/components/auth/RoleProvider';
 import { positionForStaff } from '@/lib/utils/positions';
 import { isManager } from '@/lib/utils/roles';
@@ -112,7 +114,13 @@ function ProfileForm() {
   );
 }
 
-export function SettingsForm({ settings }: { settings: PlatformSettings | null }) {
+export function SettingsForm({
+  settings,
+  layout = 'embedded',
+}: {
+  settings: PlatformSettings | null;
+  layout?: 'embedded' | 'page';
+}) {
   const [draft, setDraft] = useState<PlatformSettings | null>(settings);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -121,6 +129,16 @@ export function SettingsForm({ settings }: { settings: PlatformSettings | null }
   useEffect(() => {
     if (settings) setDraft(settings);
   }, [settings]);
+
+  useEffect(() => {
+    if (layout !== 'page' || !draft) return;
+    const hash = typeof window !== 'undefined' ? window.location.hash.replace('#', '') : '';
+    if (!hash) return;
+    const el = document.getElementById(hash);
+    if (el) {
+      requestAnimationFrame(() => el.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+    }
+  }, [layout, draft]);
 
   const update = (patch: Partial<PlatformSettings>) => {
     setDraft((current) => (current ? { ...current, ...patch } : current));
@@ -155,119 +173,179 @@ export function SettingsForm({ settings }: { settings: PlatformSettings | null }
 
   return (
     <form
-      className="mt-10"
+      id="store-settings"
+      className={layout === 'page' ? 'mt-6 scroll-mt-24' : 'mt-10 scroll-mt-24'}
       onSubmit={(event) => {
         event.preventDefault();
         void save();
       }}
     >
-      <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-emerald-300">Settings</p>
-      <h2 className="mt-1 text-2xl font-black tracking-tight text-white">Store</h2>
-      <p className="mt-1 max-w-2xl text-sm text-zinc-400">
-        Waste target, pull window, scrap buckets, and the invoice cost alert.
-      </p>
+      {layout === 'embedded' ? (
+        <>
+          <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-emerald-300">Settings</p>
+          <h2 className="mt-1 text-2xl font-black tracking-tight text-white">Store</h2>
+          <p className="mt-1 max-w-2xl text-sm text-zinc-400">
+            Targets and defaults for the waste traffic light, floor pulls, kitchen scrap, and receiving.
+          </p>
+        </>
+      ) : null}
       {!draft ? (
         <p className="mt-4 text-sm text-zinc-400">Reading store settings…</p>
       ) : (
-        <div className="mt-4 grid gap-3 rounded-3xl border border-zinc-800 bg-zinc-900/80 p-4 sm:grid-cols-2">
-          <label className="text-xs font-bold text-zinc-400 sm:col-span-2">
-            Store name
-            <input
-              required
-              value={draft.storeName}
-              onChange={(event) => update({ storeName: event.target.value })}
-              className={FIELD}
-            />
-          </label>
-          <label className="text-xs font-bold text-zinc-400">
-            Waste target (%)
-            <input
-              required
-              type="number"
-              min="0"
-              max="100"
-              step="0.1"
-              value={draft.targetWastePct}
-              onChange={(event) => update({ targetWastePct: Number(event.target.value) })}
-              className={FIELD}
-            />
-          </label>
-          <label className="text-xs font-bold text-zinc-400">
-            Pull window
-            <select
-              value={draft.pullSensitivityDays}
-              onChange={(event) => update({ pullSensitivityDays: Number(event.target.value) })}
-              className={FIELD}
-            >
-              <option value={2}>2 days</option>
-              <option value={3}>3 days</option>
-              <option value={4}>4 days</option>
-            </select>
-          </label>
-          <label className="text-xs font-bold text-zinc-400">
-            Kitchen labor rate ($/hr)
-            <input
-              required
-              type="number"
-              min="0.01"
-              step="0.01"
-              value={draft.defaultLaborRatePerHour}
-              onChange={(event) =>
-                update({ defaultLaborRatePerHour: Number(event.target.value) })
-              }
-              className={FIELD}
-            />
-          </label>
-          <label className="text-xs font-bold text-zinc-400">
-            Scrap bucket (L)
-            <input
-              required
-              type="number"
-              min="0.1"
-              step="0.1"
-              value={draft.scrapBucketVolumeL}
-              onChange={(event) => update({ scrapBucketVolumeL: Number(event.target.value) })}
-              className={FIELD}
-            />
-          </label>
-          <label className="text-xs font-bold text-zinc-400">
-            Trim density (kg/L)
-            <input
-              required
-              type="number"
-              min="0.01"
-              step="0.01"
-              value={draft.estimatedWeightPerLiterKg}
-              onChange={(event) => update({ estimatedWeightPerLiterKg: Number(event.target.value) })}
-              className={FIELD}
-            />
-          </label>
-          <label className="text-xs font-bold text-zinc-400">
-            Scrap cost ($/kg)
-            <input
-              required
-              type="number"
-              min="0"
-              step="0.01"
-              value={draft.defaultScrapCostPerKg}
-              onChange={(event) => update({ defaultScrapCostPerKg: Number(event.target.value) })}
-              className={FIELD}
-            />
-          </label>
-          <label className="text-xs font-bold text-zinc-400">
-            Invoice cost alert (%)
-            <input
-              required
-              type="number"
-              min="0"
-              max="100"
-              step="0.1"
-              value={draft.costGuardrailVariancePct}
-              onChange={(event) => update({ costGuardrailVariancePct: Number(event.target.value) })}
-              className={FIELD}
-            />
-          </label>
-          <div className="flex flex-wrap items-center gap-3 sm:col-span-2">
+        <div className="mt-4 space-y-4">
+          <fieldset className="rounded-2xl border border-zinc-800 bg-zinc-900/80 p-4">
+            <legend className="px-1 text-xs font-black uppercase tracking-wider text-zinc-500">
+              Store identity
+            </legend>
+            <label className="mt-2 block text-xs font-bold text-zinc-400">
+              Store name
+              <input
+                required
+                value={draft.storeName}
+                onChange={(event) => update({ storeName: event.target.value })}
+                className={FIELD}
+              />
+            </label>
+          </fieldset>
+
+          <fieldset
+            id="waste-pulls"
+            className="scroll-mt-24 rounded-2xl border border-emerald-900/40 bg-emerald-950/10 p-4"
+          >
+            <legend className="px-1 text-xs font-black uppercase tracking-wider text-emerald-400/90">
+              Waste &amp; floor pulls
+            </legend>
+            <p className="mt-1 text-[11px] text-zinc-500">
+              Drives the Admin traffic light and the default pull window on Operations.
+            </p>
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              <label className="text-xs font-bold text-zinc-400">
+                Waste goal (%)
+                <input
+                  required
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="0.1"
+                  value={draft.targetWastePct}
+                  onChange={(event) => update({ targetWastePct: Number(event.target.value) })}
+                  className={FIELD}
+                />
+              </label>
+              <label className="text-xs font-bold text-zinc-400">
+                Default pull window
+                <select
+                  value={draft.pullSensitivityDays}
+                  onChange={(event) => update({ pullSensitivityDays: Number(event.target.value) })}
+                  className={FIELD}
+                >
+                  <option value={2}>2 days (strict)</option>
+                  <option value={3}>3 days (standard)</option>
+                  <option value={4}>4 days (extended)</option>
+                </select>
+              </label>
+            </div>
+          </fieldset>
+
+          <fieldset
+            id="kitchen-scrap"
+            className="scroll-mt-24 rounded-2xl border border-zinc-800 bg-zinc-900/80 p-4"
+          >
+            <legend className="px-1 text-xs font-black uppercase tracking-wider text-zinc-500">
+              Kitchen scrap &amp; labor
+            </legend>
+            <p className="mt-1 text-[11px] leading-relaxed text-zinc-500">
+              Volumetric scrap buckets (Operations) convert to $ with{' '}
+              <span className="font-mono text-zinc-400">volume (L) × trim density (kg/L) × $/kg</span>.
+              That $ feeds the Admin waste traffic light alongside direct discards.
+            </p>
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              <label className="text-xs font-bold text-zinc-400">
+                Kitchen labor ($/hr)
+                <input
+                  required
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  value={draft.defaultLaborRatePerHour}
+                  onChange={(event) =>
+                    update({ defaultLaborRatePerHour: Number(event.target.value) })
+                  }
+                  className={FIELD}
+                />
+              </label>
+              <label className="text-xs font-bold text-zinc-400">
+                Scrap bucket (L)
+                <input
+                  required
+                  type="number"
+                  min="0.1"
+                  step="0.1"
+                  value={draft.scrapBucketVolumeL}
+                  onChange={(event) => update({ scrapBucketVolumeL: Number(event.target.value) })}
+                  className={FIELD}
+                />
+                <span className="mt-1 block text-[11px] font-normal text-zinc-500">
+                  Standard tub size for one volumetric scrap log.
+                </span>
+              </label>
+              <label className="text-xs font-bold text-zinc-400">
+                Trim density (kg/L)
+                <input
+                  required
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  value={draft.estimatedWeightPerLiterKg}
+                  onChange={(event) =>
+                    update({ estimatedWeightPerLiterKg: Number(event.target.value) })
+                  }
+                  className={FIELD}
+                />
+                <span className="mt-1 block text-[11px] font-normal text-zinc-500">
+                  kg of prep trim per liter in the tub (weight estimate from volume).
+                </span>
+              </label>
+              <label className="text-xs font-bold text-zinc-400">
+                Scrap cost ($/kg)
+                <input
+                  required
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={draft.defaultScrapCostPerKg}
+                  onChange={(event) => update({ defaultScrapCostPerKg: Number(event.target.value) })}
+                  className={FIELD}
+                />
+                <span className="mt-1 block text-[11px] font-normal text-zinc-500">
+                  $ per kg applied after density converts liters to kg.
+                </span>
+              </label>
+            </div>
+          </fieldset>
+
+          <fieldset className="rounded-2xl border border-zinc-800 bg-zinc-900/80 p-4">
+            <legend className="px-1 text-xs font-black uppercase tracking-wider text-zinc-500">
+              Receiving
+            </legend>
+            <label className="mt-2 block text-xs font-bold text-zinc-400 sm:max-w-xs">
+              Invoice cost alert (%)
+              <input
+                required
+                type="number"
+                min="0"
+                max="100"
+                step="0.1"
+                value={draft.costGuardrailVariancePct}
+                onChange={(event) =>
+                  update({ costGuardrailVariancePct: Number(event.target.value) })
+                }
+                className={FIELD}
+              />
+            </label>
+          </fieldset>
+
+          <div className="flex flex-wrap items-center gap-3">
             <button
               type="submit"
               disabled={saving}
@@ -300,7 +378,7 @@ const STEPS = [
     icon: Store,
   },
   {
-    href: '/kitchen',
+    href: '/production',
     step: '3',
     title: 'Kitchen',
     text: 'Cook rescued product into a prepared item and log scrap buckets.',
@@ -360,32 +438,60 @@ export function AccountPage({
   const title = loading ? 'Account' : manager ? 'Admin' : 'Profile';
 
   return (
-      <main className="mx-auto w-full max-w-7xl px-3 py-5 pb-28 sm:px-6 sm:py-8">
+      <main className="mx-auto w-full max-w-7xl px-3 py-4 pb-24 sm:px-6 sm:py-6">
         <PageIntro
           step={showControls ? 'Store dashboard' : 'Account'}
           title={title}
           description={
             showControls
-              ? 'Ledger KPIs and recovery charts at a glance. Profile, settings, and case board below.'
+              ? 'Live ledger KPIs first. Expand sections below for profile, staff, and cases.'
               : 'Your name, email, and position.'
           }
+          action={showControls ? <AdminViewTabs /> : undefined}
         />
         {showControls ? (
           <>
-            <div className="mt-4">{figures}</div>
-            <DaySteps />
+            <div className="mt-3 space-y-3">{figures}</div>
+            <CollapsibleSection
+              className="mt-3"
+              title="Workflow shortcuts"
+              description="Receive → inventory → kitchen"
+              defaultOpen={false}
+            >
+              <DaySteps />
+            </CollapsibleSection>
+            <div className="mt-3 space-y-3">
+              {settings}
+              <CollapsibleSection
+                title="Personal profile"
+                description="Name and email"
+                defaultOpen={false}
+              >
+                <ProfileForm />
+              </CollapsibleSection>
+              <CollapsibleSection
+                title="Staff"
+                description="Add people and permissions"
+                defaultOpen={false}
+              >
+                <UserManagementTable embedded />
+              </CollapsibleSection>
+              {children ? (
+                <CollapsibleSection
+                  title="Case board"
+                  description="Receive confirmation and on-hand cases"
+                  defaultOpen={false}
+                >
+                  {children}
+                </CollapsibleSection>
+              ) : null}
+            </div>
           </>
-        ) : null}
-        <div className={showControls ? 'mt-10' : 'mt-5'}>
-          <ProfileForm />
-        </div>
-        {showControls ? (
-          <>
-            {settings}
-            <UserManagementTable />
-            {children}
-          </>
-        ) : null}
+        ) : (
+          <div className="mt-5">
+            <ProfileForm />
+          </div>
+        )}
       </main>
   );
 }

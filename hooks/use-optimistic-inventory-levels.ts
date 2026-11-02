@@ -1,14 +1,16 @@
 'use client';
 
-import { useCallback, useEffect, useOptimistic, useRef, useState, useTransition } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   executeInventoryMove,
+  notifyInventoryUpdated,
   type InventoryMoveAction,
   transferSuccessMessage,
   type SubInventoryTransferRow,
 } from '@/lib/domains/inventory/inventoryMoveClient';
 import { applyOptimisticMove } from '@/lib/domains/inventory/optimisticStock';
 import { patchInventoryLevel } from '@/lib/domains/inventory/inventoryLevelsClient';
+import { applyStockLevelPatch } from '@/lib/domains/inventory/subInventoryView';
 import type { StockLevel } from '@/lib/domains/inventory/stock';
 
 export type OptimisticMovePayload = {
@@ -19,11 +21,10 @@ export type OptimisticMovePayload = {
 };
 
 function applyMoveReducer(state: StockLevel[], update: OptimisticMovePayload): StockLevel[] {
-  return state.map((row) =>
-    row.productId === update.productId
-      ? applyOptimisticMove(row, update.action, update.quantity, update.discountPct)
-      : row
-  );
+  const row = state.find((r) => r.productId === update.productId);
+  if (!row) return state;
+  const preview = applyOptimisticMove(row, update.action, update.quantity, update.discountPct);
+  return applyStockLevelPatch(state, preview);
 }
 
 function snapshotKey(levels: StockLevel[] | null): string | null {
@@ -32,8 +33,9 @@ function snapshotKey(levels: StockLevel[] | null): string | null {
 
 export function useOptimisticInventoryLevels(initialLevels: StockLevel[] | null) {
   const [levels, setLevels] = useState<StockLevel[]>(() => initialLevels ?? []);
-  const [optimisticLevels, addOptimisticMove] = useOptimistic(levels, applyMoveReducer);
-  const [, startTransition] = useTransition();
+  const levelsRef = useRef(levels);
+  levelsRef.current = levels;
+  const inFlight = useRef(new Set<string>());
   const snapshot = snapshotKey(initialLevels);
 
   useEffect(() => {
@@ -50,33 +52,57 @@ export function useOptimisticInventoryLevels(initialLevels: StockLevel[] | null)
       discountPct?: number;
       row: SubInventoryTransferRow;
     }) => {
+      if (inFlight.current.has(input.productId)) {
+        return {
+          success: false as const,
+          error: 'This item is already updating — wait a moment.',
+        };
+      }
+
       const quantity =
         input.action === 'markdown'
           ? input.row.onHand
           : Math.max(0, input.quantity ?? 0);
 
-      const snapshot = levels;
-      startTransition(() => {
-        addOptimisticMove({
+      const revertSnapshot = levelsRef.current;
+      setLevels((current) =>
+        applyMoveReducer(current, {
           productId: input.productId,
           action: input.action,
           quantity,
           discountPct: input.discountPct,
-        });
-      });
+        })
+      );
 
-      const result = await executeInventoryMove({
-        productId: input.productId,
-        action: input.action,
-        quantity: input.action === 'markdown' ? undefined : quantity,
-        staffId: input.staffId,
-        discountPct: input.discountPct,
-      });
+      inFlight.current.add(input.productId);
+      let result: Awaited<ReturnType<typeof executeInventoryMove>>;
+      try {
+        result = await executeInventoryMove({
+          productId: input.productId,
+          action: input.action,
+          quantity: input.action === 'markdown' ? undefined : quantity,
+          staffId: input.staffId,
+          discountPct: input.discountPct,
+          broadcast: false,
+        });
+      } finally {
+        inFlight.current.delete(input.productId);
+      }
 
       if (result.success && result.level) {
-        setLevels((current) =>
-          current.map((row) => (row.productId === result.level!.productId ? result.level! : row))
-        );
+        setLevels((current) => applyStockLevelPatch(current, result.level!));
+        notifyInventoryUpdated({
+          level: result.level,
+          productId: input.productId,
+          source: 'level-patch',
+        });
+        if (input.action === 'rescue' && typeof window !== 'undefined') {
+          window.dispatchEvent(
+            new CustomEvent('freshloop-kitchen-inbox', {
+              detail: { productId: input.productId, units: result.units },
+            })
+          );
+        }
         return {
           success: true as const,
           level: result.level,
@@ -84,13 +110,13 @@ export function useOptimisticInventoryLevels(initialLevels: StockLevel[] | null)
         };
       }
 
-      setLevels(snapshot);
+      setLevels(revertSnapshot);
       return {
         success: false as const,
         error: result.error ?? 'Transfer failed.',
       };
     },
-    [levels, addOptimisticMove, startTransition]
+    []
   );
 
   const patchLevelOptimistic = useCallback(
@@ -100,27 +126,25 @@ export function useOptimisticInventoryLevels(initialLevels: StockLevel[] | null)
         return { success: false as const, error: 'productId is required.' };
       }
 
-      const snapshot = levels;
+      const revertSnapshot = levelsRef.current;
       setLevels((current) =>
         current.map((row) => (row.productId === productId ? preview(row) : row))
       );
 
       const result = await patchInventoryLevel(body);
       if (result.success && result.level) {
-        setLevels((current) =>
-          current.map((row) => (row.productId === result.level!.productId ? result.level! : row))
-        );
+        setLevels((current) => applyStockLevelPatch(current, result.level!));
         return { success: true as const, level: result.level };
       }
 
-      setLevels(snapshot);
+      setLevels(revertSnapshot);
       return { success: false as const, error: result.error ?? 'Update failed.' };
     },
-    [levels]
+    []
   );
 
   return {
-    levels: optimisticLevels,
+    levels,
     setLevels,
     performMove,
     patchLevelOptimistic,

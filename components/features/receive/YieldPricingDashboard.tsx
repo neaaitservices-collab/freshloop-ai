@@ -210,7 +210,8 @@ export function YieldPricingDashboard({
 
   const [packSize, setPackSize] = useState('12');
   const [yieldDivisor, setYieldDivisor] = useState('1');
-  const [retailUnit, setRetailUnit] = useState<RetailUnit>('units');
+  const [packUnit, setPackUnit] = useState<RetailUnit>('units');
+  const [yieldUnit, setYieldUnit] = useState<RetailUnit>('units');
   const [marginMode, setMarginMode] = useState<MarginMode>('40');
   const [customMarginPercent, setCustomMarginPercent] = useState('35');
   const [currentRetailPrice, setCurrentRetailPrice] = useState('0.00');
@@ -385,7 +386,8 @@ export function YieldPricingDashboard({
     });
     setPackSize(nextPackSize);
     setYieldDivisor(nextYieldDivisor);
-    setRetailUnit(nextRetailUnit);
+    setPackUnit(nextRetailUnit);
+    setYieldUnit(nextRetailUnit);
     setMarginMode(nextMarginMode);
     setCustomMarginPercent(nextCustomMargin);
     setCurrentRetailPrice(quote.targetSrp !== null ? quote.targetSrp.toFixed(2) : '0.00');
@@ -565,7 +567,7 @@ export function YieldPricingDashboard({
       const stockHref = productId
         ? `/inventory?highlight=${encodeURIComponent(productId)}`
         : '/inventory';
-      setMovedNotice(`__STOCK__${stockHref}__${savedName}__${formatUnits(onHand)}__${retailUnit}`);
+      setMovedNotice(`__STOCK__${stockHref}__${savedName}__${formatUnits(onHand)}__${yieldUnit}`);
       window.dispatchEvent(new CustomEvent('freshloop-inventory-updated'));
     }, 340);
   };
@@ -576,7 +578,7 @@ export function YieldPricingDashboard({
       id: selected.id,
       packSize: toPositiveNumber(packSize),
       yieldDivisor: toPositiveNumber(yieldDivisor),
-      retailUnit,
+      retailUnit: yieldUnit,
       marginMode,
       customMarginPercent: toPositiveNumber(customMarginPercent),
       currentRetailPrice: priceNumber,
@@ -852,7 +854,8 @@ export function YieldPricingDashboard({
             <YieldBreakdown
               packSize={packSize}
               yieldDivisor={yieldDivisor}
-              retailUnit={retailUnit}
+              packUnit={packUnit}
+              yieldUnit={yieldUnit}
               onPackSize={(value) => {
                 setPackSize(value);
                 setSavedMessage(null);
@@ -861,8 +864,12 @@ export function YieldPricingDashboard({
                 setYieldDivisor(value);
                 setSavedMessage(null);
               }}
-              onRetailUnit={(value) => {
-                setRetailUnit(value);
+              onPackUnit={(value) => {
+                setPackUnit(value);
+                setSavedMessage(null);
+              }}
+              onYieldUnit={(value) => {
+                setYieldUnit(value);
                 setSavedMessage(null);
               }}
             />
@@ -889,7 +896,7 @@ export function YieldPricingDashboard({
 
           <PackReceiptCard
             log={selected}
-            retailUnit={retailUnit}
+            retailUnit={yieldUnit}
             quote={quote}
             currentRetailPrice={priceNumber}
             saving={saving || savingAll}

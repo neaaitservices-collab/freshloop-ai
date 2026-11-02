@@ -37,67 +37,81 @@ function Metric({
   );
 }
 
-export function AdminStats({ stats }: { stats: StoreStats | null }) {
+export function AdminMetricGrid({ stats }: { stats: StoreStats | null }) {
   if (!stats) {
     return (
-      <section className="space-y-3" aria-busy="true" aria-label="Loading store statistics">
-        <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-4 lg:gap-3">
-          {Array.from({ length: 4 }, (_, index) => (
-            <div
-              key={index}
-              className="h-[92px] animate-pulse rounded-2xl border border-slate-800 bg-slate-900/50 sm:h-[100px]"
-            />
-          ))}
-        </div>
-        <div className="grid gap-3 lg:grid-cols-3">
-          <div className="h-72 animate-pulse rounded-2xl border border-slate-800 bg-slate-900/50 lg:col-span-1" />
-          <div className="h-72 animate-pulse rounded-2xl border border-slate-800 bg-slate-900/50 lg:col-span-2" />
-        </div>
-      </section>
+      <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-4 lg:gap-3" aria-busy="true">
+        {Array.from({ length: 4 }, (_, index) => (
+          <div
+            key={index}
+            className="h-[92px] animate-pulse rounded-2xl border border-slate-800 bg-slate-900/50 sm:h-[100px]"
+          />
+        ))}
+      </div>
     );
   }
 
   return (
-    <section className="space-y-3" aria-label="Store KPIs and charts">
-      <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-4 lg:gap-3">
-        <Metric
-          label="Value rescued"
-          value={formatCurrency(stats.rescuedValue)}
-          detail="Retail value moved to kitchen prep instead of waste."
-          icon={DollarSign}
-          accent="text-emerald-400/90"
-        />
-        <Metric
-          label="Due within 48h"
-          value={String(stats.expiringWithin48h)}
-          detail="On-hand lots inside the next 48 hours."
-          icon={Clock}
-          accent="text-rose-400"
-        />
-        <Metric
-          label="Inventory value"
-          value={formatCurrency(stats.inventoryValue)}
-          detail="On-hand units at stored unit cost."
-          icon={Leaf}
-          accent="text-slate-100"
-        />
-        <Metric
-          label="Waste reduction"
-          value={stats.wasteReductionPct === null ? '—' : `${stats.wasteReductionPct.toFixed(1)}%`}
-          detail="Share of handled value rescued vs discarded."
-          icon={Percent}
-          accent="text-blue-300"
-        />
-      </div>
+    <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-4 lg:gap-3">
+      <Metric
+        label="Value rescued"
+        value={formatCurrency(stats.rescuedValue)}
+        detail="Kitchen rescue $ — not the same as waste % below."
+        icon={DollarSign}
+        accent="text-emerald-400/90"
+      />
+      <Metric
+        label="Due within 48h"
+        value={String(stats.expiringWithin48h)}
+        detail="On-hand lots inside the next 48 hours."
+        icon={Clock}
+        accent="text-rose-400"
+      />
+      <Metric
+        label="Inventory value"
+        value={formatCurrency(stats.inventoryValue)}
+        detail="On-hand units at stored unit cost."
+        icon={Leaf}
+        accent="text-slate-100"
+      />
+      <Metric
+        label="Rescue rate"
+        value={stats.wasteReductionPct === null ? '—' : `${stats.wasteReductionPct.toFixed(1)}%`}
+        detail="Rescued ÷ (rescued + discard) by retail $."
+        icon={Percent}
+        accent="text-blue-300"
+      />
+    </div>
+  );
+}
 
+export function AdminChartGrid({ stats }: { stats: StoreStats | null }) {
+  if (!stats) {
+    return (
       <div className="grid gap-3 lg:grid-cols-3">
-        <div className="min-h-0 lg:col-span-1">
-          <WasteVsRescueChart data={stats.rescueVsDiscard} />
-        </div>
-        <div className="min-h-0 lg:col-span-2">
-          <RevenueRecoveryChart data={stats.revenueDays} />
-        </div>
+        <div className="h-72 animate-pulse rounded-2xl border border-slate-800 bg-slate-900/50 lg:col-span-1" />
+        <div className="h-72 animate-pulse rounded-2xl border border-slate-800 bg-slate-900/50 lg:col-span-2" />
       </div>
+    );
+  }
+
+  return (
+    <div className="grid gap-3 lg:grid-cols-3">
+      <div className="min-h-0 lg:col-span-1">
+        <WasteVsRescueChart data={stats.rescueVsDiscard} />
+      </div>
+      <div className="min-h-0 lg:col-span-2">
+        <RevenueRecoveryChart data={stats.revenueDays} />
+      </div>
+    </div>
+  );
+}
+
+export function AdminStats({ stats }: { stats: StoreStats | null }) {
+  return (
+    <section className="space-y-3" aria-label="Store KPIs and charts">
+      <AdminMetricGrid stats={stats} />
+      <AdminChartGrid stats={stats} />
     </section>
   );
 }

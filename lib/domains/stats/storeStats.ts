@@ -1,8 +1,11 @@
 import { InventoryLocation, TransactionType } from '@prisma/client';
 import { prisma, VOLUMETRIC_SCRAP_REF_PREFIX } from '@/lib/domains/inventory/ledger';
+import type { WasteKpiReport } from '@/lib/domains/inventory/ledger';
+import { calculateRealTimeWastePct } from '@/lib/domains/inventory/ledger';
 import { getStockLevels } from '@/lib/domains/inventory/stock';
 import type { DepartmentAlert, StoreStats } from '@/lib/domains/stats/storeStatsTypes';
-import { computeWastePct } from '@/lib/domains/stats/wasteKpi';
+import { findLatestStoreSetting } from '@/lib/domains/stats/storeSettingSelect';
+import { DEFAULT_KPI_LOOKBACK_DAYS, kpiLookbackRange } from '@/lib/domains/stats/wasteKpi';
 
 export type { DepartmentAlert, RescueSlice, RevenueDay, StoreStats } from '@/lib/domains/stats/storeStatsTypes';
 
@@ -49,14 +52,38 @@ export function getStoreStats(): Promise<StoreStats> {
   return value;
 }
 
+/** Attach canonical ledger waste KPI fields (single source of truth). */
+export function applyWasteKpiToStoreStats(stats: StoreStats, wasteKpi: WasteKpiReport): StoreStats {
+  return {
+    ...stats,
+    wastePct: wasteKpi.wastePct,
+    totalWasteValue: wasteKpi.totalWasteValue,
+    grossSalesRevenue: wasteKpi.grossSalesRevenue,
+    targetWastePct: wasteKpi.targetWastePct,
+  };
+}
+
+/** Admin dashboard: inventory/chart stats + live waste KPI in one round-trip. */
+export async function getAdminStoreStatsBundle(): Promise<{
+  stats: StoreStats;
+  wasteKpi: WasteKpiReport;
+}> {
+  const [baseStats, wasteKpi] = await Promise.all([getStoreStats(), calculateRealTimeWastePct()]);
+  return { stats: applyWasteKpiToStoreStats(baseStats, wasteKpi), wasteKpi };
+}
+
 async function loadStoreStats(): Promise<StoreStats> {
   const now = new Date();
   const horizon = new Date(now.getTime() + 48 * 60 * 60 * 1000);
   const weekStart = new Date(now);
   weekStart.setHours(0, 0, 0, 0);
   weekStart.setDate(weekStart.getDate() - 6);
+  const { startDate: lookbackStart, endDate: lookbackEnd } = kpiLookbackRange(
+    DEFAULT_KPI_LOOKBACK_DAYS,
+    now
+  );
 
-  const [products, stockLevels, expirations, movements, setting, sales] = await Promise.all([
+  const [products, stockLevels, expirations, movements, setting] = await Promise.all([
     prisma.product.findMany({
       where: { isManufactured: false },
       select: {
@@ -80,6 +107,7 @@ async function loadStoreStats(): Promise<StoreStats> {
     prisma.inventoryTransaction.findMany({
       where: {
         transactionType: { in: [TransactionType.Rescue, TransactionType.Waste] },
+        timestamp: { gte: lookbackStart, lte: lookbackEnd },
       },
       select: {
         timestamp: true,
@@ -92,26 +120,7 @@ async function loadStoreStats(): Promise<StoreStats> {
         product: { select: { retailPrice: true } },
       },
     }),
-    prisma.storeSetting.findFirst({
-      select: {
-        targetWastePct: true,
-        pullSensitivityDays: true,
-        scrapBucketVolumeL: true,
-        estimatedWeightPerLiterKg: true,
-        defaultScrapCostPerKg: true,
-      },
-    }),
-    prisma.inventoryTransaction.findMany({
-      where: {
-        transactionType: { in: [TransactionType.Sale, TransactionType.POS_Sale] },
-        qtyChange: { lt: 0 },
-      },
-      select: {
-        qtyChange: true,
-        unitCostAtTime: true,
-        product: { select: { retailPrice: true, targetMargin: true } },
-      },
-    }),
+    findLatestStoreSetting(),
   ]);
 
   const levelById = new Map(stockLevels.map((row) => [row.productId, row]));
@@ -166,12 +175,6 @@ async function loadStoreStats(): Promise<StoreStats> {
   let discardValue = 0;
   let rescuedUnits = 0;
   let discardedUnits = 0;
-  let totalDiscardValue = 0;
-  let volumetricScrapValue = 0;
-  const costPerBucket =
-    (setting?.scrapBucketVolumeL ?? 20) *
-    (setting?.estimatedWeightPerLiterKg ?? 0.65) *
-    (setting?.defaultScrapCostPerKg ?? 3.5);
   const days = Array.from({ length: 7 }, (_, index) => {
     const date = new Date(weekStart);
     date.setDate(weekStart.getDate() + index);
@@ -198,11 +201,6 @@ async function loadStoreStats(): Promise<StoreStats> {
       !movement.referenceId?.startsWith(VOLUMETRIC_SCRAP_REF_PREFIX) &&
       !movement.notes?.toLowerCase().includes('volumetric scrap') &&
       !movement.notes?.toLowerCase().includes('cubeta');
-    const isVolumetric =
-      movement.transactionType === TransactionType.Waste && !isDiscard;
-
-    if (isVolumetric) volumetricScrapValue += units * costPerBucket;
-    if (isDiscard) totalDiscardValue += units * movement.unitCostAtTime;
 
     if (isRescue) {
       rescuedValue += amount;
@@ -222,26 +220,15 @@ async function loadStoreStats(): Promise<StoreStats> {
 
   const handled = rescuedValue + discardValue;
   const wasteReductionPct = handled > 0 ? Number(((rescuedValue / handled) * 100).toFixed(1)) : null;
-  let grossSales = 0;
-  for (const sale of sales) {
-    const unitsSold = Math.abs(sale.qtyChange);
-    const retail = sale.product.retailPrice;
-    const margin = Math.min(0.95, Math.max(0.05, sale.product.targetMargin ?? 0.4));
-    const price = typeof retail === 'number' && retail > 0 ? retail : sale.unitCostAtTime / (1 - margin);
-    grossSales += unitsSold * price;
-  }
-  const totalWasteValue = money(totalDiscardValue + volumetricScrapValue);
-  const grossSalesRevenue = money(grossSales);
-  const wastePct = computeWastePct(totalWasteValue, grossSalesRevenue);
 
   return {
     rescuedValue: money(rescuedValue),
     expiringWithin48h,
     inventoryValue: money(inventoryValue),
     wasteReductionPct,
-    wastePct,
-    totalWasteValue,
-    grossSalesRevenue,
+    wastePct: null,
+    totalWasteValue: 0,
+    grossSalesRevenue: 0,
     targetWastePct: setting?.targetWastePct ?? 2.5,
     pullSensitivityDays,
     pulls,
