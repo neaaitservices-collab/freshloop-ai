@@ -22,12 +22,49 @@ export function defaultSubInventoryTab(role: RoleName | undefined): SubInventory
   return 'retail_floor';
 }
 
+/** Ignore float dust from ledger aggregations when hiding empty rows. */
+export const SUB_INVENTORY_STOCK_EPS = 0.000_1;
+
+export function hasRetailFloorStock(row: Pick<StockLevel, 'onHand'>): boolean {
+  return row.onHand > SUB_INVENTORY_STOCK_EPS;
+}
+
+export function hasKitchenPrepStock(row: Pick<StockLevel, 'kitchenPrepQty'>): boolean {
+  return row.kitchenPrepQty > SUB_INVENTORY_STOCK_EPS;
+}
+
+export function hasAnySubInventoryStock(row: StockLevel): boolean {
+  return hasRetailFloorStock(row) || hasKitchenPrepStock(row);
+}
+
 export function filterRetailFloorLevels(levels: StockLevel[]): StockLevel[] {
-  return levels.filter((row) => row.onHand > 0);
+  return levels.filter(hasRetailFloorStock);
 }
 
 export function filterKitchenPrepLevels(levels: StockLevel[]): StockLevel[] {
-  return levels.filter((row) => row.kitchenPrepQty > 0);
+  return levels.filter(hasKitchenPrepStock);
+}
+
+export function filterLevelsWithAnyStock(levels: StockLevel[]): StockLevel[] {
+  return levels.filter(hasAnySubInventoryStock);
+}
+
+function withPreservedPosStats(existing: StockLevel | undefined, level: StockLevel): StockLevel {
+  if (!existing || level.posSalesDays != null) return level;
+  return {
+    ...level,
+    posSoldInWindow: existing.posSoldInWindow,
+    posSalesDays: existing.posSalesDays,
+  };
+}
+
+/** Apply a single SKU snapshot from move/sale APIs without reloading the full catalog. */
+export function applyStockLevelPatch(current: StockLevel[], level: StockLevel): StockLevel[] {
+  const existing = current.find((row) => row.productId === level.productId);
+  const merged = withPreservedPosStats(existing, level);
+  const rest = current.filter((row) => row.productId !== level.productId);
+  if (!hasAnySubInventoryStock(merged)) return rest;
+  return filterLevelsWithAnyStock([...rest, merged]);
 }
 
 export function retailFloorBalance(levels: StockLevel[]): number {

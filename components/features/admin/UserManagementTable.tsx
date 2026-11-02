@@ -12,7 +12,7 @@ const EMPTY_FORM = {
   position: 'Produce floor',
 };
 
-export function UserManagementTable() {
+export function UserManagementTable({ embedded = false }: { embedded?: boolean }) {
   const { users, activeUser, loading, refresh } = useRole();
   const [form, setForm] = useState(EMPTY_FORM);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -77,11 +77,15 @@ export function UserManagementTable() {
 
   return (
     <section className="mt-10">
-      <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-emerald-300">Controls</p>
-      <h2 className="mt-1 text-2xl font-black tracking-tight text-white">Staff</h2>
-      <p className="mt-1 max-w-2xl text-sm text-zinc-400">
-        Add the people who work the store. The position you choose is the access they get on the platform.
-      </p>
+      {embedded ? null : (
+        <>
+          <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-emerald-300">Controls</p>
+          <h2 className="mt-1 text-2xl font-black tracking-tight text-white">Staff</h2>
+          <p className="mt-1 max-w-2xl text-sm text-zinc-400">
+            Add the people who work the store. The position you choose is the access they get on the platform.
+          </p>
+        </>
+      )}
 
       {loading && users.length === 0 ? <p className="mt-4 text-sm text-zinc-400">Loading staff…</p> : null}
 

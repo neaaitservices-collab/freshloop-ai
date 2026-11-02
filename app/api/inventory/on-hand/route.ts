@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { lookupOnHand } from '@/lib/domains/inventory/stock';
+import { authErrorResponse } from '@/lib/auth/http';
+import { requireOperationalStaff } from '@/lib/auth/guardRoute';
+import { apiErrorFromUnknown } from '@/lib/domains/ai/apiError';
 
 export const dynamic = 'force-dynamic';
 
@@ -10,15 +13,12 @@ export async function GET(req: NextRequest) {
   }
 
   try {
+    await requireOperationalStaff();
     const stock = await lookupOnHand(name);
     return NextResponse.json({ success: true, ...stock });
   } catch (error) {
-    return NextResponse.json(
-      {
-        success: false,
-        error: error instanceof Error ? error.message : 'Stock could not be read.',
-      },
-      { status: 500 }
-    );
+    const authRes = authErrorResponse(error);
+    if (authRes) return authRes;
+    return apiErrorFromUnknown(error, 'Stock could not be read.');
   }
 }

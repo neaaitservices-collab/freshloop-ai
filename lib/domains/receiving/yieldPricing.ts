@@ -36,6 +36,25 @@ export function resolveTargetMargin(mode: MarginMode, customPercent: number): nu
   return bounded / 100;
 }
 
+/** Shelf floor price from unit cost and target margin: cost / (1 − margin). */
+export function floorPriceForTargetMargin(input: {
+  caseCost: number;
+  packSize: number;
+  yieldDivisor: number;
+  marginMode: MarginMode;
+  customMarginPercent: number;
+}): number | null {
+  const targetMargin = resolveTargetMargin(input.marginMode, input.customMarginPercent);
+  const quote = calculateYieldQuote({
+    caseCost: input.caseCost,
+    packSize: input.packSize,
+    yieldDivisor: input.yieldDivisor,
+    targetMargin,
+    currentRetailPrice: 0,
+  });
+  return quote.targetSrp;
+}
+
 /**
  * Retail Yield: Total Retail Units = Pack Size / Yield Divisor
  * Unit Cost: Unit Cost = caseCost / Total Retail Units
@@ -82,6 +101,61 @@ export function formatUnits(value: number | null | undefined): string {
   return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(2);
 }
 
+function gcdInt(a: number, b: number): number {
+  let x = Math.abs(Math.round(a));
+  let y = Math.abs(Math.round(b));
+  while (y > 0) {
+    const t = y;
+    y = x % y;
+    x = t;
+  }
+  return x || 1;
+}
+
+/** Human-readable case count when on-hand is often a partial case (e.g. 8 of 12 units → "2/3 case"). */
+export function formatFractionalCases(
+  unitsOnHand: number,
+  unitsPerCase: number
+): { primary: string; decimal: string; detail: string } {
+  const pack = unitsPerCase > 0 ? unitsPerCase : 1;
+  const units = Math.max(0, Number(unitsOnHand.toFixed(4)));
+  const casesDec = Number((units / pack).toFixed(4));
+  const decimal = formatUnits(casesDec);
+
+  const wholeCases = Math.floor(units / pack + 1e-9);
+  let remainder = Number((units - wholeCases * pack).toFixed(4));
+  if (remainder < 0.0001) remainder = 0;
+
+  const packInt = Math.max(1, Math.round(pack));
+  const remInt = Math.max(0, Math.round(remainder));
+  const [num, den] =
+    remInt === 0 ? [0, 1] : (() => {
+      const g = gcdInt(remInt, packInt);
+      return [remInt / g, packInt / g];
+    })();
+
+  const frac =
+    remInt === 0 ? '' : den === 1 ? String(num) : `${num}/${den}`;
+
+  let primary: string;
+  if (wholeCases > 0 && remInt === 0) {
+    primary = wholeCases === 1 ? '1 case' : `${wholeCases} cases`;
+  } else if (wholeCases > 0 && frac) {
+    primary = `${wholeCases} + ${frac} cases`;
+  } else if (frac && remInt > 0) {
+    primary = den === 1 ? `${frac} cases` : `${frac} case`;
+  } else {
+    primary = `${decimal} cases`;
+  }
+
+  const detail =
+    remInt === 0 && wholeCases > 0
+      ? `${formatUnits(units)} sellable units`
+      : `${formatUnits(units)} of ${formatUnits(pack)} units per case`;
+
+  return { primary, decimal, detail };
+}
+
 const STOCK_UNIT_LABELS: Record<string, string> = {
   LBS: 'lbs',
   KG: 'kg',
@@ -96,6 +170,13 @@ const STOCK_UNIT_LABELS: Record<string, string> = {
 
 export function stockUnitLabel(unitType: string): string {
   return STOCK_UNIT_LABELS[unitType] ?? 'units';
+}
+
+/** Maps catalog `UnitType` to yield / pack unit selectors in receiving UI. */
+export function retailUnitForUnitType(unitType: string): RetailUnit {
+  if (unitType === 'LBS' || unitType === 'KG') return 'lbs';
+  if (unitType === 'LITER' || unitType === 'ML') return 'quarts';
+  return 'units';
 }
 
 export function formatPercent(value: number | null | undefined): string {

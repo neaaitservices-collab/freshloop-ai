@@ -18,6 +18,8 @@ export interface RetailFloorTransferPanelProps {
   department?: string;
   query?: string;
   compact?: boolean;
+  layoutVariant?: 'default' | 'operations';
+  listDensity?: 'default' | 'compact';
   onSuccess: (message: string, level: StockLevel) => void;
   onError: (message: string) => void;
   departmentFilter?: (row: StockLevel) => boolean;
@@ -31,11 +33,14 @@ export function RetailFloorTransferPanel({
   priorityOnly = false,
   query = '',
   compact,
+  layoutVariant = 'default',
+  listDensity = 'default',
   onSuccess,
   onError,
   departmentFilter,
   performMove,
 }: RetailFloorTransferPanelProps) {
+  const operations = layoutVariant === 'operations';
   const rows = useMemo(() => {
     let list = filterRetailFloorLevels(levels);
     if (departmentFilter) list = list.filter(departmentFilter);
@@ -60,18 +65,32 @@ export function RetailFloorTransferPanel({
   }, [levels, pullDays, priorityOnly, query, departmentFilter]);
 
   return (
-    <div className="overflow-hidden rounded-2xl border border-emerald-900/40 bg-slate-950/80">
-      <div className="flex items-center gap-2 border-b border-slate-800 px-4 py-3">
+    <div
+      className={
+        operations
+          ? 'min-w-0 max-w-full overflow-hidden rounded-xl border border-slate-800/90 bg-slate-900/50'
+          : 'overflow-hidden rounded-2xl border border-emerald-900/40 bg-slate-950/80'
+      }
+    >
+      <div
+        className={
+          listDensity === 'compact'
+            ? 'flex items-center gap-2 border-b border-slate-800 px-3 py-2'
+            : 'flex items-center gap-2 border-b border-slate-800 px-4 py-3'
+        }
+      >
         <Store className="h-4 w-4 text-emerald-400" />
         <div>
-          <h3 className="text-sm font-black text-white">
+          <h3 className="text-xs font-black text-white sm:text-sm">
             {priorityOnly ? 'Short-Dated Action Queue' : 'Retail floor'}
           </h3>
-          <p className="text-[11px] text-slate-400">
-            {priorityOnly
-              ? 'Pull window items — swipe on mobile or use the action buttons.'
-              : `Shelf stock — send to production, markdown, or waste (choose qty in ${rows[0] ? 'lbs/units' : 'each unit'}).`}
-          </p>
+          {listDensity !== 'compact' ? (
+            <p className="text-[11px] text-slate-400">
+              {priorityOnly
+                ? 'Pull window items — swipe on mobile or use the action buttons.'
+                : 'Shelf stock — send to production, markdown, or waste.'}
+            </p>
+          ) : null}
         </div>
         <span className="ml-auto rounded-full border border-emerald-500/30 bg-emerald-950/50 px-2.5 py-0.5 text-[10px] font-bold text-emerald-300">
           {rows.length} SKUs
@@ -83,6 +102,8 @@ export function RetailFloorTransferPanel({
         pullDays={pullDays}
         staffId={staffId}
         compact={compact}
+        layoutVariant={layoutVariant}
+        listDensity={listDensity}
         actionQueue={priorityOnly}
         performMove={performMove}
         emptyMessage={

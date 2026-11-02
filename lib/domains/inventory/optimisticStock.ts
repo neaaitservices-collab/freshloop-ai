@@ -41,6 +41,15 @@ export function applyOptimisticMove(
     };
   }
 
+  if (action === 'sale') {
+    const sold = Math.min(qty, row.onHand);
+    return {
+      ...row,
+      onHand: roundQty(row.onHand - sold),
+      onHandCases: roundQty(Math.max(0, row.onHandCases - sold / Math.max(row.casePackSize, 1))),
+    };
+  }
+
   if (action === 'markdown') {
     const pct = discountPct ?? 30;
     const regular = row.regularRetailPrice ?? row.retailPrice ?? row.unitCost;

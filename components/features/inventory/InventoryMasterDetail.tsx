@@ -137,7 +137,8 @@ export function InventoryMasterDetail({
 
   const [packSize, setPackSize] = useState('1');
   const [yieldDivisor, setYieldDivisor] = useState('1');
-  const [retailUnit, setRetailUnit] = useState<RetailUnit>('units');
+  const [packUnit, setPackUnit] = useState<RetailUnit>('units');
+  const [yieldUnit, setYieldUnit] = useState<RetailUnit>('units');
   const [marginMode, setMarginMode] = useState<MarginMode>('40');
   const [customMarginPercent, setCustomMarginPercent] = useState('35');
   const [currentRetailPrice, setCurrentRetailPrice] = useState('0.00');
@@ -167,7 +168,9 @@ export function InventoryMasterDetail({
     const initialPack = selected.casePackSize;
     setPackSize(String(initialPack));
     setYieldDivisor('1');
-    setRetailUnit(retailUnitFor(selected.unitType));
+    const unit = retailUnitFor(selected.unitType);
+    setPackUnit(unit);
+    setYieldUnit(unit);
     setMarginMode('40');
     const unitsPerCase = initialPack > 0 ? initialPack : 1;
     const initialCaseCost = selected.unitCost * unitsPerCase;
@@ -230,7 +233,7 @@ export function InventoryMasterDetail({
       productId: selected.productId,
       packSize: pack,
       yieldDivisor: divisor,
-      retailUnit,
+      retailUnit: yieldUnit,
       retailPrice: priceNumber,
     };
     try {
@@ -448,10 +451,12 @@ export function InventoryMasterDetail({
                 <YieldBreakdown
                   packSize={packSize}
                   yieldDivisor={yieldDivisor}
-                  retailUnit={retailUnit}
+                  packUnit={packUnit}
+                  yieldUnit={yieldUnit}
                   onPackSize={setPackSize}
                   onYieldDivisor={setYieldDivisor}
-                  onRetailUnit={setRetailUnit}
+                  onPackUnit={setPackUnit}
+                  onYieldUnit={setYieldUnit}
                 />
                 <div className="border-t border-slate-800/80 pt-4">
                   <PricingStrategy

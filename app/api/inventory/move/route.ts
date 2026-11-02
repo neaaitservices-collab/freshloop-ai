@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { LotAllocationError } from '@/lib/domains/inventory/lots';
 import { applyRetailMarkdown, moveKitchenPrepToWaste, moveRetailStock } from '@/lib/domains/inventory/stock';
 import { apiError, apiErrorFromUnknown } from '@/lib/domains/ai/apiError';
 import { authErrorResponse } from '@/lib/auth/http';
@@ -69,6 +70,9 @@ export async function POST(req: NextRequest) {
   } catch (error) {
     const authRes = authErrorResponse(error);
     if (authRes) return authRes;
+    if (error instanceof LotAllocationError) {
+      return apiError(error.message, 409);
+    }
     return apiErrorFromUnknown(error, 'The stock could not be moved.');
   }
 }

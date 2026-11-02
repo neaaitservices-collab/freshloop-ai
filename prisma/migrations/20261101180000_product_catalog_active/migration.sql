@@ -1,0 +1,1 @@
+ALTER TABLE "products" ADD COLUMN IF NOT EXISTS "catalogActive" BOOLEAN NOT NULL DEFAULT true;

@@ -4,6 +4,10 @@ import {
   calculateRealTimeWastePct,
 } from '@/lib/domains/inventory/ledger';
 import { getLedgerInventoryItems } from '@/lib/domains/inventory/fusionInventoryView';
+import {
+  hasKitchenPrepStock,
+  hasRetailFloorStock,
+} from '@/lib/domains/inventory/subInventoryView';
 import { getStockLevels } from '@/lib/domains/inventory/stock';
 import { rememberLedgerRead } from '@/lib/domains/inventory/ledgerCache';
 import { authErrorResponse } from '@/lib/auth/http';
@@ -35,6 +39,7 @@ async function loadInventoryPayload(
   const ledgerPromise = (async () => {
     const [products, wasteKpi, stockLevels] = await Promise.all([
       prisma.product.findMany({
+        where: { catalogActive: true, isManufactured: false },
         orderBy: { name: 'asc' },
         select: {
           id: true,
@@ -62,7 +67,8 @@ async function loadInventoryPayload(
     const levelById = new Map(stockLevels.map((row) => [row.productId, row]));
     const now = new Date();
 
-    const subInventoryRows = products.map((prod) => {
+    const subInventoryRows = products
+      .map((prod) => {
       const level = levelById.get(prod.id);
       const retailStock = Number((level?.onHand ?? 0).toFixed(4));
       const kitchenStock = Number((level?.kitchenPrepQty ?? 0).toFixed(4));
@@ -103,7 +109,12 @@ async function loadInventoryPayload(
         isManufactured: prod.isManufactured,
         isFlaggedForPull: daysRemaining <= pullDays && retailStock > 0,
       };
-    });
+    })
+      .filter(
+        (row) =>
+          hasRetailFloorStock({ onHand: row.retailFloorQty }) ||
+          hasKitchenPrepStock({ kitchenPrepQty: row.kitchenPrepQty })
+      );
 
     return { wasteKpi, subInventoryRows };
   })().catch(() => null);

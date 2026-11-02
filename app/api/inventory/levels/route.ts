@@ -3,22 +3,47 @@ import { apiErrorFromUnknown } from '@/lib/domains/ai/apiError';
 import { authErrorResponse } from '@/lib/auth/http';
 import { requireSessionUser } from '@/lib/auth/session';
 import { isManager } from '@/lib/utils/roles';
+import { parsePosSalesDaysParam } from '@/lib/domains/inventory/posSalesUnits';
+import { filterLevelsWithAnyStock } from '@/lib/domains/inventory/subInventoryView';
 import {
   applyRetailMarkdown,
+  getStockLevel,
   getStockLevels,
+  getStockLevelsWithPosSales,
   moveRetailStock,
   PAR_CASES,
   setParCases,
   setStockCases,
   setSupplier,
   updateCase,
+  updateProductCatalogMeta,
+  getLastStockOverrideAudit,
+  removeProductFromCatalog,
 } from '@/lib/domains/inventory/stock';
 
 export const dynamic = 'force-dynamic';
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
-    const levels = await getStockLevels();
+    const auditProductId = req.nextUrl.searchParams.get('auditProductId')?.trim();
+    if (auditProductId) {
+      const audit = await getLastStockOverrideAudit(auditProductId);
+      return NextResponse.json({ success: true, audit });
+    }
+    const singleProductId = req.nextUrl.searchParams.get('productId')?.trim();
+    if (singleProductId) {
+      const level = await getStockLevel(singleProductId);
+      return NextResponse.json({ success: true, level });
+    }
+    const inStockOnly = req.nextUrl.searchParams.get('inStockOnly') === '1';
+    const includePosSales = req.nextUrl.searchParams.get('includePosSales') === '1';
+    const salesDays = parsePosSalesDaysParam(req.nextUrl.searchParams.get('salesDays'));
+    let levels = includePosSales
+      ? await getStockLevelsWithPosSales(salesDays)
+      : await getStockLevels();
+    if (inStockOnly) {
+      levels = filterLevelsWithAnyStock(levels);
+    }
     const low = levels.filter((row) => row.low);
     return NextResponse.json({
       success: true,
@@ -39,6 +64,28 @@ export async function GET() {
   }
 }
 
+export async function DELETE(req: NextRequest) {
+  try {
+    const actor = await requireSessionUser();
+    if (actor.role !== 'ADMIN') {
+      return NextResponse.json(
+        { success: false, error: 'Only an admin can remove items from the catalog.' },
+        { status: 403 }
+      );
+    }
+    const productId = req.nextUrl.searchParams.get('productId')?.trim() ?? '';
+    if (!productId) {
+      return NextResponse.json({ success: false, error: 'productId is required.' }, { status: 400 });
+    }
+    await removeProductFromCatalog(productId);
+    return NextResponse.json({ success: true, productId });
+  } catch (error) {
+    const authRes = authErrorResponse(error);
+    if (authRes) return authRes;
+    return apiErrorFromUnknown(error, 'The item could not be removed from the catalog.');
+  }
+}
+
 export async function PATCH(req: NextRequest) {
   try {
     const actor = await requireSessionUser();
@@ -56,6 +103,8 @@ export async function PATCH(req: NextRequest) {
       staffId?: string;
       quantity?: number;
       discountPct?: number;
+      department?: string;
+      origin?: string | null;
     };
     const productId = body.productId?.trim() ?? '';
     if (!productId) {
@@ -99,6 +148,16 @@ export async function PATCH(req: NextRequest) {
         return NextResponse.json({ success: false, error: 'Cases must be zero or greater.' }, { status: 400 });
       }
       const level = await setStockCases(productId, casesOnHand, actor.id);
+      const audit = await getLastStockOverrideAudit(productId);
+      return NextResponse.json({ success: true, level, audit });
+    }
+    if (body.department !== undefined || body.origin !== undefined) {
+      const level = await updateProductCatalogMeta({
+        productId,
+        department: body.department,
+        supplier: typeof body.supplier === 'string' ? body.supplier : undefined,
+        origin: body.origin,
+      });
       return NextResponse.json({ success: true, level });
     }
     if (typeof body.supplier === 'string') {

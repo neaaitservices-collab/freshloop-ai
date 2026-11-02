@@ -12,9 +12,21 @@ export class LotAllocationError extends Error {
 /** Synthetic layers sort after real dated lots so expiring product is consumed first. */
 const SYNTHETIC_EXPIRATION = new Date(Date.UTC(9999, 11, 31));
 
-export async function lockProductInventory(tx: LotTx, productId: string): Promise<void> {
+export async function lockProductInventory(
+  tx: LotTx,
+  productId: string,
+  location?: InventoryLocation
+): Promise<void> {
   await tx.$queryRaw`SELECT id FROM products WHERE id = ${productId} FOR UPDATE`;
-  await tx.$queryRaw`SELECT id FROM inventory_lots WHERE product_id = ${productId} FOR UPDATE`;
+  if (location) {
+    await tx.$queryRaw`
+      SELECT id FROM inventory_lots
+      WHERE product_id = ${productId} AND location = ${location}::"InventoryLocation"
+      FOR UPDATE
+    `;
+  } else {
+    await tx.$queryRaw`SELECT id FROM inventory_lots WHERE product_id = ${productId} FOR UPDATE`;
+  }
 }
 
 /** Ledger on-hand at a location. Callers must not have written the outflow being planned. */
@@ -44,6 +56,38 @@ async function openLotQty(tx: LotTx, productId: string, location: InventoryLocat
   return Number((aggregation._sum.qtyRemaining ?? 0).toFixed(4));
 }
 
+/** One round-trip for ledger on-hand + open lot qty at a location (inside a tx). */
+async function readLocationStockSnapshot(
+  tx: LotTx,
+  productId: string,
+  location: InventoryLocation
+): Promise<{ onHand: number; lotQty: number }> {
+  const rows = await tx.$queryRaw<Array<{ onHand: number; lotQty: number }>>`
+    SELECT
+      COALESCE((
+        SELECT SUM(t."Qty_Change")::float8
+        FROM "Inventory_Transactions" t
+        WHERE t."Product_ID" = ${productId}
+          AND (
+            (t."To_Location" = ${location}::"InventoryLocation" AND t."Qty_Change" > 0)
+            OR (t."From_Location" = ${location}::"InventoryLocation" AND t."Qty_Change" < 0)
+          )
+      ), 0) AS "onHand",
+      COALESCE((
+        SELECT SUM(l.qty_remaining)::float8
+        FROM inventory_lots l
+        WHERE l.product_id = ${productId}
+          AND l.location = ${location}::"InventoryLocation"
+          AND l.qty_remaining > 0
+      ), 0) AS "lotQty"
+  `;
+  const row = rows[0];
+  return {
+    onHand: Number(row?.onHand ?? 0),
+    lotQty: Number(row?.lotQty ?? 0),
+  };
+}
+
 async function catalogUnitCost(tx: LotTx, productId: string): Promise<number> {
   const product = await tx.product.findUnique({
     where: { id: productId },
@@ -65,9 +109,13 @@ export async function alignLotsToLedger(
     unitCost?: number;
     receiveReferenceId?: string;
     receiveTransactionId?: string | null;
+    /** Caller already row-locked this product (e.g. consumeLotsFifo). */
+    skipLock?: boolean;
   }
 ): Promise<void> {
-  await lockProductInventory(tx, input.productId);
+  if (!input.skipLock) {
+    await lockProductInventory(tx, input.productId, input.location);
+  }
   const target = Math.max(0, await readLocationOnHand(tx, input.productId, input.location));
   const covered = await openLotQty(tx, input.productId, input.location);
   const gap = Number((target - covered).toFixed(4));
@@ -126,13 +174,16 @@ export async function createLotOnReceive(
     receivedAt?: Date | null;
     receiveReferenceId?: string | null;
     receiveTransactionId?: string | null;
+    skipLock?: boolean;
   }
 ) {
   const qty = Number(Math.abs(input.qty).toFixed(4));
   if (!(qty > 0)) {
     throw new LotAllocationError('Lot quantity must be greater than zero.');
   }
-  await lockProductInventory(tx, input.productId);
+  if (!input.skipLock) {
+    await lockProductInventory(tx, input.productId, input.location);
+  }
   return tx.inventoryLot.create({
     data: {
       productId: input.productId,
@@ -163,13 +214,15 @@ export async function consumeLotsFifo(
      * Used by writers that still post a negative ledger row (bundle explode, manufacturing).
      */
     allowShort?: boolean;
+    unitCost?: number;
   }
-): Promise<Array<{ lotId: string; qty: number; unitCost: number }>> {
+): Promise<Array<{ lotId: string; qty: number; unitCost: number; expirationDate: Date | null }>> {
   let need = Number(Math.abs(input.qty).toFixed(4));
   if (!(need > 0)) return [];
 
-  await lockProductInventory(tx, input.productId);
-  const onHand = Math.max(0, await readLocationOnHand(tx, input.productId, input.location));
+  await lockProductInventory(tx, input.productId, input.location);
+  const snapshot = await readLocationStockSnapshot(tx, input.productId, input.location);
+  const onHand = Math.max(0, snapshot.onHand);
   if (input.allowShort) {
     need = Number(Math.min(need, onHand).toFixed(4));
     if (!(need > 0)) return [];
@@ -180,10 +233,17 @@ export async function consumeLotsFifo(
     );
   }
 
-  await alignLotsToLedger(tx, {
-    productId: input.productId,
-    location: input.location,
-  });
+  const covered = snapshot.lotQty;
+  const lotsMatchLedger = Math.abs(covered - onHand) <= 0.0001;
+  const lotsCoverNeed = covered + 0.0001 >= need;
+  if (!(lotsMatchLedger && lotsCoverNeed)) {
+    await alignLotsToLedger(tx, {
+      productId: input.productId,
+      location: input.location,
+      unitCost: input.unitCost,
+      skipLock: true,
+    });
+  }
 
   const lots = await tx.inventoryLot.findMany({
     where: {
@@ -195,7 +255,12 @@ export async function consumeLotsFifo(
   });
 
   let remaining = need;
-  const allocations: Array<{ lotId: string; qty: number; unitCost: number }> = [];
+  const allocations: Array<{
+    lotId: string;
+    qty: number;
+    unitCost: number;
+    expirationDate: Date | null;
+  }> = [];
 
   for (const lot of lots) {
     if (remaining <= 0) break;
@@ -210,7 +275,12 @@ export async function consumeLotsFifo(
         `Lot balance changed during allocation at ${input.location.replace(/_/g, ' ')}.`
       );
     }
-    allocations.push({ lotId: lot.id, qty: take, unitCost: lot.unitCostAtTime });
+    allocations.push({
+      lotId: lot.id,
+      qty: take,
+      unitCost: lot.unitCostAtTime,
+      expirationDate: lot.expirationDate,
+    });
     remaining = Number((remaining - take).toFixed(4));
   }
 
@@ -232,23 +302,25 @@ export async function transferLotsFifo(
     toLocation: InventoryLocation;
     qty: number;
     receiveReferenceId?: string;
+    unitCost?: number;
   }
 ) {
   const allocations = await consumeLotsFifo(tx, {
     productId: input.productId,
     location: input.fromLocation,
     qty: input.qty,
+    unitCost: input.unitCost,
   });
 
   for (const alloc of allocations) {
-    const source = await tx.inventoryLot.findUniqueOrThrow({ where: { id: alloc.lotId } });
     await createLotOnReceive(tx, {
       productId: input.productId,
       location: input.toLocation,
       qty: alloc.qty,
       unitCostAtTime: alloc.unitCost,
-      expirationDate: source.expirationDate,
-      receiveReferenceId: input.receiveReferenceId ?? `XFER-${source.id.slice(0, 8)}`,
+      expirationDate: alloc.expirationDate,
+      receiveReferenceId: input.receiveReferenceId ?? `XFER-${alloc.lotId.slice(0, 8)}`,
+      skipLock: true,
     });
   }
 }

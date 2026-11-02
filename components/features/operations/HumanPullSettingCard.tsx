@@ -91,10 +91,10 @@ export function HumanPullSettingCard({
       ) : null}
 
       <Link
-        href="/admin"
+        href="/admin/settings#waste-pulls"
         className="mt-auto pt-3 text-[10px] font-bold text-slate-500 underline-offset-2 hover:text-slate-300 hover:underline"
       >
-        Default window · Admin → Store settings
+        Default pull window · Store settings
       </Link>
     </div>
   );

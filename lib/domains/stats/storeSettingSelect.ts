@@ -1,5 +1,5 @@
 import type { Prisma } from '@prisma/client';
-import { prisma } from '@/lib/domains/inventory/ledger';
+import { prisma } from '@/lib/db/prisma';
 
 /** Fields present before optional multi-store migration (excludes store_id). */
 export const storeSettingSafeSelect = {

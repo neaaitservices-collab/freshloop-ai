@@ -1,4 +1,5 @@
-import { Department, InventoryLocation, TransactionType, UnitType } from '@prisma/client';
+import { Department, InventoryLocation, Prisma, TransactionType, UnitType } from '@prisma/client';
+import { parsePosSalesDaysParam, posSalesWindowStart } from '@/lib/domains/inventory/posSalesUnits';
 import { getCurrentStock, prisma, VOLUMETRIC_SCRAP_REF_PREFIX } from '@/lib/domains/inventory/ledger';
 import { rememberLedgerRead } from '@/lib/domains/inventory/ledgerCache';
 import { invalidateInventoryCaches } from '@/lib/domains/inventory/inventoryCache';
@@ -17,13 +18,22 @@ import {
 } from '@/lib/domains/inventory/lots';
 import { markdownRevenueImpact } from '@/lib/utils/money';
 import { findLatestStoreSetting } from '@/lib/domains/stats/storeSettingSelect';
+import { departmentLabel } from '@/lib/domains/inventory/inventoryCatalog';
 
 export const PAR_CASES = DEFAULT_PAR_CASES;
+
+/** Lot alignment + FIFO can exceed Prisma's default 5s interactive tx timeout on remote DBs. */
+const LEDGER_WRITE_TX = { maxWait: 15_000, timeout: 30_000 } as const;
 
 export interface StockLevel {
   productId: string;
   name: string;
   supplier: string;
+  department: string;
+  /** Display category (aligned with department for catalog filters). */
+  category: string;
+  productType: string;
+  origin: string | null;
   unitType: string;
   casePackSize: number;
   unitCost: number;
@@ -41,6 +51,9 @@ export interface StockLevel {
   isMarkdown: boolean;
   markdownPct?: number | null;
   daysRemaining: number;
+  /** Read-only: units sold in the POS lookback window (Sale + POS_Sale). */
+  posSoldInWindow?: number;
+  posSalesDays?: number;
 }
 
 export interface PostedReceipt {
@@ -88,6 +101,53 @@ export function matchProduct<T extends { name: string }>(itemName: string, produ
   return best.product;
 }
 
+/** Match by name or insert a purchasable SKU (invoice receive, OCR commit). */
+export async function findOrCreatePurchaseProduct(
+  input: {
+    itemName: string;
+    department?: Department;
+    supplier?: string | null;
+    casePackSize?: number;
+    unitCost?: number;
+    retailUnit?: string;
+  },
+  db?: LotTx
+): Promise<{ id: string; name: string; created: boolean }> {
+  const client = db ?? prisma;
+  const name = input.itemName.trim();
+  if (!name) throw new Error('Item name is required to add a catalog product.');
+
+  const products = await client.product.findMany({
+    where: { isManufactured: false },
+    select: { id: true, name: true },
+  });
+  const match = matchProduct(name, products);
+  if (match) {
+    await client.product.update({
+      where: { id: match.id },
+      data: { catalogActive: true },
+    });
+    return { id: match.id, name: match.name, created: false };
+  }
+
+  const pack = packSizeOf(input.casePackSize);
+  const unitCost = input.unitCost && input.unitCost > 0 ? Number(input.unitCost.toFixed(4)) : null;
+  const created = await client.product.create({
+    data: {
+      name,
+      department: input.department ?? departmentFor(name),
+      unitType: unitTypeFor(input.retailUnit ?? 'units'),
+      casePackSize: pack,
+      standardCost: unitCost,
+      supplier: input.supplier?.trim() || null,
+      shelfLifeDays: 7,
+      isManufactured: false,
+    },
+    select: { id: true, name: true },
+  });
+  return { id: created.id, name: created.name, created: true };
+}
+
 function packSizeOf(value: number | null | undefined): number {
   return value && value > 0 ? value : 1;
 }
@@ -123,6 +183,8 @@ export function buildStockLevel(input: {
   productId: string;
   name: string;
   supplier: string | null;
+  department?: string | null;
+  origin?: string | null;
   unitType: string;
   casePackSize: number | null;
   unitCost: number | null;
@@ -133,6 +195,7 @@ export function buildStockLevel(input: {
   regularRetailPrice?: number | null;
   daysRemaining?: number | null;
 }): StockLevel {
+  const department = input.department?.trim() || 'PRODUCE';
   const casePackSize = packSizeOf(input.casePackSize);
   const unitCost = input.unitCost && input.unitCost > 0 ? input.unitCost : 0;
   const onHand = Number(input.onHand.toFixed(2));
@@ -164,10 +227,13 @@ export function buildStockLevel(input: {
       ? Math.max(1, Math.min(99, Math.round(((regularRetailPrice - retailPrice) / regularRetailPrice) * 100)))
       : null;
 
-  return {
+  const base = {
     productId: input.productId,
     name: input.name,
     supplier: input.supplier?.trim() || 'Unassigned supplier',
+    department,
+    productType: input.unitType,
+    origin: input.origin?.trim() || null,
     unitType: input.unitType,
     casePackSize,
     unitCost,
@@ -180,6 +246,73 @@ export function buildStockLevel(input: {
     markdownPct,
     daysRemaining: Number.isFinite(input.daysRemaining) ? Number(input.daysRemaining) : 7,
   };
+  return {
+    ...base,
+    category: departmentLabel(department),
+  };
+}
+
+export interface StockOverrideAudit {
+  timestamp: string;
+  staffId: string;
+  staffName: string | null;
+  notes: string | null;
+}
+
+export async function getLastStockOverrideAudit(productId: string): Promise<StockOverrideAudit | null> {
+  const row = await prisma.inventoryTransaction.findFirst({
+    where: {
+      productId,
+      notes: { contains: 'Admin stock override' },
+    },
+    orderBy: { timestamp: 'desc' },
+    select: { timestamp: true, staffId: true, notes: true },
+  });
+  if (!row) return null;
+  const user = await prisma.user.findUnique({
+    where: { id: row.staffId },
+    select: { name: true },
+  });
+  return {
+    timestamp: row.timestamp.toISOString(),
+    staffId: row.staffId,
+    staffName: user?.name ?? null,
+    notes: row.notes,
+  };
+}
+
+export async function updateProductCatalogMeta(input: {
+  productId: string;
+  department?: string;
+  supplier?: string;
+  origin?: string | null;
+}): Promise<StockLevel> {
+  const data: {
+    department?: Department;
+    supplier?: string;
+    origin?: string | null;
+  } = {};
+  if (input.department) {
+    const allowed = new Set(Object.values(Department));
+    if (!allowed.has(input.department as Department)) {
+      throw new Error('Invalid department.');
+    }
+    data.department = input.department as Department;
+  }
+  if (input.supplier !== undefined) {
+    const next = input.supplier.trim();
+    if (!next) throw new Error('Supplier is required.');
+    data.supplier = next;
+  }
+  if (input.origin !== undefined) {
+    data.origin = input.origin?.trim() || null;
+  }
+  const product = await prisma.product.update({
+    where: { id: input.productId },
+    data,
+  });
+  invalidateInventoryCaches();
+  return readStockLevel(input.productId);
 }
 
 function daysUntil(expiration: Date | string | null, shelfLifeDays: number): number {
@@ -197,6 +330,8 @@ interface StockLevelRow {
   productId: string;
   name: string;
   supplier: string | null;
+  department: string;
+  origin: string | null;
   unitType: string;
   casePackSize: number | null;
   standardCost: number | null;
@@ -207,15 +342,96 @@ interface StockLevelRow {
   expirationDate: Date | null;
   onHand: number;
   kitchenPrepQty: number;
+  posSoldInWindow?: number | null;
 }
 
-async function loadStockLevels(): Promise<StockLevel[]> {
+function stockLevelFromRow(row: StockLevelRow): StockLevel {
+  return buildStockLevel({
+    productId: row.productId,
+    name: row.name,
+    supplier: row.supplier,
+    department: row.department,
+    origin: row.origin,
+    unitType: row.unitType,
+    casePackSize: row.casePackSize,
+    unitCost: row.standardCost,
+    onHand: Number(row.onHand) || 0,
+    kitchenPrepQty: Number(row.kitchenPrepQty) || 0,
+    parCases: row.parCases,
+    retailPrice: row.retailPrice,
+    regularRetailPrice: row.regularRetailPrice,
+    daysRemaining: daysUntil(row.expirationDate, row.shelfLifeDays ?? 7),
+  });
+}
+
+function posSoldSubselect(posSalesFrom: Date) {
+  return Prisma.sql`COALESCE((
+    SELECT SUM(ABS(s."Qty_Change"))::float8
+    FROM "Inventory_Transactions" s
+    WHERE s."Product_ID" = p.id
+      AND s."Transaction_Type" IN ('Sale'::"TransactionType", 'POS_Sale'::"TransactionType")
+      AND s."timestamp" >= ${posSalesFrom}
+  ), 0)`;
+}
+
+async function queryStockLevelRows(
+  productId?: string,
+  posSalesFrom?: Date
+): Promise<StockLevelRow[]> {
   await ensureProductMarkdownColumn();
-  const rows = await prisma.$queryRaw<StockLevelRow[]>`
+  if (productId) {
+    return prisma.$queryRaw<StockLevelRow[]>`
+      SELECT
+        p.id AS "productId",
+        p.name,
+        p.supplier,
+        p.department::text AS department,
+        p.origin,
+        p."unitType"::text AS "unitType",
+        p."casePackSize",
+        p."standardCost",
+        p."parCases",
+        p."retailPrice",
+        p."regularRetailPrice",
+        p."shelfLifeDays",
+        (
+          SELECT t2."expirationDate"
+          FROM "Inventory_Transactions" t2
+          WHERE t2."Product_ID" = p.id
+            AND t2."expirationDate" IS NOT NULL
+          ORDER BY t2."timestamp" DESC
+          LIMIT 1
+        ) AS "expirationDate",
+        COALESCE(SUM(
+          CASE
+            WHEN t."To_Location" IN ('Retail_Floor'::"InventoryLocation", 'Deli_Grab_N_Go'::"InventoryLocation") AND t."Qty_Change" > 0 THEN t."Qty_Change"
+            WHEN t."From_Location" IN ('Retail_Floor'::"InventoryLocation", 'Deli_Grab_N_Go'::"InventoryLocation") AND t."Qty_Change" < 0 THEN t."Qty_Change"
+            ELSE 0
+          END
+        ), 0)::float8 AS "onHand",
+        COALESCE(SUM(
+          CASE
+            WHEN t."To_Location" = 'Kitchen_Prep'::"InventoryLocation" AND t."Qty_Change" > 0 THEN t."Qty_Change"
+            WHEN t."From_Location" = 'Kitchen_Prep'::"InventoryLocation" AND t."Qty_Change" < 0 THEN t."Qty_Change"
+            ELSE 0
+          END
+        ), 0)::float8 AS "kitchenPrepQty"
+      FROM products p
+      LEFT JOIN "Inventory_Transactions" t ON t."Product_ID" = p.id
+      WHERE p.id = ${productId}
+      GROUP BY p.id
+    `;
+  }
+
+  const posCol = posSalesFrom ? posSoldSubselect(posSalesFrom) : Prisma.sql`NULL::float8`;
+
+  return prisma.$queryRaw<StockLevelRow[]>`
     SELECT
       p.id AS "productId",
       p.name,
       p.supplier,
+      p.department::text AS department,
+      p.origin,
       p."unitType"::text AS "unitType",
       p."casePackSize",
       p."standardCost",
@@ -244,29 +460,46 @@ async function loadStockLevels(): Promise<StockLevel[]> {
           WHEN t."From_Location" = 'Kitchen_Prep'::"InventoryLocation" AND t."Qty_Change" < 0 THEN t."Qty_Change"
           ELSE 0
         END
-      ), 0)::float8 AS "kitchenPrepQty"
+      ), 0)::float8 AS "kitchenPrepQty",
+      ${posCol} AS "posSoldInWindow"
     FROM products p
     LEFT JOIN "Inventory_Transactions" t ON t."Product_ID" = p.id
+    WHERE p."isManufactured" = false
+      AND p."catalogActive" = true
     GROUP BY p.id
   `;
+}
 
+/** Fresh catalog + POS sold in one query (not cached — for transfer UI). */
+export async function getStockLevelsWithPosSales(lookbackDays: number): Promise<StockLevel[]> {
+  const salesDays = parsePosSalesDaysParam(String(lookbackDays), 7);
+  const from = posSalesWindowStart(salesDays);
+  const rows = await queryStockLevelRows(undefined, from);
   return rows
-    .map((row) =>
-      buildStockLevel({
-        productId: row.productId,
-        name: row.name,
-        supplier: row.supplier,
-        unitType: row.unitType,
-        casePackSize: row.casePackSize,
-        unitCost: row.standardCost,
-        onHand: Number(row.onHand) || 0,
-        kitchenPrepQty: Number(row.kitchenPrepQty) || 0,
-        parCases: row.parCases,
-        retailPrice: row.retailPrice,
-        regularRetailPrice: row.regularRetailPrice,
-        daysRemaining: daysUntil(row.expirationDate, row.shelfLifeDays ?? 7),
-      })
-    )
+    .map((row) => ({
+      ...stockLevelFromRow(row),
+      posSalesDays: salesDays,
+      posSoldInWindow: Number(row.posSoldInWindow ?? 0),
+    }))
+    .sort(
+      (a, b) =>
+        Number(b.low) - Number(a.low) ||
+        a.supplier.localeCompare(b.supplier) ||
+        a.name.localeCompare(b.name)
+    );
+}
+
+async function loadStockLevelById(productId: string): Promise<StockLevel> {
+  const rows = await queryStockLevelRows(productId);
+  const row = rows[0];
+  if (!row) throw new Error('Item was not found.');
+  return stockLevelFromRow(row);
+}
+
+async function loadStockLevels(): Promise<StockLevel[]> {
+  const rows = await queryStockLevelRows();
+  return rows
+    .map(stockLevelFromRow)
     .sort(
       (a, b) =>
         Number(b.low) - Number(a.low) ||
@@ -288,31 +521,12 @@ async function readShelfOnHand(productId: string): Promise<{ floor: number; deli
 }
 
 async function readStockLevel(productId: string): Promise<StockLevel> {
-  const product = await prisma.product.findUniqueOrThrow({ where: { id: productId } });
-  const [shelf, kitchenPrepQty, prices, latest] = await Promise.all([
-    readShelfOnHand(productId),
-    getCurrentStock(productId, InventoryLocation.Kitchen_Prep),
-    readProductRetailPrices(productId),
-    prisma.inventoryTransaction.findFirst({
-      where: { productId, expirationDate: { not: null } },
-      orderBy: { timestamp: 'desc' },
-      select: { expirationDate: true },
-    }),
-  ]);
-  return buildStockLevel({
-    productId: product.id,
-    name: product.name,
-    supplier: product.supplier,
-    unitType: product.unitType,
-    casePackSize: product.casePackSize,
-    unitCost: product.standardCost,
-    onHand: shelf.floor + shelf.deli,
-    kitchenPrepQty,
-    parCases: product.parCases,
-    retailPrice: prices.retailPrice ?? product.retailPrice,
-    regularRetailPrice: prices.regularRetailPrice,
-    daysRemaining: daysUntil(latest?.expirationDate ?? null, product.shelfLifeDays),
-  });
+  return loadStockLevelById(productId);
+}
+
+/** One SKU — single aggregated SQL round-trip (moves, sales, levels API). */
+export function getStockLevel(productId: string): Promise<StockLevel> {
+  return loadStockLevelById(productId);
 }
 
 export async function applyRetailMarkdown(
@@ -449,6 +663,23 @@ export async function setStockCases(productId: string, cases: number, staffId: s
   return readStockLevel(productId);
 }
 
+/** Admin-only: hide SKU from catalogs. Does not delete ledger history. */
+export async function removeProductFromCatalog(productId: string): Promise<void> {
+  const product = await prisma.product.findUnique({
+    where: { id: productId },
+    select: { id: true, isManufactured: true },
+  });
+  if (!product) throw new Error('Product not found.');
+  if (product.isManufactured) {
+    throw new Error('Manufactured items cannot be removed from the purchase catalog.');
+  }
+  await prisma.product.update({
+    where: { id: productId },
+    data: { catalogActive: false },
+  });
+  invalidateInventoryCaches();
+}
+
 export async function setSupplier(productId: string, supplier: string): Promise<StockLevel> {
   const nextSupplier = supplier.trim();
   if (!nextSupplier) {
@@ -459,18 +690,7 @@ export async function setSupplier(productId: string, supplier: string): Promise<
     data: { supplier: nextSupplier },
   });
   invalidateInventoryCaches();
-  const onHand = await getCurrentStock(productId);
-  return buildStockLevel({
-    productId: product.id,
-    name: product.name,
-    supplier: product.supplier,
-    unitType: product.unitType,
-    casePackSize: product.casePackSize,
-    unitCost: product.standardCost,
-    onHand,
-    parCases: product.parCases,
-    retailPrice: product.retailPrice,
-  });
+  return readStockLevel(productId);
 }
 
 export async function updateCase(input: {
@@ -493,18 +713,7 @@ export async function updateCase(input: {
     },
   });
   invalidateInventoryCaches();
-  const onHand = await getCurrentStock(input.productId);
-  return buildStockLevel({
-    productId: product.id,
-    name: product.name,
-    supplier: product.supplier,
-    unitType: product.unitType,
-    casePackSize: product.casePackSize,
-    unitCost: product.standardCost,
-    onHand,
-    parCases: product.parCases,
-    retailPrice: product.retailPrice,
-  });
+  return readStockLevel(input.productId);
 }
 
 export async function setParCases(productId: string, parCases: number): Promise<StockLevel> {
@@ -514,18 +723,7 @@ export async function setParCases(productId: string, parCases: number): Promise<
     data: { parCases: nextPar },
   });
   invalidateInventoryCaches();
-  const onHand = await getCurrentStock(productId);
-  return buildStockLevel({
-    productId: product.id,
-    name: product.name,
-    supplier: product.supplier,
-    unitType: product.unitType,
-    casePackSize: product.casePackSize,
-    unitCost: product.standardCost,
-    onHand,
-    parCases: product.parCases,
-    retailPrice: product.retailPrice,
-  });
+  return readStockLevel(productId);
 }
 
 export interface OnHandLookup {
@@ -583,30 +781,19 @@ export async function postReceipt(input: {
     return { posted: false, reason: 'Pack size did not produce any retail units.' };
   }
 
-  const products = await prisma.product.findMany({
-    where: { isManufactured: false },
-    select: { id: true, name: true, shelfLifeDays: true },
-  });
-  const match = matchProduct(input.itemName, products);
   const unitCost = unitsPerCase > 0 ? input.caseCost / unitsPerCase : input.caseCost;
   const posted = await prisma.$transaction(async (tx) => {
-    let productId = match?.id;
-    if (!productId) {
-      const createdProduct = await tx.product.create({
-        data: {
-          name: input.itemName.trim(),
-          department: departmentFor(input.itemName),
-          unitType: unitTypeFor(input.retailUnit ?? 'units'),
-          casePackSize: unitsPerCase,
-          standardCost: Number(unitCost.toFixed(4)),
-          retailPrice: input.retailPrice > 0 ? input.retailPrice : null,
-          supplier: 'Received at the dock',
-          shelfLifeDays: 7,
-        },
-        select: { id: true },
-      });
-      productId = createdProduct.id;
-    }
+    const ensured = await findOrCreatePurchaseProduct(
+      {
+        itemName: input.itemName,
+        casePackSize: unitsPerCase,
+        unitCost: Number(unitCost.toFixed(4)),
+        retailUnit: input.retailUnit,
+        supplier: 'Received at the dock',
+      },
+      tx
+    );
+    const productId = ensured.id;
     const yieldPct =
       input.yieldDivisor > 0 ? Number((100 / input.yieldDivisor).toFixed(2)) : undefined;
     const product = await tx.product.update({
@@ -776,6 +963,7 @@ export async function moveRetailStock(
         productId,
         location: InventoryLocation.Retail_Floor,
         qty,
+        unitCost: cost,
       });
       await tx.inventoryTransaction.create({
         data: {
@@ -795,6 +983,7 @@ export async function moveRetailStock(
       toLocation: InventoryLocation.Kitchen_Prep,
       qty,
       receiveReferenceId: referenceId,
+      unitCost: cost,
     });
     await tx.inventoryTransaction.create({
       data: {
@@ -814,7 +1003,7 @@ export async function moveRetailStock(
         notes: 'Received in kitchen rescue from the retail floor',
       },
     });
-  });
+  }, LEDGER_WRITE_TX);
 
   invalidateInventoryCaches();
   return { level: await readStockLevel(productId), units: qty };
@@ -840,6 +1029,7 @@ export async function moveKitchenPrepToWaste(
       productId,
       location: InventoryLocation.Kitchen_Prep,
       qty,
+      unitCost: cost,
     });
     await tx.inventoryTransaction.create({
       data: {
@@ -854,7 +1044,7 @@ export async function moveKitchenPrepToWaste(
         notes: 'Discarded from kitchen prep to waste',
       },
     });
-  });
+  }, LEDGER_WRITE_TX);
   invalidateInventoryCaches();
   return { level: await readStockLevel(productId), units: qty };
 }

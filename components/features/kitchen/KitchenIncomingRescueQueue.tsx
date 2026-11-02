@@ -19,12 +19,16 @@ interface InboxMeta {
 
 export interface KitchenIncomingRescueQueueProps {
   focusInbox?: boolean;
+  maxItems?: number;
+  variant?: 'default' | 'pills';
   /** Product ids currently in Kitchen_Prep (for Synthesize Recipes). */
   onPrepProductIdsChange?: (ids: string[]) => void;
 }
 
 export function KitchenIncomingRescueQueue({
   focusInbox,
+  maxItems = 15,
+  variant = 'default',
   onPrepProductIdsChange,
 }: KitchenIncomingRescueQueueProps) {
   const [levels, setLevels] = useState<StockLevel[]>([]);
@@ -89,6 +93,8 @@ export function KitchenIncomingRescueQueue({
 
   const recentIds = new Set(inbox.map((row) => row.productId));
   const receivedQty = new Map(inbox.map((row) => [row.productId, row.qtyReceived]));
+  const displayLevels = levels.slice(0, maxItems);
+  const pills = variant === 'pills';
 
   if (loading) {
     return (
@@ -128,22 +134,53 @@ export function KitchenIncomingRescueQueue({
       <Card
         className={cn(
           'border-slate-800/90 bg-slate-900/50',
-          focusInbox && 'ring-1 ring-amber-800/50'
+          focusInbox && 'ring-1 ring-amber-800/50',
+          pills && 'rounded-2xl'
         )}
       >
-        <CardHeader className="gap-1 pb-2 pt-3">
-          <CardTitle className="text-sm font-extrabold tracking-tight text-slate-100">
-            Incoming production prep inventory
+        <CardHeader className={cn('gap-0.5', pills ? 'px-3 pb-2 pt-3' : 'gap-1 pb-2 pt-3')}>
+          <CardTitle className="text-xs font-extrabold tracking-tight text-slate-100 sm:text-sm">
+            Incoming production prep
           </CardTitle>
-          <CardDescription className="text-[11px]">
-            Production Prep · {levels.length} item{levels.length === 1 ? '' : 's'} on hand for recipes and batch production
-          </CardDescription>
+          {!pills ? (
+            <CardDescription className="text-[11px]">
+              Production Prep · {levels.length} item{levels.length === 1 ? '' : 's'} on hand
+            </CardDescription>
+          ) : (
+            <CardDescription className="text-[10px] text-slate-500">
+              {levels.length} SKUs · showing {displayLevels.length}
+            </CardDescription>
+          )}
         </CardHeader>
         <CardBody className="pt-0 pb-3">
-          <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">
-            {levels.map((row) => {
+          <div className="flex gap-1.5 overflow-x-auto pb-1 no-scrollbar">
+            {displayLevels.map((row) => {
               const isNew = recentIds.has(row.productId);
               const floorQty = receivedQty.get(row.productId);
+              if (pills) {
+                return (
+                  <div
+                    key={row.productId}
+                    title={row.name}
+                    className={cn(
+                      'shrink-0 rounded-full border px-3 py-1.5',
+                      isNew
+                        ? 'border-amber-500/40 bg-amber-950/50'
+                        : 'border-slate-700 bg-slate-950/80'
+                    )}
+                  >
+                    <p className="max-w-[140px] truncate text-[11px] font-bold text-slate-100">
+                      {row.name}
+                    </p>
+                    <p className="text-[10px] font-mono text-slate-400">
+                      {formatUnits(row.kitchenPrepQty)} {stockUnitLabel(row.unitType)}
+                      {isNew && floorQty != null ? (
+                        <span className="text-amber-400"> +{formatUnits(floorQty)}</span>
+                      ) : null}
+                    </p>
+                  </div>
+                );
+              }
               return (
                 <div
                   key={row.productId}

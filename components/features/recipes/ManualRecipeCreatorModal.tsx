@@ -21,16 +21,40 @@ interface IngredientLine {
   unit: string;
 }
 
+type DbRecipePayload = {
+  id: string;
+  name: string;
+  category?: string | null;
+  yieldPortions?: number;
+  targetRetailPrice?: number;
+  instructions?: string | null;
+  laborHours?: number | null;
+  laborRate?: number | null;
+  packagingCostPerUnit?: number | null;
+  outputProduct?: { unitType?: string };
+  bomLines?: Array<{
+    ingredientProductId: string;
+    quantityRequired: number;
+    unit?: string;
+    ingredientProduct?: { unitType?: string };
+  }>;
+};
+
 interface ManualRecipeCreatorModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onRecipeCreated?: (newRecipe: any) => void;
+  /** When set, modal loads this recipe and PATCHes on save. */
+  editRecipeId?: string | null;
+  onRecipeCreated?: (newRecipe: Record<string, unknown>) => void;
+  onRecipeUpdated?: (recipe: Record<string, unknown>) => void;
 }
 
 export function ManualRecipeCreatorModal({
   isOpen,
   onClose,
+  editRecipeId = null,
   onRecipeCreated,
+  onRecipeUpdated,
 }: ManualRecipeCreatorModalProps) {
   const [recipeName, setRecipeName] = useState('');
   const [category, setCategory] = useState('Salad / Panzanella');
@@ -50,25 +74,66 @@ export function ManualRecipeCreatorModal({
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
+  const isEditMode = Boolean(editRecipeId);
+
   useEffect(() => {
     if (!isOpen) return;
     setErrorMsg(null);
     setLoadingProducts(true);
 
-    fetch('/api/recipes')
+    fetch('/api/recipes', { cache: 'no-store' })
       .then((res) => res.json())
       .then((data) => {
         if (data.success && Array.isArray(data.inventoryProducts)) {
           setProducts(data.inventoryProducts);
-          if (data.inventoryProducts.length > 0 && lines[0].productId === '') {
-            setLines([
-              {
-                productId: data.inventoryProducts[0].id,
-                quantity: 2,
-                unit: data.inventoryProducts[0].unitType || 'LBS',
-              },
-            ]);
+        }
+
+        if (editRecipeId && data.success && Array.isArray(data.recipes)) {
+          const raw = (data.recipes as DbRecipePayload[]).find((r) => r.id === editRecipeId);
+          if (raw) {
+            setRecipeName(raw.name ?? '');
+            setCategory(raw.category ?? 'Prepared Hot Meal');
+            setYieldPortions(raw.yieldPortions ?? 10);
+            setOutputUnit(raw.outputProduct?.unitType ?? 'TUB');
+            setTargetRetailPrice(raw.targetRetailPrice ?? 7.99);
+            setInstructions(raw.instructions ?? '');
+            setLaborHours(raw.laborHours ?? 0.5);
+            setLaborRate(raw.laborRate ?? 17.6);
+            setPackagingCostPerUnit(raw.packagingCostPerUnit ?? 1);
+            const bom = raw.bomLines ?? [];
+            if (bom.length > 0) {
+              setLines(
+                bom.map((line) => ({
+                  productId: line.ingredientProductId,
+                  quantity: line.quantityRequired,
+                  unit:
+                    line.unit ??
+                    line.ingredientProduct?.unitType ??
+                    'LBS',
+                }))
+              );
+            }
+          } else {
+            setErrorMsg('Could not load this recipe for editing.');
           }
+        } else if (!editRecipeId) {
+          setRecipeName('');
+          setCategory('Salad / Panzanella');
+          setYieldPortions(10);
+          setOutputUnit('TUB');
+          setTargetRetailPrice(7.99);
+          setInstructions('');
+          setLaborHours(0.5);
+          setLaborRate(17.6);
+          setPackagingCostPerUnit(1);
+          const first = data.inventoryProducts?.[0];
+          setLines([
+            {
+              productId: first?.id ?? '',
+              quantity: 2,
+              unit: first?.unitType || 'LBS',
+            },
+          ]);
         }
       })
       .catch(() => {
@@ -77,7 +142,7 @@ export function ManualRecipeCreatorModal({
       .finally(() => {
         setLoadingProducts(false);
       });
-  }, [isOpen]);
+  }, [isOpen, editRecipeId]);
 
   if (!isOpen) return null;
 
@@ -157,23 +222,28 @@ export function ManualRecipeCreatorModal({
 
     setSubmitting(true);
     try {
-      const res = await fetch('/api/recipes', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: recipeName.trim(),
-          category,
-          yieldPortions,
-          outputUnit,
-          targetRetailPrice: price,
-          instructions,
-          laborHours: typeof laborHours === 'number' ? laborHours : 0,
-          laborRate: typeof laborRate === 'number' ? laborRate : 17.6,
-          packagingCostPerUnit:
-            typeof packagingCostPerUnit === 'number' ? packagingCostPerUnit : 0,
-          ingredients: validIngredients,
-        }),
-      });
+      const payload = {
+        name: recipeName.trim(),
+        category,
+        yieldPortions,
+        outputUnit,
+        targetRetailPrice: price,
+        instructions,
+        laborHours: typeof laborHours === 'number' ? laborHours : 0,
+        laborRate: typeof laborRate === 'number' ? laborRate : 17.6,
+        packagingCostPerUnit:
+          typeof packagingCostPerUnit === 'number' ? packagingCostPerUnit : 0,
+        ingredients: validIngredients,
+      };
+
+      const res = await fetch(
+        isEditMode && editRecipeId ? `/api/recipes/${editRecipeId}` : '/api/recipes',
+        {
+          method: isEditMode ? 'PATCH' : 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        }
+      );
 
       const json = await res.json();
       if (!res.ok || !json.success) {
@@ -182,7 +252,8 @@ export function ManualRecipeCreatorModal({
         return;
       }
 
-      onRecipeCreated?.(json.recipe);
+      if (isEditMode) onRecipeUpdated?.(json.recipe);
+      else onRecipeCreated?.(json.recipe);
       onClose();
     } catch {
       setErrorMsg('Network error while saving the recipe.');
@@ -205,9 +276,13 @@ export function ManualRecipeCreatorModal({
               <ChefHat className="h-5 w-5" />
             </div>
             <div>
-              <h2 className="text-base font-extrabold text-white">Create Production Recipe (BOM)</h2>
+              <h2 className="text-base font-extrabold text-white">
+                {isEditMode ? 'Edit Production Recipe (BOM)' : 'Create Production Recipe (BOM)'}
+              </h2>
               <p className="text-xs text-slate-400">
-                Define a standard bill of materials directly from current raw inventory.
+                {isEditMode
+                  ? 'Update yield, pricing, and ingredients — saved to the live BOM catalog.'
+                  : 'Define a standard bill of materials directly from current raw inventory.'}
               </p>
             </div>
           </div>
@@ -480,7 +555,7 @@ export function ManualRecipeCreatorModal({
               ) : (
                 <>
                   <CheckCircle2 className="h-4 w-4" />
-                  Save Production Recipe
+                  {isEditMode ? 'Save changes' : 'Save Production Recipe'}
                 </>
               )}
             </Button>

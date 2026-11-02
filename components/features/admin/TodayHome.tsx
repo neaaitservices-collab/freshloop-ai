@@ -20,7 +20,7 @@ const STEPS = [
     icon: Store,
   },
   {
-    href: '/kitchen',
+    href: '/production',
     step: '3',
     title: 'Kitchen',
     text: 'Cook rescued product into a prepared item and log scrap buckets.',

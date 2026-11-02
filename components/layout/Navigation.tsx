@@ -40,7 +40,7 @@ const ITEMS: NavItem[] = [
     roles: ['ADMIN', 'STORE_MANAGER', 'RECEIVING_CLERK', 'FLOOR_STAFF', 'DELI_CHEF'],
   },
   { id: 'voice', label: 'Voice', icon: Mic, voice: true, roles: ['ADMIN', 'STORE_MANAGER', 'FLOOR_STAFF'] },
-  { id: 'kitchen', label: 'Production', icon: ChefHat, href: '/kitchen', roles: ['ADMIN', 'STORE_MANAGER', 'DELI_CHEF'] },
+  { id: 'production', label: 'Production', icon: ChefHat, href: '/production', roles: ['ADMIN', 'STORE_MANAGER', 'DELI_CHEF'] },
   {
     id: 'operations',
     label: 'Operations',
@@ -76,6 +76,7 @@ function brandHref(role: RoleName | null): string {
 }
 
 function isActive(pathname: string, href: string) {
+  if (href === '/admin' && pathname.startsWith('/admin/executive')) return false;
   if (href === '/inventory' && pathname.startsWith('/inventory/floor')) return false;
   if (href === '/inventory/floor' && pathname.startsWith('/inventory/floor')) return true;
   return pathname === href || pathname.startsWith(`${href}/`);

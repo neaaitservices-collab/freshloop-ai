@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getStoreStats } from '@/lib/domains/stats/storeStats';
+import { getAdminStoreStatsBundle } from '@/lib/domains/stats/storeStats';
 import { authErrorResponse } from '@/lib/auth/http';
 import { requireManagerStaff } from '@/lib/auth/guardRoute';
 
@@ -8,8 +8,8 @@ export const dynamic = 'force-dynamic';
 export async function GET() {
   try {
     await requireManagerStaff();
-    const stats = await getStoreStats();
-    return NextResponse.json({ success: true, stats });
+    const { stats, wasteKpi } = await getAdminStoreStatsBundle();
+    return NextResponse.json({ success: true, stats, wasteKpi });
   } catch (error) {
     const authRes = authErrorResponse(error);
     if (authRes) return authRes;

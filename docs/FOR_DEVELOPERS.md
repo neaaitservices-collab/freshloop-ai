@@ -86,6 +86,8 @@ docs/                   # PROJECT_STRUCTURE, manager/executive docs, this file
 
 **Rule of thumb:** add behavior in `lib/domains/*`, keep `route.ts` thin (parse JSON → call domain → `NextResponse.json`). Add UI in `components/features/<area>/`.
 
+**Admin stats:** use `getAdminStoreStatsBundle()` so waste % comes only from `calculateRealTimeWastePct()` (default **30-day** lookback via `DEFAULT_KPI_LOOKBACK_DAYS` in `wasteKpi.ts`). Prisma client: `@/lib/db/prisma`.
+
 See also [PROJECT_STRUCTURE.md](./PROJECT_STRUCTURE.md).
 
 ---
