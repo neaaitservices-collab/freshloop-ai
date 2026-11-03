@@ -40,7 +40,7 @@ function Metric({
 export function AdminMetricGrid({ stats }: { stats: StoreStats | null }) {
   if (!stats) {
     return (
-      <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-4 lg:gap-3" aria-busy="true">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4 lg:gap-4" aria-busy="true">
         {Array.from({ length: 4 }, (_, index) => (
           <div
             key={index}
@@ -52,11 +52,11 @@ export function AdminMetricGrid({ stats }: { stats: StoreStats | null }) {
   }
 
   return (
-    <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-4 lg:gap-3">
+    <div className="grid grid-cols-2 gap-3 lg:grid-cols-4 lg:gap-4">
       <Metric
         label="Value rescued"
         value={formatCurrency(stats.rescuedValue)}
-        detail="Kitchen rescue $ — not the same as waste % below."
+        detail="Production rescue $ — not the same as waste % below."
         icon={DollarSign}
         accent="text-emerald-400/90"
       />
@@ -85,23 +85,24 @@ export function AdminMetricGrid({ stats }: { stats: StoreStats | null }) {
   );
 }
 
+/** @deprecated Prefer `DashboardFigures` two-column layout. */
 export function AdminChartGrid({ stats }: { stats: StoreStats | null }) {
   if (!stats) {
     return (
-      <div className="grid gap-3 lg:grid-cols-3">
-        <div className="h-72 animate-pulse rounded-2xl border border-slate-800 bg-slate-900/50 lg:col-span-1" />
-        <div className="h-72 animate-pulse rounded-2xl border border-slate-800 bg-slate-900/50 lg:col-span-2" />
+      <div className="grid gap-6 lg:grid-cols-12">
+        <div className="h-80 animate-pulse rounded-2xl border border-slate-800 bg-slate-900/50 lg:col-span-5" />
+        <div className="h-80 animate-pulse rounded-2xl border border-slate-800 bg-slate-900/50 lg:col-span-7" />
       </div>
     );
   }
 
   return (
-    <div className="grid gap-3 lg:grid-cols-3">
-      <div className="min-h-0 lg:col-span-1">
+    <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
+      <div className="lg:col-span-5">
         <WasteVsRescueChart data={stats.rescueVsDiscard} />
       </div>
-      <div className="min-h-0 lg:col-span-2">
-        <RevenueRecoveryChart data={stats.revenueDays} />
+      <div className="lg:col-span-7">
+        <RevenueRecoveryChart data={stats.revenueDays} tall />
       </div>
     </div>
   );

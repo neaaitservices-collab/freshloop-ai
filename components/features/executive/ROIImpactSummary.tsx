@@ -41,7 +41,7 @@ export function ROIImpactSummary({
     {
       label: 'Rescue value (reference)',
       value: kpis.rescueValueUsd,
-      hint: 'Retail $ kept in margin via kitchen rescue',
+      hint: 'Retail $ kept in margin via production rescue',
     },
   ];
 

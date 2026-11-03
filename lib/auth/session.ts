@@ -8,6 +8,7 @@ export type AuthSessionUser = {
   email: string;
   role: RoleName;
   position: string;
+  hourlyRate: number | null;
 };
 
 export async function getSessionUser(): Promise<AuthSessionUser | null> {
@@ -16,12 +17,19 @@ export async function getSessionUser(): Promise<AuthSessionUser | null> {
   if (!user?.id || !user.email) return null;
   const role = user.role && isRoleName(user.role) ? user.role : null;
   if (!role) return null;
+  const sessionRate = user.hourlyRate;
+  const hourlyRate =
+    typeof sessionRate === 'number' && Number.isFinite(sessionRate) && sessionRate > 0
+      ? sessionRate
+      : null;
+
   return {
     id: user.id,
     name: user.name ?? '',
     email: user.email,
     role,
     position: user.position ?? '',
+    hourlyRate,
   };
 }
 

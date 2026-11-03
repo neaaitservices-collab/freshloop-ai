@@ -4,6 +4,7 @@ import { generateContentWithFallback, parseModelJson } from '@/lib/domains/ai/ge
 import { prisma } from '@/lib/domains/inventory/ledger';
 import { moveRetailStock } from '@/lib/domains/inventory/stock';
 import { loadProductCatalog as loadCatalogProducts } from '@/lib/domains/catalog/productCatalog';
+import { handleApiRouteError } from '@/lib/domains/ai/apiError';
 import { authErrorResponse } from '@/lib/auth/http';
 import { requireSessionUser } from '@/lib/auth/session';
 
@@ -554,16 +555,10 @@ export async function POST(req: NextRequest) {
   } catch (error: unknown) {
     const authRes = authErrorResponse(error);
     if (authRes) return authRes;
-    console.error('API Error in /api/voice-logger:', error);
-    return NextResponse.json(
-      {
-        success: false,
-        error:
-          error instanceof Error
-            ? error.message
-            : 'Failed to process voice floor log',
-      },
-      { status: 500 }
+    return handleApiRouteError(
+      'POST /api/voice-logger',
+      error,
+      'Failed to process voice log. Please try again.'
     );
   }
 }

@@ -8,6 +8,7 @@ import {
   InventoryTransaction,
 } from '@prisma/client';
 import { invalidateInventoryCaches } from '@/lib/domains/inventory/inventoryCache';
+import { SCRAP_VOLUMETRIC_BUCKET_KIND } from '@/lib/domains/inventory/volumetricScrapLedger';
 import { consumeLotsFifo, LotAllocationError } from '@/lib/domains/inventory/lots';
 import {
   computeWastePct,
@@ -543,6 +544,7 @@ export async function calculateRealTimeWastePct(
     };
 
     const volumetricPrefix = `${VOLUMETRIC_SCRAP_REF_PREFIX}%`;
+    const volumetricKind = `%${SCRAP_VOLUMETRIC_BUCKET_KIND}%`;
     const wasteTimeSql = Prisma.sql`AND "timestamp" >= ${startDate} AND "timestamp" <= ${endDate}`;
 
     const [storeSetting, wasteAggRows, salesTransactions] = await Promise.all([
@@ -552,6 +554,7 @@ export async function calculateRealTimeWastePct(
           COALESCE(SUM(
             CASE
               WHEN "Reference_ID" LIKE ${volumetricPrefix}
+                OR COALESCE("notes", '') LIKE ${volumetricKind}
                 OR LOWER(COALESCE("notes", '')) LIKE '%volumetric scrap%'
                 OR LOWER(COALESCE("notes", '')) LIKE '%cubeta%'
               THEN 0
@@ -561,6 +564,7 @@ export async function calculateRealTimeWastePct(
           COALESCE(SUM(
             CASE
               WHEN "Reference_ID" LIKE ${volumetricPrefix}
+                OR COALESCE("notes", '') LIKE ${volumetricKind}
                 OR LOWER(COALESCE("notes", '')) LIKE '%volumetric scrap%'
                 OR LOWER(COALESCE("notes", '')) LIKE '%cubeta%'
               THEN ABS("Qty_Change")

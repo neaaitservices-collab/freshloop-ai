@@ -13,10 +13,15 @@ import {
 } from '@/lib/domains/inventory/ledger';
 import { invalidateInventoryCaches } from '@/lib/domains/inventory/inventoryCache';
 import { consumeLotsFifo, createLotOnReceive } from '@/lib/domains/inventory/lots';
+import { apiErrorFromUnknown } from '@/lib/domains/ai/apiError';
 import { authErrorResponse } from '@/lib/auth/http';
 import { requireRoles } from '@/lib/auth/session';
 import { MANUFACTURING_ROLES } from '@/lib/auth/permissions';
+import { parseJsonBody } from '@/lib/security/parseJsonBody';
+import { manufacturingPostBodySchema } from '@/lib/security/schemas/manufacturing';
+import { assertMutationRateLimit } from '@/lib/security/rateLimit';
 import { buildManufacturingRecipeCatalog } from '@/lib/domains/manufacturing/buildCatalog';
+import { resolveExecutionLaborRate } from '@/lib/auth/staffHourlyRate';
 import { findLatestStoreSetting } from '@/lib/domains/stats/storeSettingSelect';
 import { computeScaledBatchCost } from '@/lib/domains/manufacturing/batchCost';
 import {
@@ -91,17 +96,13 @@ const TX_RECEIVE = 'Receive' as TransactionType;
 
 export async function GET() {
   try {
+    await requireRoles(MANUFACTURING_ROLES);
     const recipes = await buildManufacturingRecipeCatalog();
     return NextResponse.json({ success: true, recipes });
   } catch (error: unknown) {
-    return NextResponse.json(
-      {
-        success: false,
-        recipes: [],
-        error: error instanceof Error ? error.message : 'Could not load recipe catalog.',
-      },
-      { status: 500 }
-    );
+    const authRes = authErrorResponse(error);
+    if (authRes) return authRes;
+    return apiErrorFromUnknown(error, 'Could not load recipe catalog.');
   }
 }
 
@@ -112,14 +113,26 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   try {
     const actor = await requireRoles(MANUFACTURING_ROLES);
-    const body = (await req.json()) as ManufacturingRequestBody;
+    const limited = assertMutationRateLimit(actor.id, 'manufacturing-batch', 15);
+    if (limited) return limited;
+
+    const parsed = await parseJsonBody(req, manufacturingPostBodySchema);
+    const body: ManufacturingRequestBody = {
+      recipe_id: parsed.recipe_id,
+      batch_output: parsed.batch_output,
+      ingredient_overrides: parsed.ingredient_overrides?.map((row) => ({
+        ingredient_product_id: row.ingredient_product_id,
+        actual_qty_used: row.actual_qty_used,
+      })),
+      enforce_stock_check: parsed.enforce_stock_check,
+      notes: parsed.notes,
+    };
 
     const effectiveRole = actor.role;
     const staffId = actor.id;
 
-    // Validate `recipe_id` and `batch_output`
-    const recipeId = resolveManufacturingRecipeId(body.recipe_id?.trim() ?? '');
-    const batchOutput = Number(body.batch_output);
+    const recipeId = resolveManufacturingRecipeId(body.recipe_id);
+    const batchOutput = body.batch_output;
 
     if (!recipeId) {
       return NextResponse.json(
@@ -132,21 +145,10 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    if (!Number.isFinite(batchOutput) || batchOutput <= 0) {
-      return NextResponse.json(
-        {
-          success: false,
-          code: 'INVALID_BATCH_OUTPUT',
-          error: 'Parameter "batch_output" must be a positive number greater than 0.',
-        },
-        { status: 400 }
-      );
-    }
-
     // Query Recipe + RecipeBOM + Output Product (with fallback to seeded catalog if DB is unavailable)
     let resolvedRecipe: FallbackRecipeCatalogEntry | null = null;
     let recipeLaborHours = 0;
-    let recipeLaborRate = 17.6;
+    let recipeLaborRateFromDb: number | null = null;
     let recipePackagingPerUnit = 0;
     try {
       const dbRecipe = await prisma.recipe?.findUnique({
@@ -163,9 +165,10 @@ export async function POST(req: NextRequest) {
       if (dbRecipe) {
         const storeSetting = await findLatestStoreSetting();
         recipeLaborHours = Number(dbRecipe.laborHours ?? 0);
-        recipeLaborRate = Number(
-          dbRecipe.laborRate ?? storeSetting?.defaultLaborRatePerHour ?? 17.6
-        );
+        recipeLaborRateFromDb =
+          dbRecipe.laborRate != null && Number(dbRecipe.laborRate) > 0
+            ? Number(dbRecipe.laborRate)
+            : null;
         recipePackagingPerUnit = Number(dbRecipe.packagingCostPerUnit ?? 0);
         resolvedRecipe = {
           id: dbRecipe.id,
@@ -297,7 +300,7 @@ export async function POST(req: NextRequest) {
               {
                 success: false,
                 code: 'INSUFFICIENT_KITCHEN_PREP_STOCK',
-                error: `Insufficient stock in Kitchen_Prep for "${bomItem.ingredientName}": required ${actualQtyToDeduct}, available ${currentKitchenStock}.`,
+                error: `Insufficient stock in production prep for "${bomItem.ingredientName}": required ${actualQtyToDeduct}, available ${currentKitchenStock}.`,
               },
               { status: 409 }
             );
@@ -337,14 +340,17 @@ export async function POST(req: NextRequest) {
       consumptionPlan.reduce((sum, item) => sum + item.lineCost, 0).toFixed(4)
     );
     const laborFromFallback = resolvedRecipe.laborHours ?? recipeLaborHours;
-    const rateFromFallback = resolvedRecipe.laborRatePerHour ?? recipeLaborRate;
+    const executionLaborRate = await resolveExecutionLaborRate(
+      staffId,
+      resolvedRecipe.laborRatePerHour ?? recipeLaborRateFromDb
+    );
     const packagingFromFallback =
       resolvedRecipe.packagingCostPerUnit ?? recipePackagingPerUnit;
 
     const costBreakdown = computeScaledBatchCost({
       ingredientCost: ingredientBatchCost,
       laborHours: laborFromFallback,
-      laborRatePerHour: rateFromFallback,
+      laborRatePerHour: executionLaborRate,
       packagingCostPerUnit: packagingFromFallback,
       standardYield,
       actualBatchOutput: batchOutput,
@@ -498,7 +504,6 @@ export async function POST(req: NextRequest) {
   } catch (error: unknown) {
     const authRes = authErrorResponse(error);
     if (authRes) return authRes;
-    console.error('API Error in /api/manufacturing:', error);
     if (error instanceof InventoryLedgerError) {
       return NextResponse.json(
         {
@@ -509,15 +514,9 @@ export async function POST(req: NextRequest) {
         { status: error.statusCode }
       );
     }
-    return NextResponse.json(
-      {
-        success: false,
-        error:
-          error instanceof Error
-            ? error.message
-            : 'Failed to execute kitchen recipe manufacturing batch',
-      },
-      { status: 500 }
+    return apiErrorFromUnknown(
+      error,
+      'Failed to execute production recipe manufacturing batch.'
     );
   }
 }

@@ -21,6 +21,11 @@ interface ProductionActiveBomPanelProps {
   hideExecutiveSummary?: boolean;
   onSummaryChange?: (summary: ProductionBomSummary) => void;
   dense?: boolean;
+  /** Managers/admins — row opens BOM editor. Kitchen staff see read-only rows. */
+  canEditRecipes?: boolean;
+  canExecuteBatch?: boolean;
+  /** Hydrated from `/api/production/bootstrap` to skip mount `GET /api/manufacturing`. */
+  initialManufacturingCatalog?: KitchenRecipeDefinition[] | null;
 }
 
 function categoryTone(category: string): string {
@@ -151,31 +156,56 @@ export function ProductionActiveBomPanel({
   hideExecutiveSummary = false,
   onSummaryChange,
   dense = false,
+  canEditRecipes = true,
+  canExecuteBatch = true,
+  initialManufacturingCatalog = null,
 }: ProductionActiveBomPanelProps) {
   const [search, setSearch] = useState('');
   const [sortKey, setSortKey] = useState<BomSortKey>('status');
   const [sortDir, setSortDir] = useState<SortDir>('asc');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [catalogById, setCatalogById] = useState<Map<string, KitchenRecipeDefinition>>(
-    new Map()
-  );
+  const [catalogById, setCatalogById] = useState<Map<string, KitchenRecipeDefinition>>(() => {
+    const map = new Map<string, KitchenRecipeDefinition>();
+    if (Array.isArray(initialManufacturingCatalog)) {
+      for (const r of initialManufacturingCatalog) {
+        map.set(r.recipeId, r);
+      }
+    }
+    return map;
+  });
 
   useEffect(() => {
-    void (async () => {
-      try {
-        const res = await fetch('/api/manufacturing', { cache: 'no-store' });
-        const json = await res.json();
-        if (!json.success || !Array.isArray(json.recipes)) return;
-        const map = new Map<string, KitchenRecipeDefinition>();
-        for (const r of json.recipes as KitchenRecipeDefinition[]) {
-          map.set(r.recipeId, r);
-        }
-        setCatalogById(map);
-      } catch {
-        /* table still works from fusion cards data */
+    if (!Array.isArray(initialManufacturingCatalog)) return;
+    const map = new Map<string, KitchenRecipeDefinition>();
+    for (const r of initialManufacturingCatalog) {
+      map.set(r.recipeId, r);
+    }
+    setCatalogById(map);
+  }, [initialManufacturingCatalog]);
+
+  const loadManufacturingCatalog = useCallback(async () => {
+    try {
+      const res = await fetch('/api/manufacturing', { cache: 'no-store' });
+      const json = await res.json();
+      if (!json.success || !Array.isArray(json.recipes)) return;
+      const map = new Map<string, KitchenRecipeDefinition>();
+      for (const r of json.recipes as KitchenRecipeDefinition[]) {
+        map.set(r.recipeId, r);
       }
-    })();
-  }, [recipes.length]);
+      setCatalogById(map);
+    } catch {
+      /* table still works from fusion cards data */
+    }
+  }, []);
+
+  useEffect(() => {
+    if (initialManufacturingCatalog === null) {
+      void loadManufacturingCatalog();
+    }
+    const onInventory = () => void loadManufacturingCatalog();
+    window.addEventListener('freshloop-inventory-updated', onInventory);
+    return () => window.removeEventListener('freshloop-inventory-updated', onInventory);
+  }, [initialManufacturingCatalog, loadManufacturingCatalog]);
 
   const toggleSort = useCallback(
     (key: BomSortKey) => {
@@ -326,15 +356,17 @@ export function ProductionActiveBomPanel({
             ) : null}
 
             <div className="hidden shrink-0 gap-2 lg:flex">
-              <Button
-                type="button"
-                variant="secondary"
-                className="min-h-10 flex-1 border-amber-500/40 bg-amber-400/90 text-xs font-black text-slate-950 hover:bg-amber-300 sm:flex-none"
-                onClick={onExecuteProduction}
-              >
-                <ChefHat className="h-3.5 w-3.5" />
-                Execute BOM
-              </Button>
+              {canExecuteBatch ? (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="min-h-10 flex-1 border-amber-500/40 bg-amber-400/90 text-xs font-black text-slate-950 hover:bg-amber-300 sm:flex-none"
+                  onClick={onExecuteProduction}
+                >
+                  <ChefHat className="h-3.5 w-3.5" />
+                  Execute BOM
+                </Button>
+              ) : null}
               {onBrowseAll ? (
                 <Button
                   type="button"
@@ -414,10 +446,21 @@ export function ProductionActiveBomPanel({
                   className="h-4 w-4 rounded border-slate-600 bg-slate-900 text-emerald-500"
                 />
               </div>
-              <button
-                type="button"
-                className="min-w-0 flex-1 text-left"
-                onClick={() => onEditRecipe(recipe)}
+              <div
+                className={cn(
+                  'min-w-0 flex-1 text-left',
+                  canEditRecipes && 'cursor-pointer'
+                )}
+                {...(canEditRecipes
+                  ? {
+                      role: 'button' as const,
+                      tabIndex: 0,
+                      onClick: () => onEditRecipe(recipe),
+                      onKeyDown: (e: React.KeyboardEvent) => {
+                        if (e.key === 'Enter' || e.key === ' ') onEditRecipe(recipe);
+                      },
+                    }
+                  : {})}
               >
                 <div className="flex flex-wrap items-center gap-2">
                   <span
@@ -448,7 +491,7 @@ export function ProductionActiveBomPanel({
                       : recipe.targetRetailPrice.toFixed(2)}
                   </span>
                 </div>
-              </button>
+              </div>
               <Button
                 type="button"
                 variant="secondary"
@@ -521,11 +564,12 @@ export function ProductionActiveBomPanel({
                 <tr
                   key={recipe.id}
                   className={cn(
-                    'cursor-pointer transition-colors hover:bg-slate-800/40',
+                    canEditRecipes && 'cursor-pointer',
+                    'transition-colors hover:bg-slate-800/40',
                     (status === 'below_par' || status === 'low_stock') &&
                       'bg-rose-950/15 hover:bg-rose-950/25'
                   )}
-                  onClick={() => onEditRecipe(recipe)}
+                  onClick={canEditRecipes ? () => onEditRecipe(recipe) : undefined}
                 >
                   <td
                     className={cn('px-3', dense ? 'py-2' : 'px-4 py-4 sm:px-6')}

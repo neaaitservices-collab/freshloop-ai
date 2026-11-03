@@ -3,9 +3,11 @@
 import React from 'react';
 import { Sliders, Clock, AlertTriangle, ShieldCheck } from 'lucide-react';
 
+type PullDays = 2 | 3 | 4;
+
 interface PullSliderControlProps {
-  currentPullDays: number;
-  onPullDaysChange: (days: number) => void;
+  currentPullDays: PullDays;
+  onPullDaysChange: (days: PullDays) => void;
   affectedCount: number;
 }
 
@@ -16,7 +18,7 @@ export const PullSliderControl: React.FC<PullSliderControlProps> = ({
 }) => {
   const presets = [
     { days: 2, label: '2-Day Strict Pull', desc: 'Tightest rotation window for ultra-fresh deli & bakery' },
-    { days: 3, label: '3-Day Standard Pull', desc: 'Optimal grocery balance for yield rescue & kitchen prep' },
+    { days: 3, label: '3-Day Standard Pull', desc: 'Optimal grocery balance for yield rescue & production prep' },
     { days: 4, label: '4-Day Extended Pull', desc: 'Early warning trigger for high-volume produce & bulk' }
   ];
 
@@ -31,11 +33,11 @@ export const PullSliderControl: React.FC<PullSliderControlProps> = ({
             <div className="flex items-center gap-2">
               <h3 className="font-bold text-base text-zinc-100">Human Pull Trigger Sensitivity</h3>
               <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
-                Store Manager Override
+                Admin only
               </span>
             </div>
             <p className="text-xs text-zinc-400 mt-0.5">
-              Adjust remaining shelf life threshold to automatically route short-dated items to Kitchen Rescue or Markdown.
+              Adjust remaining shelf life threshold to automatically route short-dated items to production rescue.
             </p>
           </div>
         </div>
@@ -65,7 +67,10 @@ export const PullSliderControl: React.FC<PullSliderControlProps> = ({
             max={4}
             step={1}
             value={currentPullDays}
-            onChange={(e) => onPullDaysChange(parseInt(e.target.value, 10))}
+            onChange={(e) => {
+              const days = parseInt(e.target.value, 10);
+              if (days === 2 || days === 3 || days === 4) onPullDaysChange(days);
+            }}
             className="w-full h-2.5 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
           />
         </div>
@@ -77,7 +82,7 @@ export const PullSliderControl: React.FC<PullSliderControlProps> = ({
             return (
               <button
                 key={preset.days}
-                onClick={() => onPullDaysChange(preset.days)}
+                onClick={() => onPullDaysChange(preset.days as PullDays)}
                 className={`flex flex-col text-left p-2 sm:p-3 rounded-xl border transition-all ${
                   isSelected
                     ? 'bg-emerald-950/60 border-emerald-500/60 text-white shadow-md shadow-emerald-500/10'

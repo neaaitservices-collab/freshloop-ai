@@ -86,7 +86,7 @@ export function OperationsTransferMetrics({
         </div>
         {!compact ? (
           <p className="mt-3 text-[11px] font-medium text-slate-400">
-            Shelf stock available for sales, markdown, and rescue to kitchen.
+            Shelf stock available for sales and rescue to production.
           </p>
         ) : null}
       </button>

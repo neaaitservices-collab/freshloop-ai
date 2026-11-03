@@ -3,35 +3,24 @@ import { LotAllocationError } from '@/lib/domains/inventory/lots';
 import { applyRetailMarkdown, moveKitchenPrepToWaste, moveRetailStock } from '@/lib/domains/inventory/stock';
 import { apiError, apiErrorFromUnknown } from '@/lib/domains/ai/apiError';
 import { authErrorResponse } from '@/lib/auth/http';
-import { requireSessionUser } from '@/lib/auth/session';
+import { requireOperationalStaff } from '@/lib/auth/guardRoute';
+import { parseJsonBody } from '@/lib/security/parseJsonBody';
+import { inventoryMoveBodySchema } from '@/lib/security/schemas/inventory';
+import { assertMutationRateLimit } from '@/lib/security/rateLimit';
 
 export const dynamic = 'force-dynamic';
 
 export async function POST(req: NextRequest) {
   try {
-    const actor = await requireSessionUser();
-    let body: {
-      productId?: string;
-      action?: string;
-      staffId?: string;
-      quantity?: number;
-      discountPct?: number;
-    };
-    try {
-      body = (await req.json()) as typeof body;
-    } catch {
-      return apiError('Request body must be valid JSON.', 400);
-    }
-    const productId = body.productId?.trim() ?? '';
-    const action = body.action;
-    if (!productId) {
-      return apiError('productId is required.', 400);
-    }
+    const actor = await requireOperationalStaff();
+    const limited = assertMutationRateLimit(actor.id, 'inventory-move', 80);
+    if (limited) return limited;
+
+    const body = await parseJsonBody(req, inventoryMoveBodySchema);
+    const { productId, action } = body;
+
     if (action === 'markdown') {
-      const discountPct =
-        typeof body.discountPct === 'number' && Number.isFinite(body.discountPct)
-          ? body.discountPct
-          : 30;
+      const discountPct = body.discountPct ?? 30;
       const marked = await applyRetailMarkdown(productId, actor.id, discountPct);
       return NextResponse.json({
         success: true,
@@ -50,15 +39,7 @@ export async function POST(req: NextRequest) {
         kitchenPrepQty: moved.level.kitchenPrepQty,
       });
     }
-    if (action !== 'waste' && action !== 'rescue') {
-      return apiError('Use action rescue, waste, kitchen_waste, or markdown.', 400);
-    }
-    const moved = await moveRetailStock(
-      productId,
-      action as 'waste' | 'rescue',
-      actor.id,
-      body.quantity
-    );
+    const moved = await moveRetailStock(productId, action, actor.id, body.quantity);
     return NextResponse.json({
       success: true,
       action,

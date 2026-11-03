@@ -16,7 +16,7 @@ export interface SwipeTransferRowProps {
 }
 
 /**
- * Touch-only swipe hints: right → rescue (kitchen), left → waste.
+ * Touch-only swipe hints: right → rescue (production), left → waste.
  */
 export function SwipeTransferRow({
   enabled,
@@ -80,7 +80,7 @@ export function SwipeTransferRow({
             offsetX > 20 ? 'opacity-100' : 'opacity-40'
           )}
         >
-          Kitchen
+          Production
           <ChefHat className="ml-1.5 h-4 w-4" />
         </div>
       </div>

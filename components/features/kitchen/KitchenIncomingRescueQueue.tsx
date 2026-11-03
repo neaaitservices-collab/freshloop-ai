@@ -99,7 +99,7 @@ export function KitchenIncomingRescueQueue({
   if (loading) {
     return (
       <Card className="border-slate-800/90 bg-slate-900/40">
-        <CardBody className="py-3 text-xs text-slate-500">Loading Kitchen_Prep rescue queue…</CardBody>
+        <CardBody className="py-3 text-xs text-slate-500">Loading production prep rescue queue…</CardBody>
       </Card>
     );
   }

@@ -1,205 +1,273 @@
 'use client';
 
-import React, { useState } from 'react';
-import { Pencil, Trash2, UserPlus } from 'lucide-react';
+import React, { useCallback, useState } from 'react';
+import { Pencil, Plus, Trash2 } from 'lucide-react';
 import { useRole } from '@/components/auth/RoleProvider';
-import { positionByLabel, positionForStaff, STAFF_POSITIONS } from '@/lib/utils/positions';
+import { readApiError } from '@/lib/api/readApiError';
+import {
+  DEFAULT_HOURLY,
+  formatHourlyRate,
+  hourlyRateInputString,
+  parseHourlyRateInput,
+} from '@/lib/utils/hourlyRateDisplay';
+import { positionForStaff, STAFF_POSITIONS } from '@/lib/utils/positions';
+import {
+  canManageStaff,
+  canRemoveStaff,
+} from '@/lib/auth/staffCapabilities';
 import { ROLE_LABELS, type StaffUser } from '@/lib/utils/roles';
+import { Button } from '@/components/ui/Button';
+import { cn } from '@/lib/utils/cn';
+import {
+  StaffEmployeeModal,
+  type StaffEmployeeFormValues,
+} from '@/components/features/admin/StaffEmployeeModal';
 
-const EMPTY_FORM = {
+const EMPTY_FORM: StaffEmployeeFormValues = {
   name: '',
   email: '',
-  position: 'Produce floor',
+  position: STAFF_POSITIONS[3].label,
+  hourlyRate: hourlyRateInputString(DEFAULT_HOURLY),
 };
 
 export function UserManagementTable({ embedded = false }: { embedded?: boolean }) {
   const { users, activeUser, loading, refresh } = useRole();
-  const [form, setForm] = useState(EMPTY_FORM);
+  const canManage = Boolean(activeUser && canManageStaff(activeUser.role));
+  const canRemove = Boolean(activeUser && canRemoveStaff(activeUser.role));
+  const canManageWage = canManage;
+
+  const [modalMode, setModalMode] = useState<'closed' | 'add' | 'edit'>('closed');
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [form, setForm] = useState<StaffEmployeeFormValues>(EMPTY_FORM);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [saveSuccess, setSaveSuccess] = useState<string | null>(null);
 
-  const startEdit = (user: StaffUser) => {
+  const closeModal = useCallback(() => {
+    setModalMode('closed');
+    setEditingId(null);
+    setForm(EMPTY_FORM);
+    setError(null);
+  }, []);
+
+  const openAdd = () => {
+    setEditingId(null);
+    setForm(EMPTY_FORM);
+    setError(null);
+    setModalMode('add');
+  };
+
+  const openEdit = (user: StaffUser) => {
     setEditingId(user.id);
     setForm({
       name: user.name,
       email: user.email,
       position: positionForStaff(user.position, user.role).label,
+      hourlyRate: hourlyRateInputString(user.hourlyRate),
     });
     setError(null);
-  };
-
-  const cancelEdit = () => {
-    setEditingId(null);
-    setForm(EMPTY_FORM);
+    setModalMode('edit');
   };
 
   const save = async () => {
+    let hourlyRate: number | undefined;
+    if (canManageWage) {
+      const parsed = parseHourlyRateInput(form.hourlyRate);
+      if (parsed == null) {
+        setError('Enter a valid hourly wage greater than zero.');
+        return;
+      }
+      hourlyRate = parsed;
+    }
     setSaving(true);
     setError(null);
     try {
+      const payload: Record<string, unknown> = {
+        name: form.name.trim(),
+        email: form.email.trim(),
+        position: form.position,
+      };
+      if (canManageWage && hourlyRate != null) {
+        payload.hourlyRate = hourlyRate;
+      }
       const response = await fetch(editingId ? `/api/users/${editingId}` : '/api/users', {
         method: editingId ? 'PATCH' : 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
+        body: JSON.stringify(payload),
       });
       const json = await response.json();
       if (!response.ok || !json.success) {
-        setError(json.error || 'Could not save that person.');
+        setError(readApiError(json, 'Could not save that employee.'));
         return;
       }
-      cancelEdit();
+      closeModal();
+      setSaveSuccess(editingId ? 'Employee updated.' : 'Employee added.');
       await refresh();
     } catch {
-      setError('Could not save that person.');
+      setError('Could not save that employee. Check your connection and try again.');
     } finally {
       setSaving(false);
     }
   };
 
-  const selected = positionByLabel(form.position) ?? STAFF_POSITIONS[3];
-
-  const remove = async (user: StaffUser) => {
+  const remove = async (user: StaffUser, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (
+      !window.confirm(
+        `Remove ${user.name} from staff? They will lose access immediately.`
+      )
+    ) {
+      return;
+    }
     setError(null);
     try {
       const response = await fetch(`/api/users/${user.id}`, { method: 'DELETE' });
       const json = await response.json();
       if (!response.ok || !json.success) {
-        setError(json.error || 'Could not remove that person.');
+        setError(readApiError(json, 'Could not remove that employee.'));
         return;
       }
-      if (editingId === user.id) cancelEdit();
+      if (editingId === user.id) closeModal();
       await refresh();
     } catch {
-      setError('Could not remove that person.');
+      setError('Could not remove that employee.');
     }
   };
 
+  if (!canManage) {
+    return null;
+  }
+
   return (
-    <section className="mt-10">
-      {embedded ? null : (
-        <>
-          <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-emerald-300">Controls</p>
-          <h2 className="mt-1 text-2xl font-black tracking-tight text-white">Staff</h2>
-          <p className="mt-1 max-w-2xl text-sm text-zinc-400">
-            Add the people who work the store. The position you choose is the access they get on the platform.
+    <section className={embedded ? '' : 'mt-10'}>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <h2 className="text-lg font-black tracking-tight text-white sm:text-xl">
+            Staff Members
+          </h2>
+          <p className="mt-0.5 text-xs text-slate-500">
+            Team roster and platform permissions by position.
           </p>
-        </>
-      )}
-
-      {loading && users.length === 0 ? <p className="mt-4 text-sm text-zinc-400">Loading staff…</p> : null}
-
-        <form
-          className="mt-4 grid gap-3 rounded-3xl border border-zinc-800 bg-zinc-900/80 p-4 sm:grid-cols-2"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void save();
-          }}
+        </div>
+        <Button
+          type="button"
+          variant="success"
+          className="min-h-11 shrink-0 border-emerald-500/45 bg-emerald-500 px-4 font-black text-slate-950 shadow-lg shadow-emerald-500/20 hover:bg-emerald-400"
+          onClick={openAdd}
         >
-          <label className="text-xs font-bold text-zinc-400">
-            Name
-            <input
-              required
-              value={form.name}
-              onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
-              className="mt-1 w-full rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-3 text-sm text-white"
-            />
-          </label>
-          <label className="text-xs font-bold text-zinc-400">
-            Email
-            <input
-              required
-              type="email"
-              value={form.email}
-              onChange={(event) => setForm((current) => ({ ...current, email: event.target.value }))}
-              className="mt-1 w-full rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-3 text-sm text-white"
-            />
-          </label>
-          <label className="text-xs font-bold text-zinc-400 sm:col-span-2">
-            Position
-            <select
-              required
-              value={form.position}
-              onChange={(event) => setForm((current) => ({ ...current, position: event.target.value }))}
-              className="mt-1 w-full rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-3 text-sm text-white"
-            >
-              {STAFF_POSITIONS.map((position) => (
-                <option key={position.label} value={position.label}>
-                  {position.label} · {ROLE_LABELS[position.role]}
-                </option>
-              ))}
-            </select>
-            <span className="mt-1 block font-medium normal-case tracking-normal text-zinc-500">
-              {selected.access}
-            </span>
-          </label>
-          <div className="flex flex-wrap items-center gap-2 sm:col-span-2">
-            <button
-              type="submit"
-              disabled={saving}
-              className="inline-flex items-center gap-2 rounded-xl bg-emerald-400 px-4 py-3 text-sm font-black text-zinc-950 disabled:opacity-60"
-            >
-              <UserPlus className="h-4 w-4" />
-              {editingId ? 'Save changes' : 'Add person'}
-            </button>
-            {editingId ? (
-              <button type="button" onClick={cancelEdit} className="px-3 py-3 text-sm font-bold text-zinc-400">
-                Cancel
-              </button>
-            ) : null}
-            {error ? <p className="text-sm text-amber-200">{error}</p> : null}
-          </div>
-        </form>
+          <Plus className="h-4 w-4" />
+          Add New Employee
+        </Button>
+      </div>
 
-        <div className="mt-4 overflow-x-auto rounded-3xl border border-zinc-800">
-          <table className="w-full min-w-[640px] text-left text-sm">
-            <thead className="bg-zinc-900 text-[11px] uppercase tracking-wider text-zinc-500">
-              <tr>
-                <th className="px-4 py-3">Name</th>
-                <th className="px-4 py-3">Position</th>
-                <th className="px-4 py-3">Permissions</th>
-                <th className="px-4 py-3 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-zinc-800 bg-zinc-950">
-              {users.map((user) => (
-                <tr key={user.id} className={user.id === activeUser?.id ? 'bg-emerald-400/5' : undefined}>
-                  <td className="px-4 py-3">
-                    <p className="font-bold text-white">{user.name}</p>
-                    <p className="text-xs text-zinc-500">{user.email}</p>
-                  </td>
-                  <td className="px-4 py-3 text-zinc-300">{user.position}</td>
-                  <td className="px-4 py-3">
-                    <p className="font-bold text-emerald-300">{ROLE_LABELS[user.role]}</p>
-                    <p className="max-w-xs text-xs text-zinc-500">
-                      {positionForStaff(user.position, user.role).access}
-                    </p>
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="flex justify-end gap-2">
-                      <button
-                        type="button"
-                        aria-label={`Edit ${user.name}`}
-                        onClick={() => startEdit(user)}
-                        className="rounded-lg border border-zinc-700 p-2 text-zinc-200"
-                      >
-                        <Pencil className="h-4 w-4" />
-                      </button>
+      {saveSuccess && modalMode === 'closed' ? (
+        <p className="mt-3 rounded-xl border border-emerald-500/30 bg-emerald-950/30 px-3 py-2 text-xs font-semibold text-emerald-100">
+          {saveSuccess}
+        </p>
+      ) : null}
+      {error && modalMode === 'closed' ? (
+        <p className="mt-3 rounded-xl border border-amber-500/30 bg-amber-950/30 px-3 py-2 text-xs font-semibold text-amber-100">
+          {error}
+        </p>
+      ) : null}
+
+      {loading && users.length === 0 ? (
+        <p className="mt-4 text-sm text-slate-500">Loading staff…</p>
+      ) : null}
+
+      <div className="mt-4 overflow-x-auto rounded-2xl border border-slate-800/90 bg-slate-950/40">
+        <table className="w-full min-w-[640px] border-collapse text-left text-sm">
+          <thead>
+            <tr className="border-b border-slate-800/90 bg-slate-900/80 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+              <th className="px-3 py-2.5 sm:px-4">Name</th>
+              <th className="hidden px-3 py-2.5 md:table-cell md:px-4">Position</th>
+              <th className="hidden px-3 py-2.5 sm:table-cell sm:px-4">Wage</th>
+              <th className="px-3 py-2.5 sm:px-4">Permissions</th>
+              <th className="w-24 px-3 py-2.5 text-right sm:px-4">Actions</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-800/80">
+            {users.map((user) => (
+              <tr
+                key={user.id}
+                className={cn(
+                  'group cursor-pointer transition-colors hover:bg-slate-800/40',
+                  user.id === activeUser?.id && 'bg-emerald-500/5'
+                )}
+                onClick={() => openEdit(user)}
+              >
+                <td className="px-3 py-2.5 sm:px-4">
+                  <p className="font-bold leading-snug text-white">{user.name}</p>
+                  <p className="text-[11px] text-slate-500">{user.email}</p>
+                  <p className="mt-0.5 text-[11px] text-slate-400 sm:hidden">
+                    {user.position}
+                  </p>
+                </td>
+                <td className="hidden px-3 py-2.5 text-slate-300 md:table-cell md:px-4">
+                  {user.position}
+                </td>
+                <td className="hidden px-3 py-2.5 sm:table-cell sm:px-4">
+                  <span className="font-mono text-xs font-semibold tabular-nums text-slate-200">
+                    {formatHourlyRate(user.hourlyRate)}
+                  </span>
+                </td>
+                <td className="px-3 py-2.5 sm:px-4">
+                  <p className="text-xs font-bold text-emerald-300">
+                    {ROLE_LABELS[user.role]}
+                  </p>
+                  <p className="font-mono text-[10px] text-slate-500 sm:hidden">
+                    {formatHourlyRate(user.hourlyRate)}
+                  </p>
+                </td>
+                <td className="px-3 py-2.5 sm:px-4">
+                  <div className="flex items-center justify-end gap-1">
+                    <button
+                      type="button"
+                      aria-label={`Edit ${user.name}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        openEdit(user);
+                      }}
+                      className="rounded-lg border border-slate-700/80 bg-slate-900/80 p-2 text-emerald-300 transition hover:border-emerald-500/40 hover:bg-emerald-950/40"
+                    >
+                      <Pencil className="h-4 w-4" />
+                    </button>
+                    {canRemove ? (
                       <button
                         type="button"
                         aria-label={`Remove ${user.name}`}
-                        onClick={() => void remove(user)}
-                        className="rounded-lg border border-zinc-700 p-2 text-zinc-400"
+                        onClick={(e) => void remove(user, e)}
+                        className="rounded-lg border border-transparent p-2 text-slate-500 opacity-0 transition group-hover:opacity-100 hover:border-rose-500/30 hover:bg-rose-950/40 hover:text-rose-300 focus:opacity-100"
                       >
                         <Trash2 className="h-4 w-4" />
                       </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+                    ) : null}
+                  </div>
+                </td>
+              </tr>
+            ))}
+            {users.length === 0 && !loading ? (
+              <tr>
+                <td colSpan={5} className="px-4 py-10 text-center text-sm text-slate-500">
+                  No staff listed yet. Add your first employee above.
+                </td>
+              </tr>
+            ) : null}
+          </tbody>
+        </table>
+      </div>
+
+      <StaffEmployeeModal
+        open={modalMode !== 'closed'}
+        mode={modalMode === 'add' ? 'add' : 'edit'}
+        values={form}
+        saving={saving}
+        error={error}
+        onChange={(patch) => setForm((current) => ({ ...current, ...patch }))}
+        onClose={closeModal}
+        onSubmit={() => void save()}
+        showHourlyRate={canManageWage}
+      />
     </section>
   );
 }

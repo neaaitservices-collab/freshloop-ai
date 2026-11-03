@@ -12,12 +12,12 @@ export const STAFF_POSITIONS: readonly StaffPosition[] = [
   {
     label: 'Owner',
     role: 'ADMIN',
-    access: 'Full platform: staff, orders, operations, receive, inventory, kitchen, and voice.',
+    access: 'Full platform: staff, orders, operations, receive, inventory, production, and voice.',
   },
   {
     label: 'Store manager',
     role: 'STORE_MANAGER',
-    access: 'Run the store: staff, orders, operations, receive, inventory, kitchen, and voice.',
+    access: 'Run the store: staff, orders, operations, receive, inventory, production, and voice.',
   },
   {
     label: 'Back door',
@@ -30,9 +30,9 @@ export const STAFF_POSITIONS: readonly StaffPosition[] = [
     access: 'Floor inventory and the voice log.',
   },
   {
-    label: 'Deli kitchen',
+    label: 'Deli production',
     role: 'DELI_CHEF',
-    access: 'Kitchen production and inventory.',
+    access: 'Production floor and inventory.',
   },
 ];
 

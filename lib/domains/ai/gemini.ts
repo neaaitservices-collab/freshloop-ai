@@ -56,26 +56,17 @@ function getApiKey(): string | null {
 }
 
 /**
- * Universal safe SDK loader supporting @google/genai, @google/generative-ai, and IDE/Turbopack environments.
- * Uses runtime module resolution so Turbopack does not fail with "Module not found" if dependencies are still installing.
+ * Loads `@google/generative-ai` at runtime so bundlers stay resilient while dependencies settle.
  */
-function getGenAIClient(apiKey: string): { type: 'genai' | 'generative-ai'; client: any } | null {
+function getGenAIClient(apiKey: string): { client: any } | null {
   try {
     const safeRequire = new Function(
       'name',
       'try { return require(name); } catch(e) { return null; }'
     );
-
-    // Try modern @google/genai SDK
-    const genaiMod = safeRequire('@google/genai');
-    if (genaiMod && genaiMod.GoogleGenAI) {
-      return { type: 'genai', client: new genaiMod.GoogleGenAI({ apiKey }) };
-    }
-
-    // Try legacy @google/generative-ai SDK
     const generativeAiMod = safeRequire('@google/generative-ai');
     if (generativeAiMod && generativeAiMod.GoogleGenerativeAI) {
-      return { type: 'generative-ai', client: new generativeAiMod.GoogleGenerativeAI(apiKey) };
+      return { client: new generativeAiMod.GoogleGenerativeAI(apiKey) };
     }
   } catch {
     // Dynamic loader fallback
@@ -140,49 +131,23 @@ export async function generateContentWithFallback(
       const sdk = getGenAIClient(apiKey);
       if (sdk) {
         try {
-          if (sdk.type === 'genai') {
-            const contents: any[] = [];
-            if (inlinePart) {
-              contents.push({
-                inlineData: {
-                  data: inlinePart.data,
-                  mimeType: inlinePart.mimeType,
-                }
-              });
-            }
-            contents.push(promptText);
-
-            const response = await sdk.client.models.generateContent({
-              model: modelName,
-              contents,
-              config: {
-                responseMimeType: 'application/json'
-              }
+          const model = sdk.client.getGenerativeModel({
+            model: modelName,
+            generationConfig: { responseMimeType: 'application/json' },
+          });
+          const parts: any[] = [{ text: promptText }];
+          if (inlinePart) {
+            parts.push({
+              inlineData: {
+                data: inlinePart.data,
+                mimeType: inlinePart.mimeType,
+              },
             });
-
-            const text = response.text;
-            if (text) {
-              return { text, modelUsed: modelName };
-            }
-          } else if (sdk.type === 'generative-ai') {
-            const model = sdk.client.getGenerativeModel({
-              model: modelName,
-              generationConfig: { responseMimeType: 'application/json' }
-            });
-            const parts: any[] = [{ text: promptText }];
-            if (inlinePart) {
-              parts.push({
-                inlineData: {
-                  data: inlinePart.data,
-                  mimeType: inlinePart.mimeType
-                }
-              });
-            }
-            const result = await model.generateContent(parts);
-            const text = result.response.text();
-            if (text) {
-              return { text, modelUsed: modelName };
-            }
+          }
+          const result = await model.generateContent(parts);
+          const text = result.response.text();
+          if (text) {
+            return { text, modelUsed: modelName };
           }
         } catch (e: any) {
           remember(modelName, e?.message || 'SDK request failed');

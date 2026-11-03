@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/domains/inventory/ledger';
-import { requireSessionUser } from '@/lib/auth/session';
+import { requireKitchenStaff } from '@/lib/auth/guardRoute';
 import { authErrorResponse } from '@/lib/auth/http';
+import { apiErrorFromUnknown } from '@/lib/domains/ai/apiError';
+import { parseJsonBody } from '@/lib/security/parseJsonBody';
+import { recipeIdParamSchema, recipeUpdateBodySchema } from '@/lib/security/schemas/recipes';
+import { assertMutationRateLimit } from '@/lib/security/rateLimit';
 import { UnitType } from '@prisma/client';
 
 export const dynamic = 'force-dynamic';
@@ -10,9 +14,13 @@ type RouteContext = { params: Promise<{ id: string }> };
 
 export async function PATCH(req: NextRequest, context: RouteContext) {
   try {
-    await requireSessionUser();
-    const { id } = await context.params;
-    const body = await req.json();
+    const actor = await requireKitchenStaff();
+    const limited = assertMutationRateLimit(actor.id, 'recipe-update', 40);
+    if (limited) return limited;
+
+    const { id: rawId } = await context.params;
+    const id = recipeIdParamSchema.parse(rawId);
+    const body = await parseJsonBody(req, recipeUpdateBodySchema);
 
     const existing = await prisma.recipe.findUnique({
       where: { id },
@@ -23,7 +31,7 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
     }
 
     const {
-      name,
+      name: trimmedName,
       category,
       yieldPortions,
       targetRetailPrice,
@@ -31,50 +39,10 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
       laborHours,
       laborRate,
       packagingCostPerUnit,
-      ingredients,
+      ingredients: validIngredients,
     } = body;
 
-    const trimmedName = typeof name === 'string' ? name.trim() : existing.name;
-    if (!trimmedName) {
-      return NextResponse.json(
-        { success: false, error: 'Recipe name is required.' },
-        { status: 400 }
-      );
-    }
-
-    const yieldQty = Number(yieldPortions ?? existing.yieldPortions);
-    if (!Number.isFinite(yieldQty) || yieldQty <= 0) {
-      return NextResponse.json(
-        { success: false, error: 'Standard yield portions must be greater than 0.' },
-        { status: 400 }
-      );
-    }
-
-    if (!Array.isArray(ingredients) || ingredients.length === 0) {
-      return NextResponse.json(
-        { success: false, error: 'At least one ingredient is required.' },
-        { status: 400 }
-      );
-    }
-
-    const validIngredients: { productId: string; quantity: number; unit?: string }[] = [];
-    for (const ing of ingredients) {
-      const pid = String(ing.productId ?? '').trim();
-      const qty = Number(ing.quantity);
-      if (!pid || !Number.isFinite(qty) || qty <= 0) continue;
-      validIngredients.push({
-        productId: pid,
-        quantity: qty,
-        unit: ing.unit ? String(ing.unit).trim() : undefined,
-      });
-    }
-
-    if (validIngredients.length === 0) {
-      return NextResponse.json(
-        { success: false, error: 'Please enter valid ingredient quantities.' },
-        { status: 400 }
-      );
-    }
+    const yieldQty = yieldPortions;
 
     const ingredientProducts = await prisma.product.findMany({
       where: { id: { in: validIngredients.map((i) => i.productId) } },
@@ -151,12 +119,6 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
     const authRes = authErrorResponse(error);
     if (authRes) return authRes;
     console.error('Failed to update recipe:', error);
-    return NextResponse.json(
-      {
-        success: false,
-        error: error instanceof Error ? error.message : 'Could not update recipe.',
-      },
-      { status: 500 }
-    );
+    return apiErrorFromUnknown(error, 'Could not update recipe.');
   }
 }

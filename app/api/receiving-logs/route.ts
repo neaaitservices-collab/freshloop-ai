@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { loadReceivingLogs, RECEIVING_SHEET_NAME } from '@/lib/domains/receiving/receivingSheet';
 import { postReceipt } from '@/lib/domains/inventory/stock';
 import { calculateYieldQuote, resolveTargetMargin, type MarginMode, type RetailUnit, RETAIL_UNITS } from '@/lib/domains/receiving/yieldPricing';
+import { handleApiRouteError } from '@/lib/domains/ai/apiError';
 import { authErrorResponse } from '@/lib/auth/http';
 import { requireReceivingStaff } from '@/lib/auth/guardRoute';
 import { requireSessionUser } from '@/lib/auth/session';
@@ -35,7 +36,7 @@ export async function GET() {
   } catch (error) {
     const authRes = authErrorResponse(error);
     if (authRes) return authRes;
-    throw error;
+    return handleApiRouteError('GET /api/receiving-logs', error, 'Receiving logs could not be loaded.');
   }
 }
 
@@ -134,9 +135,10 @@ export async function POST(req: NextRequest) {
         targetMargin,
       });
     } catch (error) {
+      console.error('[POST /api/receiving-logs] postReceipt failed', error);
       stock = {
         posted: false,
-        reason: error instanceof Error ? error.message : 'Stock was not updated.',
+        reason: 'Stock was not updated. The pack was saved for this session only.',
       };
     }
 
@@ -151,12 +153,10 @@ export async function POST(req: NextRequest) {
   } catch (error) {
     const authRes = authErrorResponse(error);
     if (authRes) return authRes;
-    return NextResponse.json(
-      {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to save the configured pack.',
-      },
-      { status: 500 }
+    return handleApiRouteError(
+      'POST /api/receiving-logs',
+      error,
+      'Failed to save the configured pack. Please try again.'
     );
   }
 }

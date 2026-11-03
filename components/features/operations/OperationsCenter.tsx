@@ -19,8 +19,6 @@ import type { PlatformSettings } from '@/lib/domains/stats/platformSettings';
 import { OperationsLiveTransfers } from '@/components/features/operations/OperationsLiveTransfers';
 import {
   Activity,
-  ArrowRight,
-  ChefHat,
   DollarSign,
   FileText,
   Mic,
@@ -84,7 +82,7 @@ export default function OperationsCenter() {
               </h1>
               <p className="text-xs sm:text-sm text-slate-400 max-w-2xl">
                 Live pulls between <code className="text-emerald-300 font-mono">Retail_Floor</code>{' '}
-                and <code className="text-amber-300 font-mono">Kitchen_Prep</code>. BOM batches,
+                and <code className="text-amber-300 font-mono">Production_Prep</code>. BOM batches,
                 volumetric scrap, and deli labels live on{' '}
                 <Link href="/production" className="font-semibold text-emerald-400 hover:text-emerald-300">
                   Production
@@ -110,15 +108,6 @@ export default function OperationsCenter() {
                 <Mic className="w-4 h-4 fill-slate-950" />
                 <span>Voice Logger</span>
               </button>
-
-              <Link
-                href="/production"
-                className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-gradient-to-r from-amber-400 to-orange-400 hover:from-amber-300 hover:to-orange-300 text-slate-950 font-extrabold text-xs shadow-lg shadow-amber-500/20 transition-all active:scale-95"
-              >
-                <ChefHat className="w-4 h-4" />
-                <span>Production dashboard</span>
-                <ArrowRight className="w-3.5 h-3.5 opacity-80" />
-              </Link>
 
               <button
                 type="button"

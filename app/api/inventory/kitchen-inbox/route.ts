@@ -22,6 +22,6 @@ export async function GET(req: NextRequest) {
   } catch (error) {
     const authRes = authErrorResponse(error);
     if (authRes) return authRes;
-    return apiErrorFromUnknown(error, 'Kitchen inbox could not be loaded.');
+    return apiErrorFromUnknown(error, 'Production inbox could not be loaded.');
   }
 }

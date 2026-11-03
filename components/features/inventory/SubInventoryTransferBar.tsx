@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowRightLeft, Loader2, Minus, Plus, Tag, Trash2 } from 'lucide-react';
+import { ArrowRightLeft, Loader2, Minus, Plus, Trash2 } from 'lucide-react';
 import {
   executeInventoryMove,
   type InventoryMoveAction,
@@ -218,9 +218,6 @@ export function SubInventoryTransferBar({
   const [kitchenQty, setKitchenQty] = useState(() => clampTransferQty(step, kitchenMax, step));
   const [internalBusy, setInternalBusy] = useState(false);
 
-  const [selectedDiscount, setSelectedDiscount] = useState<number>(30);
-  const [showDiscountPicker, setShowDiscountPicker] = useState<boolean>(false);
-
   const busy = busyProp ?? internalBusy;
 
   const prevProductId = useRef(row.productId);
@@ -242,13 +239,11 @@ export function SubInventoryTransferBar({
     onBusyChange?.(value);
   };
 
-  const run = async (action: InventoryMoveAction, quantity: number, discountOverride?: number) => {
-    if (action !== 'markdown' && !(quantity > 0)) {
+  const run = async (action: InventoryMoveAction, quantity: number) => {
+    if (!(quantity > 0)) {
       onError?.('Enter a quantity greater than zero.');
       return;
     }
-
-    const discountPct = discountOverride ?? selectedDiscount;
 
     if (performMove) {
       const outcome = await performMove({
@@ -256,7 +251,6 @@ export function SubInventoryTransferBar({
         action,
         quantity,
         staffId,
-        discountPct,
         row,
       });
       if (outcome.success) {
@@ -277,7 +271,6 @@ export function SubInventoryTransferBar({
       action,
       quantity,
       staffId,
-      discountPct,
     });
     setBusy(false);
     if (!result.success || !result.level) {
@@ -307,56 +300,6 @@ export function SubInventoryTransferBar({
   const secondaryBtn =
     'inline-flex min-h-10 flex-1 items-center justify-center gap-1.5 rounded-xl border px-3 py-2 text-[11px] font-bold disabled:cursor-not-allowed disabled:opacity-50 sm:flex-none';
 
-  const markdownControl = (
-    <div className="relative flex min-w-0 flex-[1_1_11rem] items-stretch overflow-hidden rounded-xl border border-slate-700/80 bg-slate-900/40">
-      <button
-        type="button"
-        disabled={busy}
-        onClick={() => void run('markdown', floorQty, selectedDiscount)}
-        className={`flex min-h-10 flex-1 items-center justify-center gap-1.5 px-3 font-bold text-slate-300 hover:bg-slate-800/60 disabled:opacity-40 ${
-          operations ? 'text-[11px]' : compact ? 'min-h-9 px-2.5 py-1 text-[11px]' : 'min-h-11 px-3 py-1.5 text-xs text-amber-300'
-        }`}
-        title={`Apply ${selectedDiscount}% markdown to shelf price`}
-      >
-        {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Tag className="h-3.5 w-3.5 text-amber-400/90" />}
-        <span className="truncate">{row.isMarkdown ? `Update ${selectedDiscount}%` : `${selectedDiscount}% off`}</span>
-      </button>
-      <button
-        type="button"
-        disabled={busy}
-        onClick={() => setShowDiscountPicker((prev) => !prev)}
-        className="flex min-h-10 items-center justify-center border-l border-slate-700/80 px-2 text-[10px] font-bold text-slate-400 hover:bg-slate-800/60"
-        title="Select discount percentage: 10%, 20%, 25%, 30%"
-        aria-label="Change discount percentage"
-      >
-        ▼
-      </button>
-      {showDiscountPicker ? (
-        <div className="absolute top-full right-0 z-30 mt-1 flex gap-1 rounded-xl border border-slate-700 bg-slate-900/95 p-1.5 shadow-xl backdrop-blur-md">
-          {[10, 20, 25, 30].map((pct) => (
-            <button
-              key={pct}
-              type="button"
-              disabled={busy}
-              onClick={() => {
-                setSelectedDiscount(pct);
-                setShowDiscountPicker(false);
-                void run('markdown', floorQty, pct);
-              }}
-              className={`min-h-8 rounded-lg px-2.5 py-1 text-xs font-bold transition-all ${
-                selectedDiscount === pct
-                  ? 'bg-amber-500 text-slate-950 shadow'
-                  : 'bg-slate-800/80 text-amber-200 hover:bg-slate-700/80 hover:text-white'
-              }`}
-            >
-              {pct}%
-            </button>
-          ))}
-        </div>
-      ) : null}
-    </div>
-  );
-
   return (
     <div
       className={`flex min-w-0 w-full max-w-full flex-col gap-3 ${compact ? 'min-w-0 sm:min-w-[12rem]' : operations ? '' : 'rounded-xl border border-slate-800/80 bg-slate-950/50 p-3'}`}
@@ -367,7 +310,7 @@ export function SubInventoryTransferBar({
             Floor: {formatUnits(row.onHand)} {unit}
           </span>
           <span className="rounded-lg border border-amber-500/30 bg-amber-950/40 px-2 py-1 text-amber-200">
-            Kitchen: {formatUnits(row.kitchenPrepQty)} {unit}
+            Production: {formatUnits(row.kitchenPrepQty)} {unit}
           </span>
         </div>
       ) : null}
@@ -399,7 +342,6 @@ export function SubInventoryTransferBar({
                 </button>
               </div>
               <div className="flex min-w-0 flex-wrap gap-2">
-                {markdownControl}
                 <button
                   type="button"
                   disabled={busy || floorQty <= 0}
@@ -422,7 +364,6 @@ export function SubInventoryTransferBar({
                 {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ArrowRightLeft className="h-3.5 w-3.5" />}
                 To production
               </button>
-              {markdownControl}
               <button
                 type="button"
                 disabled={busy || floorQty <= 0}
@@ -457,7 +398,7 @@ export function SubInventoryTransferBar({
             className={`${compact ? compactBtn : btnClass} w-full border border-rose-500/40 bg-rose-950/50 text-rose-200`}
           >
             <Trash2 className="h-3.5 w-3.5" />
-            Kitchen waste
+            Production waste
           </button>
         </div>
       ) : null}

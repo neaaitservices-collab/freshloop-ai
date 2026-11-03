@@ -103,13 +103,13 @@ export function ScrapBucketSettingsModal({
         <div className="flex items-start justify-between gap-3">
           <div>
             <p className="text-[10px] font-bold uppercase tracking-wider text-amber-400/90">
-              Kitchen scrap
+              Production scrap
             </p>
             <h2 id="scrap-bucket-settings-title" className="text-lg font-black text-white">
               Bucket $ defaults
             </h2>
             <p className="mt-1 text-xs leading-relaxed text-slate-400">
-              When kitchen staff log a <strong className="font-medium text-slate-300">volumetric scrap</strong>{' '}
+              When production staff log a <strong className="font-medium text-slate-300">volumetric scrap</strong>{' '}
               bucket (not individual thrown-away SKUs), the ledger counts buckets and converts them to
               dollars for the Admin waste %:{' '}
               <span className="font-mono text-[11px] text-slate-500">
@@ -155,7 +155,7 @@ export function ScrapBucketSettingsModal({
                   className={FIELD}
                 />
                 <span className="mt-1 block text-[11px] font-normal leading-snug text-slate-500">
-                  Size of one kitchen scrap tub (e.g. 20 L). Each volumetric scrap log in Operations
+                  Size of one production scrap tub (e.g. 20 L). Each volumetric scrap log in Operations
                   counts as one full bucket at this volume.
                 </span>
               </label>

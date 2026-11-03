@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { apiErrorFromUnknown } from '@/lib/domains/ai/apiError';
 import { authErrorResponse } from '@/lib/auth/http';
+import { requireOperationalStaff } from '@/lib/auth/guardRoute';
 import { requireSessionUser } from '@/lib/auth/session';
+import { parseJsonBody } from '@/lib/security/parseJsonBody';
+import { inventoryLevelsPatchSchema } from '@/lib/security/schemas/inventory';
+import { assertMutationRateLimit } from '@/lib/security/rateLimit';
+import { productIdSchema } from '@/lib/security/schemas/common';
 import { isManager } from '@/lib/utils/roles';
 import { parsePosSalesDaysParam } from '@/lib/domains/inventory/posSalesUnits';
 import { filterLevelsWithAnyStock } from '@/lib/domains/inventory/subInventoryView';
@@ -25,6 +30,7 @@ export const dynamic = 'force-dynamic';
 
 export async function GET(req: NextRequest) {
   try {
+    await requireOperationalStaff();
     const auditProductId = req.nextUrl.searchParams.get('auditProductId')?.trim();
     if (auditProductId) {
       const audit = await getLastStockOverrideAudit(auditProductId);
@@ -54,13 +60,9 @@ export async function GET(req: NextRequest) {
       levels,
     });
   } catch (error) {
-    return NextResponse.json(
-      {
-        success: false,
-        error: error instanceof Error ? error.message : 'Stock levels could not be read.',
-      },
-      { status: 500 }
-    );
+    const authRes = authErrorResponse(error);
+    if (authRes) return authRes;
+    return apiErrorFromUnknown(error, 'Stock levels could not be read.');
   }
 }
 
@@ -73,10 +75,8 @@ export async function DELETE(req: NextRequest) {
         { status: 403 }
       );
     }
-    const productId = req.nextUrl.searchParams.get('productId')?.trim() ?? '';
-    if (!productId) {
-      return NextResponse.json({ success: false, error: 'productId is required.' }, { status: 400 });
-    }
+    const productIdRaw = req.nextUrl.searchParams.get('productId')?.trim() ?? '';
+    const productId = productIdSchema.parse(productIdRaw);
     await removeProductFromCatalog(productId);
     return NextResponse.json({ success: true, productId });
   } catch (error) {
@@ -88,28 +88,16 @@ export async function DELETE(req: NextRequest) {
 
 export async function PATCH(req: NextRequest) {
   try {
-    const actor = await requireSessionUser();
-    const body = (await req.json()) as {
-      productId?: string;
-      action?: 'rescue' | 'waste' | 'markdown';
-      parCases?: number;
-      supplier?: string;
-      packSize?: number;
-      yieldDivisor?: number;
-      retailUnit?: string;
-      retailPrice?: number;
-      casesOnHand?: number;
-      role?: string;
-      staffId?: string;
-      quantity?: number;
-      discountPct?: number;
-      department?: string;
-      origin?: string | null;
-    };
-    const productId = body.productId?.trim() ?? '';
-    if (!productId) {
-      return NextResponse.json({ success: false, error: 'productId is required.' }, { status: 400 });
-    }
+    const actor = await requireOperationalStaff();
+    const body = await parseJsonBody(req, inventoryLevelsPatchSchema);
+    const productId = body.productId;
+
+    const limited = assertMutationRateLimit(
+      actor.id,
+      body.casesOnHand !== undefined ? 'inventory-stock-override' : 'inventory-levels-patch',
+      body.casesOnHand !== undefined ? 20 : 90
+    );
+    if (limited) return limited;
 
     if (body.action === 'markdown') {
       const discountPct =

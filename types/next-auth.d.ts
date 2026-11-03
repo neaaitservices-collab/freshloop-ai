@@ -7,12 +7,14 @@ declare module 'next-auth' {
       id: string;
       role: RoleName;
       position: string;
+      hourlyRate: number | null;
     } & DefaultSession['user'];
   }
 
   interface User {
     role: RoleName;
     position: string;
+    hourlyRate?: number | null;
   }
 }
 
@@ -21,5 +23,6 @@ declare module 'next-auth/jwt' {
     id?: string;
     role?: RoleName;
     position?: string;
+    hourlyRate?: number | null;
   }
 }

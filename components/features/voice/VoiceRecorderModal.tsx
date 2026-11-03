@@ -20,6 +20,7 @@ export const VoiceRecorderModal: React.FC<VoiceRecorderModalProps> = ({
   const [spokenText, setSpokenText] = useState('Logged 10 lbs bruised apples and 4L heavy cream');
   const [loading, setLoading] = useState(false);
   const [voiceResult, setVoiceResult] = useState<VoiceLoggerResult | null>(null);
+  const [processError, setProcessError] = useState<string | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
 
@@ -65,6 +66,7 @@ export const VoiceRecorderModal: React.FC<VoiceRecorderModalProps> = ({
 
   const handleProcessVoice = async (audioBase64?: string) => {
     setLoading(true);
+    setProcessError(null);
     try {
       const res = await fetch('/api/voice-logger', {
         method: 'POST',
@@ -80,9 +82,16 @@ export const VoiceRecorderModal: React.FC<VoiceRecorderModalProps> = ({
       if (json.success && json.data) {
         setVoiceResult(json.data);
         onVoiceLogged();
+        return;
       }
+      setProcessError(
+        (typeof json.error === 'string' && json.error) ||
+          (typeof json.message === 'string' && json.message) ||
+          'Voice log could not be processed. Try again.'
+      );
     } catch (err) {
       console.error('Voice logger processing error:', err);
+      setProcessError('Could not reach the server. Check your connection and try again.');
     } finally {
       setLoading(false);
     }
@@ -99,7 +108,7 @@ export const VoiceRecorderModal: React.FC<VoiceRecorderModalProps> = ({
             </div>
             <div>
               <h3 className="font-bold text-base sm:text-lg text-white">Ambient Voice Floor Logger</h3>
-              <p className="text-[10px] sm:text-xs text-zinc-400">Hands-Free Kitchen Transfer & Spoilage Parser</p>
+              <p className="text-[10px] sm:text-xs text-zinc-400">Hands-Free Production Transfer & Spoilage Parser</p>
             </div>
           </div>
 
@@ -113,6 +122,11 @@ export const VoiceRecorderModal: React.FC<VoiceRecorderModalProps> = ({
 
         {/* Content Body */}
         <div className="p-4 sm:p-6 space-y-4 sm:space-y-6 text-zinc-200 text-xs overflow-y-auto">
+          {processError ? (
+            <p className="rounded-xl border border-rose-500/40 bg-rose-950/40 px-3 py-2 text-xs font-semibold text-rose-200">
+              {processError}
+            </p>
+          ) : null}
           {!voiceResult ? (
             <div className="space-y-6">
               {/* Mic Graphic & Pulse */}
@@ -134,7 +148,7 @@ export const VoiceRecorderModal: React.FC<VoiceRecorderModalProps> = ({
                 </div>
 
                 <p className="font-bold text-sm text-white">
-                  {isRecording ? 'Listening to Kitchen Floor Voice Transfer...' : 'Click Mic to Record Spoken Floor Log'}
+                  {isRecording ? 'Listening to floor voice transfer…' : 'Click mic to record spoken floor log'}
                 </p>
                 <p className="text-zinc-500 text-xs mt-1">
                   Example: "Logged 10 lbs bruised apples and 4L heavy cream from Walk-in Cooler B"
@@ -189,7 +203,7 @@ export const VoiceRecorderModal: React.FC<VoiceRecorderModalProps> = ({
                 
                 {voiceResult.kitchenRescueNotes && (
                   <p className="text-xs text-teal-300/90 bg-teal-950/40 p-2.5 rounded-xl border border-teal-500/30">
-                    💡 <strong>Kitchen Note:</strong> {voiceResult.kitchenRescueNotes}
+                    💡 <strong>Production note:</strong> {voiceResult.kitchenRescueNotes}
                   </p>
                 )}
               </div>

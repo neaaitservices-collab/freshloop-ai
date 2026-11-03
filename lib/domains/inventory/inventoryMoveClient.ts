@@ -46,12 +46,48 @@ export type InventoryUpdatedDetail = {
   productId?: string;
   /** List already patched this level (skip duplicate merges in listeners). */
   source?: 'level-patch';
+  /** Waste KPI state already returned from volumetric-scrap POST. */
+  skipWasteKpiRefresh?: boolean;
 };
 
+const INVENTORY_UPDATED_CHANNEL = 'freshloop-inventory-updated';
+
 export function notifyInventoryUpdated(detail?: InventoryUpdatedDetail): void {
-  if (typeof window !== 'undefined') {
-    window.dispatchEvent(new CustomEvent('freshloop-inventory-updated', { detail }));
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(new CustomEvent('freshloop-inventory-updated', { detail }));
+  try {
+    const channel = new BroadcastChannel(INVENTORY_UPDATED_CHANNEL);
+    channel.postMessage({ type: 'inventory-updated' });
+    channel.close();
+  } catch {
+    /* BroadcastChannel unavailable */
   }
+}
+
+/** Same-tab + other browser tabs (Admin while logging on Production). */
+export function subscribeInventoryUpdated(
+  handler: (detail?: InventoryUpdatedDetail) => void
+): () => void {
+  if (typeof window === 'undefined') return () => {};
+
+  const onWindow = (event: Event) => {
+    const detail = (event as CustomEvent<InventoryUpdatedDetail>).detail;
+    handler(detail);
+  };
+  window.addEventListener('freshloop-inventory-updated', onWindow);
+
+  let channel: BroadcastChannel | null = null;
+  try {
+    channel = new BroadcastChannel(INVENTORY_UPDATED_CHANNEL);
+    channel.onmessage = () => handler();
+  } catch {
+    /* ignore */
+  }
+
+  return () => {
+    window.removeEventListener('freshloop-inventory-updated', onWindow);
+    channel?.close();
+  };
 }
 
 export async function executeInventoryMove(input: {
@@ -71,7 +107,6 @@ export async function executeInventoryMove(input: {
         productId: input.productId,
         action: input.action,
         quantity: input.quantity,
-        staffId: input.staffId ?? '',
         discountPct: input.discountPct,
       }),
     });
@@ -124,7 +159,7 @@ export function transferSuccessMessage(
     return `${row.name}: ${formatCurrency(level.regularRetailPrice ?? level.retailPrice ?? 0)} → ${formatCurrency(level.retailPrice ?? 0)} (${pct}% off)`;
   }
   if (action === 'kitchen_waste') {
-    return `${row.name}: ${formatUnits(moved)} ${unitLabel} discarded from kitchen prep.`;
+    return `${row.name}: ${formatUnits(moved)} ${unitLabel} discarded from production prep.`;
   }
   if (action === 'waste') {
     return `${row.name}: ${formatUnits(moved)} ${unitLabel} discarded from the floor.`;
@@ -132,5 +167,5 @@ export function transferSuccessMessage(
   if (action === 'sale') {
     return `${row.name}: sold ${formatUnits(moved)} ${unitLabel} · floor now ${formatUnits(level.onHand)} ${unitLabel}.`;
   }
-  return `${row.name}: ${formatUnits(moved)} ${unitLabel} sent to kitchen · floor now ${formatUnits(level.onHand)} ${unitLabel}.`;
+  return `${row.name}: ${formatUnits(moved)} ${unitLabel} sent to production · floor now ${formatUnits(level.onHand)} ${unitLabel}.`;
 }

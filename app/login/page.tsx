@@ -53,6 +53,9 @@ function LoginForm() {
               FreshLoop AI
             </p>
             <h1 className="text-xl font-black tracking-tight">Staff sign in</h1>
+            <p className="mt-0.5 text-[11px] text-slate-500">
+              Work email + password · secure 12-hour session
+            </p>
           </div>
         </div>
 

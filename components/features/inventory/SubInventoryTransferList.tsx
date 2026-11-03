@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useCallback, useEffect, useState } from 'react';
-import { ArrowRightLeft, ChevronRight, Tag, Trash2, TriangleAlert } from 'lucide-react';
+import { ArrowRightLeft, ChevronRight, Trash2, TriangleAlert } from 'lucide-react';
 import { OperationsTransferItemModal } from '@/components/features/operations/OperationsTransferItemModal';
 import {
   SubInventoryTransferBar,
@@ -88,7 +88,14 @@ export function SubInventoryTransferList({
   }, [rows, modalProductId]);
 
   const touchViewport = useMediaMaxWidth(768);
-  const swipeEnabled = actionQueue && location === 'retail_floor' && touchViewport && Boolean(performMove);
+  /** Short-dated queue: confirm transfers in modal (no inline waste/markdown on the list). */
+  const queueModalActions = actionQueue && !operations && location === 'retail_floor';
+  const swipeEnabled =
+    actionQueue &&
+    !queueModalActions &&
+    location === 'retail_floor' &&
+    touchViewport &&
+    Boolean(performMove);
 
   const quickMove = useCallback(
     async (row: StockLevel, action: 'rescue' | 'waste') => {
@@ -310,15 +317,14 @@ export function SubInventoryTransferList({
                 dense ? (
                   <div
                     className="mt-1.5 flex items-center gap-2 text-slate-500"
-                    aria-label="Transfer, markdown, or waste via tap"
+                    aria-label="Transfer or waste via tap"
                   >
                     <ArrowRightLeft className="h-3.5 w-3.5 text-emerald-500/80" aria-hidden />
-                    <Tag className="h-3.5 w-3.5 text-amber-500/80" aria-hidden />
                     <Trash2 className="h-3.5 w-3.5 text-rose-500/80" aria-hidden />
                   </div>
                 ) : (
                   <p className="mt-3 text-[10px] font-semibold uppercase tracking-wide text-emerald-500/80">
-                    Tap to transfer · markdown · waste
+                    Tap to transfer · waste
                   </p>
                 )
               ) : null}
@@ -328,6 +334,10 @@ export function SubInventoryTransferList({
                 className={cn('shrink-0 text-slate-600', dense ? 'h-4 w-4' : 'h-5 w-5')}
                 aria-hidden
               />
+            ) : queueModalActions ? (
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-emerald-500/80 md:self-center">
+                Tap row to transfer or log waste
+              </p>
             ) : (
               <div className="min-w-0 w-full max-w-full md:max-w-md md:shrink-0">
                 <SubInventoryTransferBar
@@ -369,6 +379,14 @@ export function SubInventoryTransferList({
           >
             {operations ? (
               operationsCard
+            ) : queueModalActions ? (
+              <button
+                type="button"
+                onClick={() => setModalProductId(row.productId)}
+                className="w-full text-left transition hover:bg-slate-900/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/50"
+              >
+                {rowBody}
+              </button>
             ) : swipeEnabled ? (
               <SwipeTransferRow
                 enabled
@@ -384,7 +402,7 @@ export function SubInventoryTransferList({
         );
       })}
     </ul>
-    {operations && modalProductId ? (
+    {(operations || queueModalActions) && modalProductId ? (
       <OperationsTransferItemModal
         row={modalRow}
         location={location}

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getAdminStoreStatsBundle } from '@/lib/domains/stats/storeStats';
+import { apiErrorFromUnknown } from '@/lib/domains/ai/apiError';
 import { authErrorResponse } from '@/lib/auth/http';
 import { requireManagerStaff } from '@/lib/auth/guardRoute';
 
@@ -13,12 +14,6 @@ export async function GET() {
   } catch (error) {
     const authRes = authErrorResponse(error);
     if (authRes) return authRes;
-    return NextResponse.json(
-      {
-        success: false,
-        error: error instanceof Error ? error.message : 'Store statistics could not be read.',
-      },
-      { status: 500 }
-    );
+    return apiErrorFromUnknown(error, 'Store statistics could not be read.');
   }
 }

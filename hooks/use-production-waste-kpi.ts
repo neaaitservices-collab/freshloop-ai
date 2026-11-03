@@ -2,16 +2,22 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { VolumetricScrapLoggedEvent } from '@/components/features/operations/VolumetricScrapForm';
-import { fetchOperationsDashboardSnapshot } from '@/components/features/operations/operationsLedgerClient';
 import type { WasteKpiReport } from '@/lib/domains/inventory/ledger';
-import { notifyInventoryUpdated } from '@/lib/domains/inventory/inventoryMoveClient';
+import { subscribeInventoryUpdated } from '@/lib/domains/inventory/inventoryMoveClient';
+import { notifyKpiUpdated } from '@/lib/domains/stats/kpiEvents';
 import {
   FRESHLOOP_SETTINGS_UPDATED,
   readSettingsUpdatedEvent,
 } from '@/lib/domains/stats/settingsEvents';
 import type { PlatformSettings } from '@/lib/domains/stats/platformSettings';
 
-export function useProductionWasteKpi(activeUserId: string | undefined) {
+export interface UseProductionWasteKpiOptions {
+  /** When true, caller hydrates via `applyBootstrap` (`/api/production/bootstrap`). */
+  deferInitialFetch?: boolean;
+}
+
+export function useProductionWasteKpi(options?: UseProductionWasteKpiOptions) {
+  const deferInitialFetch = options?.deferInitialFetch ?? false;
   const [wasteKpiReport, setWasteKpiReport] = useState<WasteKpiReport | null>(null);
   const [platformScrapConfig, setPlatformScrapConfig] = useState({
     scrapBucketVolumeL: 20,
@@ -19,6 +25,18 @@ export function useProductionWasteKpi(activeUserId: string | undefined) {
     blendedCostPerKg: 3.5,
   });
   const [syncing, setSyncing] = useState(false);
+
+  const applyBootstrap = useCallback(
+    (payload: { wasteKpi: WasteKpiReport; storeSettings: PlatformSettings }) => {
+      setWasteKpiReport(payload.wasteKpi);
+      setPlatformScrapConfig({
+        scrapBucketVolumeL: payload.storeSettings.scrapBucketVolumeL,
+        estimatedWeightPerLiterKg: payload.storeSettings.estimatedWeightPerLiterKg,
+        blendedCostPerKg: payload.storeSettings.defaultScrapCostPerKg,
+      });
+    },
+    []
+  );
 
   const scrapStoreConfig = useMemo(() => {
     const inputs = wasteKpiReport?.scrapBucketInputs;
@@ -35,8 +53,14 @@ export function useProductionWasteKpi(activeUserId: string | undefined) {
   const refreshWasteKpi = useCallback(async (showSpinner = false) => {
     if (showSpinner) setSyncing(true);
     try {
-      const snapshot = await fetchOperationsDashboardSnapshot();
-      if (snapshot.wasteKpi) setWasteKpiReport(snapshot.wasteKpi);
+      const res = await fetch('/api/inventory/waste-kpi', { cache: 'no-store' });
+      const json = (await res.json()) as {
+        success?: boolean;
+        wasteKpi?: WasteKpiReport;
+      };
+      if (res.ok && json.success && json.wasteKpi) {
+        setWasteKpiReport(json.wasteKpi);
+      }
     } catch {
       /* keep last KPI */
     } finally {
@@ -63,12 +87,16 @@ export function useProductionWasteKpi(activeUserId: string | undefined) {
   }, []);
 
   useEffect(() => {
+    if (deferInitialFetch) return;
     void refreshWasteKpi(true);
     void syncStoreSettings();
-  }, [refreshWasteKpi, syncStoreSettings]);
+  }, [deferInitialFetch, refreshWasteKpi, syncStoreSettings]);
 
   useEffect(() => {
-    const onInventory = () => void refreshWasteKpi(false);
+    const onInventory = (detail?: { skipWasteKpiRefresh?: boolean }) => {
+      if (detail?.skipWasteKpiRefresh) return;
+      void refreshWasteKpi(false);
+    };
     const onSettings = (event: Event) => {
       const saved = readSettingsUpdatedEvent(event);
       if (saved) {
@@ -79,32 +107,38 @@ export function useProductionWasteKpi(activeUserId: string | undefined) {
       void refreshWasteKpi(false);
       void syncStoreSettings();
     };
-    window.addEventListener('freshloop-inventory-updated', onInventory);
+    const unsubInventory = subscribeInventoryUpdated(onInventory);
     window.addEventListener(FRESHLOOP_SETTINGS_UPDATED, onSettings);
     return () => {
-      window.removeEventListener('freshloop-inventory-updated', onInventory);
+      unsubInventory();
       window.removeEventListener(FRESHLOOP_SETTINGS_UPDATED, onSettings);
     };
   }, [refreshWasteKpi, syncStoreSettings]);
 
   const logVolumetricScrap = useCallback(
-    async (bucketsDelta: number, event: VolumetricScrapLoggedEvent) => {
+    async (bucketsDelta: number, _event: VolumetricScrapLoggedEvent) => {
       const res = await fetch('/api/inventory/volumetric-scrap', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          buckets: bucketsDelta,
-          staffId: activeUserId ?? 'staff-kitchen',
-        }),
+        body: JSON.stringify({ buckets: bucketsDelta }),
       });
-      const json = (await res.json()) as { success?: boolean; error?: string };
+      const json = (await res.json()) as {
+        success?: boolean;
+        error?: string;
+        wasteKpi?: WasteKpiReport;
+      };
       if (!res.ok || !json.success) {
         throw new Error(json.error ?? 'Could not log volumetric scrap.');
       }
-      notifyInventoryUpdated();
+      if (json.wasteKpi) {
+        setWasteKpiReport(json.wasteKpi);
+        notifyKpiUpdated();
+        return;
+      }
+      notifyKpiUpdated();
       await refreshWasteKpi(false);
     },
-    [activeUserId, refreshWasteKpi]
+    [refreshWasteKpi]
   );
 
   return {
@@ -113,5 +147,6 @@ export function useProductionWasteKpi(activeUserId: string | undefined) {
     syncing,
     refreshWasteKpi,
     logVolumetricScrap,
+    applyBootstrap,
   };
 }

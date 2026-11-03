@@ -72,7 +72,7 @@ export function DeliLabelModal({ isOpen, onClose, recipe }: DeliLabelModalProps)
           >
             <div className="border-b-2 border-black pb-2 text-center">
               <p className="text-[10px] font-black uppercase tracking-[0.2em]">FreshLoop Deli</p>
-              <p className="text-[9px] font-bold uppercase">Kitchen rescue · grab & go</p>
+              <p className="text-[9px] font-bold uppercase">Production rescue · grab & go</p>
             </div>
 
             <h3 className="mt-3 text-base font-black uppercase leading-tight">{recipe.recipeName}</h3>

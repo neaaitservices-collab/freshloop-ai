@@ -1,6 +1,8 @@
 import { Role } from '@prisma/client';
 import { prisma } from '@/lib/domains/inventory/ledger';
 import { hashPassword } from '@/lib/auth/password';
+import { setStaffHourlyRate } from '@/lib/auth/staffHourlyRate';
+import { findLatestStoreSetting } from '@/lib/domains/stats/storeSettingSelect';
 
 const MIN_PASSWORD_LENGTH = 8;
 
@@ -33,8 +35,10 @@ export async function registerStaffUser(input: {
 
   const passwordHash = await hashPassword(password);
   const role = input.role ?? Role.FLOOR_STAFF;
+  const storeSetting = await findLatestStoreSetting();
+  const hourlyRate = storeSetting?.defaultLaborRatePerHour ?? 17.6;
 
-  return prisma.user.create({
+  const created = await prisma.user.create({
     data: {
       name,
       email,
@@ -50,4 +54,10 @@ export async function registerStaffUser(input: {
       role: true,
     },
   });
+
+  const savedRate = await setStaffHourlyRate(created.id, hourlyRate);
+  return {
+    ...created,
+    hourlyRate: savedRate,
+  };
 }

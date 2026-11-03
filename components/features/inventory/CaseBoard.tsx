@@ -4,7 +4,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { Search } from "lucide-react";
 import { useRole } from "@/components/auth/RoleProvider";
 import { PageIntro } from "@/components/layout/PageIntro";
-import { isManager } from "@/lib/utils/roles";
+import { canOverrideInventoryStock } from '@/lib/auth/staffCapabilities';
 import { PricingStrategy } from "@/components/features/receive/PricingStrategy";
 import { YieldBreakdown } from "@/components/features/receive/YieldBreakdown";
 import {
@@ -131,7 +131,7 @@ export function CaseBoard({
   const canOverride =
     roleReady &&
     !roleLoading &&
-    Boolean(activeUser && isManager(activeUser.role));
+    Boolean(activeUser && canOverrideInventoryStock(activeUser.role));
 
   useEffect(() => {
     if (!initialLevels) return;

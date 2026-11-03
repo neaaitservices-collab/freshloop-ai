@@ -7,3 +7,12 @@ export const MANUFACTURING_ROLES: RoleName[] = [
 ];
 
 export const MANAGER_ROLES: RoleName[] = ['ADMIN', 'STORE_MANAGER'];
+
+/** Volumetric scrap logging on the production / operations floor. */
+export const SCRAP_LOG_ROLES: RoleName[] = [
+  'ADMIN',
+  'STORE_MANAGER',
+  'DELI_CHEF',
+  'FLOOR_STAFF',
+  'RECEIVING_CLERK',
+];

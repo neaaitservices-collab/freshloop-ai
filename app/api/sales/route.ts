@@ -1,23 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { apiErrorFromUnknown } from '@/lib/domains/ai/apiError';
 import { authErrorResponse } from '@/lib/auth/http';
-import { requireSessionUser } from '@/lib/auth/session';
+import { requireOperationalStaff } from '@/lib/auth/guardRoute';
 import { recordProductSale } from '@/lib/domains/inventory/recordSale';
 import { executeBundleSale } from '@/lib/domains/inventory/ledger';
+import { parseJsonBody } from '@/lib/security/parseJsonBody';
+import { salesPostBodySchema } from '@/lib/security/schemas/sales';
+import { assertMutationRateLimit } from '@/lib/security/rateLimit';
 
 export const dynamic = 'force-dynamic';
 
 export async function POST(req: NextRequest) {
   try {
-    const actor = await requireSessionUser();
-    const body = (await req.json()) as {
-      productId?: string;
-      quantity?: number;
-      location?: 'floor' | 'deli';
-      unitPrice?: number;
-      bundleId?: string;
-      bundleSku?: string;
-      externalRef?: string;
-    };
+    const actor = await requireOperationalStaff();
+    const limited = assertMutationRateLimit(actor.id, 'sales-record', 120);
+    if (limited) return limited;
+
+    const body = await parseJsonBody(req, salesPostBodySchema);
 
     if (body.bundleId || body.bundleSku) {
       const bundleId = body.bundleId ?? body.bundleSku ?? '';
@@ -27,26 +26,20 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: true, type: 'bundle', result });
     }
 
-    const productId = body.productId?.trim() ?? '';
-    const quantity = Number(body.quantity);
-    if (!productId) {
-      return NextResponse.json({ success: false, error: 'productId is required.' }, { status: 400 });
-    }
-
+    const productId = body.productId!;
+    const quantity = body.quantity!;
     const sale = await recordProductSale({
       productId,
       quantity,
       staffId: actor.id,
       location: body.location,
-      unitPriceOverride: Number.isFinite(Number(body.unitPrice)) ? Number(body.unitPrice) : undefined,
+      unitPriceOverride: body.unitPrice,
     });
 
     return NextResponse.json({ success: true, type: 'product', sale });
   } catch (error) {
     const authRes = authErrorResponse(error);
     if (authRes) return authRes;
-    const message = error instanceof Error ? error.message : 'Sale could not be recorded.';
-    const status = message.includes('Insufficient') || message.includes('not found') ? 400 : 500;
-    return NextResponse.json({ success: false, error: message }, { status });
+    return apiErrorFromUnknown(error, 'Sale could not be recorded.');
   }
 }

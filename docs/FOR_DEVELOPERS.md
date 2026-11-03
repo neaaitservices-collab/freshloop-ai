@@ -52,6 +52,8 @@ npm run build                # prisma generate + next build
 
 **Demo logins** (after seed): `admin@freshloop.test`, `manager@freshloop.test`, `floor@freshloop.test`, etc. Password **`freshloop`**.
 
+**Employee profile:** `staff_users.email` is the unique work-email login. `hourly_rate_per_hour` is loaded into the JWT session (`session.user.hourlyRate`) and used by `POST /api/manufacturing` labor costing (`resolveExecutionLaborRate`). Managers may set wage via `PATCH /api/users/[id]` with `{ hourlyRate }`.
+
 **RBAC (pages)**
 
 | Routes | Roles |
@@ -63,6 +65,21 @@ npm run build                # prisma generate + next build
 | `/admin` (profile) | any signed-in staff |
 
 **API writes** must use `await requireSessionUser()` (or role helpers)—never trust `staffId` / `role` from the JSON body. Middleware returns **401** for unsigned `/api/*` except `/api/auth/*`, `/api/health`, and `/api/pos/webhook` (Bearer `POS_WEBHOOK_SECRET`, required).
+
+### Input validation & API hardening
+
+| Piece | Location |
+|-------|----------|
+| Zod schemas (strict `.strict()` bodies) | `lib/security/schemas/*` |
+| JSON parse helper | `lib/security/parseJsonBody.ts` |
+| Plain-text sanitization | `lib/security/sanitize.ts` |
+| Mutation rate limits (per user / IP) | `lib/security/rateLimit.ts` |
+| Safe API errors (no Prisma/stack leaks) | `lib/domains/ai/apiError.ts` → `apiErrorFromUnknown()`, `handleApiRouteError()` |
+| Client error text from JSON | `lib/api/readApiError.ts` |
+
+Use `parseJsonBody(req, schema)` on mutating handlers. In `catch`, prefer `return handleApiRouteError('POST /api/…', error, 'User-friendly fallback.')` so the server logs the full error and the client gets `{ success: false, error, message }` only. Hot paths call `assertMutationRateLimit`. UI mutations should use `try/finally` to clear loading state and surface `error` / `message` from the API.
+
+**Secrets:** keep `AUTH_SECRET`, `DATABASE_URL`, `POS_WEBHOOK_SECRET`, `GEMINI_API_KEY`, `RESEND_API_KEY`, and Supabase service keys **server-only** (no `NEXT_PUBLIC_` prefix). See `.env.example`.
 
 ---
 

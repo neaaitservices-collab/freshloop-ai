@@ -7,6 +7,7 @@ import {
   type OcrInvoiceMeta,
 } from '@/lib/domains/receiving/invoiceOcrCommit';
 import { generateContentWithFallback, parseModelJson, tryParseModelJson } from '@/lib/domains/ai/gemini';
+import { handleApiRouteError } from '@/lib/domains/ai/apiError';
 import { authErrorResponse } from '@/lib/auth/http';
 import { requireReceivingStaff } from '@/lib/auth/guardRoute';
 import { requireSessionUser } from '@/lib/auth/session';
@@ -558,16 +559,10 @@ export async function POST(req: NextRequest) {
   } catch (error: unknown) {
     const authRes = authErrorResponse(error);
     if (authRes) return authRes;
-    console.error('API Error in /api/invoice-ocr:', error);
-    return NextResponse.json(
-      {
-        success: false,
-        error:
-          error instanceof Error
-            ? error.message
-            : 'Failed to process vendor invoice OCR',
-      },
-      { status: 500 }
+    return handleApiRouteError(
+      'POST /api/invoice-ocr',
+      error,
+      'Failed to process the invoice. Please try again.'
     );
   }
 }
