@@ -3,6 +3,7 @@ import Credentials from 'next-auth/providers/credentials';
 import { authConfig } from '@/auth.config';
 import { prisma } from '@/lib/domains/inventory/ledger';
 import { verifyPassword } from '@/lib/auth/password';
+import { getStaffHourlyRate } from '@/lib/auth/staffHourlyRate';
 import { isRoleName } from '@/lib/utils/roles';
 
 /** Credentials + JWT only — do not use PrismaAdapter (breaks credential sessions). */
@@ -20,7 +21,17 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         const password = credentials?.password?.toString() ?? '';
         if (!email || !password) return null;
 
-        const user = await prisma.user.findUnique({ where: { email } });
+        const user = await prisma.user.findUnique({
+          where: { email },
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            role: true,
+            position: true,
+            passwordHash: true,
+          },
+        });
         if (!user?.passwordHash) return null;
 
         const valid = await verifyPassword(password, user.passwordHash);
@@ -28,10 +39,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
 
         if (!isRoleName(user.role)) return null;
 
-        const hourlyRate =
-          user.hourlyRate != null && Number.isFinite(user.hourlyRate) && user.hourlyRate > 0
-            ? Number(user.hourlyRate.toFixed(4))
-            : null;
+        const hourlyRate = await getStaffHourlyRate(user.id);
 
         return {
           id: user.id,

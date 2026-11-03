@@ -1,18 +1,33 @@
 import { PrismaClient } from '@prisma/client';
 
 const globalForPrisma = globalThis as unknown as {
-  prismaClientV2?: PrismaClient;
+  prismaClientV3?: PrismaClient;
 };
 
 function clientHasCurrentModels(client: PrismaClient | undefined): client is PrismaClient {
-  const record = client as unknown as Record<string, unknown> | undefined;
-  return Boolean(record?.recipe && record?.user);
+  const record = client as unknown as {
+    recipe?: unknown;
+    user?: unknown;
+    _runtimeDataModel?: {
+      models?: {
+        User?: {
+          fields?: Array<{ name?: string }>;
+        };
+      };
+    };
+  } | undefined;
+  if (!record?.recipe || !record?.user) return false;
+  const userFields = record._runtimeDataModel?.models?.User?.fields;
+  if (Array.isArray(userFields)) {
+    return userFields.some((f) => f.name === 'hourlyRate');
+  }
+  return true;
 }
 
-export const prisma: PrismaClient = clientHasCurrentModels(globalForPrisma.prismaClientV2)
-  ? globalForPrisma.prismaClientV2
+export const prisma: PrismaClient = clientHasCurrentModels(globalForPrisma.prismaClientV3)
+  ? globalForPrisma.prismaClientV3
   : new PrismaClient({
       log: process.env.NODE_ENV === 'development' ? ['error', 'warn'] : ['error'],
     });
 
-globalForPrisma.prismaClientV2 = prisma;
+globalForPrisma.prismaClientV3 = prisma;

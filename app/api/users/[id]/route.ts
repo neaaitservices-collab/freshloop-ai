@@ -5,26 +5,37 @@ import { handleApiRouteError } from '@/lib/domains/ai/apiError';
 import { authErrorResponse } from '@/lib/auth/http';
 import { AuthError, requireRoles, requireSessionUser } from '@/lib/auth/session';
 import { MANAGER_ROLES } from '@/lib/auth/permissions';
+import { getStaffHourlyRate, setStaffHourlyRate } from '@/lib/auth/staffHourlyRate';
 import { positionByLabel } from '@/lib/utils/positions';
 import { isManager, isRoleName, type StaffUser } from '@/lib/utils/roles';
 
 export const dynamic = 'force-dynamic';
 
-function toStaffUser(user: {
-  id: string;
-  name: string;
-  email: string;
-  position: string;
-  role: Role;
-  hourlyRate?: number | null;
-}): StaffUser {
+const staffCoreSelect = {
+  id: true,
+  name: true,
+  email: true,
+  position: true,
+  role: true,
+} as const;
+
+function toStaffUser(
+  user: {
+    id: string;
+    name: string;
+    email: string;
+    position: string;
+    role: Role;
+  },
+  hourlyRate: number | null
+): StaffUser {
   return {
     id: user.id,
     name: user.name,
     email: user.email,
     position: user.position,
     role: user.role,
-    hourlyRate: user.hourlyRate ?? null,
+    hourlyRate,
   };
 }
 
@@ -51,9 +62,15 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
       );
     }
 
-    const current = await prisma.user.findUnique({ where: { id } });
+    const current = await prisma.user.findUnique({
+      where: { id },
+      select: staffCoreSelect,
+    });
     if (!current || !isRoleName(current.role)) {
-      return NextResponse.json({ success: false, error: 'That person is already gone.' }, { status: 404 });
+      return NextResponse.json(
+        { success: false, error: 'That person is already gone.' },
+        { status: 404 }
+      );
     }
 
     let position = current.position;
@@ -85,6 +102,7 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
         );
       }
     }
+
     let hourlyRateUpdate: number | null | undefined;
     if (body.hourlyRate !== undefined) {
       if (!isManager(actor.role)) {
@@ -114,10 +132,19 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
         email,
         position,
         role,
-        ...(hourlyRateUpdate !== undefined ? { hourlyRate: hourlyRateUpdate } : {}),
       },
+      select: staffCoreSelect,
     });
-    return NextResponse.json({ success: true, user: toStaffUser(user) });
+
+    const finalHourlyRate =
+      hourlyRateUpdate !== undefined
+        ? await setStaffHourlyRate(id, hourlyRateUpdate)
+        : await getStaffHourlyRate(id);
+
+    return NextResponse.json({
+      success: true,
+      user: toStaffUser(user, finalHourlyRate),
+    });
   } catch (error) {
     const authRes = authErrorResponse(error);
     if (authRes) return authRes;
@@ -129,9 +156,15 @@ export async function DELETE(_req: NextRequest, context: { params: Promise<{ id:
   try {
     await requireRoles(MANAGER_ROLES);
     const { id } = await context.params;
-    const current = await prisma.user.findUnique({ where: { id } });
+    const current = await prisma.user.findUnique({
+      where: { id },
+      select: staffCoreSelect,
+    });
     if (!current) {
-      return NextResponse.json({ success: false, error: 'That person is already gone.' }, { status: 404 });
+      return NextResponse.json(
+        { success: false, error: 'That person is already gone.' },
+        { status: 404 }
+      );
     }
     if (current.role === 'ADMIN') {
       const admins = await prisma.user.count({ where: { role: 'ADMIN' } });
