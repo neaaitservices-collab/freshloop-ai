@@ -89,7 +89,7 @@ export function KitchenFloorInbox({ focusInbox }: { focusInbox?: boolean }) {
             <CardTitle>
               {items.length} new from the floor
             </CardTitle>
-            <CardDescription>Rescue transfers to kitchen prep · last 24h</CardDescription>
+            <CardDescription>Rescue transfers to production prep · last 24h</CardDescription>
           </div>
         </div>
         <Link href="/inventory/floor" className="shrink-0">

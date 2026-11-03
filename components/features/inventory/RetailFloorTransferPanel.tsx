@@ -87,8 +87,8 @@ export function RetailFloorTransferPanel({
           {listDensity !== 'compact' ? (
             <p className="text-[11px] text-slate-400">
               {priorityOnly
-                ? 'Pull window items — swipe on mobile or use the action buttons.'
-                : 'Shelf stock — send to production, markdown, or waste.'}
+                ? 'Pull window items — tap a row to send to production or log waste.'
+                : 'Shelf stock — send to production or log waste.'}
             </p>
           ) : null}
         </div>

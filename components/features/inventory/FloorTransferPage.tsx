@@ -1,12 +1,16 @@
 'use client';
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import Link from 'next/link';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowRight, Search } from 'lucide-react';
+import { Search } from 'lucide-react';
 import { useRole } from '@/components/auth/RoleProvider';
 import { RetailFloorTransferPanel } from '@/components/features/inventory/RetailFloorTransferPanel';
 import { PullSliderControl } from '@/components/ui/PullSliderControl';
+import {
+  useStorePullSensitivityDays,
+  type StorePullSensitivityDays,
+} from '@/hooks/use-store-pull-sensitivity-days';
+import { isAdmin } from '@/lib/utils/roles';
 import { Toast } from '@/components/ui/Toast';
 import type { StockLevel } from '@/lib/domains/inventory/stock';
 import type { DepartmentType } from '@/lib/types';
@@ -28,10 +32,24 @@ export function FloorTransferPage({ levels: initialLevels }: { levels: StockLeve
   const { levels, performMove, setLevels } = useOptimisticInventoryLevels(initialLevels);
   const [query, setQuery] = useState('');
   const [department, setDepartment] = useState<string>('ALL');
-  const [pullDays, setPullDays] = useState(3);
+  const storePullDays = useStorePullSensitivityDays();
+  const [pullDays, setPullDays] = useState<StorePullSensitivityDays>(3);
+  const adminPullSeeded = useRef(false);
   const [toast, setToast] = useState<{ text: string; kitchen?: boolean } | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const { activeUser } = useRole();
+  const canConfigurePull = activeUser != null && isAdmin(activeUser.role);
+
+  useEffect(() => {
+    if (!canConfigurePull) {
+      setPullDays(storePullDays);
+      return;
+    }
+    if (!adminPullSeeded.current) {
+      setPullDays(storePullDays);
+      adminPullSeeded.current = true;
+    }
+  }, [canConfigurePull, storePullDays]);
 
   useEffect(() => {
     const sync = () => {
@@ -69,7 +87,7 @@ export function FloorTransferPage({ levels: initialLevels }: { levels: StockLeve
     setErrorMessage(null);
     setToast({
       text: message,
-      kitchen: /sent to kitchen/i.test(message),
+      kitchen: /sent to production/i.test(message),
     });
     router.refresh();
   };
@@ -83,28 +101,18 @@ export function FloorTransferPage({ levels: initialLevels }: { levels: StockLeve
           </p>
           <h1 className="text-xl font-black text-slate-100 sm:text-2xl">Move shelf stock</h1>
           <p className="mt-1 max-w-lg text-xs text-slate-400">
-            Send to production, mark down, or waste — pick the amount in lbs or units. Production prep is
-            managed on{' '}
-            <Link href="/production" className="text-amber-300 underline">
-              Production
-            </Link>
-            .
+            Send stock to production prep or log floor waste — choose amounts in lbs or units.
           </p>
         </div>
-        <Link
-          href="/production"
-          className="inline-flex min-h-12 items-center gap-1.5 rounded-xl border border-blue-900/50 bg-blue-950/30 px-4 py-3 text-xs font-bold text-blue-200"
-        >
-          Production
-          <ArrowRight className="h-4 w-4" />
-        </Link>
       </div>
 
-      <PullSliderControl
-        currentPullDays={pullDays}
-        onPullDaysChange={setPullDays}
-        affectedCount={flaggedCount}
-      />
+      {canConfigurePull ? (
+        <PullSliderControl
+          currentPullDays={pullDays}
+          onPullDaysChange={setPullDays}
+          affectedCount={flaggedCount}
+        />
+      ) : null}
 
       <div className="mb-4 flex flex-wrap gap-2">
         <select
@@ -180,14 +188,6 @@ export function FloorTransferPage({ levels: initialLevels }: { levels: StockLeve
       {toast ? (
         <div className="fixed bottom-24 left-1/2 z-50 max-w-md -translate-x-1/2 rounded-2xl border border-slate-700 bg-slate-900/95 px-4 py-3 text-sm font-bold text-slate-100 shadow-xl md:bottom-8">
           <p>{toast.text}</p>
-          {toast.kitchen ? (
-            <Link
-              href="/production"
-              className="mt-2 inline-flex min-h-11 items-center text-xs font-bold text-blue-300 underline-offset-2 hover:underline"
-            >
-              Open production
-            </Link>
-          ) : null}
         </div>
       ) : null}
     </main>

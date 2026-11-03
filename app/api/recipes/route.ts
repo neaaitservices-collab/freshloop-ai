@@ -1,14 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/domains/inventory/ledger';
-import { requireSessionUser } from '@/lib/auth/session';
+import { requireKitchenStaff } from '@/lib/auth/guardRoute';
 import { authErrorResponse } from '@/lib/auth/http';
+import { apiErrorFromUnknown } from '@/lib/domains/ai/apiError';
+import { parseJsonBody } from '@/lib/security/parseJsonBody';
+import { recipeCreateBodySchema } from '@/lib/security/schemas/recipes';
+import { assertMutationRateLimit } from '@/lib/security/rateLimit';
 import { Department, UnitType, RecipeStatus } from '@prisma/client';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET() {
   try {
-    await requireSessionUser();
+    await requireKitchenStaff();
 
     const [recipes, inventoryProducts] = await Promise.all([
       prisma.recipe.findMany({
@@ -44,23 +48,19 @@ export async function GET() {
   } catch (error: unknown) {
     const authRes = authErrorResponse(error);
     if (authRes) return authRes;
-    return NextResponse.json(
-      {
-        success: false,
-        error: error instanceof Error ? error.message : 'Could not fetch recipes.',
-      },
-      { status: 500 }
-    );
+    return apiErrorFromUnknown(error, 'Could not fetch recipes.');
   }
 }
 
 export async function POST(req: NextRequest) {
   try {
-    await requireSessionUser();
-    const body = await req.json();
+    const actor = await requireKitchenStaff();
+    const limited = assertMutationRateLimit(actor.id, 'recipe-create', 30);
+    if (limited) return limited;
 
+    const body = await parseJsonBody(req, recipeCreateBodySchema);
     const {
-      name,
+      name: trimmedName,
       category,
       yieldPortions,
       portionSize,
@@ -70,51 +70,11 @@ export async function POST(req: NextRequest) {
       laborHours,
       laborRate,
       packagingCostPerUnit,
-      ingredients, // Array of { productId: string, quantity: number, unit?: string }
+      ingredients,
     } = body;
 
-    const trimmedName = typeof name === 'string' ? name.trim() : '';
-    if (!trimmedName) {
-      return NextResponse.json(
-        { success: false, error: 'Recipe name is required.' },
-        { status: 400 }
-      );
-    }
-
-    const yieldQty = Number(yieldPortions);
-    if (!Number.isFinite(yieldQty) || yieldQty <= 0) {
-      return NextResponse.json(
-        { success: false, error: 'Standard yield portions must be greater than 0.' },
-        { status: 400 }
-      );
-    }
-
-    if (!Array.isArray(ingredients) || ingredients.length === 0) {
-      return NextResponse.json(
-        { success: false, error: 'At least one ingredient from inventory is required.' },
-        { status: 400 }
-      );
-    }
-
-    // Validate that each ingredient exists
-    const validIngredients: { productId: string; quantity: number; unit?: string }[] = [];
-    for (const ing of ingredients) {
-      const pid = String(ing.productId ?? '').trim();
-      const qty = Number(ing.quantity);
-      if (!pid || !Number.isFinite(qty) || qty <= 0) continue;
-      validIngredients.push({
-        productId: pid,
-        quantity: qty,
-        unit: ing.unit ? String(ing.unit).trim() : undefined,
-      });
-    }
-
-    if (validIngredients.length === 0) {
-      return NextResponse.json(
-        { success: false, error: 'Please enter valid ingredient quantities.' },
-        { status: 400 }
-      );
-    }
+    const yieldQty = yieldPortions;
+    const validIngredients = ingredients;
 
     const ingredientProducts = await prisma.product.findMany({
       where: { id: { in: validIngredients.map((i) => i.productId) } },
@@ -208,12 +168,6 @@ export async function POST(req: NextRequest) {
     const authRes = authErrorResponse(error);
     if (authRes) return authRes;
     console.error('Failed to create custom recipe:', error);
-    return NextResponse.json(
-      {
-        success: false,
-        error: error instanceof Error ? error.message : 'Could not save recipe.',
-      },
-      { status: 500 }
-    );
+    return apiErrorFromUnknown(error, 'Could not save recipe.');
   }
 }

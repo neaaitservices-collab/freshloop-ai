@@ -18,6 +18,10 @@ import {
 } from '@/lib/domains/inventory/lots';
 import { markdownRevenueImpact } from '@/lib/utils/money';
 import { findLatestStoreSetting } from '@/lib/domains/stats/storeSettingSelect';
+import {
+  buildVolumetricScrapNotes,
+  serializeVolumetricScrapNotes,
+} from '@/lib/domains/inventory/volumetricScrapLedger';
 import { departmentLabel } from '@/lib/domains/inventory/inventoryCatalog';
 
 export const PAR_CASES = DEFAULT_PAR_CASES;
@@ -1018,7 +1022,7 @@ export async function moveKitchenPrepToWaste(
   const product = await prisma.product.findUnique({ where: { id: productId } });
   if (!product) throw new Error('Item was not found.');
   const prepQty = await getCurrentStock(productId, InventoryLocation.Kitchen_Prep);
-  if (!(prepQty > 0)) throw new Error('Nothing is in kitchen prep to discard.');
+  if (!(prepQty > 0)) throw new Error('Nothing is in production prep to discard.');
   const requested =
     quantity !== undefined && Number.isFinite(quantity) ? Number(quantity) : prepQty;
   const qty = Number(Math.min(prepQty, Math.max(0, requested)).toFixed(4));
@@ -1053,7 +1057,11 @@ export async function moveKitchenPrepToWaste(
 export async function logVolumetricScrapBuckets(
   buckets: number,
   staffId: string
-): Promise<{ buckets: number; referenceId: string }> {
+): Promise<{
+  buckets: number;
+  referenceId: string;
+  preview: ReturnType<typeof buildVolumetricScrapNotes>;
+}> {
   if (!Number.isFinite(buckets) || buckets <= 0) {
     throw new Error('Bucket count must be greater than zero.');
   }
@@ -1064,22 +1072,32 @@ export async function logVolumetricScrapBuckets(
   });
   if (!anchor) throw new Error('No catalog product available to anchor scrap ledger rows.');
   const settings = await findLatestStoreSetting();
-  const scrapBucketVolumeL = settings?.scrapBucketVolumeL ?? 20;
+  const scrapSettings = {
+    scrapBucketVolumeL: settings?.scrapBucketVolumeL ?? 20,
+    estimatedWeightPerLiterKg: settings?.estimatedWeightPerLiterKg ?? 0.65,
+    defaultScrapCostPerKg: settings?.defaultScrapCostPerKg ?? 3.5,
+  };
   const qty = Number(buckets.toFixed(4));
   const referenceId = `${VOLUMETRIC_SCRAP_REF_PREFIX}-${Date.now()}`;
-  await prisma.inventoryTransaction.create({
-    data: {
-      productId: anchor.id,
-      staffId: staffId.trim() || 'staff-kitchen',
-      qtyChange: qty,
-      transactionType: TransactionType.Waste,
-      fromLocation: InventoryLocation.Kitchen_Prep,
-      toLocation: InventoryLocation.Waste_Bin,
-      unitCostAtTime: 0,
-      referenceId,
-      notes: `Volumetric scrap: ${qty} bucket(s) at ${scrapBucketVolumeL}L`,
-    },
-  });
+  const preview = buildVolumetricScrapNotes(qty, scrapSettings);
+  const notes = serializeVolumetricScrapNotes(preview);
+
+  await prisma.$transaction(async (tx) => {
+    await tx.inventoryTransaction.create({
+      data: {
+        productId: anchor.id,
+        staffId: staffId.trim() || 'staff-kitchen',
+        qtyChange: qty,
+        transactionType: TransactionType.Waste,
+        fromLocation: InventoryLocation.Kitchen_Prep,
+        toLocation: InventoryLocation.Waste_Bin,
+        unitCostAtTime: 0,
+        referenceId,
+        notes,
+      },
+    });
+  }, LEDGER_WRITE_TX);
+
   invalidateInventoryCaches();
-  return { buckets: qty, referenceId };
+  return { buckets: qty, referenceId, preview };
 }

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Role } from '@prisma/client';
 import { prisma } from '@/lib/domains/inventory/ledger';
+import { handleApiRouteError } from '@/lib/domains/ai/apiError';
 import { authErrorResponse } from '@/lib/auth/http';
 import { AuthError, requireRoles, requireSessionUser } from '@/lib/auth/session';
 import { MANAGER_ROLES } from '@/lib/auth/permissions';
@@ -15,6 +16,7 @@ function toStaffUser(user: {
   email: string;
   position: string;
   role: Role;
+  hourlyRate?: number | null;
 }): StaffUser {
   return {
     id: user.id,
@@ -22,6 +24,7 @@ function toStaffUser(user: {
     email: user.email,
     position: user.position,
     role: user.role,
+    hourlyRate: user.hourlyRate ?? null,
   };
 }
 
@@ -37,6 +40,7 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
       name?: string;
       email?: string;
       position?: string;
+      hourlyRate?: number | null;
     };
     const name = body.name?.trim() ?? '';
     const email = body.email?.trim().toLowerCase() ?? '';
@@ -81,20 +85,43 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
         );
       }
     }
+    let hourlyRateUpdate: number | null | undefined;
+    if (body.hourlyRate !== undefined) {
+      if (!isManager(actor.role)) {
+        return NextResponse.json(
+          { success: false, error: 'Only a manager can change hourly wage.' },
+          { status: 403 }
+        );
+      }
+      if (body.hourlyRate === null) {
+        hourlyRateUpdate = null;
+      } else {
+        const parsed = Number(body.hourlyRate);
+        if (!Number.isFinite(parsed) || parsed <= 0 || parsed > 10_000) {
+          return NextResponse.json(
+            { success: false, error: 'Hourly wage must be a positive number.' },
+            { status: 400 }
+          );
+        }
+        hourlyRateUpdate = Number(parsed.toFixed(2));
+      }
+    }
+
     const user = await prisma.user.update({
       where: { id },
-      data: { name, email, position, role },
+      data: {
+        name,
+        email,
+        position,
+        role,
+        ...(hourlyRateUpdate !== undefined ? { hourlyRate: hourlyRateUpdate } : {}),
+      },
     });
     return NextResponse.json({ success: true, user: toStaffUser(user) });
   } catch (error) {
     const authRes = authErrorResponse(error);
     if (authRes) return authRes;
-    const message = error instanceof Error ? error.message : 'Staff could not be updated.';
-    const status = message.includes('Unique constraint') ? 409 : 500;
-    return NextResponse.json(
-      { success: false, error: status === 409 ? 'That email is already in use.' : message },
-      { status }
-    );
+    return handleApiRouteError('PATCH /api/users/[id]', error, 'Staff could not be updated.');
   }
 }
 
@@ -120,9 +147,6 @@ export async function DELETE(_req: NextRequest, context: { params: Promise<{ id:
   } catch (error) {
     const authRes = authErrorResponse(error);
     if (authRes) return authRes;
-    return NextResponse.json(
-      { success: false, error: error instanceof Error ? error.message : 'Staff could not be removed.' },
-      { status: 500 }
-    );
+    return handleApiRouteError('DELETE /api/users/[id]', error, 'Staff could not be removed.');
   }
 }

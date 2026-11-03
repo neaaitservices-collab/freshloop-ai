@@ -8,8 +8,8 @@ export function OperationsLiveTransfers({ pullDays }: { pullDays: number }) {
     <LiveSubInventoryTransfers
       pullDays={pullDays}
       defaultTab="retail_floor"
-      title="Live floor & kitchen transfers"
-      description="Tap a SKU to transfer, markdown, or log waste. Moves write to the inventory ledger immediately."
+      title="Live floor & production transfers"
+      description="Tap a SKU to send to production or log waste. Moves write to the inventory ledger immediately."
       showClerkFloorLink
     />
   );

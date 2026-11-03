@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ArrowRight, ChevronDown, Search, Sparkles } from 'lucide-react';
@@ -8,6 +8,11 @@ import { useRole } from '@/components/auth/RoleProvider';
 import { InventoryMasterDetail } from '@/components/features/inventory/InventoryMasterDetail';
 import { SubInventoryWorkspace } from '@/components/features/inventory/SubInventoryWorkspace';
 import { PullSliderControl } from '@/components/ui/PullSliderControl';
+import {
+  useStorePullSensitivityDays,
+  type StorePullSensitivityDays,
+} from '@/hooks/use-store-pull-sensitivity-days';
+import { isAdmin } from '@/lib/utils/roles';
 import { Card, CardBody } from '@/components/ui/Card';
 import { Input, Select } from '@/components/ui/Input';
 import { Toast } from '@/components/ui/Toast';
@@ -40,11 +45,25 @@ export function SlateInventory({
     useOptimisticInventoryLevels(initialLevels);
   const [query, setQuery] = useState('');
   const [department, setDepartment] = useState<string>('ALL');
-  const [pullDays, setPullDays] = useState(3);
+  const storePullDays = useStorePullSensitivityDays();
+  const [pullDays, setPullDays] = useState<StorePullSensitivityDays>(3);
+  const adminPullSeeded = useRef(false);
   const [toast, setToast] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const { activeUser } = useRole();
+  const canConfigurePull = activeUser != null && isAdmin(activeUser.role);
+
+  useEffect(() => {
+    if (!canConfigurePull) {
+      setPullDays(storePullDays);
+      return;
+    }
+    if (!adminPullSeeded.current) {
+      setPullDays(storePullDays);
+      adminPullSeeded.current = true;
+    }
+  }, [canConfigurePull, storePullDays]);
 
   useEffect(() => {
     const syncFromServer = () => {
@@ -121,7 +140,7 @@ export function SlateInventory({
             accent: 'text-amber-400/90',
           },
           {
-            label: 'Kitchen prep',
+            label: 'Production prep',
             value: `${kitchenRoutedCount}`,
             sub: 'SKUs with prep balance',
             accent: 'text-emerald-400/90',
@@ -153,11 +172,13 @@ export function SlateInventory({
         ))}
       </div>
 
-      <PullSliderControl
-        currentPullDays={pullDays}
-        onPullDaysChange={setPullDays}
-        affectedCount={flaggedForMetrics.length}
-      />
+      {canConfigurePull ? (
+        <PullSliderControl
+          currentPullDays={pullDays}
+          onPullDaysChange={setPullDays}
+          affectedCount={flaggedForMetrics.length}
+        />
+      ) : null}
 
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
         <Select
@@ -219,7 +240,7 @@ export function SlateInventory({
           onClick={() => setShowAdvanced((v) => !v)}
           className="flex w-full items-center justify-between px-4 py-3 text-left text-sm font-bold text-slate-200 hover:bg-slate-800/40"
         >
-          Split view: retail floor &amp; kitchen prep
+          Split view: retail floor &amp; production prep
           <ChevronDown
             className={`h-4 w-4 text-slate-400 transition ${showAdvanced ? 'rotate-180' : ''}`}
           />

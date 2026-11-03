@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createPasswordResetToken, passwordResetUrl } from '@/lib/auth/passwordReset';
 import { sendStaffEmail } from '@/lib/auth/sendStaffEmail';
-import { apiError } from '@/lib/domains/ai/apiError';
+import { apiError, apiErrorFromUnknown } from '@/lib/domains/ai/apiError';
+import { parseJsonBody } from '@/lib/security/parseJsonBody';
+import { forgotPasswordBodySchema } from '@/lib/security/schemas/auth';
+import { assertMutationRateLimit, clientIpKey } from '@/lib/security/rateLimit';
 
 export const dynamic = 'force-dynamic';
 
@@ -10,11 +13,11 @@ const GENERIC_OK =
 
 export async function POST(req: NextRequest) {
   try {
-    const body = (await req.json()) as { email?: string };
-    const email = body.email?.trim().toLowerCase() ?? '';
-    if (!email || !email.includes('@')) {
-      return apiError('Enter a valid work email.', 400);
-    }
+    const limited = assertMutationRateLimit(clientIpKey(req), 'auth-forgot-password', 6, 15 * 60_000);
+    if (limited) return limited;
+
+    const body = await parseJsonBody(req, forgotPasswordBodySchema);
+    const email = body.email.trim().toLowerCase();
 
     const token = await createPasswordResetToken(email);
     if (!token) {
@@ -55,7 +58,6 @@ export async function POST(req: NextRequest) {
         : {}),
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Could not send reset email.';
-    return apiError(message, 500);
+    return apiErrorFromUnknown(error, 'Could not send reset email.');
   }
 }

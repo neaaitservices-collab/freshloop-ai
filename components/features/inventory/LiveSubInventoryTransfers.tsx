@@ -34,6 +34,8 @@ export interface LiveSubInventoryTransfersProps {
   compact?: boolean;
   /** Mobile production tab: use remaining viewport for the SKU list. */
   mobileFillViewport?: boolean;
+  /** Hydrated from `/api/production/bootstrap` to skip mount `GET /api/inventory/levels`. */
+  initialLevels?: StockLevel[] | null;
 }
 
 /** Live ledger levels + operations-style tap-to-modal transfer UI. */
@@ -46,10 +48,11 @@ export function LiveSubInventoryTransfers({
   visibleTabs,
   compact = false,
   mobileFillViewport = false,
+  initialLevels = null,
 }: LiveSubInventoryTransfersProps) {
   const { activeUser } = useRole();
-  const { levels, setLevels, performMove } = useOptimisticInventoryLevels(null);
-  const [loading, setLoading] = useState(true);
+  const { levels, setLevels, performMove } = useOptimisticInventoryLevels(initialLevels);
+  const [loading, setLoading] = useState(initialLevels === null);
   const [toast, setToast] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [skuQuery, setSkuQuery] = useState('');
@@ -91,7 +94,15 @@ export function LiveSubInventoryTransfers({
   );
 
   useEffect(() => {
-    void loadFullCatalog();
+    if (!Array.isArray(initialLevels)) return;
+    setLevels(filterLevelsWithAnyStock(initialLevels));
+    setLoading(false);
+  }, [initialLevels, setLevels]);
+
+  useEffect(() => {
+    if (initialLevels === null) {
+      void loadFullCatalog();
+    }
     const onUpdate = (event: Event) => {
       const detail = (event as CustomEvent<InventoryUpdatedDetail>).detail;
       if (detail?.source === 'level-patch') return;
@@ -103,7 +114,7 @@ export function LiveSubInventoryTransfers({
     };
     window.addEventListener('freshloop-inventory-updated', onUpdate);
     return () => window.removeEventListener('freshloop-inventory-updated', onUpdate);
-  }, [loadFullCatalog, applyLevel]);
+  }, [initialLevels, loadFullCatalog, applyLevel]);
 
   useEffect(() => {
     if (!tabs.includes(activeTab)) {
@@ -161,19 +172,20 @@ export function LiveSubInventoryTransfers({
             />
           ) : null}
 
-          {compact ? (
-            <div className="relative mt-1">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
-              <input
-                type="search"
-                value={skuQuery}
-                onChange={(e) => setSkuQuery(e.target.value)}
-                placeholder="Filter SKUs…"
-                aria-label="Filter inventory SKUs"
-                className="w-full rounded-xl border border-slate-700 bg-slate-950 py-2 pl-9 pr-3 text-xs text-white placeholder:text-slate-500 focus:border-emerald-500/50 focus:outline-none"
-              />
-            </div>
-          ) : null}
+          <div className={cn('relative', compact ? 'mt-1' : 'mt-2 sm:max-w-md')}>
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
+            <input
+              type="search"
+              value={skuQuery}
+              onChange={(e) => setSkuQuery(e.target.value)}
+              placeholder="Search item or supplier…"
+              aria-label="Search inventory SKUs"
+              className={cn(
+                'w-full rounded-xl border border-slate-700 bg-slate-950 py-2 pl-9 pr-3 text-white placeholder:text-slate-500 focus:border-emerald-500/50 focus:outline-none',
+                compact ? 'text-xs' : 'min-h-11 text-sm'
+              )}
+            />
+          </div>
         </CardHeader>
         <CardBody
           className={cn(

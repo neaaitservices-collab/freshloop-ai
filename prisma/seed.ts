@@ -238,6 +238,7 @@ const STAFF_SEED = [
     email: "admin@freshloop.test",
     position: "Owner",
     role: "ADMIN" as const,
+    hourlyRate: 22,
   },
   {
     id: "staff-manager",
@@ -245,6 +246,7 @@ const STAFF_SEED = [
     email: "manager@freshloop.test",
     position: "Store manager",
     role: "STORE_MANAGER" as const,
+    hourlyRate: 20,
   },
   {
     id: "staff-receiving",
@@ -252,6 +254,7 @@ const STAFF_SEED = [
     email: "receiving@freshloop.test",
     position: "Back door",
     role: "RECEIVING_CLERK" as const,
+    hourlyRate: 17.6,
   },
   {
     id: "staff-floor",
@@ -259,6 +262,7 @@ const STAFF_SEED = [
     email: "floor@freshloop.test",
     position: "Produce floor",
     role: "FLOOR_STAFF" as const,
+    hourlyRate: 16.5,
   },
   {
     id: "staff-kitchen",
@@ -266,6 +270,7 @@ const STAFF_SEED = [
     email: "kitchen@freshloop.test",
     position: "Deli kitchen",
     role: "DELI_CHEF" as const,
+    hourlyRate: 19.25,
   },
 ];
 
@@ -280,12 +285,14 @@ async function seedStaffUsers() {
         email: staff.email,
         position: staff.position,
         role: staff.role,
+        hourlyRate: staff.hourlyRate,
         passwordHash,
       },
       update: {
         name: staff.name,
         position: staff.position,
         role: staff.role,
+        hourlyRate: staff.hourlyRate,
         passwordHash,
       },
     });

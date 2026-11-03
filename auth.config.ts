@@ -24,6 +24,9 @@ export const authConfig = {
           token.role = user.role as RoleName;
         }
         token.position = user.position;
+        const rate = (user as { hourlyRate?: number | null }).hourlyRate;
+        token.hourlyRate =
+          typeof rate === 'number' && Number.isFinite(rate) && rate > 0 ? rate : null;
       }
       if (!token.id && token.sub) {
         token.id = token.sub;
@@ -41,6 +44,9 @@ export const authConfig = {
         }
         session.user.position =
           typeof token.position === 'string' ? token.position : '';
+        const rate = token.hourlyRate;
+        session.user.hourlyRate =
+          typeof rate === 'number' && Number.isFinite(rate) && rate > 0 ? rate : null;
       }
       return session;
     },

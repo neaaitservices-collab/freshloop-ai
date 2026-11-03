@@ -29,12 +29,15 @@ function mapSessionUser(session: ReturnType<typeof useSession>['data']): StaffUs
   if (!user?.id || !user.email) return null;
   const role = user.role && isRoleName(user.role) ? user.role : null;
   if (!role) return null;
+  const rate = user.hourlyRate;
   return {
     id: user.id,
     name: user.name ?? '',
     email: user.email,
     position: user.position ?? '',
     role,
+    hourlyRate:
+      typeof rate === 'number' && Number.isFinite(rate) && rate > 0 ? rate : null,
   };
 }
 

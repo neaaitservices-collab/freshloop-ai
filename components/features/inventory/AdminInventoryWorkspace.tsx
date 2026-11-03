@@ -15,7 +15,7 @@ import {
 } from '@/lib/domains/inventory/inventoryCatalog';
 import type { StockLevel, StockOverrideAudit } from '@/lib/domains/inventory/stock';
 import type { RetailUnit } from '@/lib/domains/receiving/yieldPricing';
-import { isManager } from '@/lib/utils/roles';
+import { canOverrideInventoryStock } from '@/lib/auth/staffCapabilities';
 
 export function AdminInventoryWorkspace({
   levels: initialLevels,
@@ -32,7 +32,9 @@ export function AdminInventoryWorkspace({
   const [roleReady, setRoleReady] = useState(false);
   useEffect(() => setRoleReady(true), []);
   const canOverride =
-    roleReady && !roleLoading && Boolean(activeUser && isManager(activeUser.role));
+    roleReady &&
+    !roleLoading &&
+    Boolean(activeUser && canOverrideInventoryStock(activeUser.role));
   const canRemoveFromCatalog =
     roleReady && !roleLoading && Boolean(activeUser && activeUser.role === 'ADMIN');
 

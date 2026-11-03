@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Scale, CheckCircle2, Plus, RotateCcw, Loader2 } from 'lucide-react';
+import { Scale, CheckCircle2, Plus, RotateCcw, Loader2, AlertCircle } from 'lucide-react';
 import {
   computeScrapBucketEconomics,
   scrapTotalsForBucketCount,
@@ -45,7 +45,8 @@ export const VolumetricScrapForm: React.FC<VolumetricScrapFormProps> = ({
 }) => {
   const [customBuckets, setCustomBuckets] = useState<number>(1);
   const [lastLoggedToast, setLastLoggedToast] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
+  const [errorToast, setErrorToast] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
 
   const scrapInputs = {
     volumeL: storeConfig.scrapBucketVolumeL,
@@ -60,8 +61,10 @@ export const VolumetricScrapForm: React.FC<VolumetricScrapFormProps> = ({
   const totalWeightTodayKg = todayTotals.totalKg;
   const totalScrapCostToday = todayTotals.totalDollars;
 
+  const customPreview = scrapTotalsForBucketCount(customBuckets, scrapInputs);
+
   const triggerOneClickLog = async (bucketsCount: number) => {
-    if (bucketsCount <= 0 || submitting) return;
+    if (bucketsCount <= 0 || isLoading) return;
 
     const logged = scrapTotalsForBucketCount(bucketsCount, scrapInputs);
     const event: VolumetricScrapLoggedEvent = {
@@ -72,17 +75,21 @@ export const VolumetricScrapForm: React.FC<VolumetricScrapFormProps> = ({
       loggedAt: new Date().toISOString(),
     };
 
-    setSubmitting(true);
+    setIsLoading(true);
+    setErrorToast(null);
     try {
       await onLogScrapBuckets(bucketsCount, event);
       setLastLoggedToast(
         `+${bucketsCount} cubeta(s) (${event.estimatedWeightKg} kg · $${event.estimatedScrapCostValue.toFixed(2)})`
       );
       setTimeout(() => setLastLoggedToast(null), 3500);
-    } catch {
-      /* parent shows error toast */
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : 'No se pudo registrar el scrap volumétrico.';
+      setErrorToast(message);
+      setTimeout(() => setErrorToast(null), 5000);
     } finally {
-      setSubmitting(false);
+      setIsLoading(false);
     }
   };
 
@@ -119,8 +126,11 @@ export const VolumetricScrapForm: React.FC<VolumetricScrapFormProps> = ({
               >
                 Registro Volumétrico ({volumeLabel}L)
               </h2>
-              <span className="rounded-full border border-slate-600 px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide text-slate-300">
-                StoreSetting Sync
+              <span
+                className="rounded-full border border-slate-600 px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide text-slate-300"
+                title="Bucket size, kg/L, and $/kg from Admin → Store settings"
+              >
+                Store settings
               </span>
             </div>
             {!compact ? (
@@ -166,7 +176,7 @@ export const VolumetricScrapForm: React.FC<VolumetricScrapFormProps> = ({
               <button
                 key={bucketPreset}
                 type="button"
-                disabled={submitting}
+                disabled={isLoading}
                 onClick={() => void triggerOneClickLog(bucketPreset)}
                 className={
                   compact
@@ -214,22 +224,22 @@ export const VolumetricScrapForm: React.FC<VolumetricScrapFormProps> = ({
                 min={0.25}
                 step={0.25}
                 value={customBuckets}
-                disabled={submitting}
+                disabled={isLoading}
                 onChange={(e) =>
                   setCustomBuckets(Math.max(0.25, Number(e.target.value) || 1))
                 }
                 className="w-20 rounded-xl border border-slate-700 bg-slate-900 px-2.5 py-2 text-xs font-bold font-mono text-white"
               />
               <span className="font-mono text-[11px] text-slate-400">
-                = {(customBuckets * weightPerBucketKg).toFixed(1)} kg ($
-                {(customBuckets * costPerBucket).toFixed(2)})
+                Preview: {customPreview.totalVolumeL} L · {customPreview.totalKg} kg · $
+                {customPreview.totalDollars.toFixed(2)}
               </span>
             </div>
           </div>
 
           <button
             type="button"
-            disabled={submitting}
+            disabled={isLoading}
             onClick={() => void triggerOneClickLog(customBuckets)}
             className={
               compact
@@ -237,7 +247,7 @@ export const VolumetricScrapForm: React.FC<VolumetricScrapFormProps> = ({
                 : 'inline-flex min-h-11 shrink-0 items-center justify-center gap-2 rounded-xl bg-rose-500 px-5 py-2.5 text-xs font-black text-slate-950 shadow-lg shadow-rose-500/25 transition-all hover:bg-rose-400 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-70'
             }
           >
-            {submitting ? (
+            {isLoading ? (
               <>
                 <Loader2 className="h-4 w-4 animate-spin" />
                 …
@@ -260,7 +270,7 @@ export const VolumetricScrapForm: React.FC<VolumetricScrapFormProps> = ({
       >
         <div className={compact ? 'flex flex-wrap gap-1.5' : 'flex flex-wrap gap-2 text-[11px]'}>
           <span className="rounded-full border border-emerald-500/30 bg-emerald-950/50 px-3 py-1 font-semibold text-emerald-100">
-            Acumulado Hoy:{' '}
+            Acumulado KPI (30 días):{' '}
             <span className="font-mono text-white">
               {totalBucketsLoggedToday} cubetas ({totalVolumeTodayL}L)
             </span>
@@ -277,7 +287,13 @@ export const VolumetricScrapForm: React.FC<VolumetricScrapFormProps> = ({
           </span>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {errorToast && (
+            <span className="flex items-center gap-1 text-[11px] font-bold text-rose-400">
+              <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+              {errorToast}
+            </span>
+          )}
           {lastLoggedToast && (
             <span className="flex items-center gap-1 text-[11px] font-bold text-emerald-400">
               <CheckCircle2 className="h-3.5 w-3.5" />
@@ -292,7 +308,7 @@ export const VolumetricScrapForm: React.FC<VolumetricScrapFormProps> = ({
               className="inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1 text-[11px] font-semibold text-slate-400 transition-colors hover:text-white"
             >
               <RotateCcw className="h-3 w-3" />
-              Reiniciar Turno
+              Actualizar KPI
             </button>
           )}
         </div>

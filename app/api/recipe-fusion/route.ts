@@ -4,6 +4,7 @@ import { getFloorPullFusionItems } from '@/lib/domains/inventory/fusionInventory
 import { getKitchenPrepFusionItems } from '@/lib/domains/kitchen/prepToFusionItems';
 import { listFusionRecipes, saveFusionRecipe } from '@/lib/domains/kitchen/recipeFusionStore';
 import type { InventoryItem } from '@/types';
+import { handleApiRouteError } from '@/lib/domains/ai/apiError';
 import { authErrorResponse } from '@/lib/auth/http';
 import { requireKitchenStaff } from '@/lib/auth/guardRoute';
 import { requireSessionUser } from '@/lib/auth/session';
@@ -16,8 +17,7 @@ export async function GET() {
   } catch (error: unknown) {
     const authRes = authErrorResponse(error);
     if (authRes) return authRes;
-    const message = error instanceof Error ? error.message : 'Failed to load fusion recipes.';
-    return NextResponse.json({ success: false, error: message }, { status: 500 });
+    return handleApiRouteError('GET /api/recipe-fusion', error, 'Failed to load fusion recipes.');
   }
 }
 
@@ -73,7 +73,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         {
           success: false,
-          error: 'No kitchen prep or short-dated floor stock found on the ledger.',
+          error: 'No production prep or short-dated floor stock found on the ledger.',
         },
         { status: 400 }
       );
@@ -95,8 +95,10 @@ export async function POST(req: NextRequest) {
   } catch (error: unknown) {
     const authRes = authErrorResponse(error);
     if (authRes) return authRes;
-    console.error('API Error in /api/recipe-fusion:', error);
-    const message = error instanceof Error ? error.message : 'Failed to generate recipe fusion.';
-    return NextResponse.json({ success: false, error: message }, { status: 500 });
+    return handleApiRouteError(
+      'POST /api/recipe-fusion',
+      error,
+      'Failed to generate recipe fusion. Please try again.'
+    );
   }
 }

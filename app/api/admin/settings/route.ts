@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getPlatformSettings, parsePlatformSettings, savePlatformSettings } from '@/lib/domains/stats/platformSettings';
+import { apiErrorFromUnknown } from '@/lib/domains/ai/apiError';
 import { authErrorResponse } from '@/lib/auth/http';
 import { requireManagerStaff } from '@/lib/auth/guardRoute';
 import { requireSessionUser } from '@/lib/auth/session';
+import { assertMutationRateLimit } from '@/lib/security/rateLimit';
 
 export const dynamic = 'force-dynamic';
 
@@ -14,16 +16,16 @@ export async function GET() {
   } catch (error) {
     const authRes = authErrorResponse(error);
     if (authRes) return authRes;
-    return NextResponse.json(
-      { success: false, error: error instanceof Error ? error.message : 'Settings could not be loaded.' },
-      { status: 500 }
-    );
+    return apiErrorFromUnknown(error, 'Settings could not be loaded.');
   }
 }
 
 export async function PATCH(req: NextRequest) {
   try {
-    await requireManagerStaff();
+    const actor = await requireManagerStaff();
+    const limited = assertMutationRateLimit(actor.id, 'admin-settings', 20);
+    if (limited) return limited;
+
     const parsed = parsePlatformSettings(await req.json());
     if ('error' in parsed) {
       return NextResponse.json({ success: false, error: parsed.error }, { status: 400 });
@@ -33,9 +35,6 @@ export async function PATCH(req: NextRequest) {
   } catch (error) {
     const authRes = authErrorResponse(error);
     if (authRes) return authRes;
-    return NextResponse.json(
-      { success: false, error: error instanceof Error ? error.message : 'Settings could not be saved.' },
-      { status: 500 }
-    );
+    return apiErrorFromUnknown(error, 'Settings could not be saved.');
   }
 }

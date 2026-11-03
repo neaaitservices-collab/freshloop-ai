@@ -10,6 +10,7 @@ import {
 } from '@/lib/domains/inventory/subInventoryView';
 import { getStockLevels } from '@/lib/domains/inventory/stock';
 import { rememberLedgerRead } from '@/lib/domains/inventory/ledgerCache';
+import { handleApiRouteError } from '@/lib/domains/ai/apiError';
 import { authErrorResponse } from '@/lib/auth/http';
 import { requireSessionUser } from '@/lib/auth/session';
 
@@ -149,13 +150,7 @@ export async function GET(req: NextRequest) {
   } catch (error: unknown) {
     const authRes = authErrorResponse(error);
     if (authRes) return authRes;
-    return NextResponse.json(
-      {
-        error:
-          error instanceof Error ? error.message : 'Failed to load inventory',
-      },
-      { status: 500 }
-    );
+    return handleApiRouteError('GET /api/inventory', error, 'Failed to load inventory.');
   }
 }
 

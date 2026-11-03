@@ -247,8 +247,11 @@ export function ManualRecipeCreatorModal({
 
       const json = await res.json();
       if (!res.ok || !json.success) {
-        setErrorMsg(json.error ?? 'Failed to save recipe.');
-        setSubmitting(false);
+        setErrorMsg(
+          (typeof json.error === 'string' && json.error) ||
+            (typeof json.message === 'string' && json.message) ||
+            'Failed to save recipe.'
+        );
         return;
       }
 
@@ -525,7 +528,7 @@ export function ManualRecipeCreatorModal({
 
           <div>
             <label className="mb-1 block text-xs font-bold text-slate-300">
-              Kitchen Preparation Notes / Instructions (Optional)
+              Production prep notes / instructions (optional)
             </label>
             <textarea
               rows={2}

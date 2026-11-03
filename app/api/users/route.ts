@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Role } from '@prisma/client';
 import { prisma } from '@/lib/domains/inventory/ledger';
+import { handleApiRouteError } from '@/lib/domains/ai/apiError';
 import { authErrorResponse } from '@/lib/auth/http';
 import { requireRoles, requireSessionUser } from '@/lib/auth/session';
 import { MANAGER_ROLES } from '@/lib/auth/permissions';
+import { findLatestStoreSetting } from '@/lib/domains/stats/storeSettingSelect';
 import { positionByLabel } from '@/lib/utils/positions';
 import type { StaffUser } from '@/lib/utils/roles';
 
@@ -15,6 +17,7 @@ function toStaffUser(user: {
   email: string;
   position: string;
   role: Role;
+  hourlyRate?: number | null;
 }): StaffUser {
   return {
     id: user.id,
@@ -22,6 +25,7 @@ function toStaffUser(user: {
     email: user.email,
     position: user.position,
     role: user.role,
+    hourlyRate: user.hourlyRate ?? null,
   };
 }
 
@@ -31,15 +35,22 @@ export async function GET() {
     if (!MANAGER_ROLES.includes(sessionUser.role)) {
       return NextResponse.json({ success: true, users: [sessionUser] });
     }
-    const users = await prisma.user.findMany({ orderBy: [{ role: 'asc' }, { name: 'asc' }] });
+    const users = await prisma.user.findMany({
+      orderBy: [{ role: 'asc' }, { name: 'asc' }],
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        position: true,
+        role: true,
+        hourlyRate: true,
+      },
+    });
     return NextResponse.json({ success: true, users: users.map(toStaffUser) });
   } catch (error) {
     const authRes = authErrorResponse(error);
     if (authRes) return authRes;
-    return NextResponse.json(
-      { success: false, error: error instanceof Error ? error.message : 'Staff could not be loaded.' },
-      { status: 500 }
-    );
+    return handleApiRouteError('GET /api/users', error, 'Staff could not be loaded.');
   }
 }
 
@@ -51,6 +62,7 @@ export async function POST(req: NextRequest) {
       email?: string;
       position?: string;
       role?: string;
+      hourlyRate?: number;
     };
     const name = body.name?.trim() ?? '';
     const email = body.email?.trim().toLowerCase() ?? '';
@@ -61,18 +73,41 @@ export async function POST(req: NextRequest) {
         { status: 400 }
       );
     }
+    let hourlyRate: number | undefined;
+    if (body.hourlyRate !== undefined) {
+      const parsed = Number(body.hourlyRate);
+      if (!Number.isFinite(parsed) || parsed <= 0 || parsed > 10_000) {
+        return NextResponse.json(
+          { success: false, error: 'Hourly wage must be a positive number.' },
+          { status: 400 }
+        );
+      }
+      hourlyRate = Number(parsed.toFixed(2));
+    } else {
+      const storeSetting = await findLatestStoreSetting();
+      hourlyRate = Number((storeSetting?.defaultLaborRatePerHour ?? 17.6).toFixed(2));
+    }
     const user = await prisma.user.create({
-      data: { name, email, position: assigned.label, role: assigned.role },
+      data: {
+        name,
+        email,
+        position: assigned.label,
+        role: assigned.role,
+        hourlyRate,
+      },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        position: true,
+        role: true,
+        hourlyRate: true,
+      },
     });
     return NextResponse.json({ success: true, user: toStaffUser(user) });
   } catch (error) {
     const authRes = authErrorResponse(error);
     if (authRes) return authRes;
-    const message = error instanceof Error ? error.message : 'Staff could not be added.';
-    const status = message.includes('Unique constraint') ? 409 : 500;
-    return NextResponse.json(
-      { success: false, error: status === 409 ? 'That email is already in use.' : message },
-      { status }
-    );
+    return handleApiRouteError('POST /api/users', error, 'Staff could not be added.');
   }
 }

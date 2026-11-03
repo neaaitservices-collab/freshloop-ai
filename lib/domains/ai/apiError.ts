@@ -1,4 +1,8 @@
 import { NextResponse } from 'next/server';
+import { Prisma } from '@prisma/client';
+import { ZodError } from 'zod';
+import { AuthError } from '@/lib/auth/session';
+import { InvalidJsonBodyError } from '@/lib/security/parseJsonBody';
 import { InventoryLedgerError } from '@/lib/domains/inventory/ledger';
 
 export function errorMessage(error: unknown, fallback = 'Unexpected server error.'): string {
@@ -6,19 +10,103 @@ export function errorMessage(error: unknown, fallback = 'Unexpected server error
 }
 
 export function apiError(message: string, status = 500) {
-  return NextResponse.json({ success: false, error: message }, { status });
+  return NextResponse.json({ success: false, error: message, message }, { status });
 }
 
-export function apiErrorFromUnknown(error: unknown, fallback?: string) {
+/** Log full error server-side; never send stack or Prisma internals to clients. */
+export function logServerError(
+  scope: string,
+  error: unknown,
+  context?: Record<string, unknown>
+): void {
+  if (context) {
+    console.error(`[${scope}]`, context, error);
+    return;
+  }
+  console.error(`[${scope}]`, error);
+}
+
+/** Standard catch helper for Route Handlers. */
+export function handleApiRouteError(
+  scope: string,
+  error: unknown,
+  fallback = 'Something went wrong. Please try again.',
+  context?: Record<string, unknown>
+) {
+  logServerError(scope, error, context);
+  return apiErrorFromUnknown(error, fallback);
+}
+
+function zodErrorMessage(error: ZodError): string {
+  const first = error.errors[0];
+  if (!first) return 'Invalid request payload.';
+  const path = first.path.length ? first.path.join('.') : 'body';
+  return `${path}: ${first.message}`;
+}
+
+function isClientSafeMessage(message: string): boolean {
+  const lower = message.toLowerCase();
+  return (
+    lower.includes('not found') ||
+    lower.includes('required') ||
+    lower.includes('must be') ||
+    lower.includes('invalid') ||
+    lower.includes('forbidden') ||
+    lower.includes('unauthorized') ||
+    lower.includes('insufficient') ||
+    lower.includes('nothing is on the retail floor') ||
+    lower.includes('greater than zero') ||
+    lower.includes('already exists') ||
+    lower.includes('too many requests')
+  );
+}
+
+export function apiErrorFromUnknown(error: unknown, fallback = 'Something went wrong. Please try again.') {
+  if (error instanceof AuthError) {
+    return apiError(error.message, error.status);
+  }
+  if (error instanceof InvalidJsonBodyError) {
+    return apiError(error.message, 400);
+  }
+  if (error instanceof ZodError) {
+    return apiError(zodErrorMessage(error), 400);
+  }
   if (error instanceof InventoryLedgerError) {
     return apiError(error.message, error.statusCode);
   }
-  const message = errorMessage(error, fallback);
-  const status =
-    message.includes('not found') ||
-    message.includes('Nothing is on the retail floor') ||
-    message.includes('must be greater than zero')
-      ? 400
-      : 500;
-  return apiError(message, status);
+  if (error instanceof Prisma.PrismaClientKnownRequestError) {
+    console.error('[prisma]', error.code, error.meta);
+    if (error.code === 'P2002') {
+      return apiError('A record with that value already exists.', 409);
+    }
+    if (error.code === 'P2025') {
+      return apiError('The requested record was not found.', 404);
+    }
+    return apiError(fallback, 500);
+  }
+  if (error instanceof Prisma.PrismaClientValidationError) {
+    console.error('[prisma validation]', error.message);
+    return apiError('Invalid data for this operation.', 400);
+  }
+
+  if (error instanceof Error) {
+    const message = error.message;
+    const status =
+      message.includes('not found') ||
+      message.includes('Nothing is on the retail floor') ||
+      message.includes('must be greater than zero') ||
+      message.includes('Insufficient')
+        ? 400
+        : 500;
+    if (status >= 500) {
+      console.error('[api]', error);
+      return apiError(fallback, 500);
+    }
+    if (isClientSafeMessage(message)) {
+      return apiError(message, status);
+    }
+    return apiError(fallback, status);
+  }
+
+  return apiError(fallback, 500);
 }

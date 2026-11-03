@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { executeBundleSale, prisma } from '@/lib/domains/inventory/ledger';
 import { invalidateInventoryCaches } from '@/lib/domains/inventory/inventoryCache';
 import { recordProductSale } from '@/lib/domains/inventory/recordSale';
+import { handleApiRouteError } from '@/lib/domains/ai/apiError';
 
 export const dynamic = 'force-dynamic';
 
@@ -123,7 +124,6 @@ export async function POST(req: NextRequest) {
       results: outcome.results,
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'POS webhook failed.';
-    return NextResponse.json({ success: false, error: message }, { status: 500 });
+    return handleApiRouteError('POST /api/pos/webhook', error, 'POS webhook processing failed.');
   }
 }

@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { handleApiRouteError } from '@/lib/domains/ai/apiError';
 import { authErrorResponse } from '@/lib/auth/http';
 import { requireManagerStaff } from '@/lib/auth/guardRoute';
 import { listMarkdownSuggestions } from '@/lib/domains/pricing/markdownSuggestion';
@@ -13,7 +14,10 @@ export async function GET() {
   } catch (error: unknown) {
     const authRes = authErrorResponse(error);
     if (authRes) return authRes;
-    const message = error instanceof Error ? error.message : 'Could not load markdown suggestions.';
-    return NextResponse.json({ success: false, error: message }, { status: 500 });
+    return handleApiRouteError(
+      'GET /api/admin/markdown-suggestions',
+      error,
+      'Could not load markdown suggestions.'
+    );
   }
 }

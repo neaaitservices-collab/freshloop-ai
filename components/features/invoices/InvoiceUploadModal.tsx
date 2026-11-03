@@ -76,7 +76,11 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
 
       const json = await res.json();
       if (!res.ok || !json.success || !json.data?.lineItems?.length) {
-        setScanError(json.error || 'The invoice could not be read. Try a clearer photo.');
+        setScanError(
+          (typeof json.error === 'string' && json.error) ||
+            (typeof json.message === 'string' && json.message) ||
+            'The invoice could not be read. Try a clearer photo.'
+        );
         return;
       }
       setOcrResult({

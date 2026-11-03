@@ -83,7 +83,7 @@ export function KitchenPrepTransferPanel({
         layoutVariant={layoutVariant}
         listDensity={listDensity}
         performMove={performMove}
-        emptyMessage="No kitchen prep stock — rescue from the retail floor first."
+        emptyMessage="No production prep stock — rescue from the retail floor first."
         onSuccess={onSuccess}
         onError={onError}
       />

@@ -15,7 +15,7 @@ import { Button } from '@/components/ui/Button';
 import { Card, CardBody, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { cn } from '@/lib/utils/cn';
-import { isManager } from '@/lib/utils/roles';
+import { canOverrideInventoryStock } from '@/lib/auth/staffCapabilities';
 import type { StockLevel } from '@/lib/domains/inventory/stock';
 import {
   calculateYieldQuote,
@@ -113,7 +113,9 @@ export function InventoryMasterDetail({
   useEffect(() => setRoleReady(true), []);
 
   const canOverride =
-    roleReady && !roleLoading && Boolean(activeUser && isManager(activeUser.role));
+    roleReady &&
+    !roleLoading &&
+    Boolean(activeUser && canOverrideInventoryStock(activeUser.role));
 
   const catalog = useMemo(() => {
     const needle = (query || localQuery).trim().toLowerCase();
@@ -540,7 +542,7 @@ export function InventoryMasterDetail({
             <Card>
               <CardHeader>
                 <CardTitle>Floor moves</CardTitle>
-                <CardDescription>Rescue, markdown, or waste for this SKU</CardDescription>
+                <CardDescription>Send to production or log waste for this SKU</CardDescription>
               </CardHeader>
               <CardBody>
                 <SubInventoryTransferBar

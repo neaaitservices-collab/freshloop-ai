@@ -185,7 +185,7 @@ export function SettingsForm({
           <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-emerald-300">Settings</p>
           <h2 className="mt-1 text-2xl font-black tracking-tight text-white">Store</h2>
           <p className="mt-1 max-w-2xl text-sm text-zinc-400">
-            Targets and defaults for the waste traffic light, floor pulls, kitchen scrap, and receiving.
+            Targets and defaults for the waste traffic light, floor pulls, production scrap, and receiving.
           </p>
         </>
       ) : null}
@@ -252,7 +252,7 @@ export function SettingsForm({
             className="scroll-mt-24 rounded-2xl border border-zinc-800 bg-zinc-900/80 p-4"
           >
             <legend className="px-1 text-xs font-black uppercase tracking-wider text-zinc-500">
-              Kitchen scrap &amp; labor
+              Production scrap &amp; labor
             </legend>
             <p className="mt-1 text-[11px] leading-relaxed text-zinc-500">
               Volumetric scrap buckets (Operations) convert to $ with{' '}
@@ -261,7 +261,7 @@ export function SettingsForm({
             </p>
             <div className="mt-3 grid gap-3 sm:grid-cols-2">
               <label className="text-xs font-bold text-zinc-400">
-                Kitchen labor ($/hr)
+                Production labor ($/hr)
                 <input
                   required
                   type="number"
@@ -374,13 +374,13 @@ const STEPS = [
     href: '/inventory',
     step: '2',
     title: 'Inventory & floor',
-    text: 'See everything on hand, pull short-dated stock, and send it to the kitchen before it becomes waste.',
+    text: 'See everything on hand, pull short-dated stock, and send it to production before it becomes waste.',
     icon: Store,
   },
   {
     href: '/production',
     step: '3',
-    title: 'Kitchen',
+    title: 'Production',
     text: 'Cook rescued product into a prepared item and log scrap buckets.',
     icon: ChefHat,
   },
@@ -455,7 +455,7 @@ export function AccountPage({
             <CollapsibleSection
               className="mt-3"
               title="Workflow shortcuts"
-              description="Receive → inventory → kitchen"
+              description="Receive → inventory → production"
               defaultOpen={false}
             >
               <DaySteps />
@@ -471,7 +471,7 @@ export function AccountPage({
               </CollapsibleSection>
               <CollapsibleSection
                 title="Staff"
-                description="Add people and permissions"
+                description="Team roster and permissions"
                 defaultOpen={false}
               >
                 <UserManagementTable embedded />

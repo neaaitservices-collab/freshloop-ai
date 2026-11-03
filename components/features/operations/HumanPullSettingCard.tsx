@@ -32,7 +32,7 @@ export function HumanPullSettingCard({
             Pull window
           </p>
           <p className="mt-1 text-xs leading-snug text-slate-400">
-            Flag floor lots expiring within N days for kitchen rescue.
+            Flag floor lots expiring within N days for production rescue.
           </p>
         </div>
       </div>

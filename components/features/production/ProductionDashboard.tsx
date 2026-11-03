@@ -22,6 +22,13 @@ import {
 import { useProductionWasteKpi } from '@/hooks/use-production-waste-kpi';
 import { RecipeFusionResult } from '@/lib/types';
 import { mapDbRecipeToFusionResult } from '@/lib/domains/manufacturing/mapDbRecipeToFusion';
+import type { KitchenRecipeDefinition } from '@/lib/domains/manufacturing/types';
+import type { ProductionBootstrapData } from '@/lib/domains/manufacturing/productionBootstrap';
+import type { StockLevel } from '@/lib/domains/inventory/stock';
+import {
+  FRESHLOOP_SETTINGS_UPDATED,
+  readSettingsUpdatedEvent,
+} from '@/lib/domains/stats/settingsEvents';
 import {
   RecipeProductionModal,
   type ProductionBatchExecutedSummary,
@@ -36,17 +43,35 @@ import {
   type ProductionMobileSection,
 } from '@/components/features/production/ProductionMobileSectionNav';
 import { cn } from '@/lib/utils/cn';
+import {
+  canEditProductionBom,
+  canExecuteProductionBatch,
+} from '@/lib/auth/staffCapabilities';
 
 function ProductionDashboardContent() {
   const router = useRouter();
   const catalogRef = useRef<HTMLDetailsElement>(null);
 
   const { activeUser } = useRole();
-  const { wasteKpi, scrapStoreConfig, syncing, refreshWasteKpi, logVolumetricScrap } =
-    useProductionWasteKpi(activeUser?.id);
+  const canEditBom = canEditProductionBom(activeUser?.role);
+  const canExecuteBom = canExecuteProductionBatch(activeUser?.role);
+  const {
+    wasteKpi,
+    scrapStoreConfig,
+    syncing,
+    refreshWasteKpi,
+    logVolumetricScrap,
+    applyBootstrap,
+  } = useProductionWasteKpi({ deferInitialFetch: true });
 
   const [recipes, setRecipes] = useState<RecipeFusionResult[]>([]);
   const [savedRecipeCount, setSavedRecipeCount] = useState(0);
+  const [manufacturingCatalog, setManufacturingCatalog] = useState<
+    KitchenRecipeDefinition[] | null
+  >(null);
+  const [initialTransferLevels, setInitialTransferLevels] = useState<StockLevel[] | null>(
+    null
+  );
   const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [fusionError, setFusionError] = useState<string | null>(null);
@@ -91,21 +116,54 @@ function ProductionDashboardContent() {
   }, []);
 
   useEffect(() => {
-    void fetchRecipes();
-  }, [fetchRecipes]);
-
-  useEffect(() => {
+    let cancelled = false;
     void (async () => {
       try {
-        const res = await fetch('/api/admin/settings', { cache: 'no-store' });
-        const json = await res.json();
-        const days = json?.settings?.pullSensitivityDays;
-        if (days === 2 || days === 3 || days === 4) setPullSensitivityDays(days);
+        const res = await fetch('/api/production/bootstrap', { cache: 'no-store' });
+        const json = (await res.json()) as { success?: boolean } & Partial<ProductionBootstrapData>;
+        if (cancelled) return;
+        if (res.ok && json.success && json.wasteKpi && json.storeSettings) {
+          setRecipes(Array.isArray(json.recipes) ? json.recipes : []);
+          setSavedRecipeCount(
+            typeof json.savedRecipeCount === 'number'
+              ? json.savedRecipeCount
+              : Array.isArray(json.recipes)
+                ? json.recipes.length
+                : 0
+          );
+          setManufacturingCatalog(
+            Array.isArray(json.manufacturingRecipes) ? json.manufacturingRecipes : []
+          );
+          setInitialTransferLevels(
+            Array.isArray(json.levelsSummary) ? json.levelsSummary : []
+          );
+          const days = json.storeSettings.pullSensitivityDays;
+          if (days === 2 || days === 3 || days === 4) setPullSensitivityDays(days);
+          applyBootstrap({
+            wasteKpi: json.wasteKpi,
+            storeSettings: json.storeSettings,
+          });
+          return;
+        }
       } catch {
-        /* default 3 */
+        /* fallback below */
       }
+      if (cancelled) return;
+      void fetchRecipes();
+      void refreshWasteKpi(true);
     })();
-  }, []);
+
+    const onSettings = (event: Event) => {
+      const saved = readSettingsUpdatedEvent(event);
+      const days = saved?.pullSensitivityDays;
+      if (days === 2 || days === 3 || days === 4) setPullSensitivityDays(days);
+    };
+    window.addEventListener(FRESHLOOP_SETTINGS_UPDATED, onSettings);
+    return () => {
+      cancelled = true;
+      window.removeEventListener(FRESHLOOP_SETTINGS_UPDATED, onSettings);
+    };
+  }, [applyBootstrap, fetchRecipes, refreshWasteKpi]);
 
   const filteredRecipes = recipes.filter((r) => {
     const matchesSearch =
@@ -144,28 +202,32 @@ function ProductionDashboardContent() {
                 <ProductionBomKpiBadges summary={bomSummary} />
               </div>
               <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap xl:max-w-md xl:justify-end">
-                <Button
-                  variant="secondary"
-                  className="min-h-11 border-emerald-500/40 bg-slate-950 text-xs font-bold text-emerald-300 sm:min-h-10"
-                  onClick={() => {
-                    setEditRecipeId(null);
-                    setIsCreateRecipeModalOpen(true);
-                  }}
-                >
-                  <Plus className="h-4 w-4 text-emerald-400" />
-                  New BOM
-                </Button>
-                <Button
-                  variant="secondary"
-                  className="min-h-11 border-amber-500/40 bg-amber-400/90 text-xs font-black text-slate-950 sm:min-h-10"
-                  onClick={() => {
-                    setProductionRecipeId(undefined);
-                    setProductionOpen(true);
-                  }}
-                >
-                  <ChefHat className="h-4 w-4" />
-                  Execute batch
-                </Button>
+                {canEditBom ? (
+                  <Button
+                    variant="secondary"
+                    className="min-h-11 border-emerald-500/40 bg-slate-950 text-xs font-bold text-emerald-300 sm:min-h-10"
+                    onClick={() => {
+                      setEditRecipeId(null);
+                      setIsCreateRecipeModalOpen(true);
+                    }}
+                  >
+                    <Plus className="h-4 w-4 text-emerald-400" />
+                    New BOM
+                  </Button>
+                ) : null}
+                {canExecuteBom ? (
+                  <Button
+                    variant="secondary"
+                    className="min-h-11 border-amber-500/40 bg-amber-400/90 text-xs font-black text-slate-950 sm:min-h-10"
+                    onClick={() => {
+                      setProductionRecipeId(undefined);
+                      setProductionOpen(true);
+                    }}
+                  >
+                    <ChefHat className="h-4 w-4" />
+                    Execute batch
+                  </Button>
+                ) : null}
                 <Button
                   variant="secondary"
                   className="min-h-11 text-xs font-bold sm:min-h-10 lg:hidden"
@@ -205,8 +267,11 @@ function ProductionDashboardContent() {
           >
             <ProductionActiveBomPanel
               recipes={recipes}
+              initialManufacturingCatalog={manufacturingCatalog}
               dense
               hideExecutiveSummary
+              canEditRecipes={canEditBom}
+              canExecuteBatch={canExecuteBom}
               onSummaryChange={setBomSummary}
               onExecuteProduction={() => {
                 setProductionRecipeId(undefined);
@@ -214,6 +279,7 @@ function ProductionDashboardContent() {
               }}
               onPrintDeliLabel={(r) => setSelectedDeliRecipe(r)}
               onEditRecipe={(r) => {
+                if (!canEditBom) return;
                 setEditRecipeId(r.id);
                 setIsCreateRecipeModalOpen(true);
               }}
@@ -268,10 +334,14 @@ function ProductionDashboardContent() {
                       key={recipe.id}
                       recipe={recipe}
                       onOpenDeliModal={(r) => setSelectedDeliRecipe(r)}
-                      onExecuteBatch={(r) => {
-                        setProductionRecipeId(r.id);
-                        setProductionOpen(true);
-                      }}
+                      onExecuteBatch={
+                        canExecuteBom
+                          ? (r) => {
+                              setProductionRecipeId(r.id);
+                              setProductionOpen(true);
+                            }
+                          : undefined
+                      }
                     />
                   ))}
                 </div>
@@ -313,9 +383,10 @@ function ProductionDashboardContent() {
               <LiveSubInventoryTransfers
                 compact
                 pullDays={pullSensitivityDays}
+                initialLevels={initialTransferLevels}
                 defaultTab="kitchen_prep"
                 title="Live floor & prep transfers"
-                description="Tap a SKU to transfer, markdown, or waste."
+                description="Tap a SKU to transfer or log waste."
                 showClerkFloorLink
                 mobileFillViewport={mobileSection === 'floor'}
               />

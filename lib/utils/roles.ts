@@ -15,7 +15,7 @@ export const ROLE_LABELS: Record<RoleName, string> = {
   STORE_MANAGER: 'Store manager',
   RECEIVING_CLERK: 'Receiving',
   FLOOR_STAFF: 'Floor',
-  DELI_CHEF: 'Kitchen',
+  DELI_CHEF: 'Production',
 };
 
 export interface StaffUser {
@@ -24,6 +24,7 @@ export interface StaffUser {
   email: string;
   position: string;
   role: RoleName;
+  hourlyRate?: number | null;
 }
 
 export function isRoleName(value: string): value is RoleName {
@@ -34,6 +35,10 @@ const MANAGER_ROLES: RoleName[] = ['ADMIN', 'STORE_MANAGER'];
 
 export function isManager(role: RoleName): boolean {
   return MANAGER_ROLES.includes(role);
+}
+
+export function isAdmin(role: RoleName): boolean {
+  return role === 'ADMIN';
 }
 
 export function homeForRole(role: RoleName): string {

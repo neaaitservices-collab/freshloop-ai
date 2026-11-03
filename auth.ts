@@ -28,12 +28,18 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
 
         if (!isRoleName(user.role)) return null;
 
+        const hourlyRate =
+          user.hourlyRate != null && Number.isFinite(user.hourlyRate) && user.hourlyRate > 0
+            ? Number(user.hourlyRate.toFixed(4))
+            : null;
+
         return {
           id: user.id,
           name: user.name,
           email: user.email,
           role: user.role,
           position: user.position,
+          hourlyRate,
         };
       },
     }),

@@ -216,6 +216,8 @@ model User {
   passwordHash  String?
   position      String
   role          Role      @default(FLOOR_STAFF)
+  /// Employee hourly wage for BOM / batch labor costing (falls back to store default when null).
+  hourlyRate    Float?    @map("hourly_rate_per_hour")
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
