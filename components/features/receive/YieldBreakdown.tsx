@@ -2,7 +2,8 @@
 
 import React, { useMemo } from 'react';
 import { formatUnits, type RetailUnit } from '@/lib/domains/receiving/yieldPricing';
-import { NumberField, SectionCard, UnitSelect } from '@/components/ui/YieldFields';
+import { cn } from '@/lib/utils/cn';
+import { CurrencyField, NumberField, SectionCard, UnitSelect } from '@/components/ui/YieldFields';
 
 function toPositiveNumber(raw: string): number {
   const n = Number(raw);
@@ -18,6 +19,8 @@ export function YieldBreakdown({
   onYieldDivisor,
   onPackUnit,
   onYieldUnit,
+  caseFloorPrice,
+  onCaseFloorPrice,
 }: {
   packSize: string;
   yieldDivisor: string;
@@ -27,7 +30,12 @@ export function YieldBreakdown({
   onYieldDivisor: (value: string) => void;
   onPackUnit: (value: RetailUnit) => void;
   onYieldUnit: (value: RetailUnit) => void;
+  /** Case shelf price for one received case (editable in item settings / receive). */
+  caseFloorPrice?: string;
+  onCaseFloorPrice?: (value: string) => void;
 }) {
+  const showCaseFloor = onCaseFloorPrice != null || caseFloorPrice != null;
+  const caseFloorValue = caseFloorPrice ?? '';
   const sellablePerCase = useMemo(() => {
     const pack = toPositiveNumber(packSize);
     const divisor = toPositiveNumber(yieldDivisor);
@@ -62,7 +70,21 @@ export function YieldBreakdown({
             How much is in one received case ({packUnit}).
           </p>
         </div>
-        <div className="space-y-1.5">
+        {showCaseFloor ? (
+          <div className="space-y-1.5">
+            <CurrencyField
+              id="case-floor-price-yield"
+              label="Case floor price"
+              value={caseFloorValue}
+              onChange={onCaseFloorPrice ?? (() => {})}
+              readOnly={!onCaseFloorPrice}
+            />
+            <p className="text-[11px] text-slate-500">
+              Shelf price for one case (from invoice when listed, or 35% / 40% margin on case cost).
+            </p>
+          </div>
+        ) : null}
+        <div className={cn('space-y-1.5', showCaseFloor && 'sm:col-span-2')}>
           <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Yield divisor</span>
           <div className="flex items-end gap-2">
             <NumberField

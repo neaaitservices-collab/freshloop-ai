@@ -14,6 +14,7 @@ import {
   type PoDraft,
 } from '@/components/features/orders/supplierMail';
 import { PageIntro } from '@/components/layout/PageIntro';
+import { PageMain, ScrollTable } from '@/components/ui/layout';
 import { Badge, type BadgeVariant } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardBody, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card';
@@ -472,7 +473,7 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
           }
         }
       `}</style>
-      <main className="mx-auto w-full max-w-7xl bg-slate-950 px-3 py-5 pb-28 sm:px-6 sm:py-8">
+      <PageMain className="bg-slate-950">
         <div className="no-print">
           <PageIntro
             step="Orders"
@@ -745,7 +746,7 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
             </p>
           </article>
         )}
-      </main>
+      </PageMain>
       <Toast message={toast} onDismiss={() => setToast(null)} variant="success" />
     </>
   );

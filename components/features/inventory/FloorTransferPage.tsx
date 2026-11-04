@@ -11,6 +11,7 @@ import {
   type StorePullSensitivityDays,
 } from '@/hooks/use-store-pull-sensitivity-days';
 import { isAdmin } from '@/lib/utils/roles';
+import { PageMain } from '@/components/ui/layout';
 import { Toast } from '@/components/ui/Toast';
 import type { StockLevel } from '@/lib/domains/inventory/stock';
 import type { DepartmentType } from '@/lib/types';
@@ -93,7 +94,7 @@ export function FloorTransferPage({ levels: initialLevels }: { levels: StockLeve
   };
 
   return (
-    <main className="mx-auto w-full max-w-4xl px-3 py-5 pb-28 sm:px-6 sm:py-8">
+    <PageMain width="lg">
       <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-emerald-500/90">
@@ -190,6 +191,6 @@ export function FloorTransferPage({ levels: initialLevels }: { levels: StockLeve
           <p>{toast.text}</p>
         </div>
       ) : null}
-    </main>
+    </PageMain>
   );
 }

@@ -14,6 +14,7 @@ export function PricingStrategy({
   onCustomMargin,
   onCurrentRetailPrice,
   floorPriceFromMargin = false,
+  floorPriceUnitLabel,
 }: {
   quote: YieldQuote;
   marginMode: MarginMode;
@@ -24,7 +25,10 @@ export function PricingStrategy({
   onCurrentRetailPrice: (value: string) => void;
   /** When true, floor price is derived from target margin (not typed manually). */
   floorPriceFromMargin?: boolean;
+  /** e.g. "lb" — floor price is always per yield-divisor sellable unit. */
+  floorPriceUnitLabel?: string;
 }) {
+  const perUnitSuffix = floorPriceUnitLabel ? ` (per ${floorPriceUnitLabel})` : '';
   const modes: Array<{ id: MarginMode; label: string }> = [
     { id: '35', label: '35%' },
     { id: '40', label: '40%' },
@@ -35,9 +39,9 @@ export function PricingStrategy({
     floorPriceFromMargin && marginMode === 'custom'
       ? 'Enter custom floor price'
       : floorPriceFromMargin
-        ? 'Set by target margin'
+        ? `Per sellable unit${perUnitSuffix}; updates when you pick 35% or 40%`
         : marginMode === 'custom'
-          ? 'Enter custom floor price'
+          ? `Custom floor price per sellable unit${perUnitSuffix}`
           : 'Margin updates with the price';
 
   const floorReadOnly = floorPriceFromMargin && marginMode !== 'custom';
@@ -89,7 +93,11 @@ export function PricingStrategy({
         <div className="min-w-[180px] flex-1">
           <CurrencyField
             id="current-retail-price"
-            label={marginMode === 'custom' ? 'Custom floor price' : 'Floor price'}
+            label={
+              marginMode === 'custom'
+                ? `Custom floor price${perUnitSuffix}`
+                : `Floor price${perUnitSuffix}`
+            }
             value={currentRetailPrice}
             onChange={onCurrentRetailPrice}
             readOnly={floorReadOnly}

@@ -12,6 +12,7 @@ import { authErrorResponse } from '@/lib/auth/http';
 import { requireReceivingStaff } from '@/lib/auth/guardRoute';
 import { requireSessionUser } from '@/lib/auth/session';
 import { findLatestStoreSetting } from '@/lib/domains/stats/storeSettingSelect';
+import { matchProduct } from '@/lib/domains/inventory/productMatching';
 
 // ============================================================================
 // Types & Interfaces for Phase 3 Invoice OCR + Cost Guardrail (>20% Variance)
@@ -28,6 +29,7 @@ export interface InvoiceOcrLineItemWithGuardrail {
   sub_unit: string;
   unit_cost: number;
   total_cost: number;
+  case_retail_price: number | null;
   historical_avg_cost: number | null;
   cost_variance_pct: number | null;
   requires_approval: boolean;
@@ -66,6 +68,7 @@ export interface InvoiceOcrApiResponse {
       subUnit: string;
       unitCost: number;
       totalCost: number;
+      caseRetailPrice?: number | null;
       productId?: string | null;
       historicalAvgCost?: number | null;
       costVariancePct?: number | null;
@@ -94,15 +97,6 @@ interface CatalogLookupEntry {
   standardCostPerCase: number;
 }
 
-function normalizeItemKey(text: string): string {
-  return text
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, ' ')
-    .replace(/\b(ctn|sz|pkg|bunch|lbs?|kg|ca|qc|mex|per|cri|can|tx|tha)\b/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
 async function loadCatalogForCostComparison(): Promise<CatalogLookupEntry[]> {
   const rows = await loadProductCatalog();
   return rows.map((p) => ({
@@ -119,38 +113,7 @@ function findBestCatalogProduct(
   ocrItemName: string,
   catalog: CatalogLookupEntry[]
 ): CatalogLookupEntry | null {
-  const normOcr = normalizeItemKey(ocrItemName);
-  const ocrTokens = normOcr.split(' ').filter((w) => w.length >= 3);
-
-  let bestEntry: CatalogLookupEntry | null = null;
-  let bestScore = 0;
-
-  for (const entry of catalog) {
-    const normCat = normalizeItemKey(entry.name);
-    if (normCat === normOcr) return entry;
-
-    const catTokens = normCat.split(' ').filter((w) => w.length >= 3);
-    let matches = 0;
-    for (const token of ocrTokens) {
-      if (
-        catTokens.some(
-          (ct) => ct === token || ct.includes(token) || token.includes(ct)
-        )
-      ) {
-        matches++;
-      }
-    }
-
-    const score =
-      ocrTokens.length > 0 ? matches / Math.max(1, Math.min(ocrTokens.length, catTokens.length)) : 0;
-
-    if (score > bestScore && score >= 0.45) {
-      bestScore = score;
-      bestEntry = entry;
-    }
-  }
-
-  return bestEntry;
+  return matchProduct(ocrItemName, catalog);
 }
 
 /**
@@ -169,6 +132,7 @@ async function evaluateCostGuardrail(
     subUnit: string;
     unitCost: number;
     totalCost: number;
+    caseRetailPrice?: number | null;
   },
   catalog: CatalogLookupEntry[],
   thresholdPct: number = 20.0
@@ -233,6 +197,10 @@ async function evaluateCostGuardrail(
     sub_unit: rawItem.subUnit,
     unit_cost: rawItem.unitCost,
     total_cost: rawItem.totalCost,
+    case_retail_price:
+      rawItem.caseRetailPrice !== undefined && rawItem.caseRetailPrice !== null
+        ? rawItem.caseRetailPrice
+        : null,
     historical_avg_cost: historicalAvgCost,
     cost_variance_pct: costVariancePct,
     requires_approval: requiresApproval,
@@ -322,6 +290,7 @@ async function extractInvoiceWithGemini15FlashVision(
     subUnit: string;
     unitCost: number;
     totalCost: number;
+    caseRetailPrice?: number | null;
   }>;
   modelNote: string;
 }> {
@@ -344,10 +313,13 @@ Analyze this supermarket vendor invoice image and return ONLY valid JSON matchin
       "casePackSize": number,
       "subUnit": "lbs" | "kg" | "units" | "L" | "bunches" | "tubs" | "loaves",
       "unitCost": number,
-      "totalCost": number
+      "totalCost": number,
+      "caseRetailPrice": number | null
     }
   ]
-}`;
+}
+For caseRetailPrice use the printed case list/shelf price when the invoice shows it; otherwise null.
+Match product identity only (e.g. avocados, blackberries). Pack size on the invoice may differ from the catalog; pack/yield is edited in FreshLoop item controls after match.`;
 
   const cleanBase64 = imageBase64.includes(',') ? imageBase64.split(',')[1] : imageBase64;
   const { text, modelUsed } = await generateContentWithFallback(
@@ -374,6 +346,11 @@ Analyze this supermarket vendor invoice image and return ONLY valid JSON matchin
       const unitCost = Number(li.unitCost ?? li.unit_cost) || 0;
       const totalCost =
         Number(li.totalCost ?? li.total_cost) || Number((qty * unitCost).toFixed(2));
+      const caseRetailRaw = li.caseRetailPrice ?? li.case_retail_price ?? li.retail_price;
+      const caseRetailPrice =
+        caseRetailRaw !== undefined && caseRetailRaw !== null && Number(caseRetailRaw) > 0
+          ? Number(caseRetailRaw)
+          : null;
       return {
         name: String(li.name || li.item_name || 'Vendor Line Item'),
         department: (['PRODUCE', 'DAIRY', 'BAKERY', 'PANTRY'].includes(String(li.department))
@@ -385,6 +362,7 @@ Analyze this supermarket vendor invoice image and return ONLY valid JSON matchin
         subUnit: String(li.subUnit || 'units'),
         unitCost,
         totalCost,
+        caseRetailPrice,
       };
     }),
     modelNote: `Read from the photo with ${modelUsed}.`,
@@ -529,6 +507,7 @@ export async function POST(req: NextRequest) {
         departmentBreakdown,
         lineItems: auditedItems.map((item) => ({
           name: item.item_name,
+          matchedProductName: item.matched_product_name,
           department: item.department,
           quantity: item.quantity,
           unit: item.unit,
@@ -536,6 +515,7 @@ export async function POST(req: NextRequest) {
           subUnit: item.sub_unit,
           unitCost: item.unit_cost,
           totalCost: item.total_cost,
+          caseRetailPrice: item.case_retail_price,
           productId: item.product_id,
           historicalAvgCost: item.historical_avg_cost,
           costVariancePct: item.cost_variance_pct,

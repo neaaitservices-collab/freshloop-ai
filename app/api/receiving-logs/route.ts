@@ -45,6 +45,7 @@ export async function POST(req: NextRequest) {
     const actor = await requireReceivingStaff();
     const body = (await req.json()) as {
       itemName?: string;
+      productId?: string;
       casesReceived?: number;
       caseCost?: number;
       packSize?: number;
@@ -125,6 +126,7 @@ export async function POST(req: NextRequest) {
     try {
       stock = await postReceipt({
         itemName,
+        productId: body.productId?.trim() || undefined,
         casesReceived,
         caseCost,
         packSize,

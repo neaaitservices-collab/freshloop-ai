@@ -11,6 +11,12 @@ export interface ReceivingLog {
   caseCost: number;
   packSize?: number;
   retailUnit?: RetailUnit;
+  /** When invoice OCR matched the catalog, receive posts to this SKU. */
+  productId?: string;
+  /** Original vendor wording (for display). */
+  invoiceLineName?: string;
+  /** When OCR reads a printed case shelf / list price on the invoice. */
+  suggestedCaseFloorPrice?: number;
 }
 
 export interface YieldQuote {
@@ -37,6 +43,229 @@ export function resolveTargetMargin(mode: MarginMode, customPercent: number): nu
 }
 
 /** Shelf floor price from unit cost and target margin: cost / (1 − margin). */
+export function sellableUnitShortLabel(unit: RetailUnit): string {
+  if (unit === 'lbs') return 'lb';
+  if (unit === 'quarts') return 'quart';
+  return 'unit';
+}
+
+export function sellableUnitsPerCase(packSize: number, yieldDivisor: number): number {
+  if (!(packSize > 0) || !(yieldDivisor > 0)) return 0;
+  return packSize / yieldDivisor;
+}
+
+export function perUnitFloorFromCaseFloor(
+  caseFloorPrice: number,
+  packSize: number,
+  yieldDivisor: number
+): number | null {
+  const sellable = sellableUnitsPerCase(packSize, yieldDivisor);
+  if (!(caseFloorPrice > 0) || !(sellable > 0)) return null;
+  return Number((caseFloorPrice / sellable).toFixed(4));
+}
+
+export function caseFloorFromPerUnitFloor(
+  perUnitFloor: number,
+  packSize: number,
+  yieldDivisor: number
+): number | null {
+  const sellable = sellableUnitsPerCase(packSize, yieldDivisor);
+  if (!(perUnitFloor > 0) || !(sellable > 0)) return null;
+  return Number((perUnitFloor * sellable).toFixed(2));
+}
+
+/** Unit cost = case cost ÷ sellable units (pack ÷ yield). */
+export function unitCostFromCaseCost(
+  caseCost: number,
+  packSize: number,
+  yieldDivisor: number
+): number {
+  const sellable = sellableUnitsPerCase(packSize, yieldDivisor);
+  if (!(caseCost >= 0) || !(sellable > 0)) return 0;
+  return Number((caseCost / sellable).toFixed(4));
+}
+
+const MIN_PLAUSIBLE_UNIT_COST = 0.15;
+
+/**
+ * Catalog `standardCost` is usually per sellable unit; legacy rows sometimes store whole case cost.
+ * Always derive: unit cost = case cost ÷ (pack ÷ yield).
+ */
+export function resolvePricingEconomics(input: {
+  standardCost: number;
+  packSize: number;
+  yieldDivisor: number;
+}): { caseCost: number; unitCostPerSellable: number } {
+  const sellable = sellableUnitsPerCase(input.packSize, input.yieldDivisor);
+  const sc = input.standardCost;
+  if (!(sc > 0) || !(sellable > 0)) {
+    return { caseCost: 0, unitCostPerSellable: 0 };
+  }
+
+  const unitIfStoredIsCaseCost = sc / sellable;
+  const caseIfStoredIsUnitCost = sc * sellable;
+
+  if (
+    sellable > 1 &&
+    unitIfStoredIsCaseCost >= MIN_PLAUSIBLE_UNIT_COST &&
+    unitIfStoredIsCaseCost < sc &&
+    caseIfStoredIsUnitCost > sc * 2
+  ) {
+    return {
+      caseCost: Number(sc.toFixed(4)),
+      unitCostPerSellable: unitIfStoredIsCaseCost,
+    };
+  }
+
+  return {
+    caseCost: Number(caseIfStoredIsUnitCost.toFixed(4)),
+    unitCostPerSellable: Number(sc.toFixed(4)),
+  };
+}
+
+export function totalCaseCostFromYield(input: {
+  unitCostPerSellable: number;
+  packSize: number;
+  yieldDivisor: number;
+}): number {
+  if (!(input.unitCostPerSellable > 0) || !(input.packSize > 0) || !(input.yieldDivisor > 0)) {
+    return 0;
+  }
+  return input.unitCostPerSellable * sellableUnitsPerCase(input.packSize, input.yieldDivisor);
+}
+
+/** Case cost from catalog row + yield fields (prefers resolvePricingEconomics). */
+export function caseCostForPricing(input: {
+  standardCost: number;
+  packSize: number;
+  yieldDivisor: number;
+}): number {
+  return resolvePricingEconomics(input).caseCost;
+}
+
+/** Case shelf price from case cost and target margin (catalog column). */
+export function caseFloorForTargetMargin(input: {
+  caseCost: number;
+  marginMode: MarginMode;
+  customMarginPercent?: number;
+}): number | null {
+  const targetMargin = resolveTargetMargin(input.marginMode, input.customMarginPercent ?? 0);
+  const room = 1 - targetMargin;
+  if (!(input.caseCost >= 0) || room <= 0) return null;
+  return Number((input.caseCost / room).toFixed(2));
+}
+
+export function marginAtCaseFloorPrice(casePrice: number, caseCost: number): number | null {
+  if (!(casePrice > 0) || caseCost < 0) return null;
+  return Number((((casePrice - caseCost) / casePrice) * 100).toFixed(2));
+}
+
+/** DB `retailPrice` is per yield unit; older rows may have saved case price by mistake. */
+export function normalizeStoredUnitFloorPrice(input: {
+  retailPrice: number | null;
+  unitCostPerSellable: number;
+  packSize: number;
+  yieldDivisor: number;
+}): number | null {
+  const raw = input.retailPrice;
+  if (raw === null || !(raw > 0)) return null;
+  if (!(input.packSize > 0) || !(input.yieldDivisor > 0)) return raw;
+  const sellable = input.packSize / input.yieldDivisor;
+  const caseCost = caseCostForPricing({
+    standardCost: input.unitCostPerSellable,
+    packSize: input.packSize,
+    yieldDivisor: input.yieldDivisor,
+  });
+  const caseAt40 = caseCost > 0 ? caseFloorForTargetMargin({ caseCost, marginMode: '40' }) : null;
+  if (caseAt40 !== null && Math.abs(raw - caseAt40) < 0.05) {
+    return sellable > 0 ? Number((raw / sellable).toFixed(4)) : raw;
+  }
+  if (sellable > 1 && raw > input.unitCostPerSellable * 4) {
+    return Number((raw / sellable).toFixed(4));
+  }
+  return raw;
+}
+
+export function unitFloorForTargetMargin(input: {
+  caseCost: number;
+  packSize: number;
+  yieldDivisor: number;
+  marginMode: MarginMode;
+  customMarginPercent?: number;
+}): number | null {
+  return floorPriceForTargetMargin({
+    caseCost: input.caseCost,
+    packSize: input.packSize,
+    yieldDivisor: input.yieldDivisor,
+    marginMode: input.marginMode,
+    customMarginPercent: input.customMarginPercent ?? 0,
+  });
+}
+
+export function catalogCaseFloorPrice(input: {
+  unitCostPerSellable: number;
+  casePackSize: number;
+  retailPrice: number | null;
+  marginMode?: MarginMode;
+}): number | null {
+  const pack = input.casePackSize > 0 ? input.casePackSize : 1;
+  const econ = resolvePricingEconomics({
+    standardCost: input.unitCostPerSellable,
+    packSize: pack,
+    yieldDivisor: 1,
+  });
+  const unit = normalizeStoredUnitFloorPrice({
+    retailPrice: input.retailPrice,
+    unitCostPerSellable: econ.unitCostPerSellable,
+    packSize: pack,
+    yieldDivisor: 1,
+  });
+  if (unit !== null && unit > 0) return Number((unit * pack).toFixed(2));
+  const caseCost = econ.caseCost;
+  if (!(caseCost > 0)) return null;
+  return caseFloorForTargetMargin({
+    caseCost,
+    marginMode: input.marginMode ?? '40',
+  });
+}
+
+/** Guess 35% / 40% / custom from stored per-unit floor price. */
+export function inferMarginModeFromFloorPrice(input: {
+  unitCostPerSellable: number;
+  retailPrice: number | null;
+  packSize: number;
+  yieldDivisor: number;
+}): MarginMode {
+  const econ = resolvePricingEconomics({
+    standardCost: input.unitCostPerSellable,
+    packSize: input.packSize,
+    yieldDivisor: input.yieldDivisor,
+  });
+  const unitPrice =
+    normalizeStoredUnitFloorPrice({
+      ...input,
+      unitCostPerSellable: econ.unitCostPerSellable,
+    }) ?? input.retailPrice ?? 0;
+  if (!(econ.unitCostPerSellable > 0) || !(unitPrice > 0)) return '40';
+  const caseCost = econ.caseCost;
+  if (!(caseCost > 0)) return '40';
+  const at35 = unitFloorForTargetMargin({
+    caseCost,
+    packSize: input.packSize,
+    yieldDivisor: input.yieldDivisor,
+    marginMode: '35',
+  });
+  const at40 = unitFloorForTargetMargin({
+    caseCost,
+    packSize: input.packSize,
+    yieldDivisor: input.yieldDivisor,
+    marginMode: '40',
+  });
+  if (at35 !== null && Math.abs(unitPrice - at35) < 0.02) return '35';
+  if (at40 !== null && Math.abs(unitPrice - at40) < 0.02) return '40';
+  return 'custom';
+}
+
 export function floorPriceForTargetMargin(input: {
   caseCost: number;
   packSize: number;

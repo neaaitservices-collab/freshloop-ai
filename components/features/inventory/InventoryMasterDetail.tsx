@@ -289,8 +289,6 @@ export function InventoryMasterDetail({
     const body = {
       productId: selected.productId,
       casesOnHand: cases,
-      role: activeUser.role,
-      staffId: activeUser.id,
     };
     try {
       if (patchLevelOptimistic) {

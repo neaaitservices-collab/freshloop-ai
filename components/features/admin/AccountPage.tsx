@@ -7,6 +7,7 @@ import { PageIntro } from '@/components/layout/PageIntro';
 import { AdminViewTabs } from '@/components/features/admin/AdminViewTabs';
 import { UserManagementTable } from '@/components/features/admin/UserManagementTable';
 import { CollapsibleSection } from '@/components/ui/CollapsibleSection';
+import { PageMain } from '@/components/ui/layout';
 import { useRole } from '@/components/auth/RoleProvider';
 import { positionForStaff } from '@/lib/utils/positions';
 import { isManager } from '@/lib/utils/roles';
@@ -371,10 +372,10 @@ const STEPS = [
     icon: Package,
   },
   {
-    href: '/inventory',
+    href: '/admin#inventory-catalog',
     step: '2',
-    title: 'Inventory & floor',
-    text: 'See everything on hand, pull short-dated stock, and send it to production before it becomes waste.',
+    title: 'Catalog & margins',
+    text: 'Full product catalog from the database—zero-stock SKUs stay listed; adjust margin and shelf settings.',
     icon: Store,
   },
   {
@@ -438,13 +439,13 @@ export function AccountPage({
   const title = loading ? 'Account' : manager ? 'Admin' : 'Profile';
 
   return (
-      <main className="mx-auto w-full max-w-7xl px-3 py-4 pb-24 sm:px-6 sm:py-6">
+      <PageMain className="py-4 pb-24 sm:py-6">
         <PageIntro
           step={showControls ? 'Store dashboard' : 'Account'}
           title={title}
           description={
             showControls
-              ? 'Live ledger KPIs first. Expand sections below for profile, staff, and cases.'
+              ? 'Live ledger KPIs first. Expand sections below for profile, staff, and the inventory catalog.'
               : 'Your name, email, and position.'
           }
           action={showControls ? <AdminViewTabs /> : undefined}
@@ -455,7 +456,7 @@ export function AccountPage({
             <CollapsibleSection
               className="mt-3"
               title="Workflow shortcuts"
-              description="Receive → inventory → production"
+              description="Receive → catalog → production"
               defaultOpen={false}
             >
               <DaySteps />
@@ -478,8 +479,8 @@ export function AccountPage({
               </CollapsibleSection>
               {children ? (
                 <CollapsibleSection
-                  title="Case board"
-                  description="Receive confirmation and on-hand cases"
+                  title="Inventory catalog"
+                  description="Stock & margin control — full SKU list from the database"
                   defaultOpen={false}
                 >
                   {children}
@@ -492,6 +493,6 @@ export function AccountPage({
             <ProfileForm />
           </div>
         )}
-      </main>
+      </PageMain>
   );
 }

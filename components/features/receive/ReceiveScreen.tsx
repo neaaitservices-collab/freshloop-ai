@@ -5,6 +5,7 @@ import { FileText } from 'lucide-react';
 import { PageIntro } from '@/components/layout/PageIntro';
 import { YieldPricingDashboard } from '@/components/features/receive/YieldPricingDashboard';
 import { InvoiceUploadModal } from '@/components/features/invoices/InvoiceUploadModal';
+import { PageMain } from '@/components/ui/layout';
 import { Button } from '@/components/ui/Button';
 import { Card, CardBody } from '@/components/ui/Card';
 import type { ReceivingLogsResult } from '@/lib/domains/receiving/receivingSheet';
@@ -30,7 +31,7 @@ export function ReceiveScreen({ initial }: { initial: ReceivingLogsResult }) {
 
   return (
     <>
-      <main className="mx-auto w-full max-w-7xl bg-slate-950 px-3 py-4 sm:px-6 sm:py-8">
+      <PageMain className="bg-slate-950 py-4 sm:py-8">
         <PageIntro
           step="Step 1 · Receive"
           title="Price the delivery"
@@ -61,7 +62,7 @@ export function ReceiveScreen({ initial }: { initial: ReceivingLogsResult }) {
             }
           />
         </div>
-      </main>
+      </PageMain>
       <InvoiceUploadModal
         isOpen={invoiceOpen}
         onClose={() => setInvoiceOpen(false)}
