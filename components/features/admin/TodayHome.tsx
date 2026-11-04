@@ -3,6 +3,7 @@
 import React from 'react';
 import Link from 'next/link';
 import { ArrowRight, ChefHat, Package, Store } from 'lucide-react';
+import { PageMain } from '@/components/ui/layout';
 
 const STEPS = [
   {
@@ -30,7 +31,7 @@ const STEPS = [
 
 export function TodayHome({ figures }: { figures: React.ReactNode }) {
   return (
-      <main className="mx-auto w-full max-w-7xl px-3 py-5 pb-28 sm:px-6 sm:py-8">
+      <PageMain>
         <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-emerald-300">Store dashboard</p>
         <h1 className="mt-1 text-3xl font-black tracking-tight text-white">Today</h1>
         <p className="mt-2 max-w-2xl text-sm leading-relaxed text-zinc-400">
@@ -72,6 +73,6 @@ export function TodayHome({ figures }: { figures: React.ReactNode }) {
         >
           Open the full ledger
         </Link>
-      </main>
+      </PageMain>
   );
 }

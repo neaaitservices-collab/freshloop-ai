@@ -7,19 +7,28 @@ import { YieldBreakdown } from '@/components/features/receive/YieldBreakdown';
 import type { StockLevel, StockOverrideAudit } from '@/lib/domains/inventory/stock';
 import {
   calculateYieldQuote,
+  caseFloorForTargetMargin,
+  caseFloorFromPerUnitFloor,
   floorPriceForTargetMargin,
+  perUnitFloorFromCaseFloor,
   formatFractionalCases,
   formatPercent,
   formatUnits,
+  inferMarginModeFromFloorPrice,
   marginTone,
+  normalizeStoredUnitFloorPrice,
+  resolvePricingEconomics,
   resolveTargetMargin,
   retailUnitForUnitType,
+  sellableUnitShortLabel,
+  sellableUnitsPerCase,
   stockUnitLabel,
   type MarginMode,
   type RetailUnit,
   type YieldQuote,
 } from '@/lib/domains/receiving/yieldPricing';
 import { departmentLabel } from '@/lib/domains/inventory/inventoryCatalog';
+import { ModalBody, ModalFooter, ModalHeader, ModalShell } from '@/components/ui/layout';
 import { cn } from '@/lib/utils/cn';
 
 const DEPARTMENTS = ['PRODUCE', 'DAIRY', 'BAKERY', 'PANTRY', 'DELI_KITCHEN'] as const;
@@ -129,33 +138,72 @@ export function ItemSettingsModal({
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const skipFloorRecalc = useRef(true);
+  const floorFromMargin = useRef(true);
+  const [anchoredCaseCost, setAnchoredCaseCost] = useState(0);
+  const [currentCaseFloor, setCurrentCaseFloor] = useState('');
 
-  const syncFloorFromMargin = (mode: MarginMode, packVal: number, divisorVal: number, cost: number) => {
+  const syncFloorFromMargin = (
+    mode: MarginMode,
+    packVal: number,
+    divisorVal: number,
+    caseCostTotal: number
+  ) => {
     if (mode === 'custom') return;
     const next = floorPriceForTargetMargin({
-      caseCost: cost,
+      caseCost: caseCostTotal,
       packSize: packVal,
       yieldDivisor: divisorVal,
       marginMode: mode,
       customMarginPercent: 0,
     });
     if (next !== null && next > 0) setCurrentRetailPrice(next.toFixed(2));
+    const caseNext = caseFloorForTargetMargin({ caseCost: caseCostTotal, marginMode: mode });
+    if (caseNext !== null && caseNext > 0) setCurrentCaseFloor(caseNext.toFixed(2));
   };
 
   useEffect(() => {
     if (!open || !row) return;
     skipFloorRecalc.current = true;
+    floorFromMargin.current = true;
     setTab('overview');
     setDepartment(row.department);
     setSupplier(row.supplier);
     setOrigin(row.origin ?? '');
-    setPackSize(String(row.casePackSize));
-    setYieldDivisor('1');
+    const packVal = row.casePackSize > 0 ? row.casePackSize : 1;
+    const divVal = 1;
+    setPackSize(String(packVal));
+    setYieldDivisor(String(divVal));
     const unit = retailUnitForUnitType(row.unitType);
     setPackUnit(unit);
     setYieldUnit(unit);
-    setMarginMode('40');
-    setCurrentRetailPrice(row.retailPrice != null ? row.retailPrice.toFixed(2) : '0');
+    const econ = resolvePricingEconomics({
+      standardCost: row.unitCost,
+      packSize: packVal,
+      yieldDivisor: divVal,
+    });
+    setAnchoredCaseCost(econ.caseCost);
+    const unitFloor =
+      normalizeStoredUnitFloorPrice({
+        retailPrice: row.retailPrice,
+        unitCostPerSellable: econ.unitCostPerSellable,
+        packSize: packVal,
+        yieldDivisor: divVal,
+      }) ?? row.retailPrice;
+    const inferred = inferMarginModeFromFloorPrice({
+      unitCostPerSellable: row.unitCost,
+      retailPrice: unitFloor,
+      packSize: packVal,
+      yieldDivisor: divVal,
+    });
+    setMarginMode(inferred);
+    if (inferred === 'custom') {
+      setCurrentRetailPrice(unitFloor != null && unitFloor > 0 ? unitFloor.toFixed(2) : '0');
+      const caseFromUnit = caseFloorFromPerUnitFloor(unitFloor ?? 0, packVal, divVal);
+      setCurrentCaseFloor(caseFromUnit !== null && caseFromUnit > 0 ? caseFromUnit.toFixed(2) : '0');
+      floorFromMargin.current = false;
+    } else {
+      syncFloorFromMargin(inferred, packVal, divVal, econ.caseCost);
+    }
     setPhysicalCases(String(row.onHandCases));
     setMessage(null);
     setError(null);
@@ -177,22 +225,35 @@ export function ItemSettingsModal({
   const pack = toNumber(packSize);
   const divisor = toNumber(yieldDivisor);
   const priceNumber = toNumber(currentRetailPrice);
-  const pricingUnitsPerCase =
-    pack > 0 && divisor > 0
-      ? pack / divisor
-      : row && row.casePackSize > 0
-        ? row.casePackSize
-        : 1;
-  const caseCost = row ? row.unitCost * pricingUnitsPerCase : 0;
-  const unitCostForMargin =
-    pack > 0 && divisor > 0 && caseCost >= 0 ? caseCost / (pack / divisor) : null;
+  const sellableCount =
+    sellableUnitsPerCase(pack, divisor) ||
+    (row && row.casePackSize > 0 ? row.casePackSize : 1);
+  const pricingEconomics = useMemo(() => {
+    if (!row) return { caseCost: 0, unitCostPerSellable: 0 };
+    const sellable = sellableUnitsPerCase(pack, divisor);
+    if (anchoredCaseCost > 0 && sellable > 0) {
+      return {
+        caseCost: anchoredCaseCost,
+        unitCostPerSellable: Number((anchoredCaseCost / sellable).toFixed(4)),
+      };
+    }
+    return resolvePricingEconomics({
+      standardCost: row.unitCost,
+      packSize: pack,
+      yieldDivisor: divisor,
+    });
+  }, [row, pack, divisor, anchoredCaseCost]);
+  const { caseCost, unitCostPerSellable } = pricingEconomics;
+
   const targetMargin =
-    marginMode === 'custom' && priceNumber > 0 && unitCostForMargin !== null
-      ? Math.max(0, Math.min(0.99, (priceNumber - unitCostForMargin) / priceNumber))
+    marginMode === 'custom' && priceNumber > 0 && unitCostPerSellable > 0
+      ? Math.max(0, Math.min(0.99, (priceNumber - unitCostPerSellable) / priceNumber))
       : resolveTargetMargin(marginMode, 0);
 
   useEffect(() => {
-    if (!open || !row || skipFloorRecalc.current || marginMode === 'custom') return;
+    if (!open || !row || skipFloorRecalc.current || marginMode === 'custom' || !floorFromMargin.current) {
+      return;
+    }
     syncFloorFromMargin(marginMode, pack, divisor, caseCost);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [packSize, yieldDivisor, marginMode, caseCost, open, row?.productId]);
@@ -210,10 +271,27 @@ export function ItemSettingsModal({
   );
   const tone = marginTone(quote.currentMarginPct);
   const applyMarginMode = (mode: MarginMode) => {
+    floorFromMargin.current = mode !== 'custom';
     setMarginMode(mode);
     if (mode !== 'custom') {
       syncFloorFromMargin(mode, pack, divisor, caseCost);
     }
+  };
+
+  const onFloorPriceChange = (value: string) => {
+    floorFromMargin.current = false;
+    setMarginMode('custom');
+    setCurrentRetailPrice(value);
+    const caseNext = caseFloorFromPerUnitFloor(toNumber(value), pack, divisor);
+    if (caseNext !== null && caseNext > 0) setCurrentCaseFloor(caseNext.toFixed(2));
+  };
+
+  const onCaseFloorPriceChange = (value: string) => {
+    floorFromMargin.current = false;
+    setMarginMode('custom');
+    setCurrentCaseFloor(value);
+    const perUnit = perUnitFloorFromCaseFloor(toNumber(value), pack, divisor);
+    if (perUnit !== null && perUnit > 0) setCurrentRetailPrice(perUnit.toFixed(2));
   };
 
   if (!open || !row) return null;
@@ -228,19 +306,8 @@ export function ItemSettingsModal({
   const physicalCaseHint = formatFractionalCases(physicalUnitsPreview, ledgerUnitsPerCase);
 
   return (
-    <div className="fixed inset-0 z-[110] flex items-end justify-center p-3 sm:items-center sm:p-6">
-      <button
-        type="button"
-        className="absolute inset-0 bg-slate-950/85 backdrop-blur-sm"
-        aria-label="Close"
-        onClick={onClose}
-      />
-      <div
-        role="dialog"
-        aria-modal="true"
-        className="relative z-10 flex max-h-[92vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-slate-700 bg-slate-900 shadow-2xl"
-      >
-        <header className="shrink-0 border-b border-slate-800 px-6 py-5">
+    <ModalShell open zIndexClass="z-[110]" width="lg" onClose={onClose}>
+        <ModalHeader className="px-6 py-5">
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0">
               <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-400/90">Item settings</p>
@@ -279,9 +346,9 @@ export function ItemSettingsModal({
               </button>
             ))}
           </nav>
-        </header>
+        </ModalHeader>
 
-        <div className="flex-1 overflow-y-auto px-6 py-5">
+        <ModalBody className="px-6 py-5">
           {tab === 'overview' ? (
             <div className="space-y-5">
               <SubCard
@@ -519,6 +586,8 @@ export function ItemSettingsModal({
                   yieldDivisor={yieldDivisor}
                   packUnit={packUnit}
                   yieldUnit={yieldUnit}
+                  caseFloorPrice={currentCaseFloor}
+                  onCaseFloorPrice={onCaseFloorPriceChange}
                   onPackSize={setPackSize}
                   onYieldDivisor={setYieldDivisor}
                   onPackUnit={setPackUnit}
@@ -526,20 +595,36 @@ export function ItemSettingsModal({
                 />
               </SubCard>
 
-              <SubCard title="Floor price & margin" description="Target margin sets floor price; custom price is manual.">
+              <SubCard
+                title="Floor price & margin"
+                description={`Shelf price is per sellable ${sellableUnitShortLabel(yieldUnit)} (yield divisor unit). The catalog shows case price (× pack ÷ yield).`}
+              >
                 <PricingStrategy
                   quote={quote}
                   marginMode={marginMode}
                   customMarginPercent=""
                   currentRetailPrice={currentRetailPrice}
                   floorPriceFromMargin
+                  floorPriceUnitLabel={sellableUnitShortLabel(yieldUnit)}
                   onMarginMode={applyMarginMode}
                   onCustomMargin={() => {}}
-                  onCurrentRetailPrice={setCurrentRetailPrice}
+                  onCurrentRetailPrice={onFloorPriceChange}
                 />
+                {unitCostPerSellable > 0 ? (
+                  <p className="mt-4 text-xs text-slate-500">
+                    Unit cost{' '}
+                    <span className="font-mono font-semibold text-slate-300">
+                      ${unitCostPerSellable.toFixed(2)}
+                    </span>{' '}
+                    / {sellableUnitShortLabel(yieldUnit)} · case cost{' '}
+                    <span className="font-mono font-semibold text-slate-300">${caseCost.toFixed(2)}</span>
+                  </p>
+                ) : null}
                 <div className="mt-6 flex items-end justify-between gap-4 rounded-xl border border-slate-800 bg-slate-900/70 px-5 py-4">
                   <div>
-                    <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Margin at floor price</p>
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                      Margin at floor price (per {sellableUnitShortLabel(yieldUnit)})
+                    </p>
                     <p
                       className={cn(
                         'mt-1 font-mono text-3xl font-black tabular-nums',
@@ -573,16 +658,15 @@ export function ItemSettingsModal({
               </SubCard>
             </div>
           ) : null}
-        </div>
+        </ModalBody>
 
         {(message || error) && (
-          <footer className="shrink-0 border-t border-slate-800 px-6 py-3">
+          <ModalFooter className="px-6 py-3">
             {message ? <p className="text-sm font-semibold text-emerald-300">{message}</p> : null}
             {error ? <p className="text-sm text-amber-200">{error}</p> : null}
-          </footer>
+          </ModalFooter>
         )}
-      </div>
-    </div>
+    </ModalShell>
   );
 }
 

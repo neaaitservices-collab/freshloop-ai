@@ -11,6 +11,7 @@ import {
   ProductionBomKpiBadges,
   type ProductionBomSummary,
 } from '@/components/features/production/ProductionBomKpiBadges';
+import { PageMain } from '@/components/ui/layout';
 import { InvoiceUploadModal } from '@/components/features/invoices/InvoiceUploadModal';
 import { VoiceRecorderModal } from '@/components/features/voice/VoiceRecorderModal';
 import { DeliLabelModal } from '@/components/features/recipes/DeliLabelModal';
@@ -188,7 +189,7 @@ function ProductionDashboardContent() {
         </div>
       ) : null}
 
-      <main className="mx-auto w-full max-w-[90rem] flex-1 px-3 py-3 pb-28 sm:px-6 sm:py-5 sm:pb-8">
+      <PageMain width="wide" className="py-3 sm:py-5 sm:pb-8">
         <div className="sticky top-0 z-30 -mx-3 space-y-3 border-b border-slate-800/80 bg-slate-950/95 px-3 pb-3 pt-1 backdrop-blur-md sm:-mx-6 sm:px-6 lg:static lg:mx-0 lg:space-y-4 lg:border-0 lg:bg-transparent lg:p-0 lg:backdrop-blur-none">
           <header className="rounded-2xl border border-slate-800/90 bg-slate-900/60 p-4 lg:p-5">
             <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
@@ -393,7 +394,7 @@ function ProductionDashboardContent() {
             </div>
           </aside>
         </div>
-      </main>
+      </PageMain>
 
       <InvoiceUploadModal
         isOpen={isInvoiceModalOpen}

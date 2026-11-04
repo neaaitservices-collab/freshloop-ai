@@ -9,6 +9,7 @@ import { useRegisterAppVoice } from '@/components/layout/AppVoiceOverrideContext
 import {
   notifyInventoryUpdated,
 } from '@/lib/domains/inventory/inventoryMoveClient';
+import { PageMain } from '@/components/ui/layout';
 import { InvoiceUploadModal } from '@/components/features/invoices/InvoiceUploadModal';
 import { VoiceLoggerModal } from '@/components/features/voice/VoiceLoggerModal';
 import {
@@ -66,7 +67,7 @@ export default function OperationsCenter() {
 
   return (
     <div className="flex w-full min-w-0 flex-1 flex-col overflow-x-clip bg-slate-950 text-slate-100 font-sans selection:bg-emerald-500 selection:text-slate-950">
-      <main className="mx-auto w-full min-w-0 max-w-7xl flex-1 space-y-6 overflow-x-clip px-3 py-5 pb-28 sm:px-6 sm:py-8 sm:pb-12">
+      <PageMain className="space-y-6">
         <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-slate-900/90 via-slate-900/60 to-slate-950 border border-slate-800/90 p-5 sm:p-7 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06)] backdrop-blur-xl">
           <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-5">
             <div className="space-y-1.5">
@@ -136,7 +137,7 @@ export default function OperationsCenter() {
         <div className="min-w-0 max-w-full">
           <OperationsLiveTransfers pullDays={pullSensitivityDays} />
         </div>
-      </main>
+      </PageMain>
 
       <InvoiceUploadModal
         isOpen={isInvoiceModalOpen}

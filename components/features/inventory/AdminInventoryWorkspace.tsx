@@ -15,6 +15,7 @@ import {
 } from '@/lib/domains/inventory/inventoryCatalog';
 import type { StockLevel, StockOverrideAudit } from '@/lib/domains/inventory/stock';
 import { canOverrideInventoryStock } from '@/lib/auth/staffCapabilities';
+import { CatalogDuplicateMergePanel } from '@/components/features/inventory/CatalogDuplicateMergePanel';
 
 export function AdminInventoryWorkspace({
   levels: initialLevels,
@@ -36,6 +37,7 @@ export function AdminInventoryWorkspace({
     Boolean(activeUser && canOverrideInventoryStock(activeUser.role));
   const canRemoveFromCatalog =
     roleReady && !roleLoading && Boolean(activeUser && activeUser.role === 'ADMIN');
+  const isAdmin = roleReady && !roleLoading && activeUser?.role === 'ADMIN';
 
   useEffect(() => {
     if (!initialLevels) return;
@@ -72,15 +74,30 @@ export function AdminInventoryWorkspace({
   };
 
   return (
-    <section className="space-y-4">
+    <section id="inventory-catalog" className="scroll-mt-24 min-w-0 space-y-4">
       <div>
         <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-emerald-300/90">Inventory catalog</p>
         <h2 className="mt-1 text-xl font-black tracking-tight text-white sm:text-2xl">Stock & margin control</h2>
         <p className="mt-1 max-w-2xl text-sm text-slate-400">
-          Full product catalog from the database. Items stay listed at zero stock; only an{' '}
-          <span className="text-slate-300">admin</span> can remove a SKU from the catalog.
+          Full product catalog from the database. Items stay listed at zero stock. Admins can merge duplicate
+          SKUs (same item, different invoice names) or remove a SKU from the catalog.
         </p>
       </div>
+
+      {isAdmin ? (
+        <CatalogDuplicateMergePanel
+          onMerged={() => {
+            void fetch('/api/inventory/levels', { cache: 'no-store' })
+              .then((res) => res.json())
+              .then((json) => {
+                if (json.success && Array.isArray(json.levels)) {
+                  setLevels(json.levels as StockLevel[]);
+                }
+              })
+              .catch(() => undefined);
+          }}
+        />
+      ) : null}
 
       <InventoryFilterBar
         filters={filters}
@@ -150,15 +167,13 @@ export function AdminInventoryWorkspace({
           window.dispatchEvent(new CustomEvent('freshloop-inventory-updated'));
         }}
         onUpdatePhysicalCount={async (cases) => {
-          if (!modalRow || !activeUser) throw new Error('Not signed in.');
+          if (!modalRow) throw new Error('No item selected.');
           const res = await fetch('/api/inventory/levels', {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               productId: modalRow.productId,
               casesOnHand: cases,
-              role: activeUser.role,
-              staffId: activeUser.id,
             }),
           });
           const json = await res.json();

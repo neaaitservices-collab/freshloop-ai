@@ -86,10 +86,14 @@ function itemsFor(role: RoleName | null): NavItem[] {
   const visible = !role
     ? ITEMS.filter((item) => item.roles.includes('ADMIN'))
     : ITEMS.filter((item) => item.roles.includes(role));
+  const filtered =
+    role && isManager(role)
+      ? visible.filter((item) => item.id !== 'inventory')
+      : visible;
   if (!role || isManager(role)) {
-    return [...visible].sort((a, b) => Number(b.id === 'account') - Number(a.id === 'account'));
+    return [...filtered].sort((a, b) => Number(b.id === 'account') - Number(a.id === 'account'));
   }
-  return visible;
+  return filtered;
 }
 
 export function Navigation({ onVoice }: { onVoice: () => void }) {

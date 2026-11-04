@@ -3,6 +3,7 @@
 import React from 'react';
 import { PageIntro } from '@/components/layout/PageIntro';
 import { AdminViewTabs } from '@/components/features/admin/AdminViewTabs';
+import { PageMain } from '@/components/ui/layout';
 
 export function ExecutiveDashboardShell({
   children,
@@ -10,7 +11,7 @@ export function ExecutiveDashboardShell({
   children: React.ReactNode;
 }) {
   return (
-    <main className="mx-auto w-full max-w-7xl px-3 py-4 pb-24 sm:px-6 sm:py-6">
+    <PageMain className="py-4 pb-24 sm:py-6">
       <PageIntro
         step="Executive analytics"
         title="Business impact"
@@ -18,6 +19,6 @@ export function ExecutiveDashboardShell({
         action={<AdminViewTabs />}
       />
       <div className="mt-4 space-y-4">{children}</div>
-    </main>
+    </PageMain>
   );
 }

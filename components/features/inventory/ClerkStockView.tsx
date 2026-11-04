@@ -6,6 +6,7 @@ import { ArrowRight, Package, Search } from 'lucide-react';
 import { Card, CardBody, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { Badge } from '@/components/ui/Badge';
+import { PageMain } from '@/components/ui/layout';
 import type { StockLevel } from '@/lib/domains/inventory/stock';
 import { formatCurrency, formatUnits, stockUnitLabel } from '@/lib/domains/receiving/yieldPricing';
 import { cn } from '@/lib/utils/cn';
@@ -64,7 +65,7 @@ export function ClerkStockView({
   }, [highlightProductId, rows.length]);
 
   return (
-    <main className="mx-auto w-full max-w-4xl bg-slate-950 px-3 py-5 pb-28 sm:px-6 sm:py-8">
+    <PageMain width="lg" className="bg-slate-950">
       <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-blue-300/80">
@@ -155,6 +156,6 @@ export function ClerkStockView({
           </ul>
         </Card>
       )}
-    </main>
+    </PageMain>
   );
 }

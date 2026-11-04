@@ -4,6 +4,7 @@ import { ArrowLeft } from 'lucide-react';
 import { SettingsForm } from '@/components/features/admin/AccountPage';
 import { getPlatformSettings } from '@/lib/domains/stats/platformSettings';
 import { PageIntro } from '@/components/layout/PageIntro';
+import { PageMain } from '@/components/ui/layout';
 
 export const dynamic = 'force-dynamic';
 
@@ -14,7 +15,7 @@ async function LiveSettings() {
 
 export default function AdminStoreSettingsPage() {
   return (
-    <main className="mx-auto w-full max-w-3xl px-3 py-5 pb-28 sm:px-6 sm:py-8">
+    <PageMain width="md">
       <Link
         href="/admin"
         className="mb-4 inline-flex items-center gap-1.5 text-xs font-bold text-slate-400 transition hover:text-slate-200"
@@ -30,6 +31,6 @@ export default function AdminStoreSettingsPage() {
       <Suspense fallback={<SettingsForm settings={null} layout="page" />}>
         <LiveSettings />
       </Suspense>
-    </main>
+    </PageMain>
   );
 }

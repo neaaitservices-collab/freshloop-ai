@@ -11,6 +11,7 @@ import {
   parseHourlyRateInput,
 } from '@/lib/utils/hourlyRateDisplay';
 import { positionForStaff, STAFF_POSITIONS } from '@/lib/utils/positions';
+import { ScrollTable } from '@/components/ui/layout';
 import {
   canManageStaff,
   canRemoveStaff,
@@ -175,7 +176,8 @@ export function UserManagementTable({ embedded = false }: { embedded?: boolean }
         <p className="mt-4 text-sm text-slate-500">Loading staff…</p>
       ) : null}
 
-      <div className="mt-4 overflow-x-auto rounded-2xl border border-slate-800/90 bg-slate-950/40">
+      <div className="mt-4 min-w-0 overflow-hidden rounded-2xl border border-slate-800/90 bg-slate-950/40">
+        <ScrollTable>
         <table className="w-full min-w-[640px] border-collapse text-left text-sm">
           <thead>
             <tr className="border-b border-slate-800/90 bg-slate-900/80 text-[10px] font-bold uppercase tracking-wider text-slate-500">
@@ -255,6 +257,7 @@ export function UserManagementTable({ embedded = false }: { embedded?: boolean }
             ) : null}
           </tbody>
         </table>
+        </ScrollTable>
       </div>
 
       <StaffEmployeeModal

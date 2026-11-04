@@ -231,8 +231,6 @@ export function CaseBoard({
         body: JSON.stringify({
           productId: selected.productId,
           casesOnHand: toNumber(casesOnHand),
-          role: activeUser.role,
-          staffId: activeUser.id,
         }),
       });
       const json = await response.json();

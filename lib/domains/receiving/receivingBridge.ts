@@ -22,14 +22,30 @@ function stableLogId(result: InvoiceOcrResult, item: InvoiceOcrResult['lineItems
 export function receivingLogsFromInvoice(result: InvoiceOcrResult): ReceivingLog[] {
   return result.lineItems
     .filter((item) => item.name && Number(item.unitCost) >= 0)
-    .map((item, index) => ({
-      id: stableLogId(result, item, index),
-      itemName: item.name,
-      casesReceived: Number(item.quantity) > 0 ? Number(item.quantity) : 1,
-      caseCost: Number(item.unitCost) || 0,
-      packSize: Number(item.casePackSize) > 0 ? Number(item.casePackSize) : undefined,
-      retailUnit: retailUnitFromSubUnit(item.subUnit),
-    }));
+    .map((item, index) => {
+      const catalogName = item.matchedProductName?.trim();
+      const productId = item.productId?.trim();
+      return {
+        id: stableLogId(result, item, index),
+        itemName: catalogName || item.name,
+        invoiceLineName: catalogName && catalogName !== item.name ? item.name : undefined,
+        productId: productId || undefined,
+        casesReceived: Number(item.quantity) > 0 ? Number(item.quantity) : 1,
+        caseCost: (() => {
+          const qty = Number(item.quantity) > 0 ? Number(item.quantity) : 1;
+          const total = Number(item.totalCost) || 0;
+          const unit = Number(item.unitCost) || 0;
+          if (total > 0 && qty > 0) return Number((total / qty).toFixed(4));
+          return unit;
+        })(),
+        packSize: Number(item.casePackSize) > 0 ? Number(item.casePackSize) : undefined,
+        retailUnit: retailUnitFromSubUnit(item.subUnit),
+        suggestedCaseFloorPrice:
+          typeof item.caseRetailPrice === 'number' && item.caseRetailPrice > 0
+            ? item.caseRetailPrice
+            : undefined,
+      };
+    });
 }
 
 export function stashInvoiceForReceiving(result: InvoiceOcrResult): void {

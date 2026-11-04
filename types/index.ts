@@ -39,7 +39,11 @@ export interface InvoiceLineItemExtract {
   subUnit: string; // e.g. 'lbs', 'kg', 'units', 'ml'
   unitCost: number; // Cost per case
   totalCost: number;
+  /** Printed case list / shelf price on invoice when visible (optional). */
+  caseRetailPrice?: number | null;
   productId?: string | null;
+  /** Catalog SKU name when OCR matched an existing product (invoice line name may differ). */
+  matchedProductName?: string | null;
   historicalAvgCost?: number | null;
   costVariancePct?: number | null;
   requires_approval?: boolean;

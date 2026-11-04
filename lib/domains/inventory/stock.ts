@@ -82,6 +82,7 @@ export { matchProduct };
 export async function findOrCreatePurchaseProduct(
   input: {
     itemName: string;
+    productId?: string;
     department?: Department;
     supplier?: string | null;
     casePackSize?: number;
@@ -93,6 +94,21 @@ export async function findOrCreatePurchaseProduct(
   const client = db ?? prisma;
   const name = input.itemName.trim();
   if (!name) throw new Error('Item name is required to add a catalog product.');
+
+  const productId = input.productId?.trim();
+  if (productId) {
+    const existing = await client.product.findFirst({
+      where: { id: productId, isManufactured: false },
+      select: { id: true, name: true },
+    });
+    if (existing) {
+      await client.product.update({
+        where: { id: existing.id },
+        data: { catalogActive: true },
+      });
+      return { id: existing.id, name: existing.name, created: false };
+    }
+  }
 
   const products = await client.product.findMany({
     where: { isManufactured: false },
@@ -700,6 +716,7 @@ function unitTypeFor(retailUnit: string): UnitType {
 
 export async function postReceipt(input: {
   itemName: string;
+  productId?: string;
   casesReceived: number;
   caseCost: number;
   packSize: number;
@@ -720,6 +737,7 @@ export async function postReceipt(input: {
     const ensured = await findOrCreatePurchaseProduct(
       {
         itemName: input.itemName,
+        productId: input.productId,
         casePackSize: unitsPerCase,
         unitCost: Number(unitCost.toFixed(4)),
         retailUnit: input.retailUnit,

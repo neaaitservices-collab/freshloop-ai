@@ -5,8 +5,12 @@ import Link from 'next/link';
 import { AlertTriangle, LayoutDashboard, Receipt, RefreshCw, Sheet } from 'lucide-react';
 import {
   calculateYieldQuote,
+  caseFloorForTargetMargin,
+  caseFloorFromPerUnitFloor,
+  floorPriceForTargetMargin,
   formatCurrency,
   formatUnits,
+  perUnitFloorFromCaseFloor,
   resolveTargetMargin,
   suggestPackDefaults,
   type MarginMode,
@@ -123,6 +127,7 @@ async function postLogToInventory(log: ReceivingLog, pricing: LogPricing) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       itemName: log.itemName,
+      productId: log.productId,
       casesReceived: log.casesReceived,
       caseCost: log.caseCost,
       packSize: pricing.packSize,
@@ -215,6 +220,8 @@ export function YieldPricingDashboard({
   const [marginMode, setMarginMode] = useState<MarginMode>('40');
   const [customMarginPercent, setCustomMarginPercent] = useState('35');
   const [currentRetailPrice, setCurrentRetailPrice] = useState('0.00');
+  const [currentCaseFloor, setCurrentCaseFloor] = useState('0.00');
+  const floorFromMargin = useRef(true);
 
   const [saving, setSaving] = useState(false);
   const [savingAll, setSavingAll] = useState(false);
@@ -388,7 +395,31 @@ export function YieldPricingDashboard({
     setYieldUnit(nextRetailUnit);
     setMarginMode(nextMarginMode);
     setCustomMarginPercent(nextCustomMargin);
-    setCurrentRetailPrice(quote.targetSrp !== null ? quote.targetSrp.toFixed(2) : '0.00');
+    const packNum = Number(nextPackSize);
+    const divNum = Number(nextYieldDivisor);
+    if (
+      selected.suggestedCaseFloorPrice !== undefined &&
+      selected.suggestedCaseFloorPrice > 0
+    ) {
+      floorFromMargin.current = false;
+      setMarginMode('custom');
+      setCurrentCaseFloor(selected.suggestedCaseFloorPrice.toFixed(2));
+      const perUnit = perUnitFloorFromCaseFloor(
+        selected.suggestedCaseFloorPrice,
+        packNum,
+        divNum
+      );
+      setCurrentRetailPrice(perUnit !== null ? perUnit.toFixed(2) : '0.00');
+    } else {
+      floorFromMargin.current = true;
+      setCurrentRetailPrice(quote.targetSrp !== null ? quote.targetSrp.toFixed(2) : '0.00');
+      const caseFloor = caseFloorForTargetMargin({
+        caseCost: selected.caseCost,
+        marginMode: nextMarginMode,
+        customMarginPercent: toPositiveNumber(nextCustomMargin),
+      });
+      setCurrentCaseFloor(caseFloor !== null ? caseFloor.toFixed(2) : '0.00');
+    }
     setSavedMessage(null);
     setErrorMessage(null);
 
@@ -430,6 +461,26 @@ export function YieldPricingDashboard({
 
   const targetMargin = resolveTargetMargin(marginMode, toPositiveNumber(customMarginPercent));
   const priceNumber = toPositiveNumber(currentRetailPrice);
+  const packNum = toPositiveNumber(packSize);
+  const divNum = toPositiveNumber(yieldDivisor);
+
+  useEffect(() => {
+    if (!selected || marginMode === 'custom' || !floorFromMargin.current) return;
+    const unit = floorPriceForTargetMargin({
+      caseCost: selected.caseCost,
+      packSize: packNum,
+      yieldDivisor: divNum,
+      marginMode,
+      customMarginPercent: toPositiveNumber(customMarginPercent),
+    });
+    if (unit !== null && unit > 0) setCurrentRetailPrice(unit.toFixed(2));
+    const caseFloor = caseFloorForTargetMargin({
+      caseCost: selected.caseCost,
+      marginMode,
+      customMarginPercent: toPositiveNumber(customMarginPercent),
+    });
+    if (caseFloor !== null && caseFloor > 0) setCurrentCaseFloor(caseFloor.toFixed(2));
+  }, [selected, marginMode, packNum, divNum, customMarginPercent]);
 
   const quote = useMemo(() => {
     if (!selected) {
@@ -854,6 +905,15 @@ export function YieldPricingDashboard({
               yieldDivisor={yieldDivisor}
               packUnit={packUnit}
               yieldUnit={yieldUnit}
+              caseFloorPrice={currentCaseFloor}
+              onCaseFloorPrice={(value) => {
+                floorFromMargin.current = false;
+                setMarginMode('custom');
+                setCurrentCaseFloor(value);
+                const perUnit = perUnitFloorFromCaseFloor(toPositiveNumber(value), packNum, divNum);
+                if (perUnit !== null && perUnit > 0) setCurrentRetailPrice(perUnit.toFixed(2));
+                setSavedMessage(null);
+              }}
               onPackSize={(value) => {
                 setPackSize(value);
                 setSavedMessage(null);
@@ -878,6 +938,7 @@ export function YieldPricingDashboard({
               customMarginPercent={customMarginPercent}
               currentRetailPrice={currentRetailPrice}
               onMarginMode={(mode) => {
+                floorFromMargin.current = mode !== 'custom';
                 setMarginMode(mode);
                 setSavedMessage(null);
               }}
@@ -886,7 +947,15 @@ export function YieldPricingDashboard({
                 setSavedMessage(null);
               }}
               onCurrentRetailPrice={(value) => {
+                floorFromMargin.current = false;
+                setMarginMode('custom');
                 setCurrentRetailPrice(value);
+                const caseNext = caseFloorFromPerUnitFloor(
+                  toPositiveNumber(value),
+                  packNum,
+                  divNum
+                );
+                if (caseNext !== null && caseNext > 0) setCurrentCaseFloor(caseNext.toFixed(2));
                 setSavedMessage(null);
               }}
             />

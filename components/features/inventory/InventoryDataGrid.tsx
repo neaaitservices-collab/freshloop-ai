@@ -3,12 +3,39 @@
 import React, { useState } from 'react';
 import { ChevronDown } from 'lucide-react';
 import type { StockLevel } from '@/lib/domains/inventory/stock';
-import { formatCurrency, formatPercent, formatUnits, stockUnitLabel } from '@/lib/domains/receiving/yieldPricing';
+import {
+  catalogCaseFloorPrice,
+  caseCostForPricing,
+  formatCurrency,
+  formatPercent,
+  formatUnits,
+  marginAtCaseFloorPrice,
+  stockUnitLabel,
+} from '@/lib/domains/receiving/yieldPricing';
+import { ScrollTable } from '@/components/ui/layout';
 import { cn } from '@/lib/utils/cn';
 
+function caseCost(row: StockLevel): number {
+  const pack = row.casePackSize > 0 ? row.casePackSize : 1;
+  return caseCostForPricing({
+    standardCost: row.unitCost,
+    packSize: pack,
+    yieldDivisor: 1,
+  });
+}
+
+function casePrice(row: StockLevel): number | null {
+  return catalogCaseFloorPrice({
+    unitCostPerSellable: row.unitCost,
+    casePackSize: row.casePackSize,
+    retailPrice: row.retailPrice,
+  });
+}
+
 function marginPct(row: StockLevel): number | null {
-  if (row.retailPrice === null || row.retailPrice <= 0) return null;
-  return ((row.retailPrice - row.unitCost) / row.retailPrice) * 100;
+  const price = casePrice(row);
+  if (price === null || price <= 0) return null;
+  return marginAtCaseFloorPrice(price, caseCost(row));
 }
 
 export function InventoryDataGrid({
@@ -40,8 +67,8 @@ export function InventoryDataGrid({
   }
 
   return (
-    <div className="overflow-hidden rounded-2xl border border-slate-800/90 bg-slate-900/50 shadow-lg shadow-black/10">
-      <div className="overflow-x-auto">
+    <div className="min-w-0 overflow-hidden rounded-2xl border border-slate-800/90 bg-slate-900/50 shadow-lg shadow-black/10">
+      <ScrollTable>
         <table className="w-full min-w-[720px] text-left text-sm">
           <thead className="border-b border-slate-800 bg-slate-950/80 text-[10px] font-bold uppercase tracking-wider text-slate-500">
             <tr>
@@ -49,7 +76,7 @@ export function InventoryDataGrid({
               <th className="px-4 py-3">Supplier</th>
               <th className="px-4 py-3 text-right">On hand</th>
               <th className="px-4 py-3 text-right">Margin</th>
-              <th className="px-4 py-3 text-right">Value</th>
+              <th className="px-4 py-3 text-right">Case price</th>
               <th className="px-4 py-3 text-right">Shelf</th>
             </tr>
           </thead>
@@ -59,7 +86,7 @@ export function InventoryDataGrid({
             ))}
           </tbody>
         </table>
-      </div>
+      </ScrollTable>
     </div>
   );
 }
@@ -92,7 +119,9 @@ function GroupBlock({
         </tr>
       ) : null}
       {open
-        ? group.rows.map((row, index) => (
+        ? group.rows.map((row, index) => {
+            const floorCasePrice = casePrice(row);
+            return (
             <tr
               key={row.productId}
               onClick={() => onSelect(row)}
@@ -123,11 +152,12 @@ function GroupBlock({
                 {marginPct(row) === null ? '—' : `${formatPercent(marginPct(row)!)}%`}
               </td>
               <td className="px-4 py-3 text-right font-mono text-slate-300">
-                {formatCurrency(row.onHand * row.unitCost)}
+                {floorCasePrice === null ? '—' : formatCurrency(floorCasePrice)}
               </td>
               <td className="px-4 py-3 text-right text-xs text-slate-500">{row.daysRemaining}d</td>
             </tr>
-          ))
+            );
+          })
         : null}
     </>
   );

@@ -313,6 +313,18 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
                         >
                           <td className="p-2 sm:p-2.5 font-semibold text-white">
                             {item.name}
+                            {item.matchedProductName && item.productId ? (
+                              <p className="mt-1 text-[10px] font-normal text-emerald-300/90">
+                                Catalog: {item.matchedProductName}
+                                {item.matchedProductName !== item.name
+                                  ? ' · pack size from receiving controls'
+                                  : null}
+                              </p>
+                            ) : (
+                              <p className="mt-1 text-[10px] font-normal text-amber-200/80">
+                                No catalog match — confirm name or add SKU in Admin catalog first.
+                              </p>
+                            )}
                             {item.requires_approval ? (
                               <p className="mt-1 text-[10px] font-normal text-amber-200/90">
                                 {item.guardrailReason || 'Cost varies from historical average.'}
