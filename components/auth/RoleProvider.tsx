@@ -25,21 +25,24 @@ interface RoleContextValue {
 
 const RoleContext = createContext<RoleContextValue | null>(null);
 
-function mapSessionUser(session: ReturnType<typeof useSession>['data']): StaffUser | null {
-  const user = session?.user;
-  if (!user?.id || !user.email) return null;
-  const role = user.role && isRoleName(user.role) ? user.role : null;
-  if (!role) return null;
-  const rate = user.hourlyRate;
-  return {
-    id: user.id,
-    name: user.name ?? '',
-    email: user.email,
-    position: user.position ?? '',
-    role,
-    hourlyRate:
-      typeof rate === 'number' && Number.isFinite(rate) && rate > 0 ? rate : null,
-  };
+let inflightUsersPromise: Promise<StaffUser[] | null> | null = null;
+
+async function fetchUsersCoalesced(): Promise<StaffUser[] | null> {
+  if (inflightUsersPromise) return inflightUsersPromise;
+  inflightUsersPromise = fetch('/api/users', { cache: 'no-store' })
+    .then(async (response) => {
+      if (!response.ok) return null;
+      const json = await response.json();
+      if (json?.success && Array.isArray(json.users)) {
+        return json.users as StaffUser[];
+      }
+      return null;
+    })
+    .catch(() => null)
+    .finally(() => {
+      inflightUsersPromise = null;
+    });
+  return inflightUsersPromise;
 }
 
 function RoleContextInner({ children }: { children: React.ReactNode }) {
