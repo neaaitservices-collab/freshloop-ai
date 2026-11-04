@@ -324,7 +324,7 @@ export function SubInventoryTransferList({
                   </div>
                 ) : (
                   <p className="mt-3 text-[10px] font-semibold uppercase tracking-wide text-emerald-500/80">
-                    Tap to transfer · waste
+                    Tap to transfer · markdown · waste
                   </p>
                 )
               ) : null}
@@ -335,9 +335,10 @@ export function SubInventoryTransferList({
                 aria-hidden
               />
             ) : queueModalActions ? (
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-emerald-500/80 md:self-center">
-                Tap row to transfer or log waste
-              </p>
+              <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-500/80 md:self-center">
+                <span>Tap to transfer · markdown · waste</span>
+                <ChevronRight className="h-4 w-4 shrink-0 text-slate-500" aria-hidden />
+              </div>
             ) : (
               <div className="min-w-0 w-full max-w-full md:max-w-md md:shrink-0">
                 <SubInventoryTransferBar

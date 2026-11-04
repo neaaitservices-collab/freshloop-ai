@@ -2,7 +2,7 @@ import { Suspense } from 'react';
 import { AccountPage } from '@/components/features/admin/AccountPage';
 import { StoreSettingsEntryCard } from '@/components/features/admin/StoreSettingsEntryCard';
 import { CaseBoard } from '@/components/features/inventory/CaseBoard';
-import { DashboardFigures } from '@/components/features/admin/DashboardFigures';
+import { DashboardFigures, DashboardFiguresSkeleton } from '@/components/features/admin/DashboardFigures';
 import { getStockLevels } from '@/lib/domains/inventory/stock';
 import { getAdminStoreStatsBundle } from '@/lib/domains/stats/storeStats';
 
@@ -23,7 +23,7 @@ export default function AdminPage() {
     <AccountPage
       settings={<StoreSettingsEntryCard />}
       figures={
-        <Suspense fallback={<DashboardFigures stats={null} />}>
+        <Suspense fallback={<DashboardFiguresSkeleton />}>
           <LiveFigures />
         </Suspense>
       }

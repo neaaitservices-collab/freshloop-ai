@@ -34,9 +34,12 @@ function snapshotKey(levels: StockLevel[] | null): string | null {
 export function useOptimisticInventoryLevels(initialLevels: StockLevel[] | null) {
   const [levels, setLevels] = useState<StockLevel[]>(() => initialLevels ?? []);
   const levelsRef = useRef(levels);
-  levelsRef.current = levels;
   const inFlight = useRef(new Set<string>());
   const snapshot = snapshotKey(initialLevels);
+
+  useEffect(() => {
+    levelsRef.current = levels;
+  }, [levels]);
 
   useEffect(() => {
     if (!initialLevels) return;

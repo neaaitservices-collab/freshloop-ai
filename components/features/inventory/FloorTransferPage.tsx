@@ -83,7 +83,7 @@ export function FloorTransferPage({ levels: initialLevels }: { levels: StockLeve
     [levels, pullDays]
   );
 
-  const handleSuccess = (message: string, level: StockLevel) => {
+  const handleSuccess = (message: string) => {
     setErrorMessage(null);
     setToast({
       text: message,

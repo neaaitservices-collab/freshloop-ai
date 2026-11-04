@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { Department, InventoryLocation, TransactionType } from '@prisma/client';
-import { prisma, getMovingAverageCost } from '@/lib/domains/inventory/ledger';
+import { Department, InventoryLocation } from '@prisma/client';
+import { getMovingAverageCost } from '@/lib/domains/inventory/ledger';
 import { loadProductCatalog } from '@/lib/domains/catalog/productCatalog';
 import {
   commitInvoiceOcrReceipts,
   type OcrInvoiceMeta,
 } from '@/lib/domains/receiving/invoiceOcrCommit';
-import { generateContentWithFallback, parseModelJson, tryParseModelJson } from '@/lib/domains/ai/gemini';
+import { generateContentWithFallback, tryParseModelJson } from '@/lib/domains/ai/gemini';
 import { handleApiRouteError } from '@/lib/domains/ai/apiError';
 import { authErrorResponse } from '@/lib/auth/http';
 import { requireReceivingStaff } from '@/lib/auth/guardRoute';
@@ -406,7 +406,6 @@ export async function POST(req: NextRequest) {
       confirmCommit,
       confirmedItems,
       invoiceNumber: confirmedInvoiceNum,
-      staffId,
       invoiceMeta,
     } = body as {
       imageBase64?: string;

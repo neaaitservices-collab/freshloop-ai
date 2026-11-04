@@ -7,6 +7,8 @@ import { requireRoles, requireSessionUser } from '@/lib/auth/session';
 import { MANAGER_ROLES } from '@/lib/auth/permissions';
 import { getStaffHourlyRateMap, setStaffHourlyRate } from '@/lib/auth/staffHourlyRate';
 import { findLatestStoreSetting } from '@/lib/domains/stats/storeSettingSelect';
+import { parseJsonBody } from '@/lib/security/parseJsonBody';
+import { staffCreateBodySchema } from '@/lib/security/schemas/staff';
 import { positionByLabel } from '@/lib/utils/positions';
 import type { StaffUser } from '@/lib/utils/roles';
 
@@ -65,16 +67,10 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   try {
     await requireRoles(MANAGER_ROLES);
-    const body = (await req.json()) as {
-      name?: string;
-      email?: string;
-      position?: string;
-      role?: string;
-      hourlyRate?: number;
-    };
-    const name = body.name?.trim() ?? '';
-    const email = body.email?.trim().toLowerCase() ?? '';
-    const assigned = positionByLabel(body.position ?? '');
+    const body = await parseJsonBody(req, staffCreateBodySchema);
+    const name = body.name.trim();
+    const email = body.email.trim().toLowerCase();
+    const assigned = positionByLabel(body.position);
     if (!name || !email || !assigned) {
       return NextResponse.json(
         {
@@ -86,14 +82,7 @@ export async function POST(req: NextRequest) {
     }
     let hourlyRate: number;
     if (body.hourlyRate !== undefined) {
-      const parsed = Number(body.hourlyRate);
-      if (!Number.isFinite(parsed) || parsed <= 0 || parsed > 10_000) {
-        return NextResponse.json(
-          { success: false, error: 'Hourly wage must be a positive number.' },
-          { status: 400 }
-        );
-      }
-      hourlyRate = Number(parsed.toFixed(2));
+      hourlyRate = Number(body.hourlyRate.toFixed(2));
     } else {
       const storeSetting = await findLatestStoreSetting();
       hourlyRate = Number((storeSetting?.defaultLaborRatePerHour ?? 17.6).toFixed(2));

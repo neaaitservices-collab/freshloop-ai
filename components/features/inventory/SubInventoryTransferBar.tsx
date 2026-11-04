@@ -212,7 +212,7 @@ export function SubInventoryTransferBar({
 
   const initialFloorQty = useMemo(
     () => clampTransferQty(defaultQty ?? step, floorMax, step),
-    [defaultQty, floorMax, step, row.productId]
+    [defaultQty, floorMax, step]
   );
   const [floorQty, setFloorQty] = useState(initialFloorQty);
   const [kitchenQty, setKitchenQty] = useState(() => clampTransferQty(step, kitchenMax, step));

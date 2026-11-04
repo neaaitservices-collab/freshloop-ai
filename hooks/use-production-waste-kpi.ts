@@ -116,7 +116,8 @@ export function useProductionWasteKpi(options?: UseProductionWasteKpiOptions) {
   }, [refreshWasteKpi, syncStoreSettings]);
 
   const logVolumetricScrap = useCallback(
-    async (bucketsDelta: number, _event: VolumetricScrapLoggedEvent) => {
+    async (bucketsDelta: number, _event?: VolumetricScrapLoggedEvent) => {
+      void _event;
       const res = await fetch('/api/inventory/volumetric-scrap', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

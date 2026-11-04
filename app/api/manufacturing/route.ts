@@ -22,7 +22,6 @@ import { manufacturingPostBodySchema } from '@/lib/security/schemas/manufacturin
 import { assertMutationRateLimit } from '@/lib/security/rateLimit';
 import { buildManufacturingRecipeCatalog } from '@/lib/domains/manufacturing/buildCatalog';
 import { resolveExecutionLaborRate } from '@/lib/auth/staffHourlyRate';
-import { findLatestStoreSetting } from '@/lib/domains/stats/storeSettingSelect';
 import { computeScaledBatchCost } from '@/lib/domains/manufacturing/batchCost';
 import {
   FALLBACK_RECIPES,
@@ -163,7 +162,6 @@ export async function POST(req: NextRequest) {
         },
       });
       if (dbRecipe) {
-        const storeSetting = await findLatestStoreSetting();
         recipeLaborHours = Number(dbRecipe.laborHours ?? 0);
         recipeLaborRateFromDb =
           dbRecipe.laborRate != null && Number(dbRecipe.laborRate) > 0

@@ -6,6 +6,7 @@ import React, {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react';
 import { SessionProvider, signOut, useSession } from 'next-auth/react';
@@ -24,50 +25,87 @@ interface RoleContextValue {
 
 const RoleContext = createContext<RoleContextValue | null>(null);
 
-function mapSessionUser(session: ReturnType<typeof useSession>['data']): StaffUser | null {
-  const user = session?.user;
-  if (!user?.id || !user.email) return null;
-  const role = user.role && isRoleName(user.role) ? user.role : null;
-  if (!role) return null;
-  const rate = user.hourlyRate;
-  return {
-    id: user.id,
-    name: user.name ?? '',
-    email: user.email,
-    position: user.position ?? '',
-    role,
-    hourlyRate:
-      typeof rate === 'number' && Number.isFinite(rate) && rate > 0 ? rate : null,
-  };
+let inflightUsersPromise: Promise<StaffUser[] | null> | null = null;
+
+async function fetchUsersCoalesced(): Promise<StaffUser[] | null> {
+  if (inflightUsersPromise) return inflightUsersPromise;
+  inflightUsersPromise = fetch('/api/users', { cache: 'no-store' })
+    .then(async (response) => {
+      if (!response.ok) return null;
+      const json = await response.json();
+      if (json?.success && Array.isArray(json.users)) {
+        return json.users as StaffUser[];
+      }
+      return null;
+    })
+    .catch(() => null)
+    .finally(() => {
+      inflightUsersPromise = null;
+    });
+  return inflightUsersPromise;
 }
 
 function RoleContextInner({ children }: { children: React.ReactNode }) {
   const { data: session, status, update } = useSession();
   const loading = status === 'loading';
-  const activeUser = useMemo(() => mapSessionUser(session), [session]);
+
+  const userId = session?.user?.id ?? '';
+  const userEmail = session?.user?.email ?? '';
+  const userName = session?.user?.name ?? '';
+  const userPosition = session?.user?.position ?? '';
+  const userRoleRaw = session?.user?.role ?? '';
+  const userHourlyRate = session?.user?.hourlyRate;
+
+  const activeUser = useMemo<StaffUser | null>(() => {
+    if (!userId || !userEmail) return null;
+    const role = userRoleRaw && isRoleName(userRoleRaw) ? userRoleRaw : null;
+    if (!role) return null;
+    return {
+      id: userId,
+      name: userName,
+      email: userEmail,
+      position: userPosition,
+      role,
+      hourlyRate:
+        typeof userHourlyRate === 'number' &&
+        Number.isFinite(userHourlyRate) &&
+        userHourlyRate > 0
+          ? userHourlyRate
+          : null,
+    };
+  }, [userId, userEmail, userName, userPosition, userRoleRaw, userHourlyRate]);
+
   const [users, setUsers] = useState<StaffUser[]>([]);
+  const loadedForUserIdRef = useRef<string | null>(null);
 
   const loadStaffDirectory = useCallback(async () => {
     if (!activeUser || !isManager(activeUser.role)) {
       setUsers(activeUser ? [activeUser] : []);
       return;
     }
-    try {
-      const response = await fetch('/api/users', { cache: 'no-store' });
-      const json = await response.json();
-      if (json.success && Array.isArray(json.users)) {
-        setUsers(json.users as StaffUser[]);
-      } else {
-        setUsers(activeUser ? [activeUser] : []);
-      }
-    } catch {
-      setUsers(activeUser ? [activeUser] : []);
+    const list = await fetchUsersCoalesced();
+    if (list) {
+      setUsers(list);
+    } else {
+      setUsers([activeUser]);
     }
   }, [activeUser]);
 
   useEffect(() => {
+    if (!activeUser) {
+      loadedForUserIdRef.current = null;
+      setUsers([]);
+      return;
+    }
+    if (!isManager(activeUser.role)) {
+      loadedForUserIdRef.current = activeUser.id;
+      setUsers([activeUser]);
+      return;
+    }
+    if (loadedForUserIdRef.current === activeUser.id) return;
+    loadedForUserIdRef.current = activeUser.id;
     void loadStaffDirectory();
-  }, [loadStaffDirectory]);
+  }, [activeUser, loadStaffDirectory]);
 
   const refresh = useCallback(async () => {
     await update();
@@ -103,7 +141,7 @@ function RoleContextInner({ children }: { children: React.ReactNode }) {
 
 export function RoleProvider({ children }: { children: React.ReactNode }) {
   return (
-    <SessionProvider>
+    <SessionProvider refetchOnWindowFocus={false} refetchWhenOffline={false}>
       <RoleContextInner>{children}</RoleContextInner>
     </SessionProvider>
   );
