@@ -3,7 +3,6 @@ import {
   PrismaClient,
   InventoryLocation,
   TransactionType,
-  Department,
   UnitType,
   InventoryTransaction,
 } from '@prisma/client';

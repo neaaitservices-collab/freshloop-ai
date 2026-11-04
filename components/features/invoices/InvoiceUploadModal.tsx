@@ -153,6 +153,7 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
               <div className="border-2 border-dashed border-zinc-700 hover:border-emerald-500/50 rounded-2xl p-8 text-center transition-all bg-zinc-950/40 flex flex-col items-center justify-center gap-3">
                 {previewUrl ? (
                   <div className="relative max-h-48 overflow-hidden rounded-xl border border-zinc-800">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img src={previewUrl} alt="Invoice preview" className="max-h-48 object-contain" />
                   </div>
                 ) : (

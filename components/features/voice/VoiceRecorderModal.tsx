@@ -3,7 +3,7 @@
 import React, { useState, useRef } from 'react';
 import { VoiceLoggerResult } from '@/lib/types';
 import { DepartmentBadge } from '@/components/ui/DepartmentBadge';
-import { Mic, Square, Sparkles, X, AlertOctagon, CheckCircle2, Volume2, ArrowRightLeft, Tag, Trash2, Loader2 } from 'lucide-react';
+import { Mic, Square, Sparkles, X, AlertOctagon, Volume2, ArrowRightLeft, Tag, Trash2, Loader2 } from 'lucide-react';
 
 interface VoiceRecorderModalProps {
   isOpen: boolean;

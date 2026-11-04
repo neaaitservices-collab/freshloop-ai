@@ -227,7 +227,6 @@ export function YieldPricingDashboard({
   const [postedIds, setPostedIds] = useState<Set<string>>(() => new Set());
   const [movedNotice, setMovedNotice] = useState<string | null>(null);
   const [stashedScanLogs, setStashedScanLogs] = useState<ReceivingLog[]>([]);
-  const [stashedScanNote, setStashedScanNote] = useState<string | null>(null);
   const [hiddenLogIds, setHiddenLogIds] = useState<Set<string>>(() => new Set());
   const [pendingCredits, setPendingCredits] = useState<ReceivingDispositionRow[]>([]);
   const [dispositionBusy, setDispositionBusy] = useState(false);
@@ -289,11 +288,10 @@ export function YieldPricingDashboard({
     const stashed = consumeStashedReceivingScan();
     if (stashed?.logs.length) {
       setStashedScanLogs(stashed.logs);
-      setStashedScanNote(stashed.note);
       setSelectedId(stashed.logs[0]?.id ?? null);
       if (stashed.note) setMovedNotice(stashed.note);
     }
-  }, []);
+  }, [seeded]);
 
   const visibleLogs = useMemo(() => {
     const merged = [...extraLogs, ...stashedScanLogs, ...logs];
@@ -351,7 +349,7 @@ export function YieldPricingDashboard({
       if (current && openLogs.some((log) => log.id === current)) return current;
       return openLogs[0]?.id ?? null;
     });
-  }, [extraKey]);
+  }, [extraKey, extraLogs.length, openLogs]);
 
   useEffect(() => {
     setSelectedId((current) => {

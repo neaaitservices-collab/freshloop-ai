@@ -74,36 +74,9 @@ export interface SkippedReceipt {
   reason: string;
 }
 
-function compact(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, '');
-}
+import { matchProduct } from '@/lib/domains/inventory/productMatching';
 
-function tokens(value: string): string[] {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, ' ')
-    .split(' ')
-    .filter((token) => token.length > 2);
-}
-
-export function matchProduct<T extends { name: string }>(itemName: string, products: T[]): T | null {
-  const needle = compact(itemName);
-  const needleTokens = new Set(tokens(itemName));
-  let best: { product: T; score: number } | null = null;
-
-  for (const product of products) {
-    const hay = compact(product.name);
-    let score = 0;
-    if (hay === needle) score = 100;
-    else if (needle.length > 4 && (hay.includes(needle) || needle.includes(hay))) score = 80;
-    else score = tokens(product.name).filter((token) => needleTokens.has(token)).length * 10;
-
-    if (!best || score > best.score) best = { product, score };
-  }
-
-  if (!best || best.score < 20) return null;
-  return best.product;
-}
+export { matchProduct };
 
 /** Match by name or insert a purchasable SKU (invoice receive, OCR commit). */
 export async function findOrCreatePurchaseProduct(
@@ -311,7 +284,7 @@ export async function updateProductCatalogMeta(input: {
   if (input.origin !== undefined) {
     data.origin = input.origin?.trim() || null;
   }
-  const product = await prisma.product.update({
+  await prisma.product.update({
     where: { id: input.productId },
     data,
   });
@@ -516,14 +489,6 @@ export function getStockLevels(): Promise<StockLevel[]> {
   return rememberLedgerRead(stockCache, 'levels', STOCK_CACHE_MS, loadStockLevels);
 }
 
-async function readShelfOnHand(productId: string): Promise<{ floor: number; deli: number }> {
-  const [floor, deli] = await Promise.all([
-    getCurrentStock(productId, InventoryLocation.Retail_Floor),
-    getCurrentStock(productId, InventoryLocation.Deli_Grab_N_Go),
-  ]);
-  return { floor, deli };
-}
-
 async function readStockLevel(productId: string): Promise<StockLevel> {
   return loadStockLevelById(productId);
 }
@@ -591,41 +556,6 @@ export async function applyRetailMarkdown(
   return { level: await readStockLevel(productId) };
 }
 
-async function applyLocationDelta(
-  tx: LotTx,
-  input: {
-    productId: string;
-    location: InventoryLocation;
-    delta: number;
-    staffId: string;
-    unitCost: number;
-    referenceId: string;
-  }
-) {
-  if (Math.abs(input.delta) < 0.0001) return;
-  const shrink = input.delta < 0;
-  const created = await tx.inventoryTransaction.create({
-    data: {
-      productId: input.productId,
-      staffId: input.staffId,
-      qtyChange: input.delta,
-      transactionType: shrink ? TransactionType.Waste : TransactionType.Receive,
-      fromLocation: shrink ? input.location : InventoryLocation.External_Vendor,
-      toLocation: shrink ? InventoryLocation.Waste_Bin : input.location,
-      unitCostAtTime: input.unitCost,
-      referenceId: input.referenceId,
-      notes: shrink ? 'Admin stock override: shrink' : 'Admin stock override: add cases',
-    },
-  });
-  await alignLotsToLedger(tx, {
-    productId: input.productId,
-    location: input.location,
-    unitCost: input.unitCost,
-    receiveReferenceId: input.referenceId,
-    receiveTransactionId: created.id,
-  });
-}
-
 export async function setStockCases(productId: string, cases: number, staffId: string): Promise<StockLevel> {
   if (!Number.isFinite(cases) || cases < 0) {
     throw new Error('Cases must be zero or greater.');
@@ -689,7 +619,7 @@ export async function setSupplier(productId: string, supplier: string): Promise<
   if (!nextSupplier) {
     throw new Error('Supplier is required.');
   }
-  const product = await prisma.product.update({
+  await prisma.product.update({
     where: { id: productId },
     data: { supplier: nextSupplier },
   });
@@ -708,7 +638,7 @@ export async function updateCase(input: {
     throw new Error('Pack size and yield divisor must be greater than 0.');
   }
   const unitsPerCase = input.packSize / input.yieldDivisor;
-  const product = await prisma.product.update({
+  await prisma.product.update({
     where: { id: input.productId },
     data: {
       casePackSize: unitsPerCase,
@@ -722,7 +652,7 @@ export async function updateCase(input: {
 
 export async function setParCases(productId: string, parCases: number): Promise<StockLevel> {
   const nextPar = normalizeParCases(parCases);
-  const product = await prisma.product.update({
+  await prisma.product.update({
     where: { id: productId },
     data: { parCases: nextPar },
   });

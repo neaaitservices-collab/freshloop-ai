@@ -401,7 +401,6 @@ export async function POST(req: NextRequest) {
       spokenText,
       confirmCommit,
       confirmedItems,
-      staffId,
       transcript: commitTranscript,
     } = body as {
       audioBase64?: string;

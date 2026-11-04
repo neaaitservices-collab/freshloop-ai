@@ -4,7 +4,7 @@ import React, { Suspense, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { getSession, signIn } from 'next-auth/react';
-import { Loader2, Store, UserPlus } from 'lucide-react';
+import { Loader2, UserPlus } from 'lucide-react';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
 

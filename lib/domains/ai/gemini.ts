@@ -377,8 +377,9 @@ Rules:
  */
 export async function processRecipeFusion(
   shortDatedItems: InventoryItem[],
-  targetCategory?: string
+  _targetCategory?: string
 ): Promise<RecipeFusionResult[]> {
+  void _targetCategory;
   const apiKey = getApiKey();
   if (!apiKey) {
     return getMockRecipeFusion();

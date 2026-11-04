@@ -5,7 +5,6 @@ import { useRole } from '@/components/auth/RoleProvider';
 import { notifyInventoryUpdated } from '@/lib/domains/inventory/inventoryMoveClient';
 import { resolveManufacturingRecipeId } from '@/lib/domains/manufacturing/fallbackRecipes';
 import type {
-  KitchenRecipeBOMIngredient,
   KitchenRecipeDefinition,
   ProductionBatchExecutedSummary,
 } from '@/lib/domains/manufacturing/types';
@@ -15,13 +14,10 @@ import { resolveLaborRatePerHour } from '@/lib/domains/manufacturing/resolveLabo
 import {
   ChefHat,
   X,
-  Scale,
-  CheckCircle2,
   Loader2,
   AlertTriangle,
   Sliders,
   PackageCheck,
-  ShieldCheck,
   Sparkles,
 } from 'lucide-react';
 

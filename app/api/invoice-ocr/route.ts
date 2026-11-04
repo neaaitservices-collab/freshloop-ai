@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { Department, InventoryLocation, TransactionType } from '@prisma/client';
-import { prisma, getMovingAverageCost } from '@/lib/domains/inventory/ledger';
+import { Department, InventoryLocation } from '@prisma/client';
+import { getMovingAverageCost } from '@/lib/domains/inventory/ledger';
 import { loadProductCatalog } from '@/lib/domains/catalog/productCatalog';
 import {
   commitInvoiceOcrReceipts,
@@ -406,7 +406,6 @@ export async function POST(req: NextRequest) {
       confirmCommit,
       confirmedItems,
       invoiceNumber: confirmedInvoiceNum,
-      staffId,
       invoiceMeta,
     } = body as {
       imageBase64?: string;

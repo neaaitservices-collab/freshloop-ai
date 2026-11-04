@@ -163,7 +163,6 @@ export async function POST(req: NextRequest) {
         },
       });
       if (dbRecipe) {
-        const storeSetting = await findLatestStoreSetting();
         recipeLaborHours = Number(dbRecipe.laborHours ?? 0);
         recipeLaborRateFromDb =
           dbRecipe.laborRate != null && Number(dbRecipe.laborRate) > 0

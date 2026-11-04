@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { ChefHat, Plus, Trash2, X, AlertCircle, CheckCircle2, Loader2, Sparkles, Scale } from 'lucide-react';
+import { ChefHat, Plus, Trash2, X, AlertCircle, CheckCircle2, Loader2, Scale } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { computeRecipeBatchCost } from '@/lib/domains/manufacturing/batchCost';

@@ -41,20 +41,17 @@ export function DashboardFigures({
     if (!opts?.silent) setStatsRefreshing(true);
     setStatsError(null);
     try {
-      const res = await fetch('/api/admin/stats', { cache: 'no-store' });
-      const json = await res.json();
-      if (!res.ok || !json.success) {
-        setStatsError(json.error || 'Could not refresh dashboard stats.');
+      const result = await fetchAdminStatsCoalesced();
+      if (result.error) {
+        setStatsError(result.error);
         return;
       }
-      if (json.stats) {
-        setStats(json.stats as StoreStats);
+      if (result.stats) {
+        setStats(result.stats);
       }
-      if (json.wasteKpi) {
-        setWasteKpi(json.wasteKpi as WasteKpiReport);
+      if (result.wasteKpi) {
+        setWasteKpi(result.wasteKpi);
       }
-    } catch {
-      setStatsError('Network error — showing last loaded stats.');
     } finally {
       if (!opts?.silent) setStatsRefreshing(false);
     }
