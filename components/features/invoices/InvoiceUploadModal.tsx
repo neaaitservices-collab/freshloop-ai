@@ -5,6 +5,7 @@ import { InvoiceOcrResult } from '@/lib/types';
 import { useRole } from '@/components/auth/RoleProvider';
 import { isManager } from '@/lib/utils/roles';
 import { DepartmentBadge } from '@/components/ui/DepartmentBadge';
+import { prepareImageDataUrlForOcr } from '@/lib/utils/prepareImageForOcr';
 import { AlertTriangle, ArrowRight, Camera, CheckCircle2, FileText, ImagePlus, Loader2, Sparkles, Upload, X } from 'lucide-react';
 
 interface InvoiceUploadModalProps {
@@ -64,12 +65,20 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
     setLoading(true);
     setScanError(null);
     try {
+      let imageBase64 = '';
+      let mimeType = selectedFile?.type || 'image/jpeg';
+      if (!useDemo && previewUrl) {
+        const prepared = await prepareImageDataUrlForOcr(previewUrl);
+        imageBase64 = prepared.dataUrl;
+        mimeType = prepared.mimeType;
+      }
+
       const res = await fetch('/api/invoice-ocr', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          imageBase64: useDemo ? '' : previewUrl,
-          mimeType: selectedFile?.type || 'image/jpeg',
+          imageBase64: useDemo ? '' : imageBase64,
+          mimeType,
           demo: useDemo,
         }),
       });
