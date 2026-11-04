@@ -8,6 +8,7 @@ import {
 } from '@/lib/domains/receiving/invoiceOcrCommit';
 import { generateContentWithFallback, tryParseModelJson } from '@/lib/domains/ai/gemini';
 import { handleApiRouteError } from '@/lib/domains/ai/apiError';
+import { invoiceOcrErrorResponse } from '@/lib/domains/receiving/invoiceOcrErrors';
 import { authErrorResponse } from '@/lib/auth/http';
 import { requireReceivingStaff } from '@/lib/auth/guardRoute';
 import { requireSessionUser } from '@/lib/auth/session';
@@ -538,6 +539,8 @@ export async function POST(req: NextRequest) {
   } catch (error: unknown) {
     const authRes = authErrorResponse(error);
     if (authRes) return authRes;
+    const ocrRes = invoiceOcrErrorResponse(error);
+    if (ocrRes) return ocrRes;
     return handleApiRouteError(
       'POST /api/invoice-ocr',
       error,
