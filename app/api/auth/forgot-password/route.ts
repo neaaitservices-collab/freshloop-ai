@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createPasswordResetToken, passwordResetUrl } from '@/lib/auth/passwordReset';
 import { sendStaffEmail } from '@/lib/auth/sendStaffEmail';
-import { apiErrorFromUnknown } from '@/lib/domains/ai/apiError';
+import { apiError, apiErrorFromUnknown } from '@/lib/domains/ai/apiError';
 import { parseJsonBody } from '@/lib/security/parseJsonBody';
 import { forgotPasswordBodySchema } from '@/lib/security/schemas/auth';
 import { assertMutationRateLimit, clientIpKey } from '@/lib/security/rateLimit';

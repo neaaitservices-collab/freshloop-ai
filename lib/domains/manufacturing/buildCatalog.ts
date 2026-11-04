@@ -1,3 +1,4 @@
+import { InventoryLocation } from '@prisma/client';
 import { prisma } from '@/lib/domains/inventory/ledger';
 import { rememberLedgerRead } from '@/lib/domains/inventory/ledgerCache';
 import { getStockLevels } from '@/lib/domains/inventory/stock';

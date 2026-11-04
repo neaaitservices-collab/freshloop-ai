@@ -6,8 +6,6 @@ import { authErrorResponse } from '@/lib/auth/http';
 import { AuthError, requireRoles, requireSessionUser } from '@/lib/auth/session';
 import { MANAGER_ROLES } from '@/lib/auth/permissions';
 import { getStaffHourlyRate, setStaffHourlyRate } from '@/lib/auth/staffHourlyRate';
-import { parseJsonBody } from '@/lib/security/parseJsonBody';
-import { staffUpdateBodySchema } from '@/lib/security/schemas/staff';
 import { positionByLabel } from '@/lib/utils/positions';
 import { isManager, isRoleName, type StaffUser } from '@/lib/utils/roles';
 
@@ -49,9 +47,14 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
     if (!isSelf && !isManager(actor.role)) {
       throw new AuthError('Forbidden — managers only.', 403);
     }
-    const body = await parseJsonBody(req, staffUpdateBodySchema);
-    const name = body.name.trim();
-    const email = body.email.trim().toLowerCase();
+    const body = (await req.json()) as {
+      name?: string;
+      email?: string;
+      position?: string;
+      hourlyRate?: number | null;
+    };
+    const name = body.name?.trim() ?? '';
+    const email = body.email?.trim().toLowerCase() ?? '';
     if (!name || !email) {
       return NextResponse.json(
         { success: false, error: 'Name and email are required.' },
@@ -108,7 +111,18 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
           { status: 403 }
         );
       }
-      hourlyRateUpdate = body.hourlyRate === null ? null : Number(body.hourlyRate.toFixed(2));
+      if (body.hourlyRate === null) {
+        hourlyRateUpdate = null;
+      } else {
+        const parsed = Number(body.hourlyRate);
+        if (!Number.isFinite(parsed) || parsed <= 0 || parsed > 10_000) {
+          return NextResponse.json(
+            { success: false, error: 'Hourly wage must be a positive number.' },
+            { status: 400 }
+          );
+        }
+        hourlyRateUpdate = Number(parsed.toFixed(2));
+      }
     }
 
     const user = await prisma.user.update({

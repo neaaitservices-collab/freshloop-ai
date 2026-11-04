@@ -6,7 +6,7 @@ import {
   commitInvoiceOcrReceipts,
   type OcrInvoiceMeta,
 } from '@/lib/domains/receiving/invoiceOcrCommit';
-import { generateContentWithFallback, tryParseModelJson } from '@/lib/domains/ai/gemini';
+import { generateContentWithFallback, parseModelJson, tryParseModelJson } from '@/lib/domains/ai/gemini';
 import { handleApiRouteError } from '@/lib/domains/ai/apiError';
 import { authErrorResponse } from '@/lib/auth/http';
 import { requireReceivingStaff } from '@/lib/auth/guardRoute';

@@ -14,6 +14,7 @@ import {
   uniqueFilterOptions,
 } from '@/lib/domains/inventory/inventoryCatalog';
 import type { StockLevel, StockOverrideAudit } from '@/lib/domains/inventory/stock';
+import type { RetailUnit } from '@/lib/domains/receiving/yieldPricing';
 import { canOverrideInventoryStock } from '@/lib/auth/staffCapabilities';
 
 export function AdminInventoryWorkspace({

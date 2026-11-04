@@ -282,15 +282,13 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
     });
   }, [selectedRecipe, scaleRatio, varianceEnabled, customWeights]);
 
-  const staffHourlyRate = activeUser?.hourlyRate ?? null;
-  const recipeLaborRate = selectedRecipe.laborRatePerHour ?? null;
   const laborRatePerHour = useMemo(
     () =>
       resolveLaborRatePerHour({
-        staffHourlyRate,
-        recipeLaborRate,
+        staffHourlyRate: activeUser?.hourlyRate ?? null,
+        recipeLaborRate: selectedRecipe?.laborRatePerHour ?? null,
       }),
-    [staffHourlyRate, recipeLaborRate]
+    [activeUser?.hourlyRate, selectedRecipe?.laborRatePerHour]
   );
 
   const totalBatchCost = useMemo(() => {
