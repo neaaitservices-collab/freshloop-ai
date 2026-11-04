@@ -286,9 +286,9 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
     () =>
       resolveLaborRatePerHour({
         staffHourlyRate: activeUser?.hourlyRate ?? null,
-        recipeLaborRate: selectedRecipe?.laborRatePerHour ?? null,
+        recipeLaborRate: selectedRecipe.laborRatePerHour ?? null,
       }),
-    [activeUser?.hourlyRate, selectedRecipe?.laborRatePerHour]
+    [activeUser?.hourlyRate, selectedRecipe.laborRatePerHour]
   );
 
   const totalBatchCost = useMemo(() => {

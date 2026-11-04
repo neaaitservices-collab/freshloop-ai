@@ -16,6 +16,54 @@ import { subscribeInventoryUpdated } from '@/lib/domains/inventory/inventoryMove
 import { subscribeKpiUpdated } from '@/lib/domains/stats/kpiEvents';
 import { FRESHLOOP_SETTINGS_UPDATED } from '@/lib/domains/stats/settingsEvents';
 
+let inflightAdminStatsPromise: Promise<{
+  stats?: StoreStats;
+  wasteKpi?: WasteKpiReport;
+  error?: string;
+}> | null = null;
+
+async function fetchAdminStatsCoalesced(): Promise<{
+  stats?: StoreStats;
+  wasteKpi?: WasteKpiReport;
+  error?: string;
+}> {
+  if (inflightAdminStatsPromise) return inflightAdminStatsPromise;
+  inflightAdminStatsPromise = fetch('/api/admin/stats', { cache: 'no-store' })
+    .then(async (res) => {
+      const json = await res.json();
+      if (!res.ok || !json.success) {
+        return { error: json.error || 'Could not refresh dashboard stats.' };
+      }
+      return {
+        stats: json.stats as StoreStats | undefined,
+        wasteKpi: json.wasteKpi as WasteKpiReport | undefined,
+      };
+    })
+    .catch(() => ({ error: 'Network error — showing last loaded stats.' }))
+    .finally(() => {
+      inflightAdminStatsPromise = null;
+    });
+  return inflightAdminStatsPromise;
+}
+
+export function DashboardFiguresSkeleton() {
+  return (
+    <section className="space-y-6" aria-label="Store KPI dashboard loading" aria-busy="true">
+      <AdminMetricGrid stats={null} />
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-12 lg:items-stretch">
+        <div className="flex flex-col gap-6 lg:col-span-5">
+          <DashboardCard className="min-h-[340px] animate-pulse bg-slate-900/40" aria-busy />
+          <DashboardCard className="min-h-[360px] animate-pulse bg-slate-900/40" aria-busy />
+        </div>
+        <div className="flex flex-col gap-6 lg:col-span-7">
+          <DashboardCard className="min-h-[520px] animate-pulse bg-slate-900/40" aria-busy />
+          <DashboardCard className="min-h-[140px] animate-pulse bg-slate-900/40" aria-busy />
+        </div>
+      </div>
+    </section>
+  );
+}
+
 export function DashboardFigures({
   stats: initialStats,
   initialWasteKpi = null,
@@ -63,23 +111,29 @@ export function DashboardFigures({
   }, [refreshStats, initialStats, initialWasteKpi]);
 
   useEffect(() => {
-    const onInventory = () => void refreshStats({ silent: true });
-    const onSettings = () => {
-      void refreshStats({ silent: true });
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+    const scheduleRefresh = () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        debounceTimer = null;
+        void refreshStats({ silent: true });
+      }, 350);
     };
-    const unsubInventory = subscribeInventoryUpdated(onInventory);
-    const unsubKpi = subscribeKpiUpdated(onInventory);
-    window.addEventListener(FRESHLOOP_SETTINGS_UPDATED, onSettings);
+
+    const unsubInventory = subscribeInventoryUpdated(scheduleRefresh);
+    const unsubKpi = subscribeKpiUpdated(scheduleRefresh);
+    window.addEventListener(FRESHLOOP_SETTINGS_UPDATED, scheduleRefresh);
 
     const onVisible = () => {
-      if (document.visibilityState === 'visible') void refreshStats({ silent: true });
+      if (document.visibilityState === 'visible') scheduleRefresh();
     };
     document.addEventListener('visibilitychange', onVisible);
 
     return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
       unsubInventory();
       unsubKpi();
-      window.removeEventListener(FRESHLOOP_SETTINGS_UPDATED, onSettings);
+      window.removeEventListener(FRESHLOOP_SETTINGS_UPDATED, scheduleRefresh);
       document.removeEventListener('visibilitychange', onVisible);
     };
   }, [refreshStats]);
