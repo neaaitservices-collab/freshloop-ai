@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { Loader2, Mail } from 'lucide-react';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
+import { AuthPageShell } from '@/components/ui/layout';
 
 function ForgotPasswordForm() {
   const [email, setEmail] = useState('');
@@ -51,8 +52,7 @@ function ForgotPasswordForm() {
   };
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center bg-slate-950 px-4 py-12 text-slate-100">
-      <div className="w-full max-w-md rounded-3xl border border-slate-800 bg-slate-900/80 p-6 shadow-2xl sm:p-8">
+    <AuthPageShell>
         <div className="mb-6 flex items-center gap-3">
           <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-blue-800/50 bg-blue-950/40 text-blue-300">
             <Mail className="h-6 w-6" />
@@ -151,8 +151,7 @@ function ForgotPasswordForm() {
           <code className="text-slate-400">RESEND_API_KEY</code> in{' '}
           <code className="text-slate-400">.env.local</code> (see .env.example).
         </p>
-      </div>
-    </div>
+    </AuthPageShell>
   );
 }
 

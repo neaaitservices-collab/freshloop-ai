@@ -1,16 +1,21 @@
 'use client';
 
 import React, { Suspense, useState } from 'react';
-import { getSession, signIn } from 'next-auth/react';
-import { useSearchParams } from 'next/navigation';
+import { signIn } from 'next-auth/react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { waitForClientSession } from '@/lib/auth/waitForClientSession';
 import Link from 'next/link';
 import { Loader2, Store } from 'lucide-react';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
+import { AuthPageShell } from '@/components/ui/layout';
 
 function LoginForm() {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const callbackUrl = searchParams.get('callbackUrl') ?? '/';
+  const safeCallback =
+    callbackUrl.startsWith('/') && !callbackUrl.startsWith('//') ? callbackUrl : '/';
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -24,7 +29,7 @@ function LoginForm() {
       email: email.trim().toLowerCase(),
       password,
       redirect: false,
-      callbackUrl,
+      callbackUrl: safeCallback,
     });
     if (result?.error) {
       setSubmitting(false);
@@ -32,9 +37,13 @@ function LoginForm() {
       return;
     }
     if (result?.ok) {
-      await getSession();
-      const target = result.url ?? callbackUrl;
-      window.location.assign(target);
+      const ready = await waitForClientSession();
+      if (ready) {
+        router.refresh();
+        router.replace(safeCallback);
+      } else {
+        window.location.assign(safeCallback);
+      }
       return;
     }
     setSubmitting(false);
@@ -42,8 +51,7 @@ function LoginForm() {
   };
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center bg-slate-950 px-4 py-12 text-slate-100">
-      <div className="w-full max-w-md rounded-3xl border border-slate-800 bg-slate-900/80 p-6 shadow-2xl sm:p-8">
+    <AuthPageShell>
         <div className="mb-6 flex items-center gap-3">
           <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-emerald-800/50 bg-emerald-950/40 text-emerald-400">
             <Store className="h-6 w-6" />
@@ -122,8 +130,7 @@ function LoginForm() {
           <code className="text-slate-400">floor@freshloop.test</code> /{' '}
           <code className="text-slate-400">freshloop</code>
         </p>
-      </div>
-    </div>
+    </AuthPageShell>
   );
 }
 

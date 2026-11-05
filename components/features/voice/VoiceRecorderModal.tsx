@@ -4,6 +4,7 @@ import React, { useState, useRef } from 'react';
 import { VoiceLoggerResult } from '@/lib/types';
 import { DepartmentBadge } from '@/components/ui/DepartmentBadge';
 import { Mic, Square, Sparkles, X, AlertOctagon, Volume2, ArrowRightLeft, Tag, Trash2, Loader2 } from 'lucide-react';
+import { ModalBody, ModalFooter, ModalHeader, ModalShell } from '@/components/ui/layout';
 
 interface VoiceRecorderModalProps {
   isOpen: boolean;
@@ -23,8 +24,6 @@ export const VoiceRecorderModal: React.FC<VoiceRecorderModalProps> = ({
   const [processError, setProcessError] = useState<string | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
-
-  if (!isOpen) return null;
 
   const startRecording = async () => {
     try {
@@ -98,10 +97,14 @@ export const VoiceRecorderModal: React.FC<VoiceRecorderModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-2.5 sm:p-4 bg-black/80 backdrop-blur-md animate-fadeIn">
-      <div className="relative w-full max-w-2xl bg-zinc-900 border border-zinc-800 rounded-3xl overflow-hidden shadow-2xl flex flex-col max-h-[92vh]">
-        {/* Header */}
-        <div className="flex items-center justify-between px-4 sm:px-6 py-3.5 sm:py-4 border-b border-zinc-800 bg-zinc-950/60">
+    <ModalShell
+      open={isOpen}
+      onClose={onClose}
+      width="md"
+      panelClassName="max-w-2xl rounded-3xl border-zinc-800 bg-zinc-900 animate-fadeIn"
+    >
+        <ModalHeader className="border-zinc-800 bg-zinc-950/60 px-4 py-3.5 sm:px-6 sm:py-4">
+        <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-2.5 sm:gap-3">
             <div className="p-2 sm:p-2.5 rounded-2xl bg-teal-500/10 border border-teal-500/30 text-teal-400">
               <Mic className="w-4 h-4 sm:w-5 sm:h-5" />
@@ -113,15 +116,17 @@ export const VoiceRecorderModal: React.FC<VoiceRecorderModalProps> = ({
           </div>
 
           <button
+            type="button"
             onClick={onClose}
-            className="p-1.5 sm:p-2 rounded-xl text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition-all"
+            className="min-h-11 min-w-11 rounded-xl p-1.5 text-zinc-400 transition-all hover:bg-zinc-800 hover:text-zinc-200 sm:p-2"
+            aria-label="Close"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
+        </ModalHeader>
 
-        {/* Content Body */}
-        <div className="p-4 sm:p-6 space-y-4 sm:space-y-6 text-zinc-200 text-xs overflow-y-auto">
+        <ModalBody className="space-y-4 p-4 text-xs text-zinc-200 sm:space-y-6 sm:p-6">
           {processError ? (
             <p className="rounded-xl border border-rose-500/40 bg-rose-950/40 px-3 py-2 text-xs font-semibold text-rose-200">
               {processError}
@@ -234,22 +239,23 @@ export const VoiceRecorderModal: React.FC<VoiceRecorderModalProps> = ({
               </div>
             </div>
           )}
-        </div>
+        </ModalBody>
 
-        {/* Footer Actions */}
-        <div className="p-4 border-t border-zinc-800 bg-zinc-950/80 flex items-center justify-between">
+        <ModalFooter className="flex items-center justify-between border-zinc-800 bg-zinc-950/80 p-4">
           <button
+            type="button"
             onClick={() => setVoiceResult(null)}
-            className="px-4 py-2 rounded-xl text-xs font-semibold text-zinc-400 hover:text-zinc-200"
+            className="inline-flex min-h-11 items-center rounded-xl px-4 py-2 text-xs font-semibold text-zinc-400 hover:text-zinc-200"
           >
             {voiceResult ? 'Record Another Log' : 'Cancel'}
           </button>
 
           {!voiceResult ? (
             <button
+              type="button"
               onClick={() => handleProcessVoice()}
               disabled={loading}
-              className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold bg-gradient-to-r from-teal-500 to-emerald-400 hover:from-teal-400 hover:to-emerald-300 text-zinc-950 shadow-lg shadow-teal-500/25 transition-all"
+              className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-gradient-to-r from-teal-500 to-emerald-400 px-5 py-2.5 text-xs font-bold text-zinc-950 shadow-lg shadow-teal-500/25 transition-all hover:from-teal-400 hover:to-emerald-300 sm:min-h-12"
             >
               {loading ? (
                 <>
@@ -265,14 +271,14 @@ export const VoiceRecorderModal: React.FC<VoiceRecorderModalProps> = ({
             </button>
           ) : (
             <button
+              type="button"
               onClick={onClose}
-              className="px-5 py-2.5 rounded-xl text-xs font-bold bg-teal-400 hover:bg-teal-300 text-zinc-950 shadow-lg"
+              className="inline-flex min-h-11 items-center rounded-xl bg-teal-400 px-5 py-2.5 text-xs font-bold text-zinc-950 shadow-lg hover:bg-teal-300 sm:min-h-12"
             >
               Done
             </button>
           )}
-        </div>
-      </div>
-    </div>
+        </ModalFooter>
+    </ModalShell>
   );
 };

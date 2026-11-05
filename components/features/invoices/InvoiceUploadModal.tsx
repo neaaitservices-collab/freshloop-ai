@@ -7,6 +7,7 @@ import { isManager } from '@/lib/utils/roles';
 import { DepartmentBadge } from '@/components/ui/DepartmentBadge';
 import { prepareImageDataUrlForOcr } from '@/lib/utils/prepareImageForOcr';
 import { AlertTriangle, ArrowRight, Camera, CheckCircle2, FileText, ImagePlus, Loader2, Sparkles, Upload, X } from 'lucide-react';
+import { ModalBody, ModalFooter, ModalHeader, ModalShell, ScrollTable } from '@/components/ui/layout';
 
 interface InvoiceUploadModalProps {
   isOpen: boolean;
@@ -27,8 +28,6 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
   const [managerApprovedCosts, setManagerApprovedCosts] = useState(false);
   const { activeUser } = useRole();
   const managerCanApprove = Boolean(activeUser && isManager(activeUser.role));
-
-  if (!isOpen) return null;
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
@@ -124,10 +123,15 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-[80] flex items-end justify-center p-3 bg-black/80 backdrop-blur-md sm:items-center sm:p-4">
-      <div className="relative w-full max-w-3xl bg-zinc-900 border border-zinc-800 rounded-3xl overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
-        {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-800 bg-zinc-950/60">
+    <ModalShell
+      open={isOpen}
+      onClose={onClose}
+      width="xl"
+      zIndexClass="z-[80]"
+      panelClassName="max-w-3xl border-zinc-800 bg-zinc-900"
+    >
+        <ModalHeader className="border-zinc-800 bg-zinc-950/60 px-6 py-4">
+        <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <div className="p-2.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400">
               <FileText className="w-5 h-5" />
@@ -147,15 +151,17 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
           </div>
 
           <button
+            type="button"
             onClick={onClose}
-            className="p-2 rounded-xl text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition-all"
+            className="min-h-11 min-w-11 rounded-xl p-2 text-zinc-400 transition-all hover:bg-zinc-800 hover:text-zinc-200"
+            aria-label="Close"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
+        </ModalHeader>
 
-        {/* Content Body */}
-        <div className="p-6 overflow-y-auto space-y-6 flex-1 text-zinc-200 text-xs">
+        <ModalBody className="space-y-6 p-6 text-xs text-zinc-200">
           {!ocrResult ? (
             <div className="space-y-5">
               {/* Dropzone */}
@@ -296,8 +302,8 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
               {/* Line Items Table */}
               <div>
                 <h5 className="font-bold text-zinc-400 uppercase text-[10px] tracking-wider mb-2">Extracted Line Items ({ocrResult.lineItems.length})</h5>
-                <div className="border border-zinc-800 rounded-xl overflow-x-auto">
-                  <table className="w-full text-left min-w-[340px]">
+                <ScrollTable className="rounded-xl border border-zinc-800">
+                  <table className="w-full min-w-[340px] text-left">
                     <thead className="bg-zinc-950 text-zinc-400 font-semibold border-b border-zinc-800 text-[11px]">
                       <tr>
                         <th className="p-2 sm:p-2.5">Item Name</th>
@@ -366,7 +372,7 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
                       ))}
                     </tbody>
                   </table>
-                </div>
+                </ScrollTable>
               </div>
 
               {flaggedInvoice ? (
@@ -394,13 +400,13 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
               ) : null}
             </div>
           )}
-        </div>
+        </ModalBody>
 
-        {/* Footer Actions */}
-        <div className="p-3 sm:p-4 border-t border-zinc-800 bg-zinc-950/80 flex items-center justify-between gap-2">
+        <ModalFooter className="flex items-center justify-between gap-2 border-zinc-800 bg-zinc-950/80 p-3 sm:p-4">
           <button
+            type="button"
             onClick={handleResetScanner}
-            className="px-3 sm:px-4 py-2 rounded-xl text-xs font-semibold text-zinc-400 hover:text-zinc-200"
+            className="inline-flex min-h-11 items-center rounded-xl px-3 py-2 text-xs font-semibold text-zinc-400 hover:text-zinc-200 sm:min-h-12 sm:px-4"
           >
             {ocrResult ? 'Scan Again' : 'Reset'}
           </button>
@@ -440,8 +446,7 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
               <ArrowRight className="h-4 w-4" />
             </button>
           )}
-        </div>
-      </div>
-    </div>
+        </ModalFooter>
+    </ModalShell>
   );
 };

@@ -25,9 +25,14 @@ import {
   Mic,
   RefreshCw,
 } from 'lucide-react';
+import { useRole } from '@/components/auth/RoleProvider';
+import { canManageBundleDeals } from '@/lib/auth/staffCapabilities';
+import { SetBundlesListPanel } from '@/components/features/pricing/SetBundlesListPanel';
 
 export default function OperationsCenter() {
   const router = useRouter();
+  const { activeUser } = useRole();
+  const showSetBundles = canManageBundleDeals(activeUser?.role);
   const [pullSensitivityDays, setPullSensitivityDays] = useState<2 | 3 | 4>(3);
   const [settingsLoading, setSettingsLoading] = useState(false);
   const [isInvoiceModalOpen, setIsInvoiceModalOpen] = useState(false);
@@ -92,10 +97,10 @@ export default function OperationsCenter() {
               </p>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2.5">
+            <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center sm:gap-2.5">
               <Link
                 href="/receive"
-                className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-emerald-400 hover:bg-emerald-300 text-slate-950 font-extrabold text-xs shadow-lg shadow-emerald-500/20 transition-all active:scale-95"
+                className="flex min-h-11 items-center justify-center gap-2 rounded-2xl bg-emerald-400 px-3 py-2.5 text-slate-950 text-xs font-extrabold shadow-lg shadow-emerald-500/20 transition-all hover:bg-emerald-300 active:scale-95 sm:px-4"
               >
                 <DollarSign className="w-4 h-4" />
                 <span>Receiving prices</span>
@@ -104,7 +109,7 @@ export default function OperationsCenter() {
               <button
                 type="button"
                 onClick={() => setIsVoiceModalOpen(true)}
-                className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-gradient-to-r from-teal-500 to-emerald-400 hover:from-teal-400 hover:to-emerald-300 text-slate-950 font-extrabold text-xs shadow-lg shadow-teal-500/20 transition-all active:scale-95 cursor-pointer"
+                className="flex min-h-11 items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-teal-500 to-emerald-400 px-3 py-2.5 text-xs font-extrabold text-slate-950 shadow-lg shadow-teal-500/20 transition-all hover:from-teal-400 hover:to-emerald-300 active:scale-95 sm:px-4"
               >
                 <Mic className="w-4 h-4 fill-slate-950" />
                 <span>Voice Logger</span>
@@ -113,7 +118,7 @@ export default function OperationsCenter() {
               <button
                 type="button"
                 onClick={() => setIsInvoiceModalOpen(true)}
-                className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-slate-900 hover:bg-slate-800 border border-slate-700/80 text-slate-100 font-bold text-xs shadow-inner transition-all active:scale-95 cursor-pointer"
+                className="flex min-h-11 items-center justify-center gap-2 rounded-2xl border border-slate-700/80 bg-slate-900 px-3 py-2.5 text-xs font-bold text-slate-100 shadow-inner transition-all hover:bg-slate-800 active:scale-95 sm:px-4"
               >
                 <FileText className="w-4 h-4 text-emerald-400" />
                 <span>Invoice OCR</span>
@@ -123,7 +128,7 @@ export default function OperationsCenter() {
                 type="button"
                 onClick={() => void syncStoreSettings(true)}
                 disabled={settingsLoading}
-                className="p-2.5 rounded-2xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-400 hover:text-white transition-all cursor-pointer"
+                className="col-span-2 flex min-h-11 items-center justify-center rounded-2xl border border-slate-800 bg-slate-900 text-slate-400 transition-all hover:bg-slate-800 hover:text-white sm:col-span-1 sm:min-w-11 sm:px-2.5"
                 title="Sync store settings"
               >
                 <RefreshCw
@@ -137,6 +142,8 @@ export default function OperationsCenter() {
         <div className="min-w-0 max-w-full">
           <OperationsLiveTransfers pullDays={pullSensitivityDays} />
         </div>
+
+        {showSetBundles ? <SetBundlesListPanel readOnly={false} /> : null}
       </PageMain>
 
       <InvoiceUploadModal

@@ -1,15 +1,16 @@
 'use client';
 
-import React from 'react';
-import { RotateCcw, Search } from 'lucide-react';
+import React, { useMemo, useState } from 'react';
+import { ChevronDown, RotateCcw, Search, SlidersHorizontal } from 'lucide-react';
 import {
   EMPTY_INVENTORY_FILTERS,
   type InventoryFilters,
   type InventoryGroupBy,
 } from '@/lib/domains/inventory/inventoryCatalog';
+import { cn } from '@/lib/utils/cn';
 
 const SELECT =
-  'mt-1 w-full rounded-xl border border-slate-700/90 bg-slate-950 px-2.5 py-2 text-xs font-medium text-slate-100 outline-none focus:border-emerald-500/60';
+  'mt-1 min-h-11 w-full rounded-xl border border-slate-700/90 bg-slate-950 px-2.5 py-2 text-xs font-medium text-slate-100 outline-none focus:border-emerald-500/60';
 
 export function InventoryFilterBar({
   filters,
@@ -34,19 +35,78 @@ export function InventoryFilterBar({
   resultCount: number;
   onReset: () => void;
 }) {
+  const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
   const patch = (partial: Partial<InventoryFilters>) => onChange({ ...filters, ...partial });
 
+  const activeFilterCount = useMemo(() => {
+    let n = 0;
+    if (filters.department !== 'ALL') n += 1;
+    if (filters.category !== 'ALL') n += 1;
+    if (filters.productType !== 'ALL') n += 1;
+    if (filters.origin !== 'ALL') n += 1;
+    if (filters.supplier !== 'ALL') n += 1;
+    if (groupBy !== 'department') n += 1;
+    return n;
+  }, [filters, groupBy]);
+
+  const filterFields = (
+    <>
+      <FilterSelect
+        label="Department"
+        value={filters.department}
+        options={options.departments}
+        onChange={(department) => patch({ department })}
+      />
+      <FilterSelect
+        label="Category"
+        value={filters.category}
+        options={options.categories}
+        onChange={(category) => patch({ category })}
+      />
+      <FilterSelect
+        label="Type"
+        value={filters.productType}
+        options={options.productTypes}
+        onChange={(productType) => patch({ productType })}
+      />
+      <FilterSelect
+        label="Origin"
+        value={filters.origin}
+        options={options.origins}
+        onChange={(origin) => patch({ origin })}
+      />
+      <FilterSelect
+        label="Supplier"
+        value={filters.supplier}
+        options={options.suppliers}
+        onChange={(supplier) => patch({ supplier })}
+      />
+      <label className="block min-w-0">
+        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Group by</span>
+        <select
+          value={groupBy}
+          onChange={(e) => onGroupBy(e.target.value as InventoryGroupBy)}
+          className={SELECT}
+        >
+          <option value="none">None</option>
+          <option value="department">Department</option>
+          <option value="supplier">Supplier</option>
+        </select>
+      </label>
+    </>
+  );
+
   return (
-    <div className="rounded-2xl border border-slate-800/90 bg-slate-900/60 p-4 shadow-lg shadow-black/10 backdrop-blur-md">
+    <div className="rounded-2xl border border-slate-800/90 bg-slate-900/60 p-3 shadow-lg shadow-black/10 backdrop-blur-md sm:p-4">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
         <label className="relative block min-w-0 flex-1 lg:max-w-md">
           <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Search</span>
-          <Search className="pointer-events-none absolute bottom-2.5 left-3 h-4 w-4 text-slate-500" />
+          <Search className="pointer-events-none absolute bottom-3 left-3 h-4 w-4 text-slate-500" />
           <input
             value={filters.query}
             onChange={(e) => patch({ query: e.target.value })}
             placeholder="Item, supplier, origin…"
-            className="mt-1 w-full rounded-xl border border-slate-700 bg-slate-950 py-2.5 pl-9 pr-3 text-sm text-white outline-none focus:border-emerald-400/70"
+            className="mt-1 min-h-11 w-full rounded-xl border border-slate-700 bg-slate-950 py-2.5 pl-9 pr-3 text-sm text-white outline-none focus:border-emerald-400/70"
           />
         </label>
         <p className="text-xs text-slate-400 lg:pb-2">
@@ -54,49 +114,35 @@ export function InventoryFilterBar({
         </p>
       </div>
 
-      <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
-        <FilterSelect
-          label="Department"
-          value={filters.department}
-          options={options.departments}
-          onChange={(department) => patch({ department })}
+      <button
+        type="button"
+        onClick={() => setMobileFiltersOpen((open) => !open)}
+        className="mt-3 flex min-h-11 w-full items-center justify-between rounded-xl border border-slate-700/90 bg-slate-950/80 px-3 text-xs font-bold text-slate-200 lg:hidden"
+        aria-expanded={mobileFiltersOpen}
+      >
+        <span className="inline-flex items-center gap-2">
+          <SlidersHorizontal className="h-4 w-4 text-emerald-400/90" aria-hidden />
+          Filters
+          {activeFilterCount > 0 ? (
+            <span className="rounded-full bg-emerald-500/20 px-2 py-0.5 font-mono text-[10px] text-emerald-300">
+              {activeFilterCount}
+            </span>
+          ) : null}
+        </span>
+        <ChevronDown
+          className={cn('h-4 w-4 text-slate-400 transition', mobileFiltersOpen && 'rotate-180')}
+          aria-hidden
         />
-        <FilterSelect
-          label="Category"
-          value={filters.category}
-          options={options.categories}
-          onChange={(category) => patch({ category })}
-        />
-        <FilterSelect
-          label="Type"
-          value={filters.productType}
-          options={options.productTypes}
-          onChange={(productType) => patch({ productType })}
-        />
-        <FilterSelect
-          label="Origin"
-          value={filters.origin}
-          options={options.origins}
-          onChange={(origin) => patch({ origin })}
-        />
-        <FilterSelect
-          label="Supplier"
-          value={filters.supplier}
-          options={options.suppliers}
-          onChange={(supplier) => patch({ supplier })}
-        />
-        <label className="block">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Group by</span>
-          <select
-            value={groupBy}
-            onChange={(e) => onGroupBy(e.target.value as InventoryGroupBy)}
-            className={SELECT}
-          >
-            <option value="none">None</option>
-            <option value="department">Department</option>
-            <option value="supplier">Supplier</option>
-          </select>
-        </label>
+      </button>
+
+      <div
+        className={cn(
+          'mt-4 grid gap-3 sm:grid-cols-2',
+          mobileFiltersOpen ? 'grid' : 'hidden',
+          'lg:grid lg:grid-cols-6'
+        )}
+      >
+        {filterFields}
       </div>
 
       <div className="mt-3 flex justify-end">
@@ -105,8 +151,9 @@ export function InventoryFilterBar({
           onClick={() => {
             onChange(EMPTY_INVENTORY_FILTERS);
             onReset();
+            setMobileFiltersOpen(false);
           }}
-          className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs font-bold text-slate-400 transition hover:bg-slate-800 hover:text-slate-200"
+          className="inline-flex min-h-11 items-center gap-1.5 rounded-lg px-3 text-xs font-bold text-slate-400 transition hover:bg-slate-800 hover:text-slate-200"
         >
           <RotateCcw className="h-3.5 w-3.5" />
           Reset filters

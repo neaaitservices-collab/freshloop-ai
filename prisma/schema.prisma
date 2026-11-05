@@ -110,7 +110,8 @@ model Product {
   posMappings    POSMapping[]
   inventoryItems InventoryItem[]
   inventoryLots  InventoryLot[]
-  markdownEvents MarkdownEvent[]
+  markdownEvents     MarkdownEvent[]
+  floorBundlePromos  FloorBundlePromo[]
 
   @@index([department])
   @@index([name])
@@ -150,6 +151,24 @@ model MarkdownEvent {
 
   @@index([productId, createdAt])
   @@map("markdown_events")
+}
+
+/// Manager-saved multi-unit promo (signage / planning). Not applied to POS automatically.
+model FloorBundlePromo {
+  id          String   @id @default(uuid())
+  productId   String   @map("product_id")
+  product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  minUnits    Float    @map("min_units")
+  bundlePrice Float    @map("bundle_price")
+  label       String?
+  createdById String   @map("created_by_id")
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@index([productId, isActive])
+  @@index([isActive, updatedAt])
+  @@map("floor_bundle_promos")
 }
 
 model Store {

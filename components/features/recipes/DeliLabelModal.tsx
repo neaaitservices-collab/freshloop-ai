@@ -4,6 +4,7 @@ import React, { useEffect } from 'react';
 import { RecipeFusionResult } from '@/lib/types';
 import { Printer, X } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
+import { ModalBody, ModalFooter, ModalHeader, ModalShell } from '@/components/ui/layout';
 
 export interface DeliLabelModalProps {
   isOpen: boolean;
@@ -24,7 +25,7 @@ export function DeliLabelModal({ isOpen, onClose, recipe }: DeliLabelModalProps)
     return () => window.removeEventListener('keydown', onKey);
   }, [isOpen, onClose]);
 
-  if (!isOpen || !recipe) return null;
+  if (!recipe) return null;
 
   const packedDate = new Date().toISOString().split('T')[0];
   const allergenLine =
@@ -37,16 +38,15 @@ export function DeliLabelModal({ isOpen, onClose, recipe }: DeliLabelModalProps)
   };
 
   return (
-    <div
-      className="deli-label-modal-root fixed inset-0 z-50 flex items-end justify-center bg-black/85 p-0 sm:items-center sm:p-4"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="deli-label-title"
+    <ModalShell
+      open={isOpen}
+      onClose={onClose}
+      width="sm"
+      panelClassName="deli-label-modal-root max-w-md rounded-t-2xl border-slate-800 bg-slate-950 sm:rounded-2xl"
+      overlayClassName="no-print bg-black/85 p-0 sm:p-4"
     >
-      <div className="no-print absolute inset-0" onClick={onClose} aria-hidden />
-
-      <div className="relative z-10 flex max-h-[94vh] w-full max-w-md flex-col overflow-hidden rounded-t-2xl border border-slate-800 bg-slate-950 shadow-2xl sm:rounded-2xl">
-        <div className="no-print flex items-center justify-between border-b border-slate-800 px-4 py-3">
+        <ModalHeader className="no-print border-slate-800 px-4 py-3">
+        <div className="flex items-center justify-between gap-3">
           <div>
             <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
               Deli label
@@ -64,8 +64,9 @@ export function DeliLabelModal({ isOpen, onClose, recipe }: DeliLabelModalProps)
             <X className="h-5 w-5" />
           </button>
         </div>
+        </ModalHeader>
 
-        <div className="overflow-y-auto p-4 sm:p-5">
+        <ModalBody className="p-4 sm:p-5">
           <div
             className="deli-label-print-surface mx-auto w-full max-w-[320px] rounded-sm border-2 border-black bg-white p-4 font-mono text-black shadow-none"
             data-print-label
@@ -108,18 +109,17 @@ export function DeliLabelModal({ isOpen, onClose, recipe }: DeliLabelModalProps)
               ||| |||| | ||| |||| |
             </div>
           </div>
-        </div>
+        </ModalBody>
 
-        <div className="no-print flex gap-2 border-t border-slate-800 p-4">
-          <Button type="button" variant="secondary" className="min-h-12 flex-1" onClick={onClose}>
+        <ModalFooter className="no-print flex gap-2 border-slate-800 p-4">
+          <Button type="button" variant="secondary" className="flex-1" onClick={onClose}>
             Close
           </Button>
-          <Button type="button" variant="primary" className="min-h-12 flex-1" onClick={handlePrint}>
+          <Button type="button" variant="primary" className="flex-1" onClick={handlePrint}>
             <Printer className="h-4 w-4" />
             Print tag
           </Button>
-        </div>
-      </div>
-    </div>
+        </ModalFooter>
+    </ModalShell>
   );
 }

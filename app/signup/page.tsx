@@ -1,23 +1,35 @@
 'use client';
 
-import React, { Suspense, useState } from 'react';
+import React, { Suspense, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { useSearchParams } from 'next/navigation';
-import { getSession, signIn } from 'next-auth/react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { signIn } from 'next-auth/react';
+import { waitForClientSession } from '@/lib/auth/waitForClientSession';
 import { Loader2, UserPlus } from 'lucide-react';
-import { Input } from '@/components/ui/Input';
+import { Input, Select } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
+import { AuthPageShell } from '@/components/ui/layout';
+import { STAFF_POSITIONS } from '@/lib/utils/positions';
+import type { RoleName } from '@/lib/utils/roles';
 
 function SignupForm() {
   const searchParams = useSearchParams();
+  const router = useRouter();
   const callbackUrl = searchParams.get('callbackUrl') ?? '/';
+  const safeCallback =
+    callbackUrl.startsWith('/') && !callbackUrl.startsWith('//') ? callbackUrl : '/';
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
-  const [position, setPosition] = useState('');
+  const [role, setRole] = useState<RoleName>('FLOOR_STAFF');
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  const selectedPosition = useMemo(
+    () => STAFF_POSITIONS.find((p) => p.role === role) ?? STAFF_POSITIONS[3],
+    [role]
+  );
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -40,7 +52,7 @@ function SignupForm() {
         body: JSON.stringify({
           name,
           email: email.trim().toLowerCase(),
-          position,
+          role,
           password,
         }),
       });
@@ -55,7 +67,7 @@ function SignupForm() {
         email: email.trim().toLowerCase(),
         password,
         redirect: false,
-        callbackUrl,
+        callbackUrl: safeCallback,
       });
 
       if (signInResult?.error) {
@@ -64,8 +76,13 @@ function SignupForm() {
         return;
       }
       if (signInResult?.ok) {
-        await getSession();
-        window.location.assign(signInResult.url ?? callbackUrl);
+        const ready = await waitForClientSession();
+        if (ready) {
+          router.refresh();
+          router.replace(safeCallback);
+        } else {
+          window.location.assign(safeCallback);
+        }
         return;
       }
       setSubmitting(false);
@@ -77,8 +94,7 @@ function SignupForm() {
   };
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center bg-slate-950 px-4 py-12 text-slate-100">
-      <div className="w-full max-w-md rounded-3xl border border-slate-800 bg-slate-900/80 p-6 shadow-2xl sm:p-8">
+    <AuthPageShell>
         <div className="mb-6 flex items-center gap-3">
           <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-blue-800/50 bg-blue-950/40 text-blue-300">
             <UserPlus className="h-6 w-6" />
@@ -113,17 +129,29 @@ function SignupForm() {
               autoComplete="email"
             />
           </label>
-          <label className="block text-xs font-semibold text-slate-400">
-            Job / station
-            <Input
+          <div>
+            <label className="block text-xs font-semibold text-slate-400" htmlFor="signup-position">
+              Your position
+            </label>
+            <Select
+              id="signup-position"
               required
-              value={position}
-              onChange={(e) => setPosition(e.target.value)}
-              className="mt-1.5 min-h-12"
-              placeholder="e.g. Produce floor"
-              autoComplete="organization-title"
-            />
-          </label>
+              value={role}
+              onChange={(e) => setRole(e.target.value as RoleName)}
+              className="mt-1.5"
+            >
+              {STAFF_POSITIONS.map((position) => (
+                <option key={position.role} value={position.role}>
+                  {position.label}
+                </option>
+              ))}
+            </Select>
+            <p className="mt-2 rounded-xl border border-slate-800 bg-slate-950/80 px-3 py-2 text-[11px] leading-relaxed text-slate-400">
+              <span className="font-bold text-slate-300">{selectedPosition.label}</span>
+              {' — '}
+              {selectedPosition.access}
+            </p>
+          </div>
           <label className="block text-xs font-semibold text-slate-400">
             Password (min 8 characters)
             <Input
@@ -166,17 +194,15 @@ function SignupForm() {
         </form>
 
         <p className="mt-4 text-center text-xs text-slate-400">
-          New accounts start as{' '}
-          <span className="font-semibold text-slate-300">Floor staff</span>. A manager can
-          change your role in Admin.
+          Your position sets app access immediately. A manager can adjust your role later in Admin
+          if needed.
         </p>
         <p className="mt-3 text-center text-sm">
           <Link href="/login" className="font-bold text-emerald-400 hover:text-emerald-300">
             Already have an account? Sign in
           </Link>
         </p>
-      </div>
-    </div>
+    </AuthPageShell>
   );
 }
 

@@ -4,6 +4,7 @@ import React, { useEffect, useState } from 'react';
 import { ChefHat, Plus, Trash2, X, AlertCircle, CheckCircle2, Loader2, Scale } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
+import { ModalBody, ModalFooter, ModalHeader, ModalShell } from '@/components/ui/layout';
 import { computeRecipeBatchCost } from '@/lib/domains/manufacturing/batchCost';
 
 interface InventoryProductOption {
@@ -144,8 +145,6 @@ export function ManualRecipeCreatorModal({
       });
   }, [isOpen, editRecipeId]);
 
-  if (!isOpen) return null;
-
   const handleAddLine = () => {
     const defaultProduct = products[0]?.id ?? '';
     const defaultUnit = products[0]?.unitType ?? 'LBS';
@@ -266,14 +265,9 @@ export function ManualRecipeCreatorModal({
   };
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-3 backdrop-blur-sm sm:p-4"
-      role="dialog"
-      aria-modal="true"
-    >
-      <div className="relative z-10 flex max-h-[92vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-slate-800 bg-slate-950 shadow-2xl">
-        {/* Header */}
-        <div className="flex items-center justify-between border-b border-slate-800/80 px-5 py-4 bg-slate-900/60">
+    <ModalShell open={isOpen} onClose={onClose} width="md" panelClassName="max-w-2xl border-slate-800 bg-slate-950">
+        <ModalHeader className="border-slate-800/80 bg-slate-900/60 px-5 py-4">
+        <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-2 text-emerald-400">
               <ChefHat className="h-5 w-5" />
@@ -292,14 +286,16 @@ export function ManualRecipeCreatorModal({
           <button
             type="button"
             onClick={onClose}
-            className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white"
+            className="min-h-11 min-w-11 rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white"
+            aria-label="Close"
           >
             <X className="h-5 w-5" />
           </button>
         </div>
+        </ModalHeader>
 
-        {/* Content */}
-        <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-5 space-y-5">
+        <form id="manual-recipe-form" className="contents" onSubmit={handleSubmit}>
+        <ModalBody className="space-y-5 p-5">
           {errorMsg ? (
             <div className="flex items-center gap-2 rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-xs font-semibold text-rose-300">
               <AlertCircle className="h-4 w-4 shrink-0 text-rose-400" />
@@ -539,16 +535,17 @@ export function ManualRecipeCreatorModal({
             />
           </div>
 
-          {/* Action Buttons */}
-          <div className="flex items-center justify-end gap-3 pt-2">
-            <Button type="button" variant="ghost" onClick={onClose} disabled={submitting}>
+        </ModalBody>
+        <ModalFooter>
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end sm:gap-3">
+            <Button type="button" variant="ghost" className="w-full sm:w-auto" onClick={onClose} disabled={submitting}>
               Cancel
             </Button>
             <Button
               type="submit"
               variant="primary"
               disabled={submitting}
-              className="border-emerald-500/50 bg-emerald-500 text-slate-950 hover:bg-emerald-400 font-bold"
+              className="w-full border-emerald-500/50 bg-emerald-500 font-bold text-slate-950 hover:bg-emerald-400 sm:w-auto"
             >
               {submitting ? (
                 <>
@@ -563,8 +560,8 @@ export function ManualRecipeCreatorModal({
               )}
             </Button>
           </div>
+        </ModalFooter>
         </form>
-      </div>
-    </div>
+    </ModalShell>
   );
 }

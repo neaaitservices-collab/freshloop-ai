@@ -37,6 +37,7 @@ alwaysApply: true
 ## Shared layout kit (`@/components/ui/layout`)
 
 - **PageMain** — every feature page body (replaces ad-hoc `<main className="mx-auto...">`).
+- **AuthPageShell** — login, signup, forgot/reset password (centered card + safe bottom padding).
 - **ModalShell** + **ModalHeader** / **ModalBody** / **ModalFooter** — all overlays/dialogs.
 - **ScrollTable** — wrap every `<table>` for horizontal scroll on small viewports.
 - **PageGrid** + **PageGridSpan** — multi-column admin dashboards (`md:grid-cols-12`).

@@ -337,7 +337,7 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
             </li>
           ))}
         </ul>
-        <div className="hidden overflow-x-auto md:block">
+        <ScrollTable className="hidden md:block">
           <table className="w-full min-w-[640px] text-left text-sm">
             <thead className="bg-slate-950/80 text-[10px] uppercase tracking-wider text-slate-500">
               <tr>
@@ -395,7 +395,7 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
               ))}
             </tbody>
           </table>
-        </div>
+        </ScrollTable>
         {attention.length > 0 && resting.length > 0 && !query.trim() ? (
           <button
             type="button"
@@ -703,7 +703,8 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
               activeOrders.map((group) => (
                 <section key={group.supplier} className="mt-6">
                   <h3 className="text-lg font-black">{group.supplier}</h3>
-                  <table className="mt-2 w-full text-left text-sm">
+                  <ScrollTable className="mt-2">
+                  <table className="w-full min-w-[480px] text-left text-sm">
                     <thead className="text-[11px] uppercase tracking-wider text-zinc-500">
                       <tr>
                         <th className="py-2">Item</th>
@@ -738,6 +739,7 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
                       </tr>
                     </tfoot>
                   </table>
+                  </ScrollTable>
                 </section>
               ))
             )}

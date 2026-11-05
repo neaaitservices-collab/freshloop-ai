@@ -21,6 +21,7 @@ export function YieldBreakdown({
   onYieldUnit,
   caseFloorPrice,
   onCaseFloorPrice,
+  compact = false,
 }: {
   packSize: string;
   yieldDivisor: string;
@@ -33,6 +34,8 @@ export function YieldBreakdown({
   /** Case shelf price for one received case (editable in item settings / receive). */
   caseFloorPrice?: string;
   onCaseFloorPrice?: (value: string) => void;
+  /** Item settings: hide field helper lines under pack / yield / case floor. */
+  compact?: boolean;
 }) {
   const showCaseFloor = onCaseFloorPrice != null || caseFloorPrice != null;
   const caseFloorValue = caseFloorPrice ?? '';
@@ -66,9 +69,11 @@ export function YieldBreakdown({
               onChange={onPackUnit}
             />
           </div>
-          <p className="text-[11px] text-slate-500">
-            How much is in one received case ({packUnit}).
-          </p>
+          {!compact ? (
+            <p className="text-[11px] text-slate-500">
+              How much is in one received case ({packUnit}).
+            </p>
+          ) : null}
         </div>
         {showCaseFloor ? (
           <div className="space-y-1.5">
@@ -79,9 +84,6 @@ export function YieldBreakdown({
               onChange={onCaseFloorPrice ?? (() => {})}
               readOnly={!onCaseFloorPrice}
             />
-            <p className="text-[11px] text-slate-500">
-              Shelf price for one case (from invoice when listed, or 35% / 40% margin on case cost).
-            </p>
           </div>
         ) : null}
         <div className={cn('space-y-1.5', showCaseFloor && 'sm:col-span-2')}>
@@ -103,9 +105,11 @@ export function YieldBreakdown({
               onChange={onYieldUnit}
             />
           </div>
-          <p className="text-[11px] text-slate-500">
-            Divide {packUnit} into sellable {yieldUnit} (e.g. {packSize || '40'} ÷ {yieldDivisor || '1'}).
-          </p>
+          {!compact ? (
+            <p className="text-[11px] text-slate-500">
+              Divide {packUnit} into sellable {yieldUnit} (e.g. {packSize || '40'} ÷ {yieldDivisor || '1'}).
+            </p>
+          ) : null}
         </div>
       </div>
       {unitsMismatch ? (

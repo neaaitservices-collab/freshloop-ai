@@ -9,6 +9,17 @@ export interface RevenueDay {
   recovered: number;
 }
 
+/** One calendar day of floor rescue vs discard (ledger-backed). */
+export interface RescueOutcomeDay {
+  label: string;
+  /** Retail $ sent to kitchen (Rescue → Kitchen_Prep). */
+  recoveredUsd: number;
+  /** Retail $ lost to floor waste (excludes volumetric scrap). */
+  lostUsd: number;
+  rescueUnits: number;
+  discardUnits: number;
+}
+
 export interface DepartmentAlert {
   department: string;
   low: number;
@@ -32,5 +43,7 @@ export interface StoreStats {
   lowCount: number;
   rescueVsDiscard: RescueSlice[];
   revenueDays: RevenueDay[];
+  /** Last 7 days — single source for rescue/discard chart (units + retail $). */
+  outcomeDays: RescueOutcomeDay[];
   departmentAlerts: DepartmentAlert[];
 }

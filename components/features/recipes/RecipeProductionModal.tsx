@@ -11,6 +11,7 @@ import type {
 import type { RoleName } from '@/lib/utils/roles';
 import { computeScaledBatchCost } from '@/lib/domains/manufacturing/batchCost';
 import { resolveLaborRatePerHour } from '@/lib/domains/manufacturing/resolveLaborRate';
+import { ModalBody, ModalFooter, ModalHeader, ModalShell, ScrollTable } from '@/components/ui/layout';
 import {
   ChefHat,
   X,
@@ -329,12 +330,13 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
     );
   }, [selectedRecipe.targetRetailPrice, unitOutputCost]);
 
-  if (!isOpen) return null;
   if (!selectedRecipe) {
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
-        <p className="text-sm text-slate-300">No hay recetas BOM disponibles.</p>
-      </div>
+      <ModalShell open={isOpen} onClose={onClose} width="sm">
+        <ModalBody>
+          <p className="text-sm text-slate-300">No hay recetas BOM disponibles.</p>
+        </ModalBody>
+      </ModalShell>
     );
   }
 
@@ -425,10 +427,14 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-md">
-      <div className="relative flex max-h-[92vh] w-full max-w-3xl flex-col overflow-hidden rounded-3xl border border-slate-800 bg-slate-900 shadow-2xl">
-        {/* Header */}
-        <div className="flex items-center justify-between border-b border-slate-800 bg-slate-950/75 px-5 py-4 sm:px-6">
+    <ModalShell
+      open={isOpen}
+      onClose={onClose}
+      width="lg"
+      panelClassName="max-w-3xl rounded-3xl border-slate-800 bg-slate-900"
+    >
+        <ModalHeader className="border-slate-800 bg-slate-950/75 px-5 py-4 sm:px-6">
+        <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <div className="p-2.5 rounded-2xl bg-amber-500/15 border border-amber-500/40 text-amber-400">
               <ChefHat className="w-5 h-5" />
@@ -454,14 +460,15 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
           <button
             type="button"
             onClick={onClose}
-            className="p-2 rounded-xl text-zinc-400 hover:text-white hover:bg-zinc-800 transition-all cursor-pointer"
+            className="min-h-11 min-w-11 cursor-pointer rounded-xl p-2 text-zinc-400 transition-all hover:bg-zinc-800 hover:text-white"
+            aria-label="Close"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
+        </ModalHeader>
 
-        {/* Body */}
-        <div className="p-5 sm:p-6 overflow-y-auto space-y-5 text-xs text-zinc-200 flex-1">
+        <ModalBody className="space-y-5 p-5 text-xs text-zinc-200 sm:p-6">
           {errorMsg && (
             <div className="p-4 rounded-2xl bg-rose-950/80 border border-rose-500/50 text-rose-200 flex items-center gap-3">
               <AlertTriangle className="w-5 h-5 text-rose-400 shrink-0" />
@@ -559,8 +566,8 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
               </div>
 
               {/* BOM Ingredients Table */}
-              <div className="border border-zinc-800 rounded-2xl overflow-hidden">
-                <table className="w-full text-left border-collapse">
+              <ScrollTable className="overflow-hidden rounded-2xl border border-zinc-800">
+                <table className="w-full min-w-[520px] border-collapse text-left">
                   <thead>
                     <tr className="bg-zinc-950 text-[10px] font-bold uppercase tracking-wider text-zinc-400 border-b border-zinc-800">
                       <th className="py-3 px-4">Ingrediente (production prep)</th>
@@ -636,7 +643,7 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
                     ))}
                   </tbody>
                 </table>
-              </div>
+              </ScrollTable>
 
               {/* Financial Batch Cost & Yield Summary */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-4 rounded-2xl bg-zinc-950 border border-zinc-800">
@@ -697,10 +704,9 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
               </div>
             </div>
           )}
-        </div>
+        </ModalBody>
 
-        {/* Footer */}
-        <div className="px-5 sm:px-6 py-4 border-t border-zinc-800 bg-zinc-950/90 flex items-center justify-between gap-3">
+        <ModalFooter className="flex items-center justify-between gap-3 border-zinc-800 bg-zinc-950/90 px-5 py-4 sm:px-6">
           <button
             type="button"
             onClick={onClose}
@@ -740,8 +746,7 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
               Producir Otro Lote
             </button>
           )}
-        </div>
-      </div>
-    </div>
+        </ModalFooter>
+    </ModalShell>
   );
 };

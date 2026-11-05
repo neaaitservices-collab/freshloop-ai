@@ -5,8 +5,7 @@ import { ChevronDown } from 'lucide-react';
 import { AdminMetricGrid } from '@/components/features/admin/AdminStats';
 import { AdminOperationalAlertCards } from '@/components/features/admin/AdminOperationalAlertCards';
 import { DepartmentAlertsChart } from '@/components/features/admin/DepartmentAlertsChart';
-import { RevenueRecoveryChart } from '@/components/features/admin/RevenueRecoveryChart';
-import { WasteVsRescueChart } from '@/components/features/admin/WasteVsRescueChart';
+import { RescueOutcomeChart } from '@/components/features/admin/RescueOutcomeChart';
 import { DashboardCard } from '@/components/features/admin/DashboardCard';
 import type { StoreStats } from '@/lib/domains/stats/storeStatsTypes';
 import { WasteSemaphoreCard } from '@/components/features/admin/WasteSemaphoreCard';
@@ -53,10 +52,9 @@ export function DashboardFiguresSkeleton() {
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-12 lg:items-stretch">
         <div className="flex flex-col gap-6 lg:col-span-5">
           <DashboardCard className="min-h-[340px] animate-pulse bg-slate-900/40" aria-busy />
-          <DashboardCard className="min-h-[360px] animate-pulse bg-slate-900/40" aria-busy />
         </div>
-        <div className="flex flex-col gap-6 lg:col-span-7">
-          <DashboardCard className="min-h-[520px] animate-pulse bg-slate-900/40" aria-busy />
+        <div className="flex flex-col gap-4 lg:col-span-7 lg:gap-6">
+          <DashboardCard className="h-72 animate-pulse bg-slate-900/40" aria-busy />
           <DashboardCard className="min-h-[140px] animate-pulse bg-slate-900/40" aria-busy />
         </div>
       </div>
@@ -148,7 +146,7 @@ export function DashboardFigures({
 
       <AdminMetricGrid stats={stats} />
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-12 lg:items-stretch">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-12 lg:items-start lg:gap-6">
         {/* Left: waste KPI + unit breakdown */}
         <div className="flex flex-col gap-6 lg:col-span-5">
           <WasteSemaphoreCard
@@ -156,19 +154,13 @@ export function DashboardFigures({
             goalPct={stats?.targetWastePct}
             refreshing={statsRefreshing}
           />
-          {stats ? (
-            <WasteVsRescueChart data={stats.rescueVsDiscard} />
-          ) : (
-            <DashboardCard className="min-h-[360px] animate-pulse bg-slate-900/40" aria-busy />
-          )}
         </div>
 
-        {/* Right: revenue trend + operational alerts */}
-        <div className="flex flex-col gap-6 lg:col-span-7">
+        <div className="flex flex-col gap-4 lg:col-span-7 lg:gap-6">
           {stats ? (
-            <RevenueRecoveryChart data={stats.revenueDays} tall className="lg:min-h-[520px]" />
+            <RescueOutcomeChart data={stats.outcomeDays ?? []} tall />
           ) : (
-            <DashboardCard className="min-h-[520px] animate-pulse bg-slate-900/40" aria-busy />
+            <DashboardCard className="h-64 animate-pulse bg-slate-900/40" aria-busy />
           )}
           <AdminOperationalAlertCards stats={stats} />
         </div>

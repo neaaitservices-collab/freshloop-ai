@@ -1,16 +1,13 @@
 'use client';
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Search } from 'lucide-react';
 import { useRole } from '@/components/auth/RoleProvider';
 import { RetailFloorTransferPanel } from '@/components/features/inventory/RetailFloorTransferPanel';
-import { PullSliderControl } from '@/components/ui/PullSliderControl';
-import {
-  useStorePullSensitivityDays,
-  type StorePullSensitivityDays,
-} from '@/hooks/use-store-pull-sensitivity-days';
-import { isAdmin } from '@/lib/utils/roles';
+import { SetBundlesListPanel } from '@/components/features/pricing/SetBundlesListPanel';
+import { canViewSetBundlePromos } from '@/lib/auth/staffCapabilities';
+import { useStorePullSensitivityDays } from '@/hooks/use-store-pull-sensitivity-days';
 import { PageMain } from '@/components/ui/layout';
 import { Toast } from '@/components/ui/Toast';
 import type { StockLevel } from '@/lib/domains/inventory/stock';
@@ -33,24 +30,10 @@ export function FloorTransferPage({ levels: initialLevels }: { levels: StockLeve
   const { levels, performMove, setLevels } = useOptimisticInventoryLevels(initialLevels);
   const [query, setQuery] = useState('');
   const [department, setDepartment] = useState<string>('ALL');
-  const storePullDays = useStorePullSensitivityDays();
-  const [pullDays, setPullDays] = useState<StorePullSensitivityDays>(3);
-  const adminPullSeeded = useRef(false);
+  const pullDays = useStorePullSensitivityDays();
   const [toast, setToast] = useState<{ text: string; kitchen?: boolean } | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const { activeUser } = useRole();
-  const canConfigurePull = activeUser != null && isAdmin(activeUser.role);
-
-  useEffect(() => {
-    if (!canConfigurePull) {
-      setPullDays(storePullDays);
-      return;
-    }
-    if (!adminPullSeeded.current) {
-      setPullDays(storePullDays);
-      adminPullSeeded.current = true;
-    }
-  }, [canConfigurePull, storePullDays]);
 
   useEffect(() => {
     const sync = () => {
@@ -74,16 +57,6 @@ export function FloorTransferPage({ levels: initialLevels }: { levels: StockLeve
     [department]
   );
 
-  const flaggedCount = useMemo(
-    () =>
-      levels.filter(
-        (row) =>
-          row.onHand > 0 &&
-          (row.daysRemaining <= pullDays || row.low || row.isMarkdown)
-      ).length,
-    [levels, pullDays]
-  );
-
   const handleSuccess = (message: string) => {
     setErrorMessage(null);
     setToast({
@@ -102,17 +75,18 @@ export function FloorTransferPage({ levels: initialLevels }: { levels: StockLeve
           </p>
           <h1 className="text-xl font-black text-slate-100 sm:text-2xl">Move shelf stock</h1>
           <p className="mt-1 max-w-lg text-xs text-slate-400">
-            Send stock to production prep or log floor waste — choose amounts in lbs or units.
+            Send stock to production prep or log floor waste — choose amounts in lbs or units. Pull
+            window is set by the owner in{' '}
+            <span className="font-semibold text-slate-300">Admin → Settings</span> (currently ≤
+            {pullDays} days left).
           </p>
         </div>
       </div>
 
-      {canConfigurePull ? (
-        <PullSliderControl
-          currentPullDays={pullDays}
-          onPullDaysChange={setPullDays}
-          affectedCount={flaggedCount}
-        />
+      {canViewSetBundlePromos(activeUser?.role) ? (
+        <div className="mb-4">
+          <SetBundlesListPanel readOnly />
+        </div>
       ) : null}
 
       <div className="mb-4 flex flex-wrap gap-2">

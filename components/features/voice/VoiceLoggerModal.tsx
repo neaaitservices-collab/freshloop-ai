@@ -5,6 +5,7 @@ import { DepartmentBadge } from '@/components/ui/DepartmentBadge';
 import { useRole } from '@/components/auth/RoleProvider';
 import { notifyInventoryUpdated } from '@/lib/domains/inventory/inventoryMoveClient';
 import { DepartmentType } from '@/lib/types';
+import { ModalBody, ModalFooter, ModalHeader, ModalShell } from '@/components/ui/layout';
 import {
   Mic,
   Square,
@@ -328,10 +329,14 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-md">
-      <div className="relative w-full max-w-2xl bg-zinc-900 border border-zinc-800 rounded-3xl overflow-hidden shadow-2xl flex flex-col max-h-[92vh]">
-        {/* Header */}
-        <div className="flex items-center justify-between px-5 sm:px-6 py-4 border-b border-zinc-800 bg-zinc-950/70">
+    <ModalShell
+      open={isOpen}
+      onClose={onClose}
+      width="md"
+      panelClassName="max-w-2xl rounded-3xl border-zinc-800 bg-zinc-900"
+    >
+        <ModalHeader className="border-zinc-800 bg-zinc-950/70 px-5 py-4 sm:px-6">
+        <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <div className="p-2.5 rounded-2xl bg-teal-500/10 border border-teal-500/30 text-teal-400">
               <Mic className="w-5 h-5" />
@@ -354,14 +359,15 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
           <button
             type="button"
             onClick={onClose}
-            className="p-2 rounded-xl text-zinc-400 hover:text-white hover:bg-zinc-800 transition-all cursor-pointer"
+            className="min-h-11 min-w-11 cursor-pointer rounded-xl p-2 text-zinc-400 transition-all hover:bg-zinc-800 hover:text-white"
+            aria-label="Close"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
+        </ModalHeader>
 
-        {/* Body */}
-        <div className="p-5 sm:p-6 overflow-y-auto space-y-5 text-xs text-zinc-200 flex-1">
+        <ModalBody className="space-y-5 p-5 text-xs text-zinc-200 sm:p-6">
           {errorMsg && (
             <div className="p-3.5 rounded-2xl bg-rose-950/70 border border-rose-500/50 text-rose-200 flex items-center gap-2.5">
               <AlertOctagon className="w-4 h-4 text-rose-400 shrink-0" />
@@ -643,10 +649,9 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
               </div>
             </div>
           )}
-        </div>
+        </ModalBody>
 
-        {/* Footer Buttons */}
-        <div className="px-5 sm:px-6 py-4 border-t border-zinc-800 bg-zinc-950/90 flex flex-wrap items-center justify-between gap-3">
+        <ModalFooter className="flex flex-wrap items-center justify-between gap-3 border-zinc-800 bg-zinc-950/90 px-5 py-4 sm:px-6">
           {step === 'CAPTURE' && (
             <>
               <button
@@ -745,8 +750,7 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
               </button>
             </div>
           )}
-        </div>
-      </div>
-    </div>
+        </ModalFooter>
+    </ModalShell>
   );
 };

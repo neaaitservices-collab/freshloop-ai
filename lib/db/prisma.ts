@@ -1,33 +1,57 @@
-import { PrismaClient } from '@prisma/client';
+import type { PrismaClient } from '@prisma/client';
 
 const globalForPrisma = globalThis as unknown as {
+  prismaClientFreshloop?: PrismaClient;
+  /** Legacy dev cache — drop so new models are picked up after generate. */
   prismaClientV3?: PrismaClient;
 };
 
-function clientHasCurrentModels(client: PrismaClient | undefined): client is PrismaClient {
-  const record = client as unknown as {
-    recipe?: unknown;
-    user?: unknown;
-    _runtimeDataModel?: {
-      models?: {
-        User?: {
-          fields?: Array<{ name?: string }>;
-        };
-      };
-    };
-  } | undefined;
-  if (!record?.recipe || !record?.user) return false;
-  const userFields = record._runtimeDataModel?.models?.User?.fields;
-  if (Array.isArray(userFields)) {
-    return userFields.some((f) => f.name === 'hourlyRate');
-  }
-  return true;
+function loadPrismaClientClass(): typeof PrismaClient {
+  // Runtime require so Next/Turbopack does not embed an outdated generated client.
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  return require('@prisma/client').PrismaClient as typeof PrismaClient;
 }
 
-export const prisma: PrismaClient = clientHasCurrentModels(globalForPrisma.prismaClientV3)
-  ? globalForPrisma.prismaClientV3
-  : new PrismaClient({
-      log: process.env.NODE_ENV === 'development' ? ['error', 'warn'] : ['error'],
-    });
+function clientHasCurrentModels(client: PrismaClient | undefined): client is PrismaClient {
+  const record = client as unknown as {
+    floorBundlePromo?: { findMany?: unknown };
+  } | undefined;
+  return typeof record?.floorBundlePromo?.findMany === 'function';
+}
 
-globalForPrisma.prismaClientV3 = prisma;
+function createPrismaClient(): PrismaClient {
+  const PrismaClientCtor = loadPrismaClientClass();
+  return new PrismaClientCtor({
+    log: process.env.NODE_ENV === 'development' ? ['error', 'warn'] : ['error'],
+  });
+}
+
+function getPrismaClient(): PrismaClient {
+  delete globalForPrisma.prismaClientV3;
+
+  const cached = globalForPrisma.prismaClientFreshloop;
+  if (clientHasCurrentModels(cached)) {
+    return cached;
+  }
+
+  const client = createPrismaClient();
+  if (!clientHasCurrentModels(client)) {
+    throw new Error(
+      'Prisma client is missing FloorBundlePromo. Run: npm run db:generate — then restart the dev server.'
+    );
+  }
+  globalForPrisma.prismaClientFreshloop = client;
+  return client;
+}
+
+/** Lazy proxy so dev HMR cannot keep a stale client missing newly generated models. */
+export const prisma: PrismaClient = new Proxy({} as PrismaClient, {
+  get(_target, prop) {
+    const client = getPrismaClient();
+    const value = Reflect.get(client as object, prop, client);
+    if (typeof value === 'function') {
+      return (value as (...args: unknown[]) => unknown).bind(client);
+    }
+    return value;
+  },
+});

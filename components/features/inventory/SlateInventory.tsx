@@ -1,18 +1,13 @@
 'use client';
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ArrowRight, ChevronDown, Search, Sparkles } from 'lucide-react';
 import { useRole } from '@/components/auth/RoleProvider';
 import { InventoryMasterDetail } from '@/components/features/inventory/InventoryMasterDetail';
 import { SubInventoryWorkspace } from '@/components/features/inventory/SubInventoryWorkspace';
-import { PullSliderControl } from '@/components/ui/PullSliderControl';
-import {
-  useStorePullSensitivityDays,
-  type StorePullSensitivityDays,
-} from '@/hooks/use-store-pull-sensitivity-days';
-import { isAdmin } from '@/lib/utils/roles';
+import { useStorePullSensitivityDays } from '@/hooks/use-store-pull-sensitivity-days';
 import { Card, CardBody } from '@/components/ui/Card';
 import { Input, Select } from '@/components/ui/Input';
 import { Toast } from '@/components/ui/Toast';
@@ -45,25 +40,11 @@ export function SlateInventory({
     useOptimisticInventoryLevels(initialLevels);
   const [query, setQuery] = useState('');
   const [department, setDepartment] = useState<string>('ALL');
-  const storePullDays = useStorePullSensitivityDays();
-  const [pullDays, setPullDays] = useState<StorePullSensitivityDays>(3);
-  const adminPullSeeded = useRef(false);
+  const pullDays = useStorePullSensitivityDays();
   const [toast, setToast] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const { activeUser } = useRole();
-  const canConfigurePull = activeUser != null && isAdmin(activeUser.role);
-
-  useEffect(() => {
-    if (!canConfigurePull) {
-      setPullDays(storePullDays);
-      return;
-    }
-    if (!adminPullSeeded.current) {
-      setPullDays(storePullDays);
-      adminPullSeeded.current = true;
-    }
-  }, [canConfigurePull, storePullDays]);
 
   useEffect(() => {
     const syncFromServer = () => {
@@ -171,14 +152,6 @@ export function SlateInventory({
           </Card>
         ))}
       </div>
-
-      {canConfigurePull ? (
-        <PullSliderControl
-          currentPullDays={pullDays}
-          onPullDaysChange={setPullDays}
-          affectedCount={flaggedForMetrics.length}
-        />
-      ) : null}
 
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
         <Select

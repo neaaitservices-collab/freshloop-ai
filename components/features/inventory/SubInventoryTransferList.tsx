@@ -1,35 +1,26 @@
 'use client';
 
 import React, { useCallback, useEffect, useState } from 'react';
-import { ArrowRightLeft, ChevronRight, Trash2, TriangleAlert } from 'lucide-react';
+import { ArrowRightLeft, ChevronRight, Trash2 } from 'lucide-react';
 import { OperationsTransferItemModal } from '@/components/features/operations/OperationsTransferItemModal';
 import {
   SubInventoryTransferBar,
   type PerformInventoryMove,
   type TransferBarVariant,
 } from '@/components/features/inventory/SubInventoryTransferBar';
+import {
+  RetailFloorItemCardMeta,
+  type ItemBundlePromoHint,
+} from '@/components/features/inventory/RetailFloorItemCardMeta';
+import { FRESHLOOP_BUNDLE_PROMOS_UPDATED } from '@/components/features/pricing/SetBundlesListPanel';
 import { SwipeTransferRow } from '@/components/features/inventory/SwipeTransferRow';
 import { stockLevelToTransferRow } from '@/lib/domains/inventory/inventoryMoveClient';
 import type { StockLevel } from '@/lib/domains/inventory/stock';
-import { formatCurrency, formatPercent, formatUnits, stockUnitLabel } from '@/lib/domains/receiving/yieldPricing';
+import { formatCurrency, formatUnits, stockUnitLabel } from '@/lib/domains/receiving/yieldPricing';
+import { useRole } from '@/components/auth/RoleProvider';
+import { canManageBundleDeals, canViewSetBundlePromos } from '@/lib/auth/staffCapabilities';
 import { useMediaMaxWidth } from '@/hooks/use-media-max-width';
 import { cn } from '@/lib/utils/cn';
-
-function casesLabel(value: number): string {
-  return Number.isInteger(value) ? String(value) : value.toFixed(2);
-}
-
-function storedMargin(row: StockLevel): number | null {
-  if (row.retailPrice === null || row.retailPrice <= 0) return null;
-  return ((row.retailPrice - row.unitCost) / row.retailPrice) * 100;
-}
-
-function shelfCue(days: number): { label: string; className: string; warn: boolean } {
-  const label = `${days} ${days === 1 ? 'day' : 'days'} left`;
-  if (days < 2) return { label, className: 'text-[#C4847A]', warn: true };
-  if (days <= 7) return { label, className: 'text-[#C4A574]', warn: true };
-  return { label, className: 'text-slate-400', warn: false };
-}
 
 export function suggestedPullQty(row: StockLevel, pullDays: number): number {
   if (row.onHand <= 0) return 0;
@@ -69,8 +60,14 @@ export function SubInventoryTransferList({
   onSuccess: (message: string, level: StockLevel) => void;
   onError: (message: string) => void;
 }) {
+  const { activeUser } = useRole();
+  const showBundleTools = canManageBundleDeals(activeUser?.role);
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [modalProductId, setModalProductId] = useState<string | null>(null);
+  const [bundleByProductId, setBundleByProductId] = useState<Map<string, ItemBundlePromoHint>>(
+    () => new Map()
+  );
+  const [floorBundleMapReady, setFloorBundleMapReady] = useState(false);
   const variant = transferVariantForTab(location);
   const operations = layoutVariant === 'operations';
   const dense = listDensity === 'compact' && operations;
@@ -87,15 +84,55 @@ export function SubInventoryTransferList({
     }
   }, [rows, modalProductId]);
 
+  useEffect(() => {
+    if (!canViewSetBundlePromos(activeUser?.role) || location !== 'retail_floor') return;
+
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const loadBundles = () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        debounceTimer = null;
+        void fetch('/api/admin/floor-bundle-promos', { cache: 'no-store' })
+          .then((res) => res.json())
+          .then((json) => {
+            if (!json.success || !Array.isArray(json.promos)) return;
+            const next = new Map<string, ItemBundlePromoHint>();
+            for (const promo of json.promos as Array<{
+              id: string;
+              productId: string;
+              minUnits: number;
+              bundlePrice: number;
+              label: string | null;
+            }>) {
+              next.set(promo.productId, {
+                id: promo.id,
+                minUnits: promo.minUnits,
+                bundlePrice: promo.bundlePrice,
+                label: promo.label,
+              });
+            }
+            setBundleByProductId(next);
+          })
+          .catch(() => undefined)
+          .finally(() => setFloorBundleMapReady(true));
+      }, 250);
+    };
+
+    loadBundles();
+    window.addEventListener(FRESHLOOP_BUNDLE_PROMOS_UPDATED, loadBundles);
+    return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      window.removeEventListener(FRESHLOOP_BUNDLE_PROMOS_UPDATED, loadBundles);
+    };
+  }, [activeUser?.role, location]);
+
   const touchViewport = useMediaMaxWidth(768);
-  /** Short-dated queue: confirm transfers in modal (no inline waste/markdown on the list). */
-  const queueModalActions = actionQueue && !operations && location === 'retail_floor';
+  /** Mobile action queue: tap row for qty + markdown; desktop keeps inline transfer bar. */
+  const queueModalActions =
+    actionQueue && !operations && location === 'retail_floor' && touchViewport;
   const swipeEnabled =
-    actionQueue &&
-    !queueModalActions &&
-    location === 'retail_floor' &&
-    touchViewport &&
-    Boolean(performMove);
+    location === 'retail_floor' && touchViewport && Boolean(performMove);
 
   const quickMove = useCallback(
     async (row: StockLevel, action: 'rescue' | 'waste') => {
@@ -136,50 +173,10 @@ export function SubInventoryTransferList({
       )}
     >
       {rows.map((row) => {
-        const margin = storedMargin(row);
-        const shelf = shelfCue(row.daysRemaining);
         const unit = stockUnitLabel(row.unitType);
         const qtyAtLocation = location === 'retail_floor' ? row.onHand : row.kitchenPrepQty;
         const defaultQty =
           location === 'retail_floor' ? suggestedPullQty(row, pullDays) : Math.min(row.kitchenPrepQty, 1);
-
-        const stockPills = (
-          <div className={cn('flex flex-wrap gap-1.5', dense ? 'mt-1.5' : 'mt-3 gap-2')}>
-            <span
-              className={cn(
-                'inline-flex items-center gap-1 rounded-full border border-emerald-500/35 bg-emerald-950/50 font-bold text-emerald-200',
-                dense ? 'px-2 py-0.5 text-[10px]' : 'gap-1.5 px-3 py-1 text-[11px]'
-              )}
-            >
-              <span className="text-[8px] font-extrabold uppercase tracking-wide text-emerald-400/90">
-                Floor
-              </span>
-              {formatUnits(row.onHand)} {unit}
-            </span>
-            <span
-              className={cn(
-                'inline-flex items-center gap-1 rounded-full border border-amber-500/35 bg-amber-950/40 font-bold text-amber-100',
-                dense ? 'px-2 py-0.5 text-[10px]' : 'gap-1.5 px-3 py-1 text-[11px]'
-              )}
-            >
-              <span className="text-[8px] font-extrabold uppercase tracking-wide text-amber-400/90">
-                Prod
-              </span>
-              {formatUnits(row.kitchenPrepQty)} {unit}
-            </span>
-            {row.posSalesDays != null ? (
-              <span
-                className="inline-flex items-center gap-1.5 rounded-full border border-teal-500/35 bg-teal-950/40 px-3 py-1 text-[11px] font-bold tabular-nums text-teal-100"
-                title={`${formatUnits(row.posSoldInWindow ?? 0)} ${unit} sold via POS in the last ${row.posSalesDays} days`}
-              >
-                <span className="text-[9px] font-extrabold uppercase tracking-wide text-teal-400/90">
-                  Sold
-                </span>
-                {formatUnits(row.posSoldInWindow ?? 0)}
-              </span>
-            ) : null}
-          </div>
-        );
 
         const rowBody = (
           <div
@@ -187,7 +184,7 @@ export function SubInventoryTransferList({
               operations
                 ? dense
                   ? 'flex min-w-0 items-center gap-2 px-2.5 py-2'
-                  : 'flex min-w-0 items-center gap-3 p-5'
+                  : 'flex min-w-0 items-center gap-3 p-3 sm:p-5'
                 : 'flex flex-col gap-3 px-4 py-3 md:flex-row md:items-start',
               actionQueue &&
                 !operations &&
@@ -203,117 +200,68 @@ export function SubInventoryTransferList({
               >
                 {row.name}
               </span>
-              {!dense ? (
-                <span className="mt-1 block truncate text-xs text-slate-500">{row.supplier}</span>
+              {location !== 'retail_floor' ? (
+                <span
+                  className={cn(
+                    'mt-0.5 block truncate text-slate-500',
+                    dense ? 'text-[10px]' : 'text-xs'
+                  )}
+                  title={row.supplier}
+                >
+                  {row.supplier?.trim() ? row.supplier : 'Unassigned supplier'}
+                </span>
               ) : null}
 
-              {operations ? (
-                <>
-                  <div className="mt-2 flex flex-wrap items-center gap-2">
-                    {location === 'retail_floor' ? (
-                      <>
-                        <span
-                          className={cn(
-                            'inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11px] font-bold',
-                            shelf.warn
-                              ? 'border-amber-500/40 bg-amber-950/40 text-amber-100'
-                              : 'border-slate-700 bg-slate-950/80 text-slate-300'
-                          )}
-                        >
-                          {shelf.warn ? <TriangleAlert className="h-3.5 w-3.5 shrink-0" /> : null}
-                          {shelf.label}
-                        </span>
-                        {row.isMarkdown ? (
-                          <span className="rounded-lg border border-amber-500/40 bg-amber-500/15 px-2.5 py-1 text-[11px] font-bold text-amber-200">
-                            {row.markdownPct ? `${row.markdownPct}% off` : 'Markdown'}
-                          </span>
-                        ) : null}
-                      </>
-                    ) : (
-                      <span className="rounded-lg border border-slate-700 bg-slate-950/80 px-2.5 py-1 text-[11px] font-medium text-slate-400">
-                        MAC {formatCurrency(row.unitCost)} / {unit} ·{' '}
-                        {formatCurrency(qtyAtLocation * row.unitCost)} on hand
-                      </span>
-                    )}
-                  </div>
-                  {stockPills}
-                  {location === 'retail_floor' && !dense ? (
-                    <p className="mt-2 text-[11px] text-slate-400">
-                      {row.retailPrice !== null ? (
-                        <>Shelf {formatCurrency(row.retailPrice)} · </>
-                      ) : null}
-                      Margin {margin === null ? '—' : `${formatPercent(margin)}%`}
-                      <span className="hidden sm:inline">
-                        {' '}
-                        · {casesLabel(row.onHandCases)} cases on floor
-                      </span>
-                    </p>
-                  ) : null}
-                </>
+              {location === 'retail_floor' ? (
+                <RetailFloorItemCardMeta
+                  row={row}
+                  dense={dense}
+                  bundlePromo={bundleByProductId.get(row.productId) ?? null}
+                />
+              ) : operations ? (
+                <div className={cn('min-w-0', dense ? 'mt-1 space-y-1' : 'mt-2 space-y-2')}>
+                  <dl className="flex flex-wrap gap-x-4 gap-y-1 text-[11px]">
+                    <div>
+                      <dt className="text-[9px] font-bold uppercase tracking-wider text-slate-500">
+                        Prod
+                      </dt>
+                      <dd className="font-mono font-bold tabular-nums text-amber-100">
+                        {formatUnits(row.kitchenPrepQty)} {unit}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-[9px] font-bold uppercase tracking-wider text-slate-500">
+                        Floor
+                      </dt>
+                      <dd className="font-mono font-bold tabular-nums text-emerald-200">
+                        {formatUnits(row.onHand)} {unit}
+                      </dd>
+                    </div>
+                  </dl>
+                  <p className="text-[11px] text-slate-400">
+                    MAC {formatCurrency(row.unitCost)} / {unit} ·{' '}
+                    {formatCurrency(qtyAtLocation * row.unitCost)} on hand
+                  </p>
+                </div>
               ) : (
-                <>
-                  <span className="mt-1 block font-mono text-[11px] text-slate-300">
-                    {location === 'retail_floor' ? (
-                      <>
-                        On floor: {formatUnits(row.onHand)} {unit}
-                        <span className="hidden sm:inline">
-                          {' '}
-                          / {casesLabel(row.onHandCases)} cases
-                        </span>
-                        {row.kitchenPrepQty > 0 ? (
-                          <span className="hidden text-emerald-400/90 md:inline">
-                            {' '}
-                            · Production: {formatUnits(row.kitchenPrepQty)} {unit}
-                          </span>
-                        ) : null}
-                      </>
-                    ) : (
-                      <>
-                        In production: {formatUnits(row.kitchenPrepQty)} {unit}
-                        {row.onHand > 0 ? (
-                          <span className="text-slate-400">
-                            {' '}
-                            · Floor: {formatUnits(row.onHand)} {unit}
-                          </span>
-                        ) : null}
-                      </>
-                    )}
-                  </span>
-                  {location === 'retail_floor' ? (
-                    <span className="mt-0.5 hidden text-[11px] text-slate-400 sm:block">
-                      {row.retailPrice !== null ? (
-                        <>Shelf: {formatCurrency(row.retailPrice)} · </>
-                      ) : null}
-                      Margin: {margin === null ? '—' : `${formatPercent(margin)}%`}
-                    </span>
-                  ) : (
-                    <span className="mt-0.5 block text-[11px] text-slate-400">
-                      MAC: {formatCurrency(row.unitCost)} / {unit} · Value:{' '}
-                      {formatCurrency(qtyAtLocation * row.unitCost)}
-                    </span>
-                  )}
-                  {location === 'retail_floor' ? (
-                    <span
-                      className={`mt-1 flex flex-wrap items-center gap-2 text-[11px] font-bold ${shelf.className}`}
-                    >
-                      {shelf.warn ? <TriangleAlert className="h-3.5 w-3.5" /> : null}
-                      {shelf.label}
-                      {row.isMarkdown ? (
-                        <span className="rounded-full border border-amber-500/40 bg-amber-500/15 px-2 py-0.5 text-[10px] text-amber-200">
-                          {row.markdownPct ? `${row.markdownPct}% off` : 'Markdown'}
-                        </span>
-                      ) : null}
+                <p className="mt-1 font-mono text-[11px] text-slate-300">
+                  In production: {formatUnits(row.kitchenPrepQty)} {unit}
+                  {row.onHand > 0 ? (
+                    <span className="text-slate-400">
+                      {' '}
+                      · Floor: {formatUnits(row.onHand)} {unit}
                     </span>
                   ) : null}
-                </>
+                </p>
               )}
 
               {swipeEnabled ? (
                 <p className="mt-2 text-[10px] font-semibold text-slate-500 md:hidden">
-                  Swipe → production · ← waste
+                  Swipe right → production · left → waste · tap for qty
+                  {showBundleTools ? ' · bundle calc (owner / manager)' : ''}
                 </p>
               ) : null}
-              {operations ? (
+              {operations && !swipeEnabled ? (
                 dense ? (
                   <div
                     className="mt-1.5 flex items-center gap-2 text-slate-500"
@@ -325,6 +273,7 @@ export function SubInventoryTransferList({
                 ) : (
                   <p className="mt-3 text-[10px] font-semibold uppercase tracking-wide text-emerald-500/80">
                     Tap to transfer · waste
+                    {showBundleTools ? ' · bundle calc (owner / manager)' : ''}
                   </p>
                 )
               ) : null}
@@ -342,6 +291,7 @@ export function SubInventoryTransferList({
               <div className="min-w-0 w-full max-w-full md:max-w-md md:shrink-0">
                 <SubInventoryTransferBar
                   row={stockLevelToTransferRow(row)}
+                  stockLevel={row}
                   staffId={staffId}
                   defaultQty={defaultQty}
                   variant={variant}
@@ -351,6 +301,7 @@ export function SubInventoryTransferList({
                   busy={pendingId === row.productId}
                   onBusyChange={(b) => setPendingId(b ? row.productId : null)}
                   onSuccess={({ level, message }) => onSuccess(message, level)}
+                  onBundleSaved={(msg) => onSuccess(msg, row)}
                   onError={onError}
                 />
               </div>
@@ -378,15 +329,31 @@ export function SubInventoryTransferList({
             )}
           >
             {operations ? (
-              operationsCard
+              swipeEnabled ? (
+                <SwipeTransferRow
+                  enabled
+                  onSwipeRight={() => void quickMove(row, 'rescue')}
+                  onSwipeLeft={() => void quickMove(row, 'waste')}
+                >
+                  {operationsCard}
+                </SwipeTransferRow>
+              ) : (
+                operationsCard
+              )
             ) : queueModalActions ? (
-              <button
-                type="button"
-                onClick={() => setModalProductId(row.productId)}
-                className="w-full text-left transition hover:bg-slate-900/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/50"
+              <SwipeTransferRow
+                enabled={swipeEnabled}
+                onSwipeRight={() => void quickMove(row, 'rescue')}
+                onSwipeLeft={() => void quickMove(row, 'waste')}
               >
-                {rowBody}
-              </button>
+                <button
+                  type="button"
+                  onClick={() => setModalProductId(row.productId)}
+                  className="w-full text-left transition hover:bg-slate-900/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/50"
+                >
+                  {rowBody}
+                </button>
+              </SwipeTransferRow>
             ) : swipeEnabled ? (
               <SwipeTransferRow
                 enabled
@@ -414,6 +381,13 @@ export function SubInventoryTransferList({
         onClose={() => setModalProductId(null)}
         onSuccess={onSuccess}
         onError={onError}
+        bundlePromo={
+          modalRow && floorBundleMapReady
+            ? bundleByProductId.get(modalRow.productId) ?? null
+            : modalRow
+              ? undefined
+              : undefined
+        }
       />
     ) : null}
     </>
