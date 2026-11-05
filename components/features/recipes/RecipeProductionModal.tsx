@@ -651,7 +651,7 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
                   <span className="text-[10px] text-zinc-500 uppercase font-bold block">
                     Costo Total Lote
                   </span>
-                  <strong className="text-base font-black text-white font-mono">
+                  <strong className="font-mono text-base font-black tabular-nums text-white">
                     ${totalBatchCost.toFixed(2)}
                   </strong>
                 </div>
@@ -659,7 +659,7 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
                   <span className="text-[10px] text-zinc-500 uppercase font-bold block">
                     Costo Unitario Salida
                   </span>
-                  <strong className="text-base font-black text-amber-300 font-mono">
+                  <strong className="font-mono text-base font-black tabular-nums text-amber-300">
                     ${unitOutputCost.toFixed(2)} / {selectedRecipe.outputUnit}
                   </strong>
                 </div>
@@ -667,7 +667,7 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
                   <span className="text-[10px] text-zinc-500 uppercase font-bold block">
                     PVP Sugerido Deli
                   </span>
-                  <strong className="text-base font-black text-emerald-400 font-mono">
+                  <strong className="font-mono text-base font-black tabular-nums text-emerald-400">
                     ${selectedRecipe.targetRetailPrice.toFixed(2)}
                   </strong>
                 </div>
@@ -675,7 +675,7 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
                   <span className="text-[10px] text-zinc-500 uppercase font-bold block">
                     Margen Bruto Real
                   </span>
-                  <strong className="text-base font-black text-emerald-400 font-mono">
+                  <strong className="font-mono text-base font-black tabular-nums text-emerald-400">
                     {projectedMarginPct}%
                   </strong>
                 </div>
@@ -710,7 +710,7 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
           <button
             type="button"
             onClick={onClose}
-            className="px-4 py-2 rounded-xl text-xs font-bold text-zinc-400 hover:text-white cursor-pointer"
+            className="inline-flex min-h-11 items-center rounded-xl px-4 py-2 text-xs font-bold text-zinc-400 hover:text-white cursor-pointer"
           >
             {completedBatch ? 'Cerrar' : 'Cancelar'}
           </button>
@@ -741,7 +741,7 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
             <button
               type="button"
               onClick={() => setCompletedBatch(null)}
-              className="px-5 py-2.5 rounded-xl text-xs font-black bg-amber-400 hover:bg-amber-300 text-zinc-950 cursor-pointer"
+              className="inline-flex min-h-11 items-center rounded-xl px-5 py-2.5 text-xs font-black bg-amber-400 hover:bg-amber-300 text-zinc-950 cursor-pointer"
             >
               Producir Otro Lote
             </button>

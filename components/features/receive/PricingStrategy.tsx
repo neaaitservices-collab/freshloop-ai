@@ -59,7 +59,7 @@ export function PricingStrategy({
                   key={mode.id}
                   type="button"
                   onClick={() => onMarginMode(mode.id)}
-                  className={`rounded-full px-3 py-2 text-xs font-black transition active:scale-95 ${
+                  className={`min-h-11 rounded-full px-3 py-2 text-xs font-black transition active:scale-95 ${
                     active
                       ? 'border border-blue-800 bg-blue-900/40 text-slate-100'
                       : 'border border-slate-700 bg-slate-950 text-slate-300 hover:border-blue-800/60'
@@ -85,7 +85,7 @@ export function PricingStrategy({
                 step="0.1"
                 value={customMarginPercent}
                 onChange={(event) => onCustomMargin(event.target.value)}
-                className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3.5 py-2.5 font-mono text-sm font-bold text-slate-200 outline-none transition focus:border-slate-500 focus:ring-1 focus:ring-slate-600"
+                className="min-h-11 w-full rounded-xl border border-slate-700 bg-slate-950 px-3.5 py-2.5 font-mono text-sm font-bold tabular-nums text-slate-200 outline-none transition focus:border-slate-500 focus:ring-1 focus:ring-slate-600"
               />
             </label>
           </div>

@@ -27,7 +27,9 @@ function Metric({
           <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{label}</p>
           <Icon className="h-3.5 w-3.5 shrink-0 text-blue-400/90" />
         </div>
-        <p className={`mt-1.5 font-mono text-2xl font-black tracking-tight sm:text-[1.65rem] ${accent}`}>
+        <p
+          className={`mt-1.5 font-mono text-2xl font-black tabular-nums tracking-tight sm:text-[1.65rem] ${accent}`}
+        >
           {value}
         </p>
         <p className="mt-0.5 line-clamp-2 text-[11px] leading-snug text-slate-500">{detail}</p>

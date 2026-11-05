@@ -136,8 +136,8 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
             <div className="p-2.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400">
               <FileText className="w-5 h-5" />
             </div>
-            <div>
-              <h3 className="font-bold text-lg text-white">
+            <div className="min-w-0">
+              <h3 className="truncate font-bold text-lg text-white" title={ocrResult?.vendorName}>
                 {ocrResult?.source === 'sample' ? 'Sample invoice' : ocrResult ? ocrResult.vendorName : 'Scan the invoice'}
               </h3>
               <p className="text-xs text-zinc-400">
@@ -270,8 +270,10 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
                   </div>
                 </div>
 
-                <div className="text-right">
-                  <span className="text-lg font-extrabold text-white">${ocrResult.totalAmount.toFixed(2)}</span>
+                <div className="shrink-0 text-right">
+                  <span className="font-mono text-lg font-extrabold tabular-nums text-white">
+                    ${ocrResult.totalAmount.toFixed(2)}
+                  </span>
                   <p className="text-[10px] text-emerald-400/80 font-mono">Total Verified</p>
                 </div>
               </div>
@@ -282,19 +284,27 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                   <div className="p-3 rounded-xl bg-zinc-950 border border-emerald-500/30">
                     <span className="text-emerald-400 font-bold">Produce</span>
-                    <p className="text-sm font-extrabold text-white mt-1">${ocrResult.departmentBreakdown.PRODUCE.toFixed(2)}</p>
+                    <p className="mt-1 font-mono text-sm font-extrabold tabular-nums text-white">
+                      ${ocrResult.departmentBreakdown.PRODUCE.toFixed(2)}
+                    </p>
                   </div>
                   <div className="p-3 rounded-xl bg-zinc-950 border border-cyan-500/30">
                     <span className="text-cyan-400 font-bold">Dairy</span>
-                    <p className="text-sm font-extrabold text-white mt-1">${ocrResult.departmentBreakdown.DAIRY.toFixed(2)}</p>
+                    <p className="mt-1 font-mono text-sm font-extrabold tabular-nums text-white">
+                      ${ocrResult.departmentBreakdown.DAIRY.toFixed(2)}
+                    </p>
                   </div>
                   <div className="p-3 rounded-xl bg-zinc-950 border border-amber-500/30">
                     <span className="text-amber-400 font-bold">Bakery</span>
-                    <p className="text-sm font-extrabold text-white mt-1">${ocrResult.departmentBreakdown.BAKERY.toFixed(2)}</p>
+                    <p className="mt-1 font-mono text-sm font-extrabold tabular-nums text-white">
+                      ${ocrResult.departmentBreakdown.BAKERY.toFixed(2)}
+                    </p>
                   </div>
                   <div className="p-3 rounded-xl bg-zinc-950 border border-purple-500/30">
                     <span className="text-purple-400 font-bold">Pantry</span>
-                    <p className="text-sm font-extrabold text-white mt-1">${ocrResult.departmentBreakdown.PANTRY.toFixed(2)}</p>
+                    <p className="mt-1 font-mono text-sm font-extrabold tabular-nums text-white">
+                      ${ocrResult.departmentBreakdown.PANTRY.toFixed(2)}
+                    </p>
                   </div>
                 </div>
               </div>
@@ -347,18 +357,22 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
                             ) : null}
                           </td>
                           <td className="p-2 sm:p-2.5"><DepartmentBadge department={item.department} size="sm" /></td>
-                          <td className="p-2 sm:p-2.5 whitespace-nowrap">{item.quantity} {item.unit}</td>
-                          <td className="p-2 sm:p-2.5">${item.unitCost.toFixed(2)}</td>
+                          <td className="p-2 sm:p-2.5 whitespace-nowrap font-mono tabular-nums">
+                            {item.quantity} {item.unit}
+                          </td>
+                          <td className="p-2 sm:p-2.5 font-mono tabular-nums">
+                            ${item.unitCost.toFixed(2)}
+                          </td>
                           <td className="p-2 sm:p-2.5 whitespace-nowrap">
                             {item.costVariancePct != null ? (
                               <span
-                                className={
+                                className={`font-mono tabular-nums ${
                                   item.requires_approval
                                     ? (item.costVariancePct ?? 0) > 0
                                       ? 'font-bold text-rose-400'
                                       : 'font-bold text-amber-300'
                                     : 'text-slate-400'
-                                }
+                                }`}
                               >
                                 {item.costVariancePct > 0 ? '+' : ''}
                                 {item.costVariancePct.toFixed(1)}%
@@ -367,7 +381,9 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
                               <span className="text-zinc-600">—</span>
                             )}
                           </td>
-                          <td className="p-2 sm:p-2.5 text-right font-bold text-white">${item.totalCost.toFixed(2)}</td>
+                          <td className="p-2 sm:p-2.5 text-right font-mono font-bold tabular-nums text-white">
+                            ${item.totalCost.toFixed(2)}
+                          </td>
                         </tr>
                       ))}
                     </tbody>

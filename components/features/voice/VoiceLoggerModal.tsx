@@ -569,7 +569,7 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
                                   found?.department || item.department,
                               });
                             }}
-                            className="w-full px-2.5 py-2 rounded-xl bg-zinc-900 border border-zinc-700 text-xs text-white"
+                            className="min-h-11 w-full rounded-xl border border-zinc-700 bg-zinc-900 px-2.5 py-2 text-xs text-white"
                           >
                             {productOptionsForItem(item).map((opt) => (
                               <option key={opt.id} value={opt.id}>
@@ -596,7 +596,7 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
                                 ),
                               })
                             }
-                            className="w-full px-3 py-2 rounded-xl bg-zinc-900 border border-zinc-700 text-xs text-white font-mono"
+                            className="min-h-11 w-full rounded-xl border border-zinc-700 bg-zinc-900 px-3 py-2 font-mono text-xs tabular-nums text-white"
                           />
                         </div>
 
@@ -612,7 +612,7 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
                                   .value as VoiceActionType,
                               })
                             }
-                            className="w-full px-2.5 py-2 rounded-xl bg-zinc-900 border border-zinc-700 text-xs text-white font-bold"
+                            className="min-h-11 w-full rounded-xl border border-zinc-700 bg-zinc-900 px-2.5 py-2 text-xs font-bold text-white"
                           >
                             <option value="PULL_RESCUE">
                               PULL_RESCUE (Cocina)
@@ -657,7 +657,7 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
               <button
                 type="button"
                 onClick={onClose}
-                className="px-4 py-2 rounded-xl text-xs font-bold text-zinc-400 hover:text-white cursor-pointer"
+                className="inline-flex min-h-11 items-center rounded-xl px-4 py-2 text-xs font-bold text-zinc-400 hover:text-white cursor-pointer"
               >
                 Cancelar
               </button>
@@ -666,7 +666,7 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
                 type="button"
                 onClick={() => handleParseVoiceWithAI()}
                 disabled={parsing}
-                className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-black bg-gradient-to-r from-teal-500 to-emerald-400 hover:from-teal-400 hover:to-emerald-300 text-zinc-950 shadow-lg shadow-teal-500/25 transition-all cursor-pointer"
+                className="inline-flex min-h-11 items-center gap-2 rounded-xl px-5 py-2.5 text-xs font-black bg-gradient-to-r from-teal-500 to-emerald-400 hover:from-teal-400 hover:to-emerald-300 text-zinc-950 shadow-lg shadow-teal-500/25 transition-all cursor-pointer"
               >
                 {parsing ? (
                   <>
@@ -688,7 +688,7 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
               <button
                 type="button"
                 onClick={handleReset}
-                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold text-zinc-400 hover:text-white bg-zinc-900 border border-zinc-800 cursor-pointer"
+                className="inline-flex min-h-11 items-center gap-1.5 rounded-xl border border-zinc-800 bg-zinc-900 px-3.5 py-2 text-xs font-bold text-zinc-400 hover:text-white cursor-pointer"
               >
                 <RotateCcw className="w-3.5 h-3.5" />
                 <span>Regrabar</span>
@@ -699,7 +699,7 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
                 <button
                   type="button"
                   onClick={() => setIsEditMode((prev) => !prev)}
-                  className={`flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-extrabold border transition-all cursor-pointer ${
+                  className={`inline-flex min-h-11 items-center gap-1.5 rounded-xl border px-4 py-2.5 text-xs font-extrabold transition-all cursor-pointer ${
                     isEditMode
                       ? 'bg-teal-500/20 border-teal-400 text-teal-200'
                       : 'bg-zinc-900 hover:bg-zinc-800 border-zinc-700 text-zinc-200'
@@ -714,7 +714,7 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
                   type="button"
                   onClick={handleConfirmAndCommit}
                   disabled={committing}
-                  className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-black bg-gradient-to-r from-emerald-500 to-teal-400 hover:from-emerald-400 hover:to-teal-300 text-zinc-950 shadow-lg shadow-emerald-500/30 transition-all active:scale-95 cursor-pointer"
+                  className="inline-flex min-h-11 items-center gap-2 rounded-xl px-5 py-2.5 text-xs font-black bg-gradient-to-r from-emerald-500 to-teal-400 hover:from-emerald-400 hover:to-teal-300 text-zinc-950 shadow-lg shadow-emerald-500/30 transition-all active:scale-95 cursor-pointer"
                 >
                   {committing ? (
                     <>
@@ -737,14 +737,14 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
               <button
                 type="button"
                 onClick={handleReset}
-                className="px-4 py-2 rounded-xl text-xs font-bold text-zinc-400 hover:text-white cursor-pointer"
+                className="inline-flex min-h-11 items-center rounded-xl px-4 py-2 text-xs font-bold text-zinc-400 hover:text-white cursor-pointer"
               >
                 Registrar Otro Audio
               </button>
               <button
                 type="button"
                 onClick={onClose}
-                className="px-6 py-2.5 rounded-xl text-xs font-black bg-emerald-400 hover:bg-emerald-300 text-zinc-950 cursor-pointer"
+                className="inline-flex min-h-11 items-center rounded-xl px-6 py-2.5 text-xs font-black bg-emerald-400 hover:bg-emerald-300 text-zinc-950 cursor-pointer"
               >
                 Cerrar y Actualizar Piso
               </button>

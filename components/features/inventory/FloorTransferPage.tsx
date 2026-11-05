@@ -11,7 +11,9 @@ import {
   type StorePullSensitivityDays,
 } from '@/hooks/use-store-pull-sensitivity-days';
 import { isAdmin } from '@/lib/utils/roles';
+import { SetBundlesListPanel } from '@/components/features/pricing/SetBundlesListPanel';
 import { PageMain } from '@/components/ui/layout';
+import { canViewSetBundlePromos } from '@/lib/auth/staffCapabilities';
 import { Toast } from '@/components/ui/Toast';
 import type { StockLevel } from '@/lib/domains/inventory/stock';
 import type { DepartmentType } from '@/lib/types';
