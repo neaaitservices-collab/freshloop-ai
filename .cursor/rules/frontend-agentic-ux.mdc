@@ -124,7 +124,7 @@ Never require manual browser refreshes. When a ledger mutation occurs:
 ### 4.3 Responsive Data Presentations
 
 - **Desktop (≥ 768px):** Clean, high-density data tables wrapped in `ScrollTable` with pixel-aligned columns.
-- **Mobile (< 768px):** Auto-collapse table rows into card stacks (`SwipeTransferRow`), enabling swipe-right to rescue and swipe-left to waste.
+- **Mobile (< 768px):** Auto-collapse table rows into card stacks; tap opens the transfer modal (no swipe-to-rescue/waste — explicit qty + confirm in modal).
 - **Sticky Actions:** Modal footers and confirmation trays must remain sticky (`sticky bottom-0`) so action buttons are always accessible without scrolling.
 
 ## 5. Frontend Alignment Checklist (Audit Before Shipping)

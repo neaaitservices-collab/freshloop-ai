@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { ArrowRightLeft, ChevronRight, Trash2 } from 'lucide-react';
 import { OperationsTransferItemModal } from '@/components/features/operations/OperationsTransferItemModal';
 import {
@@ -13,13 +13,11 @@ import {
   type ItemBundlePromoHint,
 } from '@/components/features/inventory/RetailFloorItemCardMeta';
 import { FRESHLOOP_BUNDLE_PROMOS_UPDATED } from '@/components/features/pricing/SetBundlesListPanel';
-import { SwipeTransferRow } from '@/components/features/inventory/SwipeTransferRow';
 import { stockLevelToTransferRow } from '@/lib/domains/inventory/inventoryMoveClient';
 import type { StockLevel } from '@/lib/domains/inventory/stock';
 import { formatCurrency, formatUnits, stockUnitLabel } from '@/lib/domains/receiving/yieldPricing';
 import { useRole } from '@/components/auth/RoleProvider';
 import { canManageBundleDeals, canViewSetBundlePromos } from '@/lib/auth/staffCapabilities';
-import { useMediaMaxWidth } from '@/hooks/use-media-max-width';
 import { cn } from '@/lib/utils/cn';
 
 export function suggestedPullQty(row: StockLevel, pullDays: number): number {
@@ -53,7 +51,7 @@ export function SubInventoryTransferList({
   compact?: boolean;
   layoutVariant?: 'default' | 'operations';
   listDensity?: 'default' | 'compact';
-  /** Short-dated floor board: stacked cards + swipe on touch viewports. */
+  /** Short-dated floor board: stacked cards; tap opens transfer modal. */
   actionQueue?: boolean;
   performMove?: PerformInventoryMove;
   emptyMessage: string;
@@ -127,37 +125,8 @@ export function SubInventoryTransferList({
     };
   }, [activeUser?.role, location]);
 
-  const touchViewport = useMediaMaxWidth(768);
-  /** Action queue: tap row for qty + markdown (mobile swipe hints; desktop tap opens same modal). */
+  /** Action queue: tap row for qty, rescue, waste, and markdown in the transfer modal. */
   const queueModalActions = actionQueue && !operations && location === 'retail_floor';
-  const swipeEnabled =
-    location === 'retail_floor' && touchViewport && Boolean(performMove);
-
-  const quickMove = useCallback(
-    async (row: StockLevel, action: 'rescue' | 'waste') => {
-      if (!performMove) return;
-      const qty = suggestedPullQty(row, pullDays);
-      if (!(qty > 0)) {
-        onError('Nothing left on the floor to move.');
-        return;
-      }
-      setPendingId(row.productId);
-      const outcome = await performMove({
-        productId: row.productId,
-        action,
-        quantity: qty,
-        staffId,
-        row: stockLevelToTransferRow(row),
-      });
-      setPendingId(null);
-      if (outcome.success) {
-        onSuccess(outcome.message, outcome.level);
-      } else {
-        onError(outcome.error);
-      }
-    },
-    [performMove, pullDays, staffId, onSuccess, onError]
-  );
 
   if (rows.length === 0) {
     return <p className="px-4 py-10 text-center text-sm text-slate-400">{emptyMessage}</p>;
@@ -254,13 +223,7 @@ export function SubInventoryTransferList({
                 </p>
               )}
 
-              {swipeEnabled ? (
-                <p className="mt-2 text-[10px] font-semibold text-slate-500 md:hidden">
-                  Swipe right → production · left → waste · tap for qty
-                  {showBundleTools ? ' · bundle calc (owner / manager)' : ''}
-                </p>
-              ) : null}
-              {operations && !swipeEnabled ? (
+              {operations ? (
                 dense ? (
                   <div
                     className="mt-1.5 flex items-center gap-2 text-slate-500"
@@ -328,39 +291,15 @@ export function SubInventoryTransferList({
             )}
           >
             {operations ? (
-              swipeEnabled ? (
-                <SwipeTransferRow
-                  enabled
-                  onSwipeRight={() => void quickMove(row, 'rescue')}
-                  onSwipeLeft={() => void quickMove(row, 'waste')}
-                >
-                  {operationsCard}
-                </SwipeTransferRow>
-              ) : (
-                operationsCard
-              )
+              operationsCard
             ) : queueModalActions ? (
-              <SwipeTransferRow
-                enabled={swipeEnabled}
-                onSwipeRight={() => void quickMove(row, 'rescue')}
-                onSwipeLeft={() => void quickMove(row, 'waste')}
-              >
-                <button
-                  type="button"
-                  onClick={() => setModalProductId(row.productId)}
-                  className="w-full text-left transition hover:bg-slate-900/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/50"
-                >
-                  {rowBody}
-                </button>
-              </SwipeTransferRow>
-            ) : swipeEnabled ? (
-              <SwipeTransferRow
-                enabled
-                onSwipeRight={() => void quickMove(row, 'rescue')}
-                onSwipeLeft={() => void quickMove(row, 'waste')}
+              <button
+                type="button"
+                onClick={() => setModalProductId(row.productId)}
+                className="w-full text-left transition hover:bg-slate-900/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/50"
               >
                 {rowBody}
-              </SwipeTransferRow>
+              </button>
             ) : (
               rowBody
             )}
