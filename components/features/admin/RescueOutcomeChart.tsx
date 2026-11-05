@@ -115,7 +115,7 @@ export function RescueOutcomeChart({
         </div>
 
         {hasData ? (
-          <dl className="grid grid-cols-2 gap-2 text-[11px]">
+          <dl className="grid grid-cols-2 gap-2 text-[11px] sm:grid-cols-4">
             <div className="rounded-lg border border-slate-800 bg-slate-950/60 px-2.5 py-2">
               <dt className="font-bold uppercase tracking-wide text-slate-500">Recovered</dt>
               <dd className="font-mono text-sm font-black tabular-nums text-emerald-300">

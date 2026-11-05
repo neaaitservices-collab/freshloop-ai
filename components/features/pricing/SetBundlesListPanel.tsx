@@ -25,24 +25,13 @@ function profitPctLabel(promo: FloorBundlePromoView): string {
   return `${formatPercent(marginPct)}%`;
 }
 
-function ProfitPctCell({
-  promo,
-  align = 'end',
-}: {
-  promo: FloorBundlePromoView;
-  align?: 'start' | 'end';
-}) {
+function ProfitPctCell({ promo }: { promo: FloorBundlePromoView }) {
   const { marginPct, marginTone } = promo.economics;
   const belowAlert = isBundleMarginBelowAlert(marginPct);
   const isLoss = marginTone === 'loss' || (marginPct != null && marginPct < 0);
 
   return (
-    <div
-      className={cn(
-        'flex flex-col gap-1',
-        align === 'start' ? 'items-start' : 'items-end'
-      )}
-    >
+    <div className="flex flex-col items-end gap-1 sm:items-end">
       <span
         className={cn(
           'font-mono text-sm font-black tabular-nums',
@@ -246,7 +235,7 @@ export function SetBundlesListPanel({ readOnly = false }: SetBundlesListPanelPro
                             Profit %
                           </dt>
                           <dd className="mt-0.5">
-                            <ProfitPctCell promo={promo} align="start" />
+                            <ProfitPctCell promo={promo} />
                           </dd>
                         </div>
                       ) : null}

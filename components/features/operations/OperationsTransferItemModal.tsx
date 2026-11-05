@@ -20,7 +20,7 @@ import {
 } from '@/components/features/inventory/RetailFloorItemCardMeta';
 import { suggestedPullQty } from '@/components/features/inventory/SubInventoryTransferList';
 import { canManageBundleDeals } from '@/lib/auth/staffCapabilities';
-import { ModalBody, ModalFooter, ModalHeader, ModalShell } from '@/components/ui/layout';
+import { ModalBody, ModalHeader, ModalShell } from '@/components/ui/layout';
 
 export function OperationsTransferItemModal({
   row,
@@ -192,8 +192,6 @@ export function OperationsTransferItemModal({
               <X className="h-5 w-5" />
             </button>
           </div>
-        </ModalHeader>
-        <ModalBody className="px-5 py-4">
           {location === 'retail_floor' ? (
             <RetailFloorItemCardMeta
               row={row}
@@ -204,7 +202,7 @@ export function OperationsTransferItemModal({
               bundleActionsBusy={bundleRemoving}
             />
           ) : (
-            <dl className="mb-4 flex flex-wrap gap-x-4 gap-y-1 text-[11px]">
+            <dl className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-[11px]">
               <div>
                 <dt className="text-[9px] font-bold uppercase tracking-wider text-slate-500">Prod</dt>
                 <dd className="font-mono font-bold tabular-nums text-amber-100">
@@ -219,6 +217,8 @@ export function OperationsTransferItemModal({
               </div>
             </dl>
           )}
+        </ModalHeader>
+        <ModalBody className="px-5 py-4">
           {savedMessage ? (
             <div className="mb-4 flex items-start gap-2 rounded-xl border border-emerald-500/40 bg-emerald-950/50 px-3 py-2.5 text-xs text-emerald-100">
               <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" />
@@ -231,8 +231,6 @@ export function OperationsTransferItemModal({
               Removing bundle…
             </p>
           ) : null}
-        </ModalBody>
-        <ModalFooter className="sticky bottom-0 border-t border-slate-800 bg-slate-900/95 px-5 py-3 backdrop-blur-sm">
           <SubInventoryTransferBar
             row={stockLevelToTransferRow(row)}
             stockLevel={row}
@@ -248,7 +246,7 @@ export function OperationsTransferItemModal({
             hideBundleCalcButton={canManageBundles && Boolean(localBundle?.id)}
             onOpenBundleEditor={() => setBundleModalOpen(true)}
           />
-        </ModalFooter>
+        </ModalBody>
       {canManageBundles && location === 'retail_floor' ? (
         <BundleDealModal
           open={bundleModalOpen}
