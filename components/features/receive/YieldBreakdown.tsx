@@ -21,6 +21,7 @@ export function YieldBreakdown({
   onYieldUnit,
   caseFloorPrice,
   onCaseFloorPrice,
+  compact = false,
 }: {
   packSize: string;
   yieldDivisor: string;
@@ -33,6 +34,7 @@ export function YieldBreakdown({
   /** Case shelf price for one received case (editable in item settings / receive). */
   caseFloorPrice?: string;
   onCaseFloorPrice?: (value: string) => void;
+  compact?: boolean;
 }) {
   const showCaseFloor = onCaseFloorPrice != null || caseFloorPrice != null;
   const caseFloorValue = caseFloorPrice ?? '';

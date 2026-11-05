@@ -49,7 +49,7 @@ export function ModalShell({
         role="dialog"
         aria-modal="true"
         className={cn(
-          'relative z-10 flex max-h-[min(92vh,100dvh)] w-full min-w-0 flex-col overflow-hidden',
+          'relative z-10 flex max-h-[min(92dvh,92vh)] w-full min-w-0 flex-col overflow-hidden',
           'rounded-2xl border border-slate-700 bg-slate-900 shadow-2xl',
           PANEL_WIDTH[width],
           panelClassName
@@ -102,7 +102,12 @@ export function ModalFooter({
   children: React.ReactNode;
 }) {
   return (
-    <footer className={cn('shrink-0 border-t border-slate-800 px-4 py-3 sm:px-6', className)}>
+    <footer
+      className={cn(
+        'sticky bottom-0 z-10 shrink-0 border-t border-slate-800 bg-slate-900/95 px-4 py-3 backdrop-blur-sm sm:px-6',
+        className
+      )}
+    >
       {children}
     </footer>
   );

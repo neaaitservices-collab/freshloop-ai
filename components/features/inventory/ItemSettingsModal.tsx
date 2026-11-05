@@ -34,7 +34,7 @@ import { cn } from '@/lib/utils/cn';
 const DEPARTMENTS = ['PRODUCE', 'DAIRY', 'BAKERY', 'PANTRY', 'DELI_KITCHEN'] as const;
 
 const INPUT =
-  'mt-2 w-full rounded-xl border border-slate-700/90 bg-slate-950 px-3.5 py-2.5 text-sm text-slate-100 outline-none transition focus:border-emerald-500/45 focus:ring-1 focus:ring-emerald-500/20';
+  'mt-2 min-h-11 w-full rounded-xl border border-slate-700/90 bg-slate-950 px-3.5 py-2.5 text-sm text-slate-100 outline-none transition focus:border-emerald-500/45 focus:ring-1 focus:ring-emerald-500/20';
 
 const LABEL = 'text-[11px] font-bold uppercase tracking-wide text-slate-400';
 
@@ -317,7 +317,8 @@ export function ItemSettingsModal({
             <button
               type="button"
               onClick={onClose}
-              className="rounded-xl p-2 text-slate-400 transition hover:bg-slate-800 hover:text-slate-200"
+              className="min-h-11 min-w-11 rounded-xl p-2 text-slate-400 transition hover:bg-slate-800 hover:text-slate-200"
+              aria-label="Close item settings"
             >
               <X className="h-5 w-5" />
             </button>
@@ -338,7 +339,7 @@ export function ItemSettingsModal({
                   setError(null);
                 }}
                 className={cn(
-                  'flex-1 rounded-lg py-2.5 text-xs font-black uppercase tracking-wide transition',
+                  'flex-1 min-h-11 rounded-lg py-2.5 text-xs font-black uppercase tracking-wide transition',
                   tab === id ? 'bg-emerald-400 text-slate-950 shadow-sm' : 'text-slate-400 hover:text-slate-200'
                 )}
               >

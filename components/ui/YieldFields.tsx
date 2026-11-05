@@ -46,7 +46,7 @@ export function ReadOnlyStat({
 }
 
 const UNIT_SELECT_CLASS =
-  'w-full min-w-[5.5rem] rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm font-bold text-slate-100 outline-none transition focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/20';
+  'min-h-11 w-full min-w-[5.5rem] rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm font-bold text-slate-100 outline-none transition focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/20';
 
 export function UnitSelect({
   id,
@@ -113,7 +113,7 @@ export function NumberField({
         step={step}
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3.5 py-2.5 font-mono text-sm font-bold text-slate-200 outline-none transition focus:border-slate-500 focus:ring-1 focus:ring-slate-600"
+        className="min-h-11 w-full rounded-xl border border-slate-700 bg-slate-950 px-3.5 py-2.5 font-mono text-sm font-bold tabular-nums text-slate-200 outline-none transition focus:border-slate-500 focus:ring-1 focus:ring-slate-600"
       />
     </label>
   );
@@ -140,7 +140,7 @@ export function CurrencyField({
           readOnly ? 'opacity-95' : 'focus-within:border-slate-500 focus-within:ring-1 focus-within:ring-slate-600'
         }`}
       >
-        <span className="flex items-center bg-slate-900/80 px-3 font-mono text-sm font-black text-slate-300">
+        <span className="flex min-h-11 items-center bg-slate-900/80 px-3 font-mono text-sm font-black tabular-nums text-slate-300">
           $
         </span>
         <input
@@ -157,7 +157,7 @@ export function CurrencyField({
             const parsed = Number(value);
             if (Number.isFinite(parsed) && parsed >= 0) onChange(parsed.toFixed(2));
           }}
-          className={`w-full bg-transparent px-3 py-2.5 font-mono text-sm font-bold outline-none ${
+          className={`min-h-11 w-full bg-transparent px-3 py-2.5 font-mono text-sm font-bold tabular-nums outline-none ${
             readOnly ? 'cursor-default text-emerald-200/95' : 'text-slate-100'
           }`}
         />

@@ -1,4 +1,5 @@
 export { ModalShell, ModalHeader, ModalBody, ModalFooter } from '@/components/ui/layout/ModalShell';
+export { AuthPageShell } from '@/components/ui/layout/AuthPageShell';
 export { PageMain } from '@/components/ui/layout/PageMain';
 export { ScrollTable } from '@/components/ui/layout/ScrollTable';
 export { PageGrid, PageGridSpan } from '@/components/ui/layout/PageGrid';

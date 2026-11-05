@@ -144,7 +144,7 @@ function TransferQtyPicker({
             applyDraft();
           }
         }}
-        className={`min-h-11 border-0 bg-slate-950 text-center font-mono font-bold text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/40 ${
+        className={`min-h-11 border-0 bg-slate-950 text-center font-mono font-bold tabular-nums text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/40 ${
           unified ? 'w-[4.5rem] text-sm' : compact ? 'h-11 w-16 rounded-lg border border-slate-600 text-xs' : 'min-h-12 w-20 rounded-lg border border-slate-600 text-sm'
         }`}
         aria-label={`Quantity in ${unit}`}
