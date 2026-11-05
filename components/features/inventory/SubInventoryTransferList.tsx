@@ -51,7 +51,7 @@ export function SubInventoryTransferList({
   compact?: boolean;
   layoutVariant?: 'default' | 'operations';
   listDensity?: 'default' | 'compact';
-  /** Short-dated floor board: stacked cards + swipe on touch viewports. */
+  /** Short-dated floor board: stacked cards; tap opens transfer modal. */
   actionQueue?: boolean;
   performMove?: PerformInventoryMove;
   emptyMessage: string;
