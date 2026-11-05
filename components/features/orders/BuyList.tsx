@@ -22,6 +22,7 @@ import { Input } from '@/components/ui/Input';
 import { Toast } from '@/components/ui/Toast';
 import { formatCurrency, formatUnits, stockUnitLabel } from '@/lib/domains/receiving/yieldPricing';
 import { cn } from '@/lib/utils/cn';
+import { fieldMatchesNeedle } from '@/lib/utils/searchNeedle';
 import { stockFromPar } from '@/lib/domains/inventory/parLevel';
 import type { StockLevel } from '@/lib/domains/inventory/stock';
 
@@ -288,7 +289,9 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
   const matches = needle
     ? levels
         .filter(
-          (row) => row.name.toLowerCase().includes(needle) || row.supplier.toLowerCase().includes(needle)
+          (row) =>
+            fieldMatchesNeedle(row.name, needle) ||
+            fieldMatchesNeedle(row.supplier, needle)
         )
         .slice(0, 8)
     : [];

@@ -57,6 +57,27 @@ export function OperationsTransferItemModal({
   const [localBundle, setLocalBundle] = useState<ItemBundlePromoHint | null>(bundlePromo ?? null);
   const [closingAfterTransfer, setClosingAfterTransfer] = useState(false);
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const messageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearSavedMessageTimer = useCallback(() => {
+    if (messageTimerRef.current) {
+      clearTimeout(messageTimerRef.current);
+      messageTimerRef.current = null;
+    }
+  }, []);
+
+  const showSavedMessage = useCallback(
+    (message: string, autoClearMs = 4000) => {
+      clearSavedMessageTimer();
+      setSavedMessage(message);
+      if (autoClearMs <= 0) return;
+      messageTimerRef.current = setTimeout(() => {
+        messageTimerRef.current = null;
+        setSavedMessage(null);
+      }, autoClearMs);
+    },
+    [clearSavedMessageTimer]
+  );
 
   useEffect(() => {
     if (bundlePromo === undefined) return;
@@ -66,6 +87,7 @@ export function OperationsTransferItemModal({
   const scheduleCloseAfterSuccess = useCallback(
     (message: string, level: StockLevel) => {
       onSuccess(message, level);
+      clearSavedMessageTimer();
       setSavedMessage(message);
       setClosingAfterTransfer(true);
       if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
@@ -76,7 +98,7 @@ export function OperationsTransferItemModal({
         onClose();
       }, 1000);
     },
-    [onClose, onSuccess]
+    [clearSavedMessageTimer, onClose, onSuccess]
   );
 
   const removeBundlePromo = useCallback(async () => {
@@ -94,18 +116,19 @@ export function OperationsTransferItemModal({
       }
       setLocalBundle(null);
       window.dispatchEvent(new CustomEvent(FRESHLOOP_BUNDLE_PROMOS_UPDATED));
-      setSavedMessage(`${row.name}: bundle removed from set list.`);
+      showSavedMessage(`${row.name}: bundle removed from set list.`);
     } catch {
       onError('Could not remove bundle promo.');
     } finally {
       setBundleRemoving(false);
     }
-  }, [localBundle?.id, onError, row]);
+  }, [localBundle?.id, onError, row, showSavedMessage]);
 
   useEffect(() => {
     setMounted(true);
     return () => {
       if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+      if (messageTimerRef.current) clearTimeout(messageTimerRef.current);
     };
   }, []);
 
@@ -116,13 +139,8 @@ export function OperationsTransferItemModal({
       clearTimeout(closeTimerRef.current);
       closeTimerRef.current = null;
     }
-  }, [row?.productId]);
-
-  useEffect(() => {
-    if (!savedMessage) return;
-    const timer = setTimeout(() => setSavedMessage(null), 4000);
-    return () => clearTimeout(timer);
-  }, [savedMessage]);
+    clearSavedMessageTimer();
+  }, [row?.productId, clearSavedMessageTimer]);
 
   useEffect(() => {
     if (!row) return;
@@ -274,7 +292,7 @@ export function OperationsTransferItemModal({
                 label: promo.label,
               });
             }
-            setSavedMessage(message);
+            showSavedMessage(message);
           }}
         />
       ) : null}

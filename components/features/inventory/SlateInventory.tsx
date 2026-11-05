@@ -74,8 +74,9 @@ export function SlateInventory({
 
   const onHand = useMemo(() => levels.filter((row) => row.onHand > 0), [levels]);
 
-  const flaggedForMetrics = onHand.filter(
-    (row) => row.daysRemaining <= pullDays || row.low || row.isMarkdown
+  const flaggedForMetrics = useMemo(
+    () => onHand.filter((row) => row.daysRemaining <= pullDays || row.low || row.isMarkdown),
+    [onHand, pullDays]
   );
 
   const totalValueAtRisk = flaggedForMetrics.reduce(

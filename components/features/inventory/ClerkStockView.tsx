@@ -10,6 +10,7 @@ import { PageMain } from '@/components/ui/layout';
 import type { StockLevel } from '@/lib/domains/inventory/stock';
 import { formatCurrency, formatUnits, stockUnitLabel } from '@/lib/domains/receiving/yieldPricing';
 import { cn } from '@/lib/utils/cn';
+import { fieldMatchesNeedle } from '@/lib/utils/searchNeedle';
 
 export function ClerkStockView({
   levels: initialLevels,
@@ -47,8 +48,8 @@ export function ClerkStockView({
       .filter((row) => {
         if (!needle) return true;
         return (
-          row.name.toLowerCase().includes(needle) ||
-          row.supplier.toLowerCase().includes(needle)
+          fieldMatchesNeedle(row.name, needle) ||
+          fieldMatchesNeedle(row.supplier, needle)
         );
       })
       .sort((a, b) => a.name.localeCompare(b.name));

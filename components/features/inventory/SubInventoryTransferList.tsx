@@ -128,9 +128,8 @@ export function SubInventoryTransferList({
   }, [activeUser?.role, location]);
 
   const touchViewport = useMediaMaxWidth(768);
-  /** Mobile action queue: tap row for qty + markdown; desktop keeps inline transfer bar. */
-  const queueModalActions =
-    actionQueue && !operations && location === 'retail_floor' && touchViewport;
+  /** Action queue: tap row for qty + markdown (mobile swipe hints; desktop tap opens same modal). */
+  const queueModalActions = actionQueue && !operations && location === 'retail_floor';
   const swipeEnabled =
     location === 'retail_floor' && touchViewport && Boolean(performMove);
 

@@ -15,6 +15,7 @@ import { Button } from '@/components/ui/Button';
 import { Card, CardBody, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { cn } from '@/lib/utils/cn';
+import { fieldMatchesNeedle } from '@/lib/utils/searchNeedle';
 import { canOverrideInventoryStock } from '@/lib/auth/staffCapabilities';
 import type { StockLevel } from '@/lib/domains/inventory/stock';
 import {
@@ -125,8 +126,8 @@ export function InventoryMasterDetail({
       .filter((row) => {
         if (!needle) return true;
         return (
-          row.name.toLowerCase().includes(needle) ||
-          row.supplier.toLowerCase().includes(needle)
+          fieldMatchesNeedle(row.name, needle) ||
+          fieldMatchesNeedle(row.supplier, needle)
         );
       })
       .sort((a, b) => a.name.localeCompare(b.name));

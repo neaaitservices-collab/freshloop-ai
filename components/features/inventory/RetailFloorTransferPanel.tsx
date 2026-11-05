@@ -10,6 +10,7 @@ import { filterRetailFloorLevels } from '@/lib/domains/inventory/subInventoryVie
 import { useRole } from '@/components/auth/RoleProvider';
 import { canManageBundleDeals } from '@/lib/auth/staffCapabilities';
 import type { StockLevel } from '@/lib/domains/inventory/stock';
+import { fieldMatchesNeedle } from '@/lib/utils/searchNeedle';
 
 export interface RetailFloorTransferPanelProps {
   levels: StockLevel[];
@@ -52,9 +53,9 @@ export function RetailFloorTransferPanel({
     if (needle) {
       list = list.filter(
         (row) =>
-          row.name.toLowerCase().includes(needle) ||
-          row.supplier.toLowerCase().includes(needle) ||
-          (row.origin?.trim().toLowerCase().includes(needle) ?? false)
+          fieldMatchesNeedle(row.name, needle) ||
+          fieldMatchesNeedle(row.supplier, needle) ||
+          fieldMatchesNeedle(row.origin, needle)
       );
     }
     if (priorityOnly) {

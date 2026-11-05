@@ -20,6 +20,7 @@ import {
   type YieldQuote,
 } from "@/lib/domains/receiving/yieldPricing";
 import type { StockLevel } from "@/lib/domains/inventory/stock";
+import { fieldMatchesNeedle } from "@/lib/utils/searchNeedle";
 import { AdminInventoryWorkspace } from "@/components/features/inventory/AdminInventoryWorkspace";
 
 function casesLabel(value: number): string {
@@ -76,8 +77,8 @@ export function CaseBoard({
     if (!needle) return catalog;
     return catalog.filter(
       (row) =>
-        row.name.toLowerCase().includes(needle) ||
-        row.supplier.toLowerCase().includes(needle),
+        fieldMatchesNeedle(row.name, needle) ||
+        fieldMatchesNeedle(row.supplier, needle),
     );
   }, [catalog, query]);
 
@@ -87,8 +88,8 @@ export function CaseBoard({
     return catalog
       .filter(
         (row) =>
-          row.name.toLowerCase().includes(needle) ||
-          row.supplier.toLowerCase().includes(needle),
+          fieldMatchesNeedle(row.name, needle) ||
+          fieldMatchesNeedle(row.supplier, needle),
       )
       .slice(0, 8);
   }, [catalog, query]);

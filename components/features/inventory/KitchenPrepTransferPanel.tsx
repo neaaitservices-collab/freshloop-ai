@@ -6,6 +6,7 @@ import { SubInventoryTransferList } from '@/components/features/inventory/SubInv
 import type { PerformInventoryMove } from '@/components/features/inventory/SubInventoryTransferBar';
 import { filterKitchenPrepLevels } from '@/lib/domains/inventory/subInventoryView';
 import type { StockLevel } from '@/lib/domains/inventory/stock';
+import { fieldMatchesNeedle } from '@/lib/utils/searchNeedle';
 
 export interface KitchenPrepTransferPanelProps {
   levels: StockLevel[];
@@ -40,8 +41,8 @@ export function KitchenPrepTransferPanel({
     if (needle) {
       list = list.filter(
         (row) =>
-          row.name.toLowerCase().includes(needle) ||
-          row.supplier.toLowerCase().includes(needle)
+          fieldMatchesNeedle(row.name, needle) ||
+          fieldMatchesNeedle(row.supplier, needle)
       );
     }
     return list.sort((a, b) => b.kitchenPrepQty - a.kitchenPrepQty || a.name.localeCompare(b.name));
