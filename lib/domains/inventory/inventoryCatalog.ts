@@ -1,4 +1,5 @@
 import type { StockLevel } from '@/lib/domains/inventory/stock';
+import { fieldMatchesNeedle } from '@/lib/utils/searchNeedle';
 
 export type InventoryGroupBy = 'none' | 'department' | 'supplier';
 
@@ -76,9 +77,9 @@ export function applyInventoryFilters(
     if (filters.supplier !== 'ALL' && row.supplier !== filters.supplier) return false;
     if (!needle) return true;
     return (
-      row.name.toLowerCase().includes(needle) ||
-      row.supplier.toLowerCase().includes(needle) ||
-      (row.origin?.toLowerCase().includes(needle) ?? false)
+      fieldMatchesNeedle(row.name, needle) ||
+      fieldMatchesNeedle(row.supplier, needle) ||
+      fieldMatchesNeedle(row.origin, needle)
     );
   });
 }

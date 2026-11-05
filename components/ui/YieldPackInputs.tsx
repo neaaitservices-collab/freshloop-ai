@@ -43,7 +43,7 @@ export function YieldPackInputs({
   onCaseFloorPrice?: (value: string) => void;
   caseFloorReadOnly?: boolean;
   showCaseFloor?: boolean;
-  ids?: Partial<typeof DEFAULT_IDS>;
+  ids?: Partial<Record<keyof typeof DEFAULT_IDS, string>>;
 }) {
   const fieldIds = { ...DEFAULT_IDS, ...ids };
   const caseValue = caseFloorPrice ?? '';

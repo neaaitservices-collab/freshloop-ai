@@ -43,7 +43,6 @@ export async function POST(req: NextRequest) {
     if (message.includes('Password must') || message.includes('required')) {
       return apiError(message, 400);
     }
-    console.error('[auth-signup]', error);
     return apiErrorFromUnknown(error, 'Could not create account.');
   }
 }

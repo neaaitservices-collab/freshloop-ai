@@ -132,7 +132,7 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
     >
         <ModalHeader className="border-zinc-800 bg-zinc-950/60 px-6 py-4">
         <div className="flex items-center justify-between gap-3">
-          <div className="flex min-w-0 flex-1 items-center gap-3">
+          <div className="flex items-center gap-3">
             <div className="p-2.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400">
               <FileText className="w-5 h-5" />
             </div>
