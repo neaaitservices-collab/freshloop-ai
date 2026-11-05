@@ -595,7 +595,10 @@ export function ItemSettingsModal({
                 />
               </SubCard>
 
-              <SubCard title="Floor price & margin">
+              <SubCard
+                title="Floor price & margin"
+                description={`Shelf price is per sellable ${sellableUnitShortLabel(yieldUnit)} (yield divisor unit). The catalog shows case price (× pack ÷ yield).`}
+              >
                 <PricingStrategy
                   quote={quote}
                   marginMode={marginMode}

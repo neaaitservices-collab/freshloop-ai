@@ -102,12 +102,7 @@ export function ModalFooter({
   children: React.ReactNode;
 }) {
   return (
-    <footer
-      className={cn(
-        'sticky bottom-0 z-10 shrink-0 border-t border-slate-800 bg-slate-900/95 px-4 py-3 backdrop-blur-sm sm:px-6',
-        className
-      )}
-    >
+    <footer className={cn('shrink-0 border-t border-slate-800 px-4 py-3 sm:px-6', className)}>
       {children}
     </footer>
   );

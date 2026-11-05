@@ -17,7 +17,7 @@
 - Responsive tables (horizontal scroll or card stack on mobile); modals/panels must not clip the viewport.
 - Defensive overflow: `truncate`, `min-w-0`, sensible `flex-shrink`/`flex-grow`; currency and long labels must not blow layouts.
 - Use `@/components/ui/layout` (PageMain, ModalShell, ScrollTable, PageGrid, SurfaceStack).
-- Full detail: `.cursor/rules/frontend-design-layout.mdc` and `.cursor/rules/frontend-agentic-ux.mdc` (always applied).
+- Full detail: `.cursor/rules/frontend-design-layout.mdc` (always applied).
 
 ## Auth & API
 - Middleware requires login on `/api/*` except `/api/auth/*`, `/api/health`, `/api/pos/webhook`.

@@ -142,8 +142,6 @@ export default function OperationsCenter() {
         <div className="min-w-0 max-w-full">
           <OperationsLiveTransfers pullDays={pullSensitivityDays} />
         </div>
-
-        {showSetBundles ? <SetBundlesListPanel readOnly={false} /> : null}
       </PageMain>
 
       <InvoiceUploadModal

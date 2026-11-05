@@ -5,9 +5,12 @@ import { useRouter } from 'next/navigation';
 import { Search } from 'lucide-react';
 import { useRole } from '@/components/auth/RoleProvider';
 import { RetailFloorTransferPanel } from '@/components/features/inventory/RetailFloorTransferPanel';
-import { SetBundlesListPanel } from '@/components/features/pricing/SetBundlesListPanel';
-import { canViewSetBundlePromos } from '@/lib/auth/staffCapabilities';
-import { useStorePullSensitivityDays } from '@/hooks/use-store-pull-sensitivity-days';
+import { PullSliderControl } from '@/components/ui/PullSliderControl';
+import {
+  useStorePullSensitivityDays,
+  type StorePullSensitivityDays,
+} from '@/hooks/use-store-pull-sensitivity-days';
+import { isAdmin } from '@/lib/utils/roles';
 import { PageMain } from '@/components/ui/layout';
 import { Toast } from '@/components/ui/Toast';
 import type { StockLevel } from '@/lib/domains/inventory/stock';
