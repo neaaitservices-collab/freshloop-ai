@@ -2,8 +2,7 @@
 
 import React from 'react';
 import { Clock, DollarSign, Leaf, Percent } from 'lucide-react';
-import { RevenueRecoveryChart } from '@/components/features/admin/RevenueRecoveryChart';
-import { WasteVsRescueChart } from '@/components/features/admin/WasteVsRescueChart';
+import { RescueOutcomeChart } from '@/components/features/admin/RescueOutcomeChart';
 import { Card, CardBody } from '@/components/ui/Card';
 import { formatCurrency } from '@/lib/domains/receiving/yieldPricing';
 import type { StoreStats } from '@/lib/domains/stats/storeStatsTypes';
@@ -56,7 +55,7 @@ export function AdminMetricGrid({ stats }: { stats: StoreStats | null }) {
       <Metric
         label="Value rescued"
         value={formatCurrency(stats.rescuedValue)}
-        detail="Production rescue $ — not the same as waste % below."
+        detail="30-day retail $ to kitchen — chart below is last 7 days."
         icon={DollarSign}
         accent="text-emerald-400/90"
       />
@@ -77,7 +76,7 @@ export function AdminMetricGrid({ stats }: { stats: StoreStats | null }) {
       <Metric
         label="Rescue rate"
         value={stats.wasteReductionPct === null ? '—' : `${stats.wasteReductionPct.toFixed(1)}%`}
-        detail="Rescued ÷ (rescued + discard) by retail $."
+        detail="30-day share rescued vs discard (retail $)."
         icon={Percent}
         accent="text-blue-300"
       />
@@ -97,13 +96,8 @@ export function AdminChartGrid({ stats }: { stats: StoreStats | null }) {
   }
 
   return (
-    <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
-      <div className="lg:col-span-5">
-        <WasteVsRescueChart data={stats.rescueVsDiscard} />
-      </div>
-      <div className="lg:col-span-7">
-        <RevenueRecoveryChart data={stats.revenueDays} tall />
-      </div>
+    <div className="grid grid-cols-1 gap-6">
+      <RescueOutcomeChart data={stats.outcomeDays ?? []} tall />
     </div>
   );
 }

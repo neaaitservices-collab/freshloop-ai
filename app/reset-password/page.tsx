@@ -6,6 +6,7 @@ import { useSearchParams } from 'next/navigation';
 import { KeyRound, Loader2 } from 'lucide-react';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
+import { AuthPageShell } from '@/components/ui/layout';
 
 function ResetPasswordForm() {
   const searchParams = useSearchParams();
@@ -59,8 +60,7 @@ function ResetPasswordForm() {
   };
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center bg-slate-950 px-4 py-12 text-slate-100">
-      <div className="w-full max-w-md rounded-3xl border border-slate-800 bg-slate-900/80 p-6 shadow-2xl sm:p-8">
+    <AuthPageShell>
         <div className="mb-6 flex items-center gap-3">
           <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-amber-800/50 bg-amber-950/40 text-amber-300">
             <KeyRound className="h-6 w-6" />
@@ -122,8 +122,7 @@ function ResetPasswordForm() {
             </Button>
           </form>
         )}
-      </div>
-    </div>
+    </AuthPageShell>
   );
 }
 

@@ -5,6 +5,7 @@ import { ArrowDown, ArrowUp, ChefHat, Printer, Search, UtensilsCrossed } from 'l
 import type { RecipeFusionResult } from '@/lib/types';
 import type { KitchenRecipeDefinition } from '@/lib/domains/manufacturing/types';
 import { Button } from '@/components/ui/Button';
+import { ScrollTable } from '@/components/ui/layout';
 import { cn } from '@/lib/utils/cn';
 
 export type BomRowStatus = 'ready' | 'below_par' | 'low_stock';
@@ -504,7 +505,7 @@ export function ProductionActiveBomPanel({
             </li>
           ))}
         </ul>
-        <div className="hidden overflow-x-auto md:block">
+        <ScrollTable className="hidden md:block">
           <table className="w-full min-w-[720px] border-collapse text-left">
             <thead>
               <tr className="border-b border-slate-800 bg-slate-950/80 text-[10px] font-bold uppercase tracking-wider text-slate-500">
@@ -644,7 +645,7 @@ export function ProductionActiveBomPanel({
               ))}
             </tbody>
           </table>
-        </div>
+        </ScrollTable>
         </>
       )}
     </section>

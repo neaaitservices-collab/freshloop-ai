@@ -7,6 +7,8 @@ import {
 } from '@/components/features/inventory/SubInventoryTransferList';
 import type { PerformInventoryMove } from '@/components/features/inventory/SubInventoryTransferBar';
 import { filterRetailFloorLevels } from '@/lib/domains/inventory/subInventoryView';
+import { useRole } from '@/components/auth/RoleProvider';
+import { canManageBundleDeals } from '@/lib/auth/staffCapabilities';
 import type { StockLevel } from '@/lib/domains/inventory/stock';
 
 export interface RetailFloorTransferPanelProps {
@@ -41,6 +43,8 @@ export function RetailFloorTransferPanel({
   performMove,
 }: RetailFloorTransferPanelProps) {
   const operations = layoutVariant === 'operations';
+  const { activeUser } = useRole();
+  const showBundleTools = canManageBundleDeals(activeUser?.role);
   const rows = useMemo(() => {
     let list = filterRetailFloorLevels(levels);
     if (departmentFilter) list = list.filter(departmentFilter);
@@ -49,7 +53,8 @@ export function RetailFloorTransferPanel({
       list = list.filter(
         (row) =>
           row.name.toLowerCase().includes(needle) ||
-          row.supplier.toLowerCase().includes(needle)
+          row.supplier.toLowerCase().includes(needle) ||
+          (row.origin?.trim().toLowerCase().includes(needle) ?? false)
       );
     }
     if (priorityOnly) {
@@ -87,8 +92,10 @@ export function RetailFloorTransferPanel({
           {listDensity !== 'compact' ? (
             <p className="text-[11px] text-slate-400">
               {priorityOnly
-                ? 'Pull window items — tap a row to send to production or log waste.'
-                : 'Shelf stock — send to production or log waste.'}
+                ? showBundleTools
+                  ? 'Pull window — swipe for quick moves; owner / store manager can open bundle calc.'
+                  : 'Pull window — swipe for quick moves or tap a row to transfer / waste.'
+                : 'Shelf stock — swipe on phone or use actions below each row.'}
             </p>
           ) : null}
         </div>

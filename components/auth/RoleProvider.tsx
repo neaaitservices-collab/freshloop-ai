@@ -141,7 +141,7 @@ function RoleContextInner({ children }: { children: React.ReactNode }) {
 
 export function RoleProvider({ children }: { children: React.ReactNode }) {
   return (
-    <SessionProvider refetchOnWindowFocus={false} refetchWhenOffline={false}>
+    <SessionProvider refetchOnWindowFocus>
       <RoleContextInner>{children}</RoleContextInner>
     </SessionProvider>
   );

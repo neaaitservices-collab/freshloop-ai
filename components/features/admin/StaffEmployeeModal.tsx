@@ -4,6 +4,7 @@ import React, { useEffect, useId } from 'react';
 import { X } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Input, Select } from '@/components/ui/Input';
+import { ModalBody, ModalFooter, ModalHeader, ModalShell } from '@/components/ui/layout';
 import { positionByLabel, STAFF_POSITIONS } from '@/lib/utils/positions';
 import { ROLE_LABELS } from '@/lib/utils/roles';
 import { cn } from '@/lib/utils/cn';
@@ -51,23 +52,10 @@ export function StaffEmployeeModal({
     return () => window.removeEventListener('keydown', onKey);
   }, [open, onClose]);
 
-  if (!open) return null;
-
   return (
-    <div
-      className="fixed inset-0 z-[60] flex items-end justify-center bg-black/75 p-3 backdrop-blur-sm sm:items-center sm:p-4"
-      role="presentation"
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
-    >
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        className="flex max-h-[92vh] w-full max-w-md flex-col overflow-hidden rounded-2xl border border-slate-800 bg-slate-950 shadow-2xl"
-      >
-        <div className="flex items-start justify-between border-b border-slate-800/90 px-4 py-4 sm:px-5">
+    <ModalShell open={open} onClose={onClose} width="sm" zIndexClass="z-[60]">
+      <ModalHeader>
+        <div className="flex items-start justify-between gap-3">
           <div>
             <h2 id={titleId} className="text-lg font-black text-white">
               {mode === 'add' ? 'Add New Employee' : 'Edit Employee Details'}
@@ -79,27 +67,30 @@ export function StaffEmployeeModal({
           <button
             type="button"
             onClick={onClose}
-            className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-800 hover:text-white"
+            className="min-h-11 min-w-11 rounded-lg p-2 text-slate-400 transition hover:bg-slate-800 hover:text-white"
             aria-label="Close"
           >
             <X className="h-5 w-5" />
           </button>
         </div>
+      </ModalHeader>
 
-        <form
-          className="space-y-4 overflow-y-auto px-4 py-4 sm:px-5"
-          onSubmit={(e) => {
-            e.preventDefault();
-            onSubmit();
-          }}
-        >
+      <form
+        id="staff-employee-form"
+        className="contents"
+        onSubmit={(e) => {
+          e.preventDefault();
+          onSubmit();
+        }}
+      >
+        <ModalBody className="space-y-4">
           <label className="block text-xs font-bold text-slate-400">
             Name
             <Input
               required
               value={values.name}
               onChange={(e) => onChange({ name: e.target.value })}
-              className="mt-1.5 min-h-11"
+              className="mt-1.5"
               autoComplete="name"
             />
           </label>
@@ -110,7 +101,7 @@ export function StaffEmployeeModal({
               type="email"
               value={values.email}
               onChange={(e) => onChange({ email: e.target.value })}
-              className="mt-1.5 min-h-11"
+              className="mt-1.5"
               autoComplete="email"
             />
           </label>
@@ -120,7 +111,7 @@ export function StaffEmployeeModal({
               required
               value={values.position}
               onChange={(e) => onChange({ position: e.target.value })}
-              className="mt-1.5 min-h-11"
+              className="mt-1.5"
             >
               {STAFF_POSITIONS.map((position) => (
                 <option key={position.label} value={position.label}>
@@ -148,7 +139,7 @@ export function StaffEmployeeModal({
                   step={0.01}
                   value={values.hourlyRate}
                   onChange={(e) => onChange({ hourlyRate: e.target.value })}
-                  className="min-h-11 pl-7 font-mono tabular-nums"
+                  className="pl-7 font-mono tabular-nums"
                   placeholder="17.60"
                   aria-describedby="hourly-rate-hint"
                 />
@@ -167,34 +158,26 @@ export function StaffEmployeeModal({
               {error}
             </p>
           ) : null}
+        </ModalBody>
 
-          <div className="flex flex-col-reverse gap-2 border-t border-slate-800/80 pt-4 sm:flex-row sm:justify-end">
-            <Button
-              type="button"
-              variant="secondary"
-              className="min-h-11 w-full sm:w-auto"
-              onClick={onClose}
-              disabled={saving}
-            >
+        <ModalFooter>
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <Button type="button" variant="secondary" className="w-full sm:w-auto" onClick={onClose} disabled={saving}>
               Cancel
             </Button>
             <Button
               type="submit"
               variant="success"
               className={cn(
-                'min-h-11 w-full border-emerald-500/40 bg-emerald-500 font-black text-slate-950 hover:bg-emerald-400 sm:w-auto'
+                'w-full border-emerald-500/40 bg-emerald-500 font-black text-slate-950 hover:bg-emerald-400 sm:w-auto'
               )}
               disabled={saving}
             >
-              {saving
-                ? 'Saving…'
-                : mode === 'add'
-                  ? 'Create Employee'
-                  : 'Save Changes'}
+              {saving ? 'Saving…' : mode === 'add' ? 'Create Employee' : 'Save Changes'}
             </Button>
           </div>
-        </form>
-      </div>
-    </div>
+        </ModalFooter>
+      </form>
+    </ModalShell>
   );
 }

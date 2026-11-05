@@ -49,9 +49,9 @@ export function InventoryDataGrid({
 }) {
   if (loading) {
     return (
-      <div className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-900/50 p-4">
-        {Array.from({ length: 8 }, (_, i) => (
-          <div key={i} className="mb-2 h-10 animate-pulse rounded-lg bg-slate-800/80" />
+      <div className="space-y-2 overflow-hidden rounded-2xl border border-slate-800 bg-slate-900/50 p-3 md:p-4">
+        {Array.from({ length: 6 }, (_, i) => (
+          <div key={i} className="h-28 animate-pulse rounded-xl bg-slate-800/80 md:h-10" />
         ))}
       </div>
     );
@@ -74,6 +74,7 @@ export function InventoryDataGrid({
             <tr>
               <th className="px-4 py-3">Item</th>
               <th className="px-4 py-3">Supplier</th>
+              <th className="px-4 py-3">Origin</th>
               <th className="px-4 py-3 text-right">On hand</th>
               <th className="px-4 py-3 text-right">Margin</th>
               <th className="px-4 py-3 text-right">Case price</th>
@@ -82,7 +83,7 @@ export function InventoryDataGrid({
           </thead>
           <tbody>
             {groups.map((group) => (
-              <GroupBlock key={group.key} group={group} onSelect={onSelect} />
+              <GroupTableBlock key={group.key} group={group} onSelect={onSelect} />
             ))}
           </tbody>
         </table>
@@ -91,7 +92,43 @@ export function InventoryDataGrid({
   );
 }
 
-function GroupBlock({
+function MobileGroupBlock({
+  group,
+  onSelect,
+}: {
+  group: { key: string; label: string; rows: StockLevel[] };
+  onSelect: (row: StockLevel) => void;
+}) {
+  const multi = group.key !== 'all';
+  const [open, setOpen] = useState(true);
+
+  return (
+    <section className="min-w-0">
+      {multi ? (
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          className="mb-2 flex min-h-11 w-full items-center gap-2 rounded-lg px-1 text-left text-xs font-black uppercase tracking-wide text-slate-300"
+        >
+          <ChevronDown className={cn('h-4 w-4 shrink-0 transition', open && 'rotate-180')} />
+          {group.label}
+          <span className="font-mono text-slate-500">({group.rows.length})</span>
+        </button>
+      ) : null}
+      {open ? (
+        <ul className="space-y-2">
+          {group.rows.map((row) => (
+            <li key={row.productId}>
+              <CatalogItemCard row={row} onSelect={() => onSelect(row)} />
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </section>
+  );
+}
+
+function GroupTableBlock({
   group,
   onSelect,
 }: {
@@ -105,11 +142,11 @@ function GroupBlock({
     <>
       {multi ? (
         <tr className="bg-slate-950/60">
-          <td colSpan={6} className="px-4 py-2">
+          <td colSpan={CATALOG_COLUMN_COUNT} className="px-4 py-2">
             <button
               type="button"
               onClick={() => setOpen((v) => !v)}
-              className="flex w-full items-center gap-2 text-left text-xs font-black uppercase tracking-wide text-slate-300"
+              className="flex min-h-11 w-full items-center gap-2 text-left text-xs font-black uppercase tracking-wide text-slate-300"
             >
               <ChevronDown className={cn('h-4 w-4 transition', open && 'rotate-180')} />
               {group.label}
@@ -141,10 +178,13 @@ function GroupBlock({
                   <span className="ml-2 rounded-md bg-slate-800 px-1.5 py-0.5 text-[10px] font-bold text-slate-400">
                     Out of stock
                   </span>
-                ) : null}
-                {row.low && row.onHand > 0 ? (
-                  <span className="ml-2 rounded-md bg-rose-950/80 px-1.5 py-0.5 text-[10px] font-bold text-rose-300">
-                    Low
+                </td>
+                <td className="max-w-[8rem] px-4 py-3">
+                  <span
+                    className="block truncate font-semibold text-slate-300"
+                    title={itemOriginLabel(row)}
+                  >
+                    {itemOriginLabel(row)}
                   </span>
                 ) : null}
               </td>

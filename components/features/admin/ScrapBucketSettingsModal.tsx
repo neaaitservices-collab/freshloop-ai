@@ -10,6 +10,7 @@ import {
   scrapDollarsPerBucket,
 } from '@/lib/domains/stats/scrapBucketEconomics';
 import { ScrapBucketFormulaSummary } from '@/components/features/admin/WasteFormulaBreakdown';
+import { ModalBody, ModalFooter, ModalHeader, ModalShell } from '@/components/ui/layout';
 
 const FIELD =
   'mt-1 w-full min-h-11 rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-slate-100';
@@ -84,22 +85,9 @@ export function ScrapBucketSettingsModal({
     }
   };
 
-  if (!open) return null;
-
   return (
-    <div
-      className="fixed inset-0 z-[100] flex items-end justify-center p-3 sm:items-center sm:p-6"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="scrap-bucket-settings-title"
-    >
-      <button
-        type="button"
-        className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm"
-        aria-label="Close"
-        onClick={onClose}
-      />
-      <div className="relative z-10 w-full max-w-lg rounded-2xl border border-slate-700 bg-slate-900 p-5 shadow-2xl">
+    <ModalShell open={open} onClose={onClose} width="sm" zIndexClass="z-[100]">
+      <ModalHeader>
         <div className="flex items-start justify-between gap-3">
           <div>
             <p className="text-[10px] font-bold uppercase tracking-wider text-amber-400/90">
@@ -121,20 +109,24 @@ export function ScrapBucketSettingsModal({
           <button
             type="button"
             onClick={onClose}
-            className="rounded-lg p-2 text-slate-400 hover:bg-slate-800 hover:text-white"
+            className="min-h-11 min-w-11 rounded-lg p-2 text-slate-400 hover:bg-slate-800 hover:text-white"
+            aria-label="Close"
           >
             <X className="h-5 w-5" />
           </button>
         </div>
+      </ModalHeader>
 
+      <ModalBody>
         {loading ? (
-          <p className="mt-6 flex items-center gap-2 text-sm text-slate-400">
+          <p className="flex items-center gap-2 text-sm text-slate-400">
             <Loader2 className="h-4 w-4 animate-spin" />
             Loading…
           </p>
         ) : draft ? (
           <form
-            className="mt-4 space-y-3"
+            id="scrap-bucket-form"
+            className="space-y-3"
             onSubmit={(e) => {
               e.preventDefault();
               void save();
@@ -207,29 +199,35 @@ export function ScrapBucketSettingsModal({
               </div>
             ) : null}
 
-            <div className="flex flex-wrap items-center gap-3 pt-1">
-              <button
-                type="submit"
-                disabled={saving}
-                className="rounded-xl bg-emerald-400 px-4 py-2.5 text-sm font-black text-slate-950 disabled:opacity-60"
-              >
-                {saving ? 'Saving…' : 'Save'}
-              </button>
-              <Link
-                href="/admin/settings#kitchen-scrap"
-                className="text-xs font-bold text-slate-400 underline-offset-2 hover:text-slate-200 hover:underline"
-                onClick={onClose}
-              >
-                All store settings
-              </Link>
-              {message ? <p className="text-sm font-bold text-emerald-300">{message}</p> : null}
-              {error ? <p className="text-sm text-amber-200">{error}</p> : null}
-            </div>
           </form>
         ) : (
-          <p className="mt-4 text-sm text-amber-200">{error || 'Settings unavailable.'}</p>
+          <p className="text-sm text-amber-200">{error || 'Settings unavailable.'}</p>
         )}
-      </div>
-    </div>
+      </ModalBody>
+
+      {draft && !loading ? (
+        <ModalFooter>
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              type="submit"
+              form="scrap-bucket-form"
+              disabled={saving}
+              className="inline-flex min-h-11 items-center rounded-xl bg-emerald-400 px-4 py-2.5 text-sm font-black text-slate-950 disabled:opacity-60 sm:min-h-12"
+            >
+              {saving ? 'Saving…' : 'Save'}
+            </button>
+            <Link
+              href="/admin/settings#kitchen-scrap"
+              className="inline-flex min-h-11 items-center text-xs font-bold text-slate-400 underline-offset-2 hover:text-slate-200 hover:underline"
+              onClick={onClose}
+            >
+              All store settings
+            </Link>
+            {message ? <p className="text-sm font-bold text-emerald-300">{message}</p> : null}
+            {error ? <p className="text-sm text-amber-200">{error}</p> : null}
+          </div>
+        </ModalFooter>
+      ) : null}
+    </ModalShell>
   );
 }

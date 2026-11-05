@@ -3,7 +3,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, X } from 'lucide-react';
 import { PricingStrategy } from '@/components/features/receive/PricingStrategy';
-import { YieldBreakdown } from '@/components/features/receive/YieldBreakdown';
+import { CatalogYieldPackFields } from '@/components/features/inventory/CatalogYieldPackFields';
 import type { StockLevel, StockOverrideAudit } from '@/lib/domains/inventory/stock';
 import {
   calculateYieldQuote,
@@ -580,8 +580,8 @@ export function ItemSettingsModal({
 
           {tab === 'pricing' ? (
             <div className="space-y-6">
-              <SubCard title="Yield & pack" description="Case pack, divisor, and sellable units per case.">
-                <YieldBreakdown
+              <SubCard title="Yield & pack">
+                <CatalogYieldPackFields
                   packSize={packSize}
                   yieldDivisor={yieldDivisor}
                   packUnit={packUnit}

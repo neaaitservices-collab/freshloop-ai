@@ -13,6 +13,7 @@ export interface SubInventoryTransferRow {
   markdownPct?: number | null;
   regularRetailPrice?: number | null;
   retailPrice?: number | null;
+  unitCost?: number;
   posSoldInWindow?: number;
   posSalesDays?: number;
 }
@@ -36,6 +37,7 @@ export function stockLevelToTransferRow(level: StockLevel): SubInventoryTransfer
     markdownPct: level.markdownPct,
     regularRetailPrice: level.regularRetailPrice,
     retailPrice: level.retailPrice,
+    unitCost: level.unitCost,
     posSoldInWindow: level.posSoldInWindow,
     posSalesDays: level.posSalesDays,
   };

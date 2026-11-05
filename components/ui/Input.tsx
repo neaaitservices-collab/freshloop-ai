@@ -10,7 +10,7 @@ export function Input({
   return (
     <input
       className={cn(
-        'w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-200 placeholder:text-slate-500',
+        'min-h-[44px] w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-200 placeholder:text-slate-500 sm:min-h-[48px]',
         'outline-none transition focus:border-slate-500 focus:ring-1 focus:ring-slate-600',
         'disabled:cursor-not-allowed disabled:opacity-50',
         className
@@ -28,7 +28,7 @@ export function Select({
   return (
     <select
       className={cn(
-        'w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm font-medium text-slate-200',
+        'min-h-[44px] w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm font-medium text-slate-200 sm:min-h-[48px]',
         'outline-none transition focus:border-slate-500 focus:ring-1 focus:ring-slate-600',
         className
       )}

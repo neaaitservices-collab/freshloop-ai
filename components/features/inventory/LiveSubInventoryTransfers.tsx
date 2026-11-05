@@ -178,7 +178,7 @@ export function LiveSubInventoryTransfers({
               type="search"
               value={skuQuery}
               onChange={(e) => setSkuQuery(e.target.value)}
-              placeholder="Search item or supplier…"
+              placeholder="Search item, supplier, origin…"
               aria-label="Search inventory SKUs"
               className={cn(
                 'w-full rounded-xl border border-slate-700 bg-slate-950 py-2 pl-9 pr-3 text-white placeholder:text-slate-500 focus:border-emerald-500/50 focus:outline-none',

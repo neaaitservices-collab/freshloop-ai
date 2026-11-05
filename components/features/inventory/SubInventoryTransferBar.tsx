@@ -1,7 +1,13 @@
 'use client';
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowRightLeft, Loader2, Minus, Plus, Trash2 } from 'lucide-react';
+import { ArrowRightLeft, Calculator, Loader2, Minus, Plus, Trash2 } from 'lucide-react';
+import { useRole } from '@/components/auth/RoleProvider';
+import {
+  BundleDealModal,
+  type SavedBundlePromoPayload,
+} from '@/components/features/pricing/BundleDealModal';
+import { canManageBundleDeals } from '@/lib/auth/staffCapabilities';
 import {
   executeInventoryMove,
   type InventoryMoveAction,
@@ -39,6 +45,15 @@ export interface SubInventoryTransferBarProps {
   performMove?: PerformInventoryMove;
   onSuccess?: (payload: { action: InventoryMoveAction; level: StockLevel; message: string }) => void;
   onError?: (message: string) => void;
+  /** Full stock row for manager bundle-deal modal (floor SKUs). */
+  stockLevel?: StockLevel | null;
+  onBundleSaved?: (message: string) => void;
+  /** When a saved bundle exists, hide calc (edit lives on the item header). */
+  hideBundleCalcButton?: boolean;
+  /** Parent-owned bundle editor (e.g. operations transfer modal). */
+  onOpenBundleEditor?: () => void;
+  /** Skip bundle modal GET when floor list already loaded this SKU. */
+  bundlePromoHint?: SavedBundlePromoPayload | null;
 }
 
 /** Step size for +/- and input based on product unit type. */
@@ -204,7 +219,15 @@ export function SubInventoryTransferBar({
   performMove,
   onSuccess,
   onError,
+  stockLevel = null,
+  onBundleSaved,
+  hideBundleCalcButton = false,
+  onOpenBundleEditor,
+  bundlePromoHint,
 }: SubInventoryTransferBarProps) {
+  const { activeUser } = useRole();
+  const showBundleDeals = canManageBundleDeals(activeUser?.role);
+  const [bundleModalOpen, setBundleModalOpen] = useState(false);
   const floorMax = row.onHand;
   const kitchenMax = row.kitchenPrepQty;
   const step = transferStepForUnit(row.unitType);
@@ -298,7 +321,10 @@ export function SubInventoryTransferBar({
     'inline-flex min-h-11 flex-1 items-center justify-center gap-1.5 rounded-xl px-3 py-2.5 text-xs font-black disabled:cursor-not-allowed disabled:opacity-50 sm:flex-none';
 
   const secondaryBtn =
-    'inline-flex min-h-10 flex-1 items-center justify-center gap-1.5 rounded-xl border px-3 py-2 text-[11px] font-bold disabled:cursor-not-allowed disabled:opacity-50 sm:flex-none';
+    'inline-flex min-h-11 flex-1 items-center justify-center gap-1.5 rounded-xl border px-3 py-2 text-[11px] font-bold disabled:cursor-not-allowed disabled:opacity-50 sm:flex-none sm:min-h-12';
+
+  const bundleBtn =
+    'inline-flex min-h-11 flex-1 items-center justify-center gap-1.5 rounded-xl border border-amber-500/40 bg-amber-950/40 px-3 py-2 text-[11px] font-bold text-amber-100 hover:bg-amber-950/60 disabled:cursor-not-allowed disabled:opacity-50 sm:flex-none sm:min-h-12';
 
   return (
     <div
@@ -351,6 +377,19 @@ export function SubInventoryTransferBar({
                   <Trash2 className="h-3.5 w-3.5" />
                   Floor waste
                 </button>
+                {showBundleDeals && stockLevel && !hideBundleCalcButton ? (
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() =>
+                      onOpenBundleEditor ? onOpenBundleEditor() : setBundleModalOpen(true)
+                    }
+                    className={`${bundleBtn} min-w-[8.5rem]`}
+                  >
+                    <Calculator className="h-3.5 w-3.5" />
+                    Bundle calc
+                  </button>
+                ) : null}
               </div>
             </>
           ) : (
@@ -373,6 +412,19 @@ export function SubInventoryTransferBar({
                 <Trash2 className="h-3.5 w-3.5" />
                 Floor waste
               </button>
+              {showBundleDeals && stockLevel && !hideBundleCalcButton ? (
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() =>
+                    onOpenBundleEditor ? onOpenBundleEditor() : setBundleModalOpen(true)
+                  }
+                  className={`${compact ? compactBtn : btnClass} border border-amber-500/35 bg-amber-950/50 text-amber-100`}
+                >
+                  <Calculator className="h-3.5 w-3.5" />
+                  Bundle calc
+                </button>
+              ) : null}
             </div>
           )}
         </div>
@@ -408,6 +460,16 @@ export function SubInventoryTransferBar({
           <Loader2 className="h-3 w-3 animate-spin" />
           Updating ledger…
         </span>
+      ) : null}
+
+      {showBundleDeals && stockLevel && !onOpenBundleEditor ? (
+        <BundleDealModal
+          open={bundleModalOpen}
+          row={stockLevel}
+          existingPromo={bundlePromoHint}
+          onClose={() => setBundleModalOpen(false)}
+          onSaved={onBundleSaved}
+        />
       ) : null}
     </div>
   );

@@ -217,7 +217,8 @@ export function SettingsForm({
               Waste &amp; floor pulls
             </legend>
             <p className="mt-1 text-[11px] text-zinc-500">
-              Drives the Admin traffic light and the default pull window on Operations.
+              Drives the Admin traffic light and the pull window on Operations and the clerk floor
+              view (staff cannot change this on the floor).
             </p>
             <div className="mt-3 grid gap-3 sm:grid-cols-2">
               <label className="text-xs font-bold text-zinc-400">

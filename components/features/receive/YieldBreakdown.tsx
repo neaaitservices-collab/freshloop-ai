@@ -66,9 +66,11 @@ export function YieldBreakdown({
               onChange={onPackUnit}
             />
           </div>
-          <p className="text-[11px] text-slate-500">
-            How much is in one received case ({packUnit}).
-          </p>
+          {!compact ? (
+            <p className="text-[11px] text-slate-500">
+              How much is in one received case ({packUnit}).
+            </p>
+          ) : null}
         </div>
         {showCaseFloor ? (
           <div className="space-y-1.5">
@@ -103,9 +105,11 @@ export function YieldBreakdown({
               onChange={onYieldUnit}
             />
           </div>
-          <p className="text-[11px] text-slate-500">
-            Divide {packUnit} into sellable {yieldUnit} (e.g. {packSize || '40'} ÷ {yieldDivisor || '1'}).
-          </p>
+          {!compact ? (
+            <p className="text-[11px] text-slate-500">
+              Divide {packUnit} into sellable {yieldUnit} (e.g. {packSize || '40'} ÷ {yieldDivisor || '1'}).
+            </p>
+          ) : null}
         </div>
       </div>
       {unitsMismatch ? (

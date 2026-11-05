@@ -21,6 +21,22 @@ export function canEditProductionBom(role: RoleName | null | undefined): boolean
   return role != null && isManager(role);
 }
 
+/**
+ * Set bundles list + bundle calculator — **owner (ADMIN)** and **STORE_MANAGER** only.
+ * Calculator only; no POS write.
+ */
+export function canManageBundleDeals(role: RoleName | null | undefined): boolean {
+  return role != null && isManager(role);
+}
+
+export const BUNDLE_DEALS_ROLE_HINT =
+  'Only the owner or a store manager can use set bundles and the bundle calculator.';
+
+/** Read saved bundle promos (signage reference) — any signed-in staff. */
+export function canViewSetBundlePromos(role: RoleName | null | undefined): boolean {
+  return role != null;
+}
+
 /** Run manufacturing batch / execute BOM against kitchen prep. */
 export function canExecuteProductionBatch(role: RoleName | null | undefined): boolean {
   if (!role) return false;

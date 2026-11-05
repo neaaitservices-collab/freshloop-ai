@@ -43,7 +43,9 @@ describe('security schemas', () => {
       name: 'Chef\x00One',
       email: 'chef@freshloop.test',
       password: 'freshloop1',
+      role: 'DELI_CHEF',
     });
     assert.equal(parsed.name, 'ChefOne');
+    assert.equal(parsed.role, 'DELI_CHEF');
   });
 });

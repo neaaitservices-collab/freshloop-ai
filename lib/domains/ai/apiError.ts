@@ -57,8 +57,23 @@ function isClientSafeMessage(message: string): boolean {
     lower.includes('nothing is on the retail floor') ||
     lower.includes('greater than zero') ||
     lower.includes('already exists') ||
-    lower.includes('too many requests')
+    lower.includes('too many requests') ||
+    lower.includes('below cost') ||
+    lower.includes('bundle promo') ||
+    lower.includes('bundle calculator') ||
+    lower.includes('store manager can use set bundles') ||
+    lower.includes('migrate deploy') ||
+    lower.includes('floor_bundle_promos') ||
+    lower.includes('db:generate')
   );
+}
+
+export function prismaSetupHint(error: unknown): string | null {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError)) return null;
+  if (error.code === 'P2021') {
+    return 'Set bundles storage is not on this database yet. Run: npx prisma migrate deploy';
+  }
+  return null;
 }
 
 export function apiErrorFromUnknown(error: unknown, fallback = 'Something went wrong. Please try again.') {
@@ -76,6 +91,8 @@ export function apiErrorFromUnknown(error: unknown, fallback = 'Something went w
   }
   if (error instanceof Prisma.PrismaClientKnownRequestError) {
     console.error('[prisma]', error.code, error.meta);
+    const setupHint = prismaSetupHint(error);
+    if (setupHint) return apiError(setupHint, 503);
     if (error.code === 'P2002') {
       return apiError('A record with that value already exists.', 409);
     }
@@ -83,6 +100,10 @@ export function apiErrorFromUnknown(error: unknown, fallback = 'Something went w
       return apiError('The requested record was not found.', 404);
     }
     return apiError(fallback, 500);
+  }
+  if (error instanceof Prisma.PrismaClientInitializationError) {
+    console.error('[prisma init]', error.message);
+    return apiError(fallback, 503);
   }
   if (error instanceof Prisma.PrismaClientValidationError) {
     console.error('[prisma validation]', error.message);
@@ -100,6 +121,9 @@ export function apiErrorFromUnknown(error: unknown, fallback = 'Something went w
         : 500;
     if (status >= 500) {
       console.error('[api]', error);
+      if (isClientSafeMessage(message)) {
+        return apiError(message, 500);
+      }
       return apiError(fallback, 500);
     }
     if (isClientSafeMessage(message)) {

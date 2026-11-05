@@ -1,8 +1,9 @@
 import { Role } from '@prisma/client';
 import { prisma } from '@/lib/domains/inventory/ledger';
 import { hashPassword } from '@/lib/auth/password';
-import { setStaffHourlyRate } from '@/lib/auth/staffHourlyRate';
 import { findLatestStoreSetting } from '@/lib/domains/stats/storeSettingSelect';
+import type { RoleName } from '@/lib/utils/roles';
+import { positionForRole } from '@/lib/utils/positions';
 
 const MIN_PASSWORD_LENGTH = 8;
 
@@ -14,8 +15,8 @@ export async function registerStaffUser(input: {
   name: string;
   email: string;
   password: string;
-  position: string;
-  role?: Role;
+  role: RoleName;
+  position?: string;
 }) {
   if (!isPublicSignupEnabled()) {
     throw new Error('Registration is closed. Ask a store manager for an account.');
@@ -23,18 +24,19 @@ export async function registerStaffUser(input: {
 
   const name = input.name.trim();
   const email = input.email.trim().toLowerCase();
-  const position = input.position.trim();
   const password = input.password;
+  const role = input.role as Role;
+  const position =
+    input.position?.trim() || positionForRole(input.role).label;
 
-  if (!name || !email || !position) {
-    throw new Error('Name, email, and position are required.');
+  if (!name || !email) {
+    throw new Error('Name and email are required.');
   }
   if (password.length < MIN_PASSWORD_LENGTH) {
     throw new Error(`Password must be at least ${MIN_PASSWORD_LENGTH} characters.`);
   }
 
   const passwordHash = await hashPassword(password);
-  const role = input.role ?? Role.FLOOR_STAFF;
   const storeSetting = await findLatestStoreSetting();
   const hourlyRate = storeSetting?.defaultLaborRatePerHour ?? 17.6;
 
@@ -45,6 +47,7 @@ export async function registerStaffUser(input: {
       position,
       role,
       passwordHash,
+      hourlyRate,
     },
     select: {
       id: true,
@@ -52,12 +55,9 @@ export async function registerStaffUser(input: {
       email: true,
       position: true,
       role: true,
+      hourlyRate: true,
     },
   });
 
-  const savedRate = await setStaffHourlyRate(created.id, hourlyRate);
-  return {
-    ...created,
-    hourlyRate: savedRate,
-  };
+  return created;
 }

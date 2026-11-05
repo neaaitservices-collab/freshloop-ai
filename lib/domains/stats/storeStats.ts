@@ -7,7 +7,13 @@ import type { DepartmentAlert, StoreStats } from '@/lib/domains/stats/storeStats
 import { findLatestStoreSetting } from '@/lib/domains/stats/storeSettingSelect';
 import { DEFAULT_KPI_LOOKBACK_DAYS, kpiLookbackRange } from '@/lib/domains/stats/wasteKpi';
 
-export type { DepartmentAlert, RescueSlice, RevenueDay, StoreStats } from '@/lib/domains/stats/storeStatsTypes';
+export type {
+  DepartmentAlert,
+  RescueOutcomeDay,
+  RescueSlice,
+  RevenueDay,
+  StoreStats,
+} from '@/lib/domains/stats/storeStatsTypes';
 
 const DEPARTMENT_LABELS: Record<string, string> = {
   PRODUCE: 'Produce',
@@ -183,6 +189,8 @@ async function loadStoreStats(): Promise<StoreStats> {
       label: date.toLocaleDateString(undefined, { weekday: 'short' }),
       lost: 0,
       recovered: 0,
+      rescueUnits: 0,
+      discardUnits: 0,
     };
   });
   const dayIndex = new Map(days.map((day, index) => [day.key, index]));
@@ -214,8 +222,14 @@ async function loadStoreStats(): Promise<StoreStats> {
 
     const index = dayIndex.get(dayKey(movement.timestamp));
     if (index === undefined) continue;
-    if (isRescue) days[index].recovered += amount;
-    if (isDiscard) days[index].lost += amount;
+    if (isRescue) {
+      days[index].recovered += amount;
+      days[index].rescueUnits += units;
+    }
+    if (isDiscard) {
+      days[index].lost += amount;
+      days[index].discardUnits += units;
+    }
   }
 
   const handled = rescuedValue + discardValue;
@@ -241,6 +255,13 @@ async function loadStoreStats(): Promise<StoreStats> {
       label: day.label,
       lost: money(day.lost),
       recovered: money(day.recovered),
+    })),
+    outcomeDays: days.map((day) => ({
+      label: day.label,
+      recoveredUsd: money(day.recovered),
+      lostUsd: money(day.lost),
+      rescueUnits: Number(day.rescueUnits.toFixed(2)),
+      discardUnits: Number(day.discardUnits.toFixed(2)),
     })),
     departmentAlerts: Array.from(alerts.values()),
   };
