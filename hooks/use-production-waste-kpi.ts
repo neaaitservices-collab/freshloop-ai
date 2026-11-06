@@ -25,10 +25,12 @@ export function useProductionWasteKpi(options?: UseProductionWasteKpiOptions) {
     blendedCostPerKg: 3.5,
   });
   const [syncing, setSyncing] = useState(false);
+  const [wasteKpiRefreshError, setWasteKpiRefreshError] = useState<string | null>(null);
 
   const applyBootstrap = useCallback(
     (payload: { wasteKpi: WasteKpiReport; storeSettings: PlatformSettings }) => {
       setWasteKpiReport(payload.wasteKpi);
+      setWasteKpiRefreshError(null);
       setPlatformScrapConfig({
         scrapBucketVolumeL: payload.storeSettings.scrapBucketVolumeL,
         estimatedWeightPerLiterKg: payload.storeSettings.estimatedWeightPerLiterKg,
@@ -57,12 +59,16 @@ export function useProductionWasteKpi(options?: UseProductionWasteKpiOptions) {
       const json = (await res.json()) as {
         success?: boolean;
         wasteKpi?: WasteKpiReport;
+        error?: string;
       };
       if (res.ok && json.success && json.wasteKpi) {
         setWasteKpiReport(json.wasteKpi);
+        setWasteKpiRefreshError(null);
+        return;
       }
+      setWasteKpiRefreshError(json.error ?? 'Could not refresh waste KPI.');
     } catch {
-      /* keep last KPI */
+      setWasteKpiRefreshError('Network error — waste KPI may be stale.');
     } finally {
       if (showSpinner) setSyncing(false);
     }
@@ -133,6 +139,7 @@ export function useProductionWasteKpi(options?: UseProductionWasteKpiOptions) {
       }
       if (json.wasteKpi) {
         setWasteKpiReport(json.wasteKpi);
+        setWasteKpiRefreshError(null);
         notifyKpiUpdated();
         return;
       }
@@ -146,6 +153,7 @@ export function useProductionWasteKpi(options?: UseProductionWasteKpiOptions) {
     wasteKpi: wasteKpiReport,
     scrapStoreConfig,
     syncing,
+    wasteKpiRefreshError,
     refreshWasteKpi,
     logVolumetricScrap,
     applyBootstrap,

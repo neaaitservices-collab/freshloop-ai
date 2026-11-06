@@ -334,7 +334,16 @@ Rules: unitCost/totalCost per case when unit is cases; caseRetailPrice = printed
 
   const cleanBase64 = imageBase64.includes(',') ? imageBase64.split(',')[1] : imageBase64;
   const ocrModels = invoiceOcrModelCandidates();
-  const ocrOpts = { skipModelDiscovery: true as const, maxModelsToTry: 5 };
+  /** REST-first + short retry list keeps median latency low; fallback widens search only on failure. */
+  const ocrOpts = {
+    skipModelDiscovery: true as const,
+    maxModelsToTry: 3,
+    preferRestApi: true as const,
+    generationConfig: {
+      temperature: 0,
+      maxOutputTokens: 8192,
+    },
+  };
   let text: string;
   let modelUsed: string;
   try {
@@ -349,7 +358,12 @@ Rules: unitCost/totalCost per case when unit is cases; caseRetailPrice = printed
       visionPrompt,
       { data: cleanBase64, mimeType: mimeType || 'image/jpeg' },
       ocrModels,
-      { skipModelDiscovery: false, maxModelsToTry: 8 }
+      {
+        skipModelDiscovery: false,
+        maxModelsToTry: 5,
+        preferRestApi: true,
+        generationConfig: { temperature: 0, maxOutputTokens: 8192 },
+      }
     ));
   }
 

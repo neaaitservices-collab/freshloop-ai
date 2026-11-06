@@ -21,16 +21,27 @@ export function ReceiveScreen({ initial }: { initial: ReceivingLogsResult }) {
   const [scanNote, setScanNote] = useState<string | null>(null);
   const [suppliers, setSuppliers] = useState<SupplierRecord[]>([]);
   const [selectedSupplierId, setSelectedSupplierId] = useState('');
+  const [supplierLoadError, setSupplierLoadError] = useState<string | null>(null);
 
   const loadSuppliers = useCallback(() => {
+    setSupplierLoadError(null);
     void fetch('/api/admin/suppliers', { cache: 'no-store' })
-      .then((r) => r.json())
-      .then((json) => {
-        if (json.success && Array.isArray(json.suppliers)) {
-          setSuppliers(json.suppliers as SupplierRecord[]);
+      .then(async (r) => {
+        const json = (await r.json()) as {
+          success?: boolean;
+          suppliers?: SupplierRecord[];
+          error?: string;
+        };
+        if (!r.ok || !json.success || !Array.isArray(json.suppliers)) {
+          setSupplierLoadError(json.error ?? 'Could not load suppliers.');
+          return;
         }
+        setSuppliers(json.suppliers);
       })
-      .catch(() => {});
+      .catch((err: unknown) => {
+        setSupplierLoadError('Network error — supplier list may be incomplete.');
+        console.error('[freshloop] ReceiveScreen loadSuppliers', err);
+      });
   }, []);
 
   useEffect(() => {
@@ -68,6 +79,11 @@ export function ReceiveScreen({ initial }: { initial: ReceivingLogsResult }) {
         />
         <Card className="mt-4 border-slate-800 bg-slate-900/40">
           <CardBody className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {supplierLoadError ? (
+              <p className="sm:col-span-2 lg:col-span-3 rounded-xl border border-amber-900/50 bg-amber-950/30 px-4 py-3 text-sm text-amber-200">
+                {supplierLoadError}
+              </p>
+            ) : null}
             <SupplierSelect
               suppliers={suppliers}
               value={selectedSupplierId}

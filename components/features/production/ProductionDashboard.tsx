@@ -58,6 +58,7 @@ function ProductionDashboardContent() {
     wasteKpi,
     scrapStoreConfig,
     syncing,
+    wasteKpiRefreshError,
     refreshWasteKpi,
     logVolumetricScrap,
     applyBootstrap,
@@ -235,6 +236,11 @@ function ProductionDashboardContent() {
             </div>
             {syncing ? (
               <p className="mt-2 text-[10px] text-slate-500">Syncing waste KPI…</p>
+            ) : null}
+            {wasteKpiRefreshError ? (
+              <p className="mt-2 rounded-xl border border-amber-900/50 bg-amber-950/30 px-3 py-2 text-[11px] font-semibold text-amber-200">
+                {wasteKpiRefreshError}
+              </p>
             ) : null}
           </header>
 

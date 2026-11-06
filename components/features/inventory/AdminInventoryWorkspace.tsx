@@ -32,6 +32,7 @@ export function AdminInventoryWorkspace({
   const [filters, setFilters] = useState<InventoryFilters>(EMPTY_INVENTORY_FILTERS);
   const [groupBy, setGroupBy] = useState<InventoryGroupBy>('department');
   const [modalRow, setModalRow] = useState<StockLevel | null>(null);
+  const [levelsRefreshError, setLevelsRefreshError] = useState<string | null>(null);
 
   const { activeUser, loading: roleLoading } = useRole();
   const [roleReady, setRoleReady] = useState(false);
@@ -50,6 +51,29 @@ export function AdminInventoryWorkspace({
   }, [initialLevels]);
 
   useEffect(() => {
+    const refreshLevelsFromApi = () => {
+      void fetch('/api/inventory/levels', { cache: 'no-store' })
+        .then(async (res) => {
+          const json = (await res.json()) as {
+            success?: boolean;
+            levels?: StockLevel[];
+            error?: string;
+          };
+          if (!res.ok || !json.success) {
+            setLevelsRefreshError(json.error ?? 'Could not refresh catalog.');
+            return;
+          }
+          if (Array.isArray(json.levels)) {
+            setLevelsRefreshError(null);
+            setLevels(json.levels);
+          }
+        })
+        .catch((err: unknown) => {
+          setLevelsRefreshError('Network error — catalog may be out of date.');
+          console.error('[freshloop] AdminInventoryWorkspace refresh levels', err);
+        });
+    };
+
     const refreshLevels = (event: Event) => {
       const detail = (event as CustomEvent<InventoryUpdatedDetail>).detail;
       if (detail?.source === 'level-patch' && detail.level) {
@@ -58,14 +82,7 @@ export function AdminInventoryWorkspace({
         );
         return;
       }
-      void fetch('/api/inventory/levels', { cache: 'no-store' })
-        .then((res) => res.json())
-        .then((json) => {
-          if (json.success && Array.isArray(json.levels)) {
-            setLevels(json.levels as StockLevel[]);
-          }
-        })
-        .catch(() => {});
+      refreshLevelsFromApi();
     };
     window.addEventListener('freshloop-inventory-updated', refreshLevels);
     return () => window.removeEventListener('freshloop-inventory-updated', refreshLevels);
@@ -96,17 +113,35 @@ export function AdminInventoryWorkspace({
         </p>
       </div>
 
+      {levelsRefreshError ? (
+        <p className="rounded-xl border border-amber-900/50 bg-amber-950/30 px-4 py-3 text-sm text-amber-200">
+          {levelsRefreshError}
+        </p>
+      ) : null}
+
       {isAdmin ? (
         <CatalogDuplicateMergePanel
           onMerged={() => {
             void fetch('/api/inventory/levels', { cache: 'no-store' })
-              .then((res) => res.json())
-              .then((json) => {
-                if (json.success && Array.isArray(json.levels)) {
-                  setLevels(json.levels as StockLevel[]);
+              .then(async (res) => {
+                const json = (await res.json()) as {
+                  success?: boolean;
+                  levels?: StockLevel[];
+                  error?: string;
+                };
+                if (!res.ok || !json.success) {
+                  setLevelsRefreshError(json.error ?? 'Could not refresh catalog after merge.');
+                  return;
+                }
+                if (Array.isArray(json.levels)) {
+                  setLevelsRefreshError(null);
+                  setLevels(json.levels);
                 }
               })
-              .catch(() => undefined);
+              .catch((err: unknown) => {
+                setLevelsRefreshError('Network error — catalog may be out of date.');
+                console.error('[freshloop] AdminInventoryWorkspace merge refresh', err);
+              });
           }}
         />
       ) : null}
