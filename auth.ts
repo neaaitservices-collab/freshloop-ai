@@ -9,6 +9,38 @@ import { isRoleName } from '@/lib/utils/roles';
 /** Credentials + JWT only — do not use PrismaAdapter (breaks credential sessions). */
 export const { handlers, auth, signIn, signOut } = NextAuth({
   ...authConfig,
+  callbacks: {
+    ...authConfig.callbacks,
+    async session({ session, token }) {
+      if (session.user) {
+        session.user.id = (token.id as string) ?? token.sub ?? '';
+        session.user.position =
+          typeof token.position === 'string' ? token.position : '';
+        const rate = token.hourlyRate;
+        session.user.hourlyRate =
+          typeof rate === 'number' && Number.isFinite(rate) && rate > 0 ? rate : null;
+      }
+
+      const userId = session.user?.id;
+      if (!userId) {
+        throw new Error('Session invalid — missing user id.');
+      }
+
+      const row = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { role: true },
+      });
+      if (!row) {
+        throw new Error('Session invalid — user not found.');
+      }
+      if (!isRoleName(row.role)) {
+        throw new Error('Session invalid — unknown role.');
+      }
+      session.user!.role = row.role;
+
+      return session;
+    },
+  },
   providers: [
     Credentials({
       name: 'Staff credentials',

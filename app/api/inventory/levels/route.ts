@@ -99,6 +99,24 @@ export async function PATCH(req: NextRequest) {
     );
     if (limited) return limited;
 
+    const isPricingOrCatalogPatch =
+      body.packSize !== undefined ||
+      body.parCases !== undefined ||
+      body.department !== undefined ||
+      body.origin !== undefined ||
+      body.pullSensitivityDays !== undefined ||
+      typeof body.supplier === 'string';
+
+    if (isPricingOrCatalogPatch && !isManager(actor.role)) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Only a store manager or admin can change catalog pricing and metadata.',
+        },
+        { status: 403 }
+      );
+    }
+
     if (body.action === 'markdown') {
       const discountPct =
         typeof body.discountPct === 'number' && Number.isFinite(body.discountPct)

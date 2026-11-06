@@ -1,4 +1,5 @@
 import { Suspense } from 'react';
+import { requireManagerStaff } from '@/lib/auth/guardRoute';
 import { AccountPage } from '@/components/features/admin/AccountPage';
 import { StoreSettingsEntryCard } from '@/components/features/admin/StoreSettingsEntryCard';
 import { CaseBoard } from '@/components/features/inventory/CaseBoard';
@@ -18,7 +19,8 @@ async function LiveCases() {
   return <CaseBoard levels={levels} showReceipt />;
 }
 
-export default function AdminPage() {
+export default async function AdminPage() {
+  await requireManagerStaff();
   return (
     <AccountPage
       settings={<StoreSettingsEntryCard />}

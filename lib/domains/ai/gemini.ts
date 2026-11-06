@@ -271,9 +271,18 @@ export async function generateContentWithFallback(
 /**
  * Extract Vendor Invoice details using Gemini Vision OCR
  */
+function rejectProductionAiMock(feature: string): never {
+  throw new Error(
+    `${feature} is unavailable. Configure GEMINI_API_KEY or try again later.`
+  );
+}
+
 export async function processInvoiceOcr(base64Image: string, mimeType: string = 'image/jpeg'): Promise<InvoiceOcrResult> {
   const apiKey = getApiKey();
   if (!apiKey) {
+    if (process.env.NODE_ENV === 'production') {
+      rejectProductionAiMock('Invoice OCR');
+    }
     const mock = getMockOcrResult();
     if (base64Image) {
       mock.rawSummary = '⚠️ GEMINI_API_KEY is missing in .env.local. Set your GEMINI_API_KEY to analyze uploaded invoice images.';
@@ -422,6 +431,9 @@ export async function processRecipeFusion(
   void _targetCategory;
   const apiKey = getApiKey();
   if (!apiKey) {
+    if (process.env.NODE_ENV === 'production') {
+      rejectProductionAiMock('Recipe fusion');
+    }
     return getMockRecipeFusion();
   }
 
@@ -474,6 +486,9 @@ Return a JSON array of recipes adhering strictly to this schema:
     ) {
       rawList = (parsed as Record<string, unknown>).recipes as any[];
     } else {
+      if (process.env.NODE_ENV === 'production') {
+        rejectProductionAiMock('Recipe fusion');
+      }
       return getMockRecipeFusion();
     }
 
@@ -485,6 +500,9 @@ Return a JSON array of recipes adhering strictly to this schema:
     }));
   } catch (error) {
     console.error('Error in processRecipeFusion Gemini call:', error);
+    if (process.env.NODE_ENV === 'production') {
+      rejectProductionAiMock('Recipe fusion');
+    }
     return getMockRecipeFusion();
   }
 }

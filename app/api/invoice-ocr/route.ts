@@ -16,6 +16,10 @@ import { requireSessionUser } from '@/lib/auth/session';
 import { findLatestStoreSetting } from '@/lib/domains/stats/storeSettingSelect';
 import { matchProduct } from '@/lib/domains/inventory/productMatching';
 import { upsertSupplierByName } from '@/lib/domains/suppliers/suppliers';
+import { assertHotPathRateLimit } from '@/lib/security/rateLimit';
+
+export const maxDuration = 60;
+export const dynamic = 'force-dynamic';
 
 // ============================================================================
 // Types & Interfaces for Phase 3 Invoice OCR + Cost Guardrail (>20% Variance)
@@ -396,7 +400,9 @@ Rules: unitCost/totalCost per case when unit is cases; caseRetailPrice = printed
 
 export async function POST(req: NextRequest) {
   try {
-    await requireSessionUser();
+    const actor = await requireSessionUser();
+    const limited = assertHotPathRateLimit(actor.id, 'invoiceOcr');
+    if (limited) return limited;
     const body = await req.json();
     const {
       imageBase64,

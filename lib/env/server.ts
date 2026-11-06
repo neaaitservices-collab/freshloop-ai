@@ -50,8 +50,8 @@ export function assertProductionEnv(): void {
   if (!getAuthSecret()) missing.push('AUTH_SECRET (or NEXTAUTH_SECRET)');
 
   if (missing.length > 0) {
-    console.warn(
-      `[FreshLoop] Missing production environment: ${missing.join(', ')}. See .env.example and docs/DEPLOYMENT.md.`
+    throw new Error(
+      `Missing production environment: ${missing.join(', ')}. See .env.example and docs/DEPLOYMENT.md.`
     );
   }
 }

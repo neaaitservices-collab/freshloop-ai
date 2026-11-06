@@ -211,7 +211,9 @@ model InventoryTransaction {
   notes           String?
 
   @@index([productId, timestamp])
+  @@index([productId, transactionType, timestamp])
   @@index([transactionType, timestamp])
+  @@index([transactionType, toLocation, timestamp])
   @@index([fromLocation, toLocation])
   @@index([referenceId])
   @@index([expirationDate])
@@ -441,6 +443,7 @@ model InvoiceLineItem {
   subUnit         String?
   createdAt       DateTime       @default(now())
 
+  @@index([invoiceId])
   @@index([inventoryItemId])
   @@map("invoice_line_items")
 }
