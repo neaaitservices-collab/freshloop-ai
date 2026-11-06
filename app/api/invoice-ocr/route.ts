@@ -8,7 +8,7 @@ import {
 } from '@/lib/domains/receiving/invoiceOcrCommit';
 import { generateContentWithFallback, tryParseModelJson } from '@/lib/domains/ai/gemini';
 import { invoiceOcrModelCandidates } from '@/lib/domains/ai/geminiModels';
-import { handleApiRouteError } from '@/lib/domains/ai/apiError';
+import { handleApiRouteError, logServerError } from '@/lib/domains/ai/apiError';
 import { invoiceOcrErrorResponse } from '@/lib/domains/receiving/invoiceOcrErrors';
 import { authErrorResponse } from '@/lib/auth/http';
 import { requireReceivingStaff } from '@/lib/auth/guardRoute';
@@ -399,6 +399,9 @@ Rules: unitCost/totalCost per case when unit is cases; caseRetailPrice = printed
 // ============================================================================
 
 export async function POST(req: NextRequest) {
+  let actorId: string | undefined;
+  let operation: 'preview' | 'commit' = 'preview';
+  let referenceId: string | undefined;
   try {
     const actor = await requireSessionUser();
     const limited = assertHotPathRateLimit(actor.id, 'invoiceOcr');
@@ -438,10 +441,12 @@ export async function POST(req: NextRequest) {
     // explicitly confirmed by the user/manager (`confirmCommit: true`).
     // ------------------------------------------------------------------------
     if (confirmCommit && Array.isArray(confirmedItems) && confirmedItems.length > 0) {
-      const actor = await requireReceivingStaff();
-      const referenceId = confirmedInvoiceNum || `INV-OCR-${Date.now()}`;
+      operation = 'commit';
+      const commitActor = await requireReceivingStaff();
+      actorId = commitActor.id;
+      referenceId = confirmedInvoiceNum || `INV-OCR-${Date.now()}`;
       const committed = await commitInvoiceOcrReceipts({
-        staffId: actor.id,
+        staffId: commitActor.id,
         referenceId,
         confirmedItems,
         invoiceMeta: invoiceMeta ?? null,
@@ -564,11 +569,25 @@ export async function POST(req: NextRequest) {
     const authRes = authErrorResponse(error);
     if (authRes) return authRes;
     const ocrRes = invoiceOcrErrorResponse(error);
-    if (ocrRes) return ocrRes;
+    if (ocrRes) {
+      logServerError('POST /api/invoice-ocr', error, {
+        path: '/api/invoice-ocr',
+        actorId,
+        referenceId,
+        operation,
+      });
+      return ocrRes;
+    }
     return handleApiRouteError(
       'POST /api/invoice-ocr',
       error,
-      'Failed to process the invoice. Please try again.'
+      'Failed to process the invoice. Please try again.',
+      {
+        path: '/api/invoice-ocr',
+        actorId,
+        referenceId,
+        operation,
+      }
     );
   }
 }

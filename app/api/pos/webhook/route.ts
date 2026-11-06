@@ -47,7 +47,7 @@ export async function POST(req: NextRequest) {
       lines?: PosWebhookLine[];
     };
 
-    const externalRef = body.externalRef?.trim() ?? '';
+    externalRef = body.externalRef?.trim() ?? '';
     if (!externalRef) {
       return NextResponse.json({ success: false, error: 'externalRef is required.' }, { status: 400 });
     }

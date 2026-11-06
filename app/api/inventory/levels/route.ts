@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { apiErrorFromUnknown } from '@/lib/domains/ai/apiError';
+import { apiErrorFromUnknown, handleApiRouteError } from '@/lib/domains/ai/apiError';
 import { authErrorResponse } from '@/lib/auth/http';
 import { requireOperationalStaff } from '@/lib/auth/guardRoute';
 import { requireSessionUser } from '@/lib/auth/session';
@@ -87,10 +87,13 @@ export async function DELETE(req: NextRequest) {
 }
 
 export async function PATCH(req: NextRequest) {
+  let actorId: string | undefined;
+  let productId: string | undefined;
   try {
     const actor = await requireOperationalStaff();
+    actorId = actor.id;
     const body = await parseJsonBody(req, inventoryLevelsPatchSchema);
-    const productId = body.productId;
+    productId = body.productId;
 
     const limited = assertMutationRateLimit(
       actor.id,
@@ -232,6 +235,16 @@ export async function PATCH(req: NextRequest) {
   } catch (error) {
     const authRes = authErrorResponse(error);
     if (authRes) return authRes;
-    return apiErrorFromUnknown(error, 'The alert level could not be saved.');
+    return handleApiRouteError(
+      'PATCH /api/inventory/levels',
+      error,
+      'The alert level could not be saved.',
+      {
+        path: '/api/inventory/levels',
+        actorId,
+        productId,
+        operation: 'level-patch',
+      }
+    );
   }
 }
