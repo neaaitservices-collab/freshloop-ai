@@ -213,7 +213,6 @@ export function SlateInventory({
           onLevelsChange={setLevels}
           patchLevelOptimistic={patchLevelOptimistic}
           performMove={performMove}
-          pullDays={pullDays}
           query={query}
           departmentFilter={departmentFilter}
           onToast={(message) => {

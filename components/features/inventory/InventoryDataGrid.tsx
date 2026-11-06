@@ -7,7 +7,6 @@ import { itemOriginLabel } from '@/components/features/inventory/RetailFloorItem
 import {
   catalogCaseFloorPrice,
   catalogDisplayCaseCost,
-  caseCostForPricing,
   formatCurrency,
   formatPercent,
   formatUnits,

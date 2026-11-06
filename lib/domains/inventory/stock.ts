@@ -10,7 +10,6 @@ import {
   writeProductMarkdownPrices,
 } from '@/lib/domains/inventory/productMarkdownColumn';
 import {
-  alignLotsToLedger,
   consumeLotsFifo,
   createLotOnReceive,
   transferLotsFifo,
