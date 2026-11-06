@@ -5,6 +5,14 @@ import { AuthError } from '@/lib/auth/session';
 import { InvalidJsonBodyError } from '@/lib/security/parseJsonBody';
 import { InventoryLedgerError } from '@/lib/domains/inventory/ledger';
 
+export type ApiErrorLogContext = Record<string, unknown> & {
+  actorId?: string;
+  path?: string;
+  route?: string;
+  productId?: string;
+  referenceId?: string;
+};
+
 export function errorMessage(error: unknown, fallback = 'Unexpected server error.'): string {
   return error instanceof Error ? error.message : fallback;
 }
@@ -13,17 +21,31 @@ export function apiError(message: string, status = 500) {
   return NextResponse.json({ success: false, error: message, message }, { status });
 }
 
+function serializeError(error: unknown): Record<string, unknown> {
+  if (error instanceof Error) {
+    return {
+      name: error.name,
+      message: error.message,
+      stack: error.stack,
+    };
+  }
+  return { value: error };
+}
+
 /** Log full error server-side; never send stack or Prisma internals to clients. */
 export function logServerError(
   scope: string,
   error: unknown,
-  context?: Record<string, unknown>
+  context?: ApiErrorLogContext
 ): void {
-  if (context) {
-    console.error(`[${scope}]`, context, error);
-    return;
-  }
-  console.error(`[${scope}]`, error);
+  const envelope = {
+    ts: new Date().toISOString(),
+    scope,
+    route: context?.route ?? context?.path ?? scope,
+    ...context,
+    error: serializeError(error),
+  };
+  console.error(JSON.stringify(envelope));
 }
 
 /** Standard catch helper for Route Handlers. */
@@ -31,10 +53,13 @@ export function handleApiRouteError(
   scope: string,
   error: unknown,
   fallback = 'Something went wrong. Please try again.',
-  context?: Record<string, unknown>
+  context?: ApiErrorLogContext
 ) {
-  logServerError(scope, error, context);
-  return apiErrorFromUnknown(error, fallback);
+  logServerError(scope, error, {
+    route: scope,
+    ...context,
+  });
+  return apiErrorFromUnknown(error, fallback, context);
 }
 
 function zodErrorMessage(error: ZodError): string {
@@ -76,7 +101,11 @@ export function prismaSetupHint(error: unknown): string | null {
   return null;
 }
 
-export function apiErrorFromUnknown(error: unknown, fallback = 'Something went wrong. Please try again.') {
+export function apiErrorFromUnknown(
+  error: unknown,
+  fallback = 'Something went wrong. Please try again.',
+  context?: ApiErrorLogContext
+) {
   if (error instanceof AuthError) {
     return apiError(error.message, error.status);
   }
@@ -87,10 +116,23 @@ export function apiErrorFromUnknown(error: unknown, fallback = 'Something went w
     return apiError(zodErrorMessage(error), 400);
   }
   if (error instanceof InventoryLedgerError) {
+    logServerError('inventory-ledger', error, {
+      route: context?.route,
+      path: context?.path,
+      actorId: context?.actorId,
+      productId: context?.productId,
+      referenceId: context?.referenceId,
+    });
     return apiError(error.message, error.statusCode);
   }
   if (error instanceof Prisma.PrismaClientKnownRequestError) {
-    console.error('[prisma]', error.code, error.meta);
+    logServerError('prisma', error, {
+      route: context?.route,
+      path: context?.path,
+      actorId: context?.actorId,
+      prismaCode: error.code,
+      meta: error.meta,
+    });
     const setupHint = prismaSetupHint(error);
     if (setupHint) return apiError(setupHint, 503);
     if (error.code === 'P2002') {
@@ -102,11 +144,11 @@ export function apiErrorFromUnknown(error: unknown, fallback = 'Something went w
     return apiError(fallback, 500);
   }
   if (error instanceof Prisma.PrismaClientInitializationError) {
-    console.error('[prisma init]', error.message);
+    logServerError('prisma-init', error, context);
     return apiError(fallback, 503);
   }
   if (error instanceof Prisma.PrismaClientValidationError) {
-    console.error('[prisma validation]', error.message);
+    logServerError('prisma-validation', error, context);
     return apiError('Invalid data for this operation.', 400);
   }
 
@@ -120,7 +162,7 @@ export function apiErrorFromUnknown(error: unknown, fallback = 'Something went w
         ? 400
         : 500;
     if (status >= 500) {
-      console.error('[api]', error);
+      logServerError('api', error, context);
       if (isClientSafeMessage(message)) {
         return apiError(message, 500);
       }
@@ -132,5 +174,6 @@ export function apiErrorFromUnknown(error: unknown, fallback = 'Something went w
     return apiError(fallback, status);
   }
 
+  logServerError('api-unknown', error, context);
   return apiError(fallback, 500);
 }

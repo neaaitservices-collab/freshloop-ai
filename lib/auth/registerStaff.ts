@@ -8,6 +8,9 @@ import { positionForRole } from '@/lib/utils/positions';
 const MIN_PASSWORD_LENGTH = 8;
 
 export function isPublicSignupEnabled(): boolean {
+  if (process.env.NODE_ENV === 'production') {
+    return process.env.ALLOW_PUBLIC_SIGNUP === 'true';
+  }
   return process.env.ALLOW_PUBLIC_SIGNUP !== 'false';
 }
 

@@ -4,6 +4,7 @@ import { executeBundleSale, prisma } from '@/lib/domains/inventory/ledger';
 import { invalidateInventoryCaches } from '@/lib/domains/inventory/inventoryCache';
 import { recordProductSale } from '@/lib/domains/inventory/recordSale';
 import { handleApiRouteError } from '@/lib/domains/ai/apiError';
+import { assertHotPathRateLimit, clientIpKey } from '@/lib/security/rateLimit';
 
 export const dynamic = 'force-dynamic';
 
@@ -33,15 +34,12 @@ function webhookAuthorized(header: string | null, secret: string): boolean {
  */
 export async function POST(req: NextRequest) {
   const secret = process.env.POS_WEBHOOK_SECRET?.trim();
-  if (!secret) {
-    return NextResponse.json(
-      { success: false, error: 'POS webhook secret is not configured.' },
-      { status: 503 }
-    );
-  }
-  if (!webhookAuthorized(req.headers.get('authorization'), secret)) {
+  if (!secret || !webhookAuthorized(req.headers.get('authorization'), secret)) {
     return NextResponse.json({ success: false, error: 'Unauthorized POS webhook.' }, { status: 401 });
   }
+
+  const limited = assertHotPathRateLimit(clientIpKey(req), 'posWebhook');
+  if (limited) return limited;
 
   try {
     const body = (await req.json()) as {
@@ -124,6 +122,8 @@ export async function POST(req: NextRequest) {
       results: outcome.results,
     });
   } catch (error) {
-    return handleApiRouteError('POST /api/pos/webhook', error, 'POS webhook processing failed.');
+    return handleApiRouteError('POST /api/pos/webhook', error, 'POS webhook processing failed.', {
+      path: '/api/pos/webhook',
+    });
   }
 }

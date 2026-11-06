@@ -93,6 +93,8 @@ export interface SkippedReceipt {
 
 export { matchProduct };
 
+export type PurchaseProductNameCatalog = { id: string; name: string }[];
+
 /** Match by name or insert a purchasable SKU (invoice receive, OCR commit). */
 export async function findOrCreatePurchaseProduct(
   input: {
@@ -106,7 +108,9 @@ export async function findOrCreatePurchaseProduct(
     unitCost?: number;
     retailUnit?: string;
   },
-  db?: LotTx
+  db?: LotTx,
+  /** When provided, reused across batch lines (avoids repeated catalog scans). */
+  nameCatalog?: PurchaseProductNameCatalog
 ): Promise<{ id: string; name: string; created: boolean }> {
   const client = db ?? prisma;
   const name = input.itemName.trim();
@@ -127,10 +131,12 @@ export async function findOrCreatePurchaseProduct(
     }
   }
 
-  const products = await client.product.findMany({
-    where: { isManufactured: false },
-    select: { id: true, name: true },
-  });
+  const products =
+    nameCatalog ??
+    (await client.product.findMany({
+      where: { isManufactured: false },
+      select: { id: true, name: true },
+    }));
   const match = matchProduct(name, products);
   if (match) {
     await client.product.update({
@@ -161,6 +167,9 @@ export async function findOrCreatePurchaseProduct(
     },
     select: { id: true, name: true },
   });
+  if (nameCatalog) {
+    nameCatalog.push({ id: created.id, name: created.name });
+  }
   return { id: created.id, name: created.name, created: true };
 }
 

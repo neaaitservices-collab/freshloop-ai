@@ -6,6 +6,7 @@ import {
   normalizeProductPackFields,
   postProductReceipt,
   productPackWriteData,
+  type PurchaseProductNameCatalog,
 } from '@/lib/domains/inventory/stock';
 import { resolveSupplierIdForVendorName } from '@/lib/domains/suppliers/suppliers';
 
@@ -31,6 +32,23 @@ export interface OcrInvoiceMeta {
   departmentBreakdown: Record<string, number>;
   rawOcrJson?: unknown;
 }
+
+type ReceiptProductRow = {
+  id: string;
+  casePackSize: number | null;
+  receivePackSize: number | null;
+  splitFactor: number | null;
+  name: string;
+  department: Department;
+};
+
+const receiptProductSelect = {
+  casePackSize: true,
+  receivePackSize: true,
+  splitFactor: true,
+  name: true,
+  department: true,
+} as const;
 
 /** Case invoices quote a cost per case; inventory stores a per-unit cost and retail units. */
 export function resolveInvoiceReceipt(
@@ -86,6 +104,30 @@ export async function commitInvoiceOcrReceipts(input: {
         invoiceId = invoice.id;
       }
 
+      const nameCatalog: PurchaseProductNameCatalog = await tx.product.findMany({
+        where: { isManufactured: false },
+        select: { id: true, name: true },
+      });
+
+      const explicitProductIds = [
+        ...new Set(
+          input.confirmedItems
+            .map((item) => String(item.product_id ?? '').trim())
+            .filter(Boolean)
+        ),
+      ];
+
+      const prefetched = explicitProductIds.length
+        ? await tx.product.findMany({
+            where: { id: { in: explicitProductIds } },
+            select: { id: true, ...receiptProductSelect },
+          })
+        : [];
+
+      const productsById = new Map<string, ReceiptProductRow>(
+        prefetched.map((row) => [row.id, row])
+      );
+
       const receipts = [];
       for (const item of input.confirmedItems) {
         let productId = String(item.product_id ?? '').trim();
@@ -104,23 +146,23 @@ export async function commitInvoiceOcrReceipts(input: {
               casePackSize: linePack,
               unitCost: Number(item.unit_cost) > 0 ? Number(item.unit_cost) : undefined,
             },
-            tx
+            tx,
+            nameCatalog
           );
           productId = ensured.id;
         }
 
-        let product = await tx.product.findUnique({
-          where: { id: productId },
-          select: {
-            casePackSize: true,
-            receivePackSize: true,
-            splitFactor: true,
-            name: true,
-            department: true,
-          },
-        });
+        let product = productsById.get(productId);
         if (!product) {
-          throw new Error(`Product was not found: ${productId}`);
+          const loaded = await tx.product.findUnique({
+            where: { id: productId },
+            select: { id: true, ...receiptProductSelect },
+          });
+          if (!loaded) {
+            throw new Error(`Product was not found: ${productId}`);
+          }
+          product = loaded;
+          productsById.set(productId, product);
         }
 
         if (item.case_pack_size && item.case_pack_size > 0) {
@@ -130,14 +172,9 @@ export async function commitInvoiceOcrReceipts(input: {
           product = await tx.product.update({
             where: { id: productId },
             data: packData,
-            select: {
-              casePackSize: true,
-              receivePackSize: true,
-              splitFactor: true,
-              name: true,
-              department: true,
-            },
+            select: { id: true, ...receiptProductSelect },
           });
+          productsById.set(productId, product);
         }
 
         const packFields = normalizeProductPackFields({

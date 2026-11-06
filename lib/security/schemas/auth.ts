@@ -1,8 +1,10 @@
 import { z } from 'zod';
-import { ROLES } from '@/lib/utils/roles';
 import { optionalSafeText, safeText } from '@/lib/security/schemas/common';
 
-const signupRoleSchema = z.enum(ROLES);
+/** Roles allowed on public self-signup (never ADMIN or STORE_MANAGER). */
+export const PUBLIC_SIGNUP_ROLES = ['FLOOR_STAFF', 'RECEIVING_CLERK', 'DELI_CHEF'] as const;
+
+const signupRoleSchema = z.enum(PUBLIC_SIGNUP_ROLES);
 
 export const signupBodySchema = z
   .object({

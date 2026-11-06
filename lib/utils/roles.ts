@@ -58,11 +58,8 @@ export function canVisit(role: RoleName, pathname: string): boolean {
     return true;
   }
 
-  if (path === '/admin/users' || path.startsWith('/admin/users/')) {
-    return isManager(role);
-  }
   if (path === '/admin' || path.startsWith('/admin/')) {
-    return true;
+    return isManager(role);
   }
 
   if (isManager(role)) return true;

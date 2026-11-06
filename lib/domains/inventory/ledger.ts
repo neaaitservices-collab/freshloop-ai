@@ -589,15 +589,13 @@ export async function calculateRealTimeWastePct(
     const defaultRange = kpiLookbackRange();
     const startDate = options?.startDate ?? defaultRange.startDate;
     const endDate = options?.endDate ?? defaultRange.endDate;
-    const timestampFilter = {
-      timestamp: { gte: startDate, lte: endDate },
-    };
-
     const volumetricPrefix = `${VOLUMETRIC_SCRAP_REF_PREFIX}%`;
     const volumetricKind = `%${SCRAP_VOLUMETRIC_BUCKET_KIND}%`;
     const wasteTimeSql = Prisma.sql`AND "timestamp" >= ${startDate} AND "timestamp" <= ${endDate}`;
 
-    const [storeSetting, wasteAggRows, salesTransactions] = await Promise.all([
+    const salesTimeSql = Prisma.sql`AND t."timestamp" >= ${startDate} AND t."timestamp" <= ${endDate}`;
+
+    const [storeSetting, wasteAggRows, salesAggRows] = await Promise.all([
       findLatestStoreSetting(),
       prisma.$queryRaw<Array<{ discardValue: number; bucketUnits: number }>>(Prisma.sql`
         SELECT
@@ -625,23 +623,21 @@ export async function calculateRealTimeWastePct(
         WHERE "Transaction_Type" = 'Waste'
         ${wasteTimeSql}
       `),
-      prisma.inventoryTransaction.findMany({
-        where: {
-          transactionType: {
-            in: [TransactionType.Sale, TransactionType.POS_Sale],
-          },
-          qtyChange: { lt: 0 },
-          ...timestampFilter,
-        },
-        include: {
-          product: {
-            select: {
-              retailPrice: true,
-              targetMargin: true,
-            },
-          },
-        },
-      }),
+      prisma.$queryRaw<Array<{ grossSalesRevenue: number }>>(Prisma.sql`
+        SELECT COALESCE(SUM(
+          ABS(t."Qty_Change") * CASE
+            WHEN p."retailPrice" IS NOT NULL AND p."retailPrice" > 0 THEN p."retailPrice"
+            ELSE t."Unit_Cost_At_Time" / (
+              1 - LEAST(0.95::float8, GREATEST(0.05::float8, COALESCE(p."targetMargin", 0.4)))
+            )
+          END
+        ), 0)::float8 AS "grossSalesRevenue"
+        FROM "Inventory_Transactions" t
+        INNER JOIN products p ON p.id = t."Product_ID"
+        WHERE t."Transaction_Type" IN ('Sale'::"TransactionType", 'POS_Sale'::"TransactionType")
+          AND t."Qty_Change" < 0
+        ${salesTimeSql}
+      `),
     ]);
 
     const targetWastePct = storeSetting?.targetWastePct ?? 2.5;
@@ -668,29 +664,13 @@ export async function calculateRealTimeWastePct(
       ).totalDollars;
     }
 
-    let grossSalesRevenue = 0;
-
-    for (const saleTx of salesTransactions) {
-      const unitsSold = Math.abs(saleTx.qtyChange);
-      const explicitRetailPrice = saleTx.product.retailPrice;
-
-      let unitSellingPrice: number;
-      if (typeof explicitRetailPrice === 'number' && explicitRetailPrice > 0) {
-        unitSellingPrice = explicitRetailPrice;
-      } else {
-        // Derive selling price from unitCostAtTime and targetMargin: Price = Cost / (1 - Margin)
-        const margin = Math.min(0.95, Math.max(0.05, saleTx.product.targetMargin ?? 0.4));
-        unitSellingPrice = saleTx.unitCostAtTime / (1 - margin);
-      }
-
-      grossSalesRevenue += unitsSold * unitSellingPrice;
-    }
+    const grossSalesRevenue = Number((salesAggRows[0]?.grossSalesRevenue ?? 0).toFixed(2));
 
     // 4. Apply Master Plan Formula: (Valor Total Descarte + Valor Scraps Volumétricos) / Ventas Brutas Totales
     const roundedDiscardValue = Number(totalDiscardValue.toFixed(2));
     const roundedVolumetricValue = Number(volumetricScrapValue.toFixed(2));
     const totalWasteValue = wasteNumeratorDollars(roundedDiscardValue, roundedVolumetricValue);
-    const roundedGrossSales = Number(grossSalesRevenue.toFixed(2));
+    const roundedGrossSales = grossSalesRevenue;
 
     const wastePct = computeWastePct(totalWasteValue, roundedGrossSales);
     const wasteRatio =
