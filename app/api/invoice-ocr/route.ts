@@ -404,7 +404,6 @@ export async function POST(req: NextRequest) {
   let referenceId: string | undefined;
   try {
     const actor = await requireSessionUser();
-    actorId = actor.id;
     const limited = assertHotPathRateLimit(actor.id, 'invoiceOcr');
     if (limited) return limited;
     const body = await req.json();

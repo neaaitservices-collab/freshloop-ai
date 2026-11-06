@@ -11,21 +11,7 @@ export type ApiErrorLogContext = Record<string, unknown> & {
   route?: string;
   productId?: string;
   referenceId?: string;
-  operation?: string;
 };
-
-const LOGGED_BY_HANDLER = '__loggedByHandler';
-
-function envelopeContext(context?: ApiErrorLogContext): Record<string, unknown> {
-  if (!context) return {};
-  const copy = { ...context };
-  delete copy[LOGGED_BY_HANDLER];
-  return copy;
-}
-
-function shouldLogServer(context?: ApiErrorLogContext): boolean {
-  return !(context && context[LOGGED_BY_HANDLER] === true);
-}
 
 export function errorMessage(error: unknown, fallback = 'Unexpected server error.'): string {
   return error instanceof Error ? error.message : fallback;
@@ -52,12 +38,11 @@ export function logServerError(
   error: unknown,
   context?: ApiErrorLogContext
 ): void {
-  const meta = envelopeContext(context);
   const envelope = {
     ts: new Date().toISOString(),
     scope,
-    route: (meta.route as string | undefined) ?? (meta.path as string | undefined) ?? scope,
-    ...meta,
+    route: context?.route ?? context?.path ?? scope,
+    ...context,
     error: serializeError(error),
   };
   console.error(JSON.stringify(envelope));
@@ -74,10 +59,7 @@ export function handleApiRouteError(
     route: scope,
     ...context,
   });
-  return apiErrorFromUnknown(error, fallback, {
-    ...context,
-    [LOGGED_BY_HANDLER]: true,
-  });
+  return apiErrorFromUnknown(error, fallback, context);
 }
 
 function zodErrorMessage(error: ZodError): string {
@@ -134,31 +116,23 @@ export function apiErrorFromUnknown(
     return apiError(zodErrorMessage(error), 400);
   }
   if (error instanceof InventoryLedgerError) {
-    if (shouldLogServer(context)) {
-      logServerError('inventory-ledger', error, {
-        route: context?.route,
-        path: context?.path,
-        actorId: context?.actorId,
-        productId: context?.productId,
-        referenceId: context?.referenceId,
-        operation: context?.operation,
-      });
-    }
+    logServerError('inventory-ledger', error, {
+      route: context?.route,
+      path: context?.path,
+      actorId: context?.actorId,
+      productId: context?.productId,
+      referenceId: context?.referenceId,
+    });
     return apiError(error.message, error.statusCode);
   }
   if (error instanceof Prisma.PrismaClientKnownRequestError) {
-    if (shouldLogServer(context)) {
-      logServerError('prisma', error, {
-        route: context?.route,
-        path: context?.path,
-        actorId: context?.actorId,
-        productId: context?.productId,
-        referenceId: context?.referenceId,
-        operation: context?.operation,
-        prismaCode: error.code,
-        meta: error.meta,
-      });
-    }
+    logServerError('prisma', error, {
+      route: context?.route,
+      path: context?.path,
+      actorId: context?.actorId,
+      prismaCode: error.code,
+      meta: error.meta,
+    });
     const setupHint = prismaSetupHint(error);
     if (setupHint) return apiError(setupHint, 503);
     if (error.code === 'P2002') {
@@ -170,11 +144,11 @@ export function apiErrorFromUnknown(
     return apiError(fallback, 500);
   }
   if (error instanceof Prisma.PrismaClientInitializationError) {
-    if (shouldLogServer(context)) logServerError('prisma-init', error, context);
+    logServerError('prisma-init', error, context);
     return apiError(fallback, 503);
   }
   if (error instanceof Prisma.PrismaClientValidationError) {
-    if (shouldLogServer(context)) logServerError('prisma-validation', error, context);
+    logServerError('prisma-validation', error, context);
     return apiError('Invalid data for this operation.', 400);
   }
 
@@ -187,7 +161,7 @@ export function apiErrorFromUnknown(
       message.includes('Insufficient')
         ? 400
         : 500;
-    if (status >= 500 && shouldLogServer(context)) {
+    if (status >= 500) {
       logServerError('api', error, context);
       if (isClientSafeMessage(message)) {
         return apiError(message, 500);
@@ -200,6 +174,6 @@ export function apiErrorFromUnknown(
     return apiError(fallback, status);
   }
 
-  if (shouldLogServer(context)) logServerError('api-unknown', error, context);
+  logServerError('api-unknown', error, context);
   return apiError(fallback, 500);
 }
