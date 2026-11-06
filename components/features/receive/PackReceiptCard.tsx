@@ -147,15 +147,22 @@ export function PackReceiptCard({
         </div>
       </div>
 
+      {/**
+       * Pin to the viewport bottom (`bottom-0`) so the tray background is continuous with the tab bar.
+       * Reserve space with padding-bottom = measured nav height (not `bottom: nav-h`, which left a body-colored strip).
+       */}
       <div
-        className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-800 bg-slate-950/95 p-3 shadow-[0_-8px_32px_rgba(0,0,0,0.45)] backdrop-blur-md md:static md:inset-auto md:rounded-2xl md:border md:shadow-lg md:shadow-black/20"
-        style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}
+        className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-800 bg-slate-950/95 px-3 pt-3 pb-[max(0.75rem,var(--freshloop-mobile-nav-h,3.5rem))] shadow-[0_-8px_32px_rgba(0,0,0,0.45)] backdrop-blur-md md:static md:bottom-auto md:inset-auto md:rounded-2xl md:border md:p-3 md:pb-3 md:shadow-lg md:shadow-black/20"
       >
         <div className="mx-auto max-w-3xl">
           <ReceiptActionFooter {...footerProps} />
         </div>
       </div>
-      <div className="h-44 md:hidden" aria-hidden />
+      {/** Reserve scroll space for sticky tray + mobile tab bar */}
+      <div
+        className="min-h-[calc(11rem+var(--freshloop-mobile-nav-h))] md:hidden"
+        aria-hidden
+      />
     </section>
   );
 }

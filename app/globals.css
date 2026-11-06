@@ -3,6 +3,13 @@
 :root {
   --background: #ffffff;
   --foreground: #171717;
+  /**
+   * Mobile bottom tab bar height (see Navigation.tsx: pt-1 + row + pb).
+   * Do not use tab min-width (4.25rem) here — that caused a visible gap above the nav.
+   */
+  --freshloop-mobile-nav-h: calc(
+    3rem + max(0.35rem, env(safe-area-inset-bottom, 0px))
+  );
 }
 
 @theme inline {

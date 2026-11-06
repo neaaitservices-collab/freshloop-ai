@@ -112,26 +112,37 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
   const [transcript, setTranscript] = useState('');
   const [draftItems, setDraftItems] = useState<EditableVoiceDraftItem[]>([]);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [catalogLoadWarning, setCatalogLoadWarning] = useState<string | null>(null);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
 
   useEffect(() => {
     if (!isOpen) return;
+    setCatalogLoadWarning(null);
     void fetch('/api/inventory/levels', { cache: 'no-store' })
-      .then((r) => r.json())
-      .then((json) => {
-        if (!json.success || !Array.isArray(json.levels)) return;
-        const opts = json.levels.map(
-          (row: { productId: string; name: string; supplier?: string }) => ({
-            id: row.productId,
-            name: row.name,
-            department: inferDepartmentFromName(row.name),
-          })
-        );
+      .then(async (r) => {
+        const json = (await r.json()) as {
+          success?: boolean;
+          levels?: Array<{ productId: string; name: string; supplier?: string }>;
+          error?: string;
+        };
+        if (!r.ok || !json.success) {
+          setCatalogLoadWarning(json.error ?? 'Could not load catalog for voice match.');
+          return;
+        }
+        if (!Array.isArray(json.levels)) return;
+        const opts = json.levels.map((row) => ({
+          id: row.productId,
+          name: row.name,
+          department: inferDepartmentFromName(row.name),
+        }));
         if (opts.length > 0) setCatalogOptions(opts);
       })
-      .catch(() => undefined);
+      .catch((err: unknown) => {
+        setCatalogLoadWarning('Network error — using fallback catalog.');
+        console.error('[freshloop] VoiceLoggerModal catalog fetch', err);
+      });
   }, [isOpen]);
 
   const productOptionsForItem = useMemo(() => {
@@ -368,6 +379,11 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
         </ModalHeader>
 
         <ModalBody className="space-y-5 p-5 text-xs text-zinc-200 sm:p-6">
+          {catalogLoadWarning ? (
+            <div className="rounded-2xl border border-amber-600/40 bg-amber-950/50 px-3.5 py-2.5 text-amber-200">
+              {catalogLoadWarning}
+            </div>
+          ) : null}
           {errorMsg && (
             <div className="p-3.5 rounded-2xl bg-rose-950/70 border border-rose-500/50 text-rose-200 flex items-center gap-2.5">
               <AlertOctagon className="w-4 h-4 text-rose-400 shrink-0" />

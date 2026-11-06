@@ -847,7 +847,13 @@ export function YieldPricingDashboard({
   };
 
   return (
-    <div className={embedded ? '' : 'mx-auto w-full max-w-7xl flex-1 px-3 py-5 pb-28 sm:px-6 sm:py-8'}>
+    <div
+      className={
+        embedded
+          ? 'pb-[calc(4rem+var(--freshloop-mobile-nav-h))] md:pb-0'
+          : 'mx-auto w-full max-w-7xl flex-1 px-3 py-5 pb-28 sm:px-6 sm:py-8'
+      }
+    >
       <div className={`mb-5 flex flex-col gap-3 sm:flex-row sm:items-center ${embedded ? 'sm:justify-end' : 'sm:justify-between'}`}>
         <div>
           <h1 className={`${embedded ? 'sr-only' : 'text-2xl font-black tracking-tight text-white'}`}>

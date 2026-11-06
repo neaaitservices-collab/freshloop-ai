@@ -55,7 +55,8 @@ export function CostVarianceChart({
         <div>
           <h2 className="text-sm font-black text-slate-100">Cost variance · baseline vs optimized</h2>
           <p className="mt-1 text-xs leading-relaxed text-slate-400">
-            Monthly operating cost (waste + shrink proxy). Green bar shows modeled optimized spend.
+            Modeled trend for meetings (not raw POS history). Monthly operating cost (waste + shrink proxy). Green
+            bar shows modeled optimized spend.
           </p>
         </div>
         <p className="rounded-xl bg-emerald-950/40 px-3 py-1.5 text-right ring-1 ring-emerald-900/40">

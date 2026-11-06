@@ -3,8 +3,9 @@ export async function prepareImageDataUrlForOcr(
   dataUrl: string,
   options?: { maxEdge?: number; quality?: number; maxBase64Chars?: number }
 ): Promise<{ dataUrl: string; mimeType: string }> {
-  const maxEdge = options?.maxEdge ?? 1680;
-  const quality = options?.quality ?? 0.78;
+  /** ~1400px long edge + 0.72 JPEG is enough for line-item OCR and reduces upload + token work. */
+  const maxEdge = options?.maxEdge ?? 1400;
+  const quality = options?.quality ?? 0.72;
   const maxBase64Chars = options?.maxBase64Chars ?? 2_400_000;
 
   const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);

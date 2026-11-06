@@ -80,6 +80,13 @@ export type GenerateContentOptions = {
   skipModelDiscovery?: boolean;
   /** Cap how many models to attempt before failing. */
   maxModelsToTry?: number;
+  /**
+   * Use the generateContent REST endpoint first (skip SDK). Often lower latency for vision
+   * and avoids paying for two sequential attempts when both are installed.
+   */
+  preferRestApi?: boolean;
+  /** Merged into generationConfig (JSON mode, caps, temperature). */
+  generationConfig?: Record<string, unknown>;
 };
 
 const MODEL_LIST_TTL_MS = 30 * 60 * 1000;
@@ -124,6 +131,115 @@ function rankFlashModels(names: string[]): string[] {
 /**
  * Direct REST API fallback supporting OAuth Bearer tokens (AQ.xxx) & API keys (AIzaSyxxx)
  */
+function buildGenerationConfig(options?: GenerateContentOptions): Record<string, unknown> {
+  return {
+    responseMimeType: 'application/json',
+    temperature: 0.1,
+    maxOutputTokens: 8192,
+    ...options?.generationConfig,
+  };
+}
+
+async function tryGeminiRestGenerateContent(
+  modelName: string,
+  apiKey: string,
+  promptText: string,
+  inlinePart: { data: string; mimeType: string } | undefined,
+  genConfig: Record<string, unknown>,
+  remember: (model: string, detail: string) => void
+): Promise<string | null> {
+  const parts: any[] = [{ text: promptText }];
+  if (inlinePart) {
+    parts.push({ inlineData: inlinePart });
+  }
+  const payload = JSON.stringify({
+    contents: [{ parts }],
+    generationConfig: genConfig,
+  });
+
+  const attempts: Array<{ label: string; url: string; headers: Record<string, string> }> = [
+    {
+      label: 'key',
+      url: `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${encodeURIComponent(apiKey)}`,
+      headers: { 'Content-Type': 'application/json' },
+    },
+  ];
+  if (apiKey.startsWith('AQ.')) {
+    attempts.push({
+      label: 'bearer',
+      url: `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent`,
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+      },
+    });
+  }
+
+  let keyUnauthorized = false;
+  for (const attempt of attempts) {
+    if (attempt.label === 'bearer' && !keyUnauthorized) continue;
+    try {
+      const response = await fetch(attempt.url, {
+        method: 'POST',
+        headers: attempt.headers,
+        body: payload,
+      });
+      const raw = await response.text();
+      if (response.ok) {
+        const data = JSON.parse(raw);
+        const responseText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (responseText) {
+          return responseText;
+        }
+        remember(modelName, `${attempt.label} returned no text`);
+      } else {
+        if (attempt.label === 'key' && (response.status === 401 || response.status === 403)) {
+          keyUnauthorized = true;
+        }
+        remember(modelName, `${attempt.label} ${response.status} ${raw.slice(0, 180)}`);
+      }
+    } catch (e: any) {
+      remember(modelName, `${attempt.label} ${e?.message || 'request failed'}`);
+    }
+  }
+  return null;
+}
+
+function tryGeminiSdkGenerateContent(
+  apiKey: string,
+  modelName: string,
+  promptText: string,
+  inlinePart: { data: string; mimeType: string } | undefined,
+  genConfig: Record<string, unknown>,
+  remember: (model: string, detail: string) => void
+): Promise<string | null> {
+  const sdk = getGenAIClient(apiKey);
+  if (!sdk) return Promise.resolve(null);
+  return (async () => {
+    try {
+      const model = sdk.client.getGenerativeModel({
+        model: modelName,
+        generationConfig: genConfig,
+      });
+      const parts: any[] = [{ text: promptText }];
+      if (inlinePart) {
+        parts.push({
+          inlineData: {
+            data: inlinePart.data,
+            mimeType: inlinePart.mimeType,
+          },
+        });
+      }
+      const result = await model.generateContent(parts);
+      const text = result.response.text();
+      return text || null;
+    } catch (e: any) {
+      remember(modelName, e?.message || 'SDK request failed');
+      return null;
+    }
+  })();
+}
+
 export async function generateContentWithFallback(
   promptText: string,
   inlinePart?: { data: string; mimeType: string },
@@ -142,6 +258,9 @@ export async function generateContentWithFallback(
     failures.push(`${modelName}: ${safe}`);
   };
 
+  const genConfig = buildGenerationConfig(options);
+  const preferRest = Boolean(options?.preferRestApi && inlinePart);
+
   const maxTry = options?.maxModelsToTry ?? 4;
   let modelsToTry: string[];
 
@@ -158,85 +277,50 @@ export async function generateContentWithFallback(
 
   for (const modelName of modelsToTry) {
     try {
-      const sdk = getGenAIClient(apiKey);
-      if (sdk) {
-        try {
-          const model = sdk.client.getGenerativeModel({
-            model: modelName,
-            generationConfig: { responseMimeType: 'application/json' },
-          });
-          const parts: any[] = [{ text: promptText }];
-          if (inlinePart) {
-            parts.push({
-              inlineData: {
-                data: inlinePart.data,
-                mimeType: inlinePart.mimeType,
-              },
-            });
-          }
-          const result = await model.generateContent(parts);
-          const text = result.response.text();
-          if (text) {
-            return { text, modelUsed: modelName };
-          }
-        } catch (e: any) {
-          remember(modelName, e?.message || 'SDK request failed');
+      let text: string | null = null;
+
+      if (preferRest) {
+        text = await tryGeminiRestGenerateContent(
+          modelName,
+          apiKey,
+          promptText,
+          inlinePart,
+          genConfig,
+          remember
+        );
+        if (!text) {
+          text = await tryGeminiSdkGenerateContent(
+            apiKey,
+            modelName,
+            promptText,
+            inlinePart,
+            genConfig,
+            remember
+          );
+        }
+      } else {
+        text = await tryGeminiSdkGenerateContent(
+          apiKey,
+          modelName,
+          promptText,
+          inlinePart,
+          genConfig,
+          remember
+        );
+        if (!text) {
+          text = await tryGeminiRestGenerateContent(
+            modelName,
+            apiKey,
+            promptText,
+            inlinePart,
+            genConfig,
+            remember
+          );
         }
       }
 
-      const parts: any[] = [{ text: promptText }];
-      if (inlinePart) {
-        parts.push({ inlineData: inlinePart });
-      }
-      const payload = JSON.stringify({
-        contents: [{ parts }],
-        generationConfig: { responseMimeType: 'application/json' },
-      });
-
-      const attempts: Array<{ label: string; url: string; headers: Record<string, string> }> = [
-        {
-          label: 'key',
-          url: `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${encodeURIComponent(apiKey)}`,
-          headers: { 'Content-Type': 'application/json' },
-        },
-      ];
-      if (apiKey.startsWith('AQ.')) {
-        attempts.push({
-          label: 'bearer',
-          url: `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent`,
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${apiKey}`,
-          },
-        });
-      }
-
-      let keyUnauthorized = false;
-      for (const attempt of attempts) {
-        if (attempt.label === 'bearer' && !keyUnauthorized) continue;
-        try {
-          const response = await fetch(attempt.url, {
-            method: 'POST',
-            headers: attempt.headers,
-            body: payload,
-          });
-          const raw = await response.text();
-          if (response.ok) {
-            const data = JSON.parse(raw);
-            const responseText = data.candidates?.[0]?.content?.parts?.[0]?.text;
-            if (responseText) {
-              return { text: responseText, modelUsed: modelName };
-            }
-            remember(modelName, `${attempt.label} returned no text`);
-          } else {
-            if (attempt.label === 'key' && (response.status === 401 || response.status === 403)) {
-              keyUnauthorized = true;
-            }
-            remember(modelName, `${attempt.label} ${response.status} ${raw.slice(0, 180)}`);
-          }
-        } catch (e: any) {
-          remember(modelName, `${attempt.label} ${e?.message || 'request failed'}`);
-        }
+      if (text) {
+        return { text, modelUsed: modelName };
       }
     } catch (err: any) {
       remember(modelName, err?.message || 'request failed');
@@ -329,7 +413,14 @@ Make sure totalAmount equals sum of department totals and line item costs. Forma
 
     const { text, modelUsed } = await generateContentWithFallback(
       prompt,
-      cleanData ? { data: cleanData, mimeType: mimeType || 'image/jpeg' } : undefined
+      cleanData ? { data: cleanData, mimeType: mimeType || 'image/jpeg' } : undefined,
+      [...GEMINI_FLASH_MODEL_FALLBACKS],
+      {
+        skipModelDiscovery: true,
+        maxModelsToTry: 4,
+        preferRestApi: Boolean(cleanData),
+        generationConfig: { temperature: 0, maxOutputTokens: 8192 },
+      }
     );
 
     const parsed = parseModelJson<Record<string, unknown>>(text);

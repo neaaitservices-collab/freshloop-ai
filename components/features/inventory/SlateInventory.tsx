@@ -43,6 +43,7 @@ export function SlateInventory({
   const pullDays = useStorePullSensitivityDays();
   const [toast, setToast] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [levelsSyncWarning, setLevelsSyncWarning] = useState<string | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const { activeUser } = useRole();
 
@@ -52,13 +53,25 @@ export function SlateInventory({
         `/api/inventory/levels?includePosSales=1&salesDays=${encodeURIComponent(String(pullDays))}`,
         { cache: 'no-store' }
       )
-        .then((response) => response.json())
-        .then((json) => {
-          if (json.success && Array.isArray(json.levels)) {
-            setLevels(json.levels as StockLevel[]);
+        .then(async (response) => {
+          const json = (await response.json()) as {
+            success?: boolean;
+            levels?: StockLevel[];
+            error?: string;
+          };
+          if (!response.ok || !json.success) {
+            setLevelsSyncWarning(json.error ?? 'Could not sync inventory.');
+            return;
+          }
+          if (Array.isArray(json.levels)) {
+            setLevelsSyncWarning(null);
+            setLevels(json.levels);
           }
         })
-        .catch(() => undefined);
+        .catch((err: unknown) => {
+          setLevelsSyncWarning('Network error — list may be out of date.');
+          console.error('[freshloop] SlateInventory syncFromServer', err);
+        });
     };
     window.addEventListener('freshloop-inventory-updated', syncFromServer);
     return () => window.removeEventListener('freshloop-inventory-updated', syncFromServer);
@@ -153,6 +166,12 @@ export function SlateInventory({
           </Card>
         ))}
       </div>
+
+      {levelsSyncWarning ? (
+        <p className="rounded-xl border border-amber-900/50 bg-amber-950/30 px-4 py-3 text-sm text-amber-200">
+          {levelsSyncWarning}
+        </p>
+      ) : null}
 
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
         <Select

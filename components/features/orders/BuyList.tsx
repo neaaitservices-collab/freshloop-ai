@@ -75,6 +75,7 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
   const loading = initialLevels === null;
   const [levels, setLevels] = useState<StockLevel[]>(() => initialLevels ?? []);
   const [error, setError] = useState<string | null>(null);
+  const [levelSyncWarning, setLevelSyncWarning] = useState<string | null>(null);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [marks, setMarks] = useState<Record<string, LineMark>>({});
   const [draft, setDraft] = useState<PoDraft | null>(null);
@@ -95,13 +96,25 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
   useEffect(() => {
     const syncFromServer = () => {
       void fetch('/api/inventory/levels', { cache: 'no-store' })
-        .then((response) => response.json())
-        .then((json) => {
-          if (json.success && Array.isArray(json.levels)) {
-            setLevels(json.levels as StockLevel[]);
+        .then(async (response) => {
+          const json = (await response.json()) as {
+            success?: boolean;
+            levels?: StockLevel[];
+            error?: string;
+          };
+          if (!response.ok || !json.success) {
+            setLevelSyncWarning(json.error ?? 'Could not sync order list.');
+            return;
+          }
+          if (Array.isArray(json.levels)) {
+            setLevelSyncWarning(null);
+            setLevels(json.levels);
           }
         })
-        .catch(() => undefined);
+        .catch((err: unknown) => {
+          setLevelSyncWarning('Network error — order list may be out of date.');
+          console.error('[freshloop] BuyList syncFromServer', err);
+        });
     };
     window.addEventListener('freshloop-inventory-updated', syncFromServer);
     return () => window.removeEventListener('freshloop-inventory-updated', syncFromServer);
@@ -493,6 +506,12 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
           {error ? (
             <p className="mt-4 rounded-xl border border-rose-900/50 bg-rose-950/30 px-4 py-3 text-sm font-semibold text-rose-400">
               {error}
+            </p>
+          ) : null}
+
+          {levelSyncWarning ? (
+            <p className="mt-4 rounded-xl border border-amber-900/50 bg-amber-950/30 px-4 py-3 text-sm text-amber-200">
+              {levelSyncWarning}
             </p>
           ) : null}
 

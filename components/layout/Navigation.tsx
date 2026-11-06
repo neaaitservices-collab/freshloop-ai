@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useLayoutEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
@@ -115,12 +115,52 @@ function itemsFor(role: RoleName | null): NavItem[] {
   return filtered;
 }
 
+function syncMobileNavHeightCssVar(navEl: HTMLElement | null) {
+  if (typeof document === 'undefined') return;
+  if (!navEl) {
+    document.documentElement.style.removeProperty('--freshloop-mobile-nav-h');
+    return;
+  }
+  const style = window.getComputedStyle(navEl);
+  const rect = navEl.getBoundingClientRect();
+  if (style.display === 'none' || rect.height < 1) {
+    document.documentElement.style.removeProperty('--freshloop-mobile-nav-h');
+    return;
+  }
+  const h = Math.ceil(rect.height);
+  document.documentElement.style.setProperty('--freshloop-mobile-nav-h', `${h}px`);
+}
+
 export function Navigation({ onVoice }: { onVoice?: () => void } = {}) {
   const pathname = usePathname();
   const { activeUser, signOutUser } = useRole();
   const [collapsed, setCollapsed] = useState(false);
+  const mobileNavRef = useRef<HTMLElement | null>(null);
   const items = itemsFor(activeUser?.role ?? null);
   const role = activeUser?.role ?? null;
+
+  useLayoutEffect(() => {
+    const el = mobileNavRef.current;
+    if (!el) return;
+
+    const run = () => syncMobileNavHeightCssVar(el);
+    run();
+
+    const ro = new ResizeObserver(run);
+    ro.observe(el);
+
+    window.addEventListener('orientationchange', run);
+    const mq = window.matchMedia('(max-width: 767px)');
+    const onMq = () => run();
+    mq.addEventListener('change', onMq);
+
+    return () => {
+      ro.disconnect();
+      window.removeEventListener('orientationchange', run);
+      mq.removeEventListener('change', onMq);
+      document.documentElement.style.removeProperty('--freshloop-mobile-nav-h');
+    };
+  }, [items.length, pathname]);
 
   return (
     <>
@@ -201,7 +241,10 @@ export function Navigation({ onVoice }: { onVoice?: () => void } = {}) {
         ) : null}
       </header>
 
-      <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-slate-800 bg-slate-950/95 px-1 pb-[max(0.35rem,env(safe-area-inset-bottom))] pt-1 backdrop-blur-xl md:hidden">
+      <nav
+        ref={mobileNavRef}
+        className="fixed inset-x-0 bottom-0 z-40 border-t border-slate-800 bg-slate-950/95 px-1 pb-[max(0.35rem,env(safe-area-inset-bottom))] pt-1 backdrop-blur-xl md:hidden"
+      >
         <ul className="flex overflow-x-auto">
           {items.map((item) => {
             const shown = displayItem(item, role);

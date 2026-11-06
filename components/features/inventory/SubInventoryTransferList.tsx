@@ -66,6 +66,7 @@ export function SubInventoryTransferList({
     () => new Map()
   );
   const [floorBundleMapReady, setFloorBundleMapReady] = useState(false);
+  const [bundlePromoError, setBundlePromoError] = useState<string | null>(null);
   const variant = transferVariantForTab(location);
   const operations = layoutVariant === 'operations';
   const dense = listDensity === 'compact' && operations;
@@ -92,9 +93,18 @@ export function SubInventoryTransferList({
       debounceTimer = setTimeout(() => {
         debounceTimer = null;
         void fetch('/api/admin/floor-bundle-promos', { cache: 'no-store' })
-          .then((res) => res.json())
-          .then((json) => {
-            if (!json.success || !Array.isArray(json.promos)) return;
+          .then(async (res) => {
+            const json = (await res.json()) as {
+              success?: boolean;
+              promos?: unknown[];
+              error?: string;
+            };
+            if (!res.ok || !json.success) {
+              setBundlePromoError(json.error ?? 'Could not load bundle pricing.');
+              return;
+            }
+            if (!Array.isArray(json.promos)) return;
+            setBundlePromoError(null);
             const next = new Map<string, ItemBundlePromoHint>();
             for (const promo of json.promos as Array<{
               id: string;
@@ -112,7 +122,10 @@ export function SubInventoryTransferList({
             }
             setBundleByProductId(next);
           })
-          .catch(() => undefined)
+          .catch((err: unknown) => {
+            setBundlePromoError('Network error — bundle hints unavailable.');
+            console.error('[freshloop] SubInventoryTransferList floor-bundle-promos', err);
+          })
           .finally(() => setFloorBundleMapReady(true));
       }, 250);
     };
@@ -134,6 +147,11 @@ export function SubInventoryTransferList({
 
   return (
     <>
+    {bundlePromoError && location === 'retail_floor' && showBundleTools ? (
+      <p className="mb-2 rounded-xl border border-amber-900/40 bg-amber-950/25 px-3 py-2 text-[11px] font-semibold text-amber-200">
+        {bundlePromoError}
+      </p>
+    ) : null}
     <ul
       className={cn(
         operations && (dense ? 'space-y-1.5 p-2' : 'space-y-3 p-3'),
