@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils/cn';
 const TABS = [
   { href: '/admin/executive', label: 'Executive ROI' },
   { href: '/admin', label: 'Operations' },
+  { href: '/admin/suppliers', label: 'Suppliers' },
 ] as const;
 
 export function AdminViewTabs() {
@@ -21,7 +22,9 @@ export function AdminViewTabs() {
         const active =
           tab.href === '/admin/executive'
             ? pathname.startsWith('/admin/executive')
-            : pathname === '/admin';
+            : tab.href === '/admin/suppliers'
+              ? pathname.startsWith('/admin/suppliers')
+              : pathname === '/admin';
         return (
           <Link
             key={tab.href}

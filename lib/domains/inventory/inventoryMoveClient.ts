@@ -50,6 +50,8 @@ export type InventoryUpdatedDetail = {
   source?: 'level-patch';
   /** Waste KPI state already returned from volumetric-scrap POST. */
   skipWasteKpiRefresh?: boolean;
+  /** Skip debounced `/api/admin/stats` refresh (e.g. single-SKU case override). */
+  skipStatsRefresh?: boolean;
 };
 
 const INVENTORY_UPDATED_CHANNEL = 'freshloop-inventory-updated';

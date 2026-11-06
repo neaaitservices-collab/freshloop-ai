@@ -102,7 +102,7 @@ export function CaseBoard({
   const [packSize, setPackSize] = useState(() =>
     selected ? String(selected.casePackSize) : "1",
   );
-  const [yieldDivisor, setYieldDivisor] = useState("1");
+  const [splitFactor, setSplitFactor] = useState("1");
   const [packUnit, setPackUnit] = useState<RetailUnit>(() =>
     selected ? retailUnitFor(selected.unitType) : "units",
   );
@@ -142,7 +142,7 @@ export function CaseBoard({
   useEffect(() => {
     if (!selected) return;
     setPackSize(String(selected.casePackSize));
-    setYieldDivisor("1");
+    setSplitFactor("1");
     const unit = retailUnitFor(selected.unitType);
     setPackUnit(unit);
     setYieldUnit(unit);
@@ -164,7 +164,7 @@ export function CaseBoard({
   );
   const priceNumber = toNumber(currentRetailPrice);
   const pack = toNumber(packSize);
-  const divisor = toNumber(yieldDivisor);
+  const divisor = toNumber(splitFactor);
   const unitsPerCase =
     selected && pack > 0 && divisor > 0
       ? pack / divisor
@@ -175,7 +175,7 @@ export function CaseBoard({
       calculateYieldQuote({
         caseCost,
         packSize: pack,
-        yieldDivisor: divisor,
+        splitFactor: divisor,
         targetMargin,
         currentRetailPrice: priceNumber,
       }),
@@ -197,7 +197,7 @@ export function CaseBoard({
         body: JSON.stringify({
           productId: selected.productId,
           packSize: pack,
-          yieldDivisor: divisor,
+          splitFactor: divisor,
           retailUnit: yieldUnit,
           retailPrice: priceNumber,
         }),
@@ -294,7 +294,7 @@ export function CaseBoard({
             selected ? (
               <EditorPanel
                 packSize={packSize}
-                yieldDivisor={yieldDivisor}
+                splitFactor={splitFactor}
                 packUnit={packUnit}
                 yieldUnit={yieldUnit}
                 quote={quote}
@@ -309,8 +309,8 @@ export function CaseBoard({
                   setPackSize(value);
                   setSavedMessage(null);
                 }}
-                onYieldDivisor={(value) => {
-                  setYieldDivisor(value);
+                onSplitFactor={(value) => {
+                  setSplitFactor(value);
                   setSavedMessage(null);
                 }}
                 onPackUnit={(value) => {
@@ -473,15 +473,15 @@ export function CaseBoard({
               <div className="space-y-5 rounded-3xl border border-zinc-800 bg-zinc-900/80 p-4 sm:p-5">
                 <YieldBreakdown
                   packSize={packSize}
-                  yieldDivisor={yieldDivisor}
+                  splitFactor={splitFactor}
                   packUnit={packUnit}
                   yieldUnit={yieldUnit}
                   onPackSize={(value) => {
                     setPackSize(value);
                     setSavedMessage(null);
                   }}
-                  onYieldDivisor={(value) => {
-                    setYieldDivisor(value);
+                  onSplitFactor={(value) => {
+                    setSplitFactor(value);
                     setSavedMessage(null);
                   }}
                   onPackUnit={(value) => {
@@ -820,7 +820,7 @@ function FocusedEditor({
 
 function EditorPanel({
   packSize,
-  yieldDivisor,
+  splitFactor,
   packUnit,
   yieldUnit,
   quote,
@@ -832,7 +832,7 @@ function EditorPanel({
   saving,
   canSave,
   onPackSize,
-  onYieldDivisor,
+  onSplitFactor,
   onPackUnit,
   onYieldUnit,
   onMarginMode,
@@ -841,7 +841,7 @@ function EditorPanel({
   onSave,
 }: {
   packSize: string;
-  yieldDivisor: string;
+  splitFactor: string;
   packUnit: RetailUnit;
   yieldUnit: RetailUnit;
   quote: YieldQuote;
@@ -853,7 +853,7 @@ function EditorPanel({
   saving: boolean;
   canSave: boolean;
   onPackSize: (value: string) => void;
-  onYieldDivisor: (value: string) => void;
+  onSplitFactor: (value: string) => void;
   onPackUnit: (value: RetailUnit) => void;
   onYieldUnit: (value: RetailUnit) => void;
   onMarginMode: (value: MarginMode) => void;
@@ -865,11 +865,11 @@ function EditorPanel({
     <div className="space-y-5 rounded-3xl border border-zinc-800 bg-zinc-900/80 p-4 sm:p-5">
       <YieldBreakdown
         packSize={packSize}
-        yieldDivisor={yieldDivisor}
+        splitFactor={splitFactor}
         packUnit={packUnit}
         yieldUnit={yieldUnit}
         onPackSize={onPackSize}
-        onYieldDivisor={onYieldDivisor}
+        onSplitFactor={onSplitFactor}
         onPackUnit={onPackUnit}
         onYieldUnit={onYieldUnit}
       />

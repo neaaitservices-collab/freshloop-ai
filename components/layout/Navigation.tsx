@@ -14,8 +14,10 @@ import {
   User,
   Users,
   Warehouse,
+  Truck,
 } from 'lucide-react';
 import { useRole } from '@/components/auth/RoleProvider';
+import { VOICE_UI_ENABLED } from '@/lib/features/voiceUiEnabled';
 import { homePathForRole } from '@/lib/utils/roleRouting';
 import { isManager, ROLE_LABELS, type RoleName } from '@/lib/utils/roles';
 
@@ -33,13 +35,30 @@ interface NavItem {
 const ITEMS: NavItem[] = [
   { id: 'receive', label: 'Receive', icon: Package, href: '/receive', roles: ['ADMIN', 'STORE_MANAGER', 'RECEIVING_CLERK'] },
   {
+    id: 'suppliers',
+    label: 'Suppliers',
+    icon: Truck,
+    href: '/admin/suppliers',
+    roles: ['ADMIN', 'STORE_MANAGER', 'RECEIVING_CLERK'],
+  },
+  {
     id: 'inventory',
     label: 'Inventory',
     icon: Warehouse,
     href: '/inventory',
     roles: ['ADMIN', 'STORE_MANAGER', 'RECEIVING_CLERK', 'FLOOR_STAFF', 'DELI_CHEF'],
   },
-  { id: 'voice', label: 'Voice', icon: Mic, voice: true, roles: ['ADMIN', 'STORE_MANAGER', 'FLOOR_STAFF'] },
+  ...(VOICE_UI_ENABLED
+    ? ([
+        {
+          id: 'voice',
+          label: 'Voice',
+          icon: Mic,
+          voice: true as const,
+          roles: ['ADMIN', 'STORE_MANAGER', 'FLOOR_STAFF'] as RoleName[],
+        },
+      ] as NavItem[])
+    : []),
   { id: 'production', label: 'Production', icon: ChefHat, href: '/production', roles: ['ADMIN', 'STORE_MANAGER', 'DELI_CHEF'] },
   {
     id: 'operations',
@@ -96,7 +115,7 @@ function itemsFor(role: RoleName | null): NavItem[] {
   return filtered;
 }
 
-export function Navigation({ onVoice }: { onVoice: () => void }) {
+export function Navigation({ onVoice }: { onVoice?: () => void } = {}) {
   const pathname = usePathname();
   const { activeUser, signOutUser } = useRole();
   const [collapsed, setCollapsed] = useState(false);
@@ -192,6 +211,7 @@ export function Navigation({ onVoice }: { onVoice: () => void }) {
               active ? 'text-blue-300' : 'text-slate-400'
             }`;
             if (shown.voice) {
+              if (!onVoice) return null;
               return (
                 <li key={shown.id} className="flex flex-1">
                   <button type="button" onClick={onVoice} className={className}>
@@ -225,7 +245,7 @@ function NavRow({
   item: NavItem;
   active: boolean;
   collapsed: boolean;
-  onVoice: () => void;
+  onVoice?: () => void;
 }) {
   const Icon = item.icon;
   const className = `flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-bold transition ${
@@ -236,6 +256,7 @@ function NavRow({
       : 'text-slate-300 hover:bg-slate-800/50 hover:text-slate-100'
   }`;
   if (item.voice) {
+    if (!onVoice) return null;
     return (
       <button type="button" onClick={onVoice} className={className} title="Voice">
         <Icon className="h-4 w-4 shrink-0" />

@@ -1,5 +1,6 @@
 import type { InventoryMoveAction } from '@/lib/domains/inventory/inventoryMoveClient';
 import type { StockLevel } from '@/lib/domains/inventory/stock';
+import { stockFromPar } from '@/lib/domains/inventory/parLevel';
 
 function roundQty(value: number): number {
   return Number(value.toFixed(2));
@@ -66,4 +67,17 @@ export function applyOptimisticMove(
   }
 
   return row;
+}
+
+/** Preview shelf stock after a manager sets cases on hand (floor + deli target). */
+export function applyOptimisticStockCases(row: StockLevel, casesOnHand: number): StockLevel {
+  const pack = row.casePackSize > 0 ? row.casePackSize : 1;
+  const onHand = Number((Math.max(0, casesOnHand) * pack).toFixed(2));
+  const rated = stockFromPar({
+    onHand,
+    casePackSize: pack,
+    unitCost: row.unitCost,
+    parCases: row.parCases,
+  });
+  return { ...row, onHand, ...rated };
 }

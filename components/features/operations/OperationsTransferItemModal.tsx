@@ -166,7 +166,7 @@ export function OperationsTransferItemModal({
   const variant: TransferBarVariant = location === 'retail_floor' ? 'floor' : 'kitchen';
   const defaultQty =
     location === 'retail_floor'
-      ? suggestedPullQty(row, pullDays)
+      ? suggestedPullQty(row)
       : Math.min(row.kitchenPrepQty, 1);
   const transferBusy = busy || bundleRemoving;
 

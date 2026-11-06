@@ -5,9 +5,7 @@ import Link from 'next/link';
 import { AlertTriangle, LayoutDashboard, Receipt, RefreshCw, Sheet } from 'lucide-react';
 import {
   calculateYieldQuote,
-  caseFloorForTargetMargin,
   caseFloorFromPerUnitFloor,
-  floorPriceForTargetMargin,
   formatCurrency,
   formatUnits,
   perUnitFloorFromCaseFloor,
@@ -17,14 +15,17 @@ import {
   type ReceivingLog,
   type RetailUnit,
 } from '@/lib/domains/receiving/yieldPricing';
-import { ReceivingDetails } from '@/components/features/receive/ReceivingDetails';
-import { YieldBreakdown } from '@/components/features/receive/YieldBreakdown';
-import { PricingStrategy } from '@/components/features/receive/PricingStrategy';
+import { InvoiceItemsCarousel } from '@/components/features/receive/InvoiceItemsCarousel';
+import { ReceivingPricingYieldCard } from '@/components/features/receive/ReceivingPricingYieldCard';
 import { PackReceiptCard } from '@/components/features/receive/PackReceiptCard';
 import { PendingVendorCreditsPanel } from '@/components/features/receive/PendingVendorCreditsPanel';
 import { Button } from '@/components/ui/Button';
 import { Card, CardBody } from '@/components/ui/Card';
 import { cn } from '@/lib/utils/cn';
+import {
+  applyPresetMarginToUnitPrice,
+  parseCatalogPriceInput,
+} from '@/lib/domains/receiving/catalogItemPricing';
 import { consumeStashedReceivingScan } from '@/lib/domains/receiving/receivingBridge';
 import { readReceivingPrefs, writeReceivingPrefs } from '@/lib/domains/receiving/receivingPreferences';
 import type { ReceivingDispositionRow } from '@/lib/domains/receiving/receivingDisposition';
@@ -75,22 +76,24 @@ function toPositiveNumber(raw: string): number {
 
 interface LogPricing {
   packSize: number;
-  yieldDivisor: number;
+  splitFactor: number;
   retailUnit: RetailUnit;
   marginMode: MarginMode;
   customMarginPercent: number;
   currentRetailPrice: number;
+  caseRetailPrice: number | null;
 }
 
 function resolveLogPricing(log: ReceivingLog, live: (LogPricing & { id: string }) | null): LogPricing {
   if (live && live.id === log.id) {
     return {
       packSize: live.packSize,
-      yieldDivisor: live.yieldDivisor,
+      splitFactor: live.splitFactor,
       retailUnit: live.retailUnit,
       marginMode: live.marginMode,
       customMarginPercent: live.customMarginPercent,
       currentRetailPrice: live.currentRetailPrice,
+      caseRetailPrice: live.caseRetailPrice,
     };
   }
 
@@ -98,7 +101,7 @@ function resolveLogPricing(log: ReceivingLog, live: (LogPricing & { id: string }
   const saved = readReceivingPrefs(log.itemName);
   const packFromSheet = log.packSize && log.packSize > 0 ? log.packSize : 0;
   const packSize = packFromSheet || toPositiveNumber(saved?.packSize ?? defaults.packSize) || toPositiveNumber(defaults.packSize);
-  const yieldDivisor = toPositiveNumber(saved?.yieldDivisor ?? defaults.yieldDivisor) || 1;
+  const splitFactor = toPositiveNumber(saved?.splitFactor ?? defaults.splitFactor) || 1;
   const retailUnit = log.retailUnit ?? saved?.retailUnit ?? defaults.retailUnit;
   const marginMode = saved?.marginMode ?? '40';
   const customMarginPercent = toPositiveNumber(saved?.customMarginPercent ?? '35') || 35;
@@ -106,22 +109,30 @@ function resolveLogPricing(log: ReceivingLog, live: (LogPricing & { id: string }
   const quote = calculateYieldQuote({
     caseCost: log.caseCost,
     packSize,
-    yieldDivisor,
+    splitFactor,
     targetMargin,
     currentRetailPrice: 0,
   });
 
   return {
     packSize,
-    yieldDivisor,
+    splitFactor,
     retailUnit,
     marginMode,
     customMarginPercent,
     currentRetailPrice: quote.targetSrp !== null ? Number(quote.targetSrp.toFixed(2)) : 0,
+    caseRetailPrice:
+      log.suggestedCaseFloorPrice !== undefined && log.suggestedCaseFloorPrice > 0
+        ? log.suggestedCaseFloorPrice
+        : null,
   };
 }
 
-async function postLogToInventory(log: ReceivingLog, pricing: LogPricing) {
+async function postLogToInventory(
+  log: ReceivingLog,
+  pricing: LogPricing,
+  supplierId?: string
+) {
   const response = await fetch('/api/receiving-logs', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -131,11 +142,13 @@ async function postLogToInventory(log: ReceivingLog, pricing: LogPricing) {
       casesReceived: log.casesReceived,
       caseCost: log.caseCost,
       packSize: pricing.packSize,
-      yieldDivisor: pricing.yieldDivisor,
+      splitFactor: pricing.splitFactor,
       retailUnit: pricing.retailUnit,
       marginMode: pricing.marginMode,
       customMarginPercent: pricing.customMarginPercent,
       currentRetailPrice: pricing.currentRetailPrice,
+      caseRetailPrice: pricing.caseRetailPrice,
+      ...(supplierId ? { supplierId } : {}),
     }),
   });
   let json: {
@@ -155,6 +168,64 @@ async function postLogToInventory(log: ReceivingLog, pricing: LogPricing) {
     onHand: Number(json.stock?.onHand),
     productId: typeof json.stock?.productId === 'string' ? json.stock.productId : undefined,
   };
+}
+
+function logPricingToPostBody(log: ReceivingLog, pricing: LogPricing, supplierId?: string) {
+  return {
+    externalLogId: log.id,
+    itemName: log.itemName,
+    productId: log.productId,
+    casesReceived: log.casesReceived,
+    caseCost: log.caseCost,
+    packSize: pricing.packSize,
+    splitFactor: pricing.splitFactor,
+    retailUnit: pricing.retailUnit,
+    marginMode: pricing.marginMode,
+    customMarginPercent: pricing.customMarginPercent,
+    currentRetailPrice: pricing.currentRetailPrice,
+    caseRetailPrice: pricing.caseRetailPrice,
+    ...(supplierId ? { supplierId } : {}),
+  };
+}
+
+async function postLogsBatchToInventory(
+  entries: Array<{ log: ReceivingLog; pricing: LogPricing }>,
+  supplierId?: string
+): Promise<{
+  ok: boolean;
+  results: Array<{
+    externalLogId?: string;
+    itemName: string;
+    stock: { posted: boolean; reason?: string; onHand?: number; productId?: string };
+  }>;
+  error?: string;
+}> {
+  const response = await fetch('/api/receiving-logs/batch', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      supplierId,
+      items: entries.map(({ log, pricing }) => logPricingToPostBody(log, pricing, supplierId)),
+    }),
+  });
+  let json: {
+    success?: boolean;
+    error?: string;
+    results?: Array<{
+      externalLogId?: string;
+      itemName: string;
+      stock: { posted: boolean; reason?: string; onHand?: number; productId?: string };
+    }>;
+  } = {};
+  try {
+    json = await response.json();
+  } catch {
+    json = {};
+  }
+  if (!response.ok || !json.success || !Array.isArray(json.results)) {
+    return { ok: false, results: [], error: json.error || 'Batch save failed.' };
+  }
+  return { ok: true, results: json.results };
 }
 
 function MovedNoticeBanner({ notice }: { notice: string }) {
@@ -193,6 +264,7 @@ export function YieldPricingDashboard({
   initialWarning = null,
   onScanNext,
   onLogDisposition,
+  supplierId,
 }: {
   onOpenCommandCenter?: () => void;
   embedded?: boolean;
@@ -204,6 +276,8 @@ export function YieldPricingDashboard({
   onScanNext?: () => void;
   /** Drop scanned invoice lines from the parent list when removed / not received. */
   onLogDisposition?: (logId: string) => void;
+  /** Global supplier for posts to `/api/receiving-logs`. */
+  supplierId?: string;
 }) {
   const seeded = initialLogs !== undefined;
   const [logs, setLogs] = useState<ReceivingLog[]>(initialLogs ?? []);
@@ -214,7 +288,7 @@ export function YieldPricingDashboard({
   const [selectedId, setSelectedId] = useState<string | null>(initialLogs?.[0]?.id ?? null);
 
   const [packSize, setPackSize] = useState('12');
-  const [yieldDivisor, setYieldDivisor] = useState('1');
+  const [splitFactor, setSplitFactor] = useState('1');
   const [packUnit, setPackUnit] = useState<RetailUnit>('units');
   const [yieldUnit, setYieldUnit] = useState<RetailUnit>('units');
   const [marginMode, setMarginMode] = useState<MarginMode>('40');
@@ -377,7 +451,7 @@ export function YieldPricingDashboard({
       selected.packSize && selected.packSize > 0
         ? String(selected.packSize)
         : (saved?.packSize ?? defaults.packSize);
-    const nextYieldDivisor = saved?.yieldDivisor ?? defaults.yieldDivisor;
+    const nextSplitFactor = saved?.splitFactor ?? defaults.splitFactor;
     const nextRetailUnit = selected.retailUnit ?? saved?.retailUnit ?? defaults.retailUnit;
     const nextMarginMode = saved?.marginMode ?? '40';
     const nextCustomMargin = saved?.customMarginPercent ?? '35';
@@ -385,18 +459,18 @@ export function YieldPricingDashboard({
     const quote = calculateYieldQuote({
       caseCost: selected.caseCost,
       packSize: Number(nextPackSize),
-      yieldDivisor: Number(nextYieldDivisor),
+      splitFactor: Number(nextSplitFactor),
       targetMargin,
       currentRetailPrice: 0,
     });
     setPackSize(nextPackSize);
-    setYieldDivisor(nextYieldDivisor);
+    setSplitFactor(nextSplitFactor);
     setPackUnit(nextRetailUnit);
     setYieldUnit(nextRetailUnit);
     setMarginMode(nextMarginMode);
     setCustomMarginPercent(nextCustomMargin);
     const packNum = Number(nextPackSize);
-    const divNum = Number(nextYieldDivisor);
+    const divNum = Number(nextSplitFactor);
     if (
       selected.suggestedCaseFloorPrice !== undefined &&
       selected.suggestedCaseFloorPrice > 0
@@ -412,13 +486,17 @@ export function YieldPricingDashboard({
       setCurrentRetailPrice(perUnit !== null ? perUnit.toFixed(2) : '0.00');
     } else {
       floorFromMargin.current = true;
-      setCurrentRetailPrice(quote.targetSrp !== null ? quote.targetSrp.toFixed(2) : '0.00');
-      const caseFloor = caseFloorForTargetMargin({
-        caseCost: selected.caseCost,
-        marginMode: nextMarginMode,
-        customMarginPercent: toPositiveNumber(nextCustomMargin),
-      });
-      setCurrentCaseFloor(caseFloor !== null ? caseFloor.toFixed(2) : '0.00');
+      const presetUnit =
+        nextMarginMode === '35' || nextMarginMode === '40'
+          ? applyPresetMarginToUnitPrice({
+              mode: nextMarginMode,
+              unitCost: quote.unitCost ?? 0,
+            })
+          : null;
+      setCurrentRetailPrice(
+        presetUnit ?? (quote.targetSrp !== null ? quote.targetSrp.toFixed(2) : '0.00')
+      );
+      setCurrentCaseFloor('');
     }
     setSavedMessage(null);
     setErrorMessage(null);
@@ -430,7 +508,7 @@ export function YieldPricingDashboard({
         ? savedDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
         : 'prior session';
       setSavedPrefsHint(
-        `Using saved defaults (pack ${saved.packSize}, yield ÷${saved.yieldDivisor}, margin ${saved.marginMode ?? '40'}%) from ${label}.`
+        `Using saved defaults (pack ${saved.packSize}, yield ÷${saved.splitFactor}, margin ${saved.marginMode ?? '40'}%) from ${label}.`
       );
     } else {
       setSavedPrefsHint(null);
@@ -462,32 +540,14 @@ export function YieldPricingDashboard({
   const targetMargin = resolveTargetMargin(marginMode, toPositiveNumber(customMarginPercent));
   const priceNumber = toPositiveNumber(currentRetailPrice);
   const packNum = toPositiveNumber(packSize);
-  const divNum = toPositiveNumber(yieldDivisor);
-
-  useEffect(() => {
-    if (!selected || marginMode === 'custom' || !floorFromMargin.current) return;
-    const unit = floorPriceForTargetMargin({
-      caseCost: selected.caseCost,
-      packSize: packNum,
-      yieldDivisor: divNum,
-      marginMode,
-      customMarginPercent: toPositiveNumber(customMarginPercent),
-    });
-    if (unit !== null && unit > 0) setCurrentRetailPrice(unit.toFixed(2));
-    const caseFloor = caseFloorForTargetMargin({
-      caseCost: selected.caseCost,
-      marginMode,
-      customMarginPercent: toPositiveNumber(customMarginPercent),
-    });
-    if (caseFloor !== null && caseFloor > 0) setCurrentCaseFloor(caseFloor.toFixed(2));
-  }, [selected, marginMode, packNum, divNum, customMarginPercent]);
+  const divNum = toPositiveNumber(splitFactor);
 
   const quote = useMemo(() => {
     if (!selected) {
       return calculateYieldQuote({
         caseCost: 0,
         packSize: 0,
-        yieldDivisor: 0,
+        splitFactor: 0,
         targetMargin,
         currentRetailPrice: priceNumber,
       });
@@ -495,11 +555,33 @@ export function YieldPricingDashboard({
     return calculateYieldQuote({
       caseCost: selected.caseCost,
       packSize: toPositiveNumber(packSize),
-      yieldDivisor: toPositiveNumber(yieldDivisor),
+      splitFactor: toPositiveNumber(splitFactor),
       targetMargin,
       currentRetailPrice: priceNumber,
     });
-  }, [selected, packSize, yieldDivisor, targetMargin, priceNumber]);
+  }, [selected, packSize, splitFactor, targetMargin, priceNumber]);
+
+  useEffect(() => {
+    if (!selected || marginMode === 'custom' || !floorFromMargin.current) return;
+    const unitCost = quote.unitCost;
+    if (unitCost === null || !(unitCost > 0)) return;
+    if (marginMode !== '35' && marginMode !== '40') return;
+    const next = applyPresetMarginToUnitPrice({ mode: marginMode, unitCost });
+    if (next) setCurrentRetailPrice(next);
+  }, [selected, marginMode, packNum, divNum, quote.unitCost]);
+
+  const applyMarginMode = (mode: MarginMode) => {
+    floorFromMargin.current = mode !== 'custom';
+    setMarginMode(mode);
+    setSavedMessage(null);
+    if (mode === '35' || mode === '40') {
+      const unitCost = quote.unitCost;
+      if (unitCost !== null && unitCost > 0) {
+        const next = applyPresetMarginToUnitPrice({ mode, unitCost });
+        if (next) setCurrentRetailPrice(next);
+      }
+    }
+  };
 
   const hideLogFromBoard = (removedId: string, notice: string) => {
     setHiddenLogIds((prev) => {
@@ -626,18 +708,19 @@ export function YieldPricingDashboard({
     return {
       id: selected.id,
       packSize: toPositiveNumber(packSize),
-      yieldDivisor: toPositiveNumber(yieldDivisor),
+      splitFactor: toPositiveNumber(splitFactor),
       retailUnit: yieldUnit,
       marginMode,
       customMarginPercent: toPositiveNumber(customMarginPercent),
       currentRetailPrice: priceNumber,
+      caseRetailPrice: parseCatalogPriceInput(currentCaseFloor),
     };
   };
 
   const rememberPricing = (itemName: string, pricing: LogPricing) => {
     writeReceivingPrefs(itemName, {
       packSize: String(pricing.packSize),
-      yieldDivisor: String(pricing.yieldDivisor),
+      splitFactor: String(pricing.splitFactor),
       retailUnit: pricing.retailUnit,
       marginMode: pricing.marginMode,
       customMarginPercent: String(pricing.customMarginPercent),
@@ -656,7 +739,7 @@ export function YieldPricingDashboard({
     setMovedNotice(null);
 
     try {
-      const result = await postLogToInventory(selected, pricing);
+      const result = await postLogToInventory(selected, pricing, supplierId);
       if (!result.ok) {
         setErrorMessage(
           result.reason || 'Stock was not updated, so this case stays on the receiving list.'
@@ -682,6 +765,7 @@ export function YieldPricingDashboard({
     setSavedMessage(null);
     setErrorMessage(null);
     setMovedNotice(null);
+    setSaveAllProgress(`${targets.length} items…`);
 
     const failed: string[] = [];
     let savedCount = 0;
@@ -690,29 +774,45 @@ export function YieldPricingDashboard({
     let lastProductId: string | undefined;
     let lastUnit: RetailUnit = 'units';
 
+    const entries = targets.map((log) => ({
+      log,
+      pricing: resolveLogPricing(log, live && live.id === log.id ? live : null),
+    }));
+
     try {
-      for (let index = 0; index < targets.length; index += 1) {
-        const log = targets[index];
-        setSaveAllProgress(`${index + 1} of ${targets.length}`);
-        const pricing = resolveLogPricing(log, live);
-        try {
-          const result = await postLogToInventory(log, pricing);
-          if (!result.ok) {
-            failed.push(`${log.itemName} (${result.reason})`);
-            continue;
-          }
+      const batch = await postLogsBatchToInventory(entries, supplierId);
+      if (!batch.ok) {
+        setErrorMessage(batch.error || 'Batch save failed. Check the connection and try again.');
+        return;
+      }
+
+      const pricingByLogId = new Map(entries.map((e) => [e.log.id, e.pricing]));
+
+      for (const row of batch.results) {
+        const logId = row.externalLogId;
+        const log = logId ? targets.find((t) => t.id === logId) : undefined;
+        const pricing = logId ? pricingByLogId.get(logId) : undefined;
+        const label = row.itemName || log?.itemName || 'Item';
+
+        if (!row.stock.posted) {
+          failed.push(`${label} (${row.stock.reason || 'Save failed'})`);
+          continue;
+        }
+
+        if (pricing && log) {
           rememberPricing(log.itemName, pricing);
           markLogPosted(log.id);
           purgeLogFromLocalSources(log.id);
-          savedCount += 1;
-          lastName = log.itemName;
-          lastOnHand = result.onHand;
-          lastProductId = result.productId;
-          lastUnit = pricing.retailUnit;
-        } catch {
-          failed.push(`${log.itemName} (connection error)`);
         }
+        savedCount += 1;
+        lastName = label;
+        lastOnHand = Number(row.stock.onHand) || 0;
+        lastProductId = row.stock.productId;
+        lastUnit = pricing?.retailUnit ?? 'units';
       }
+    } catch {
+      setErrorMessage('Batch save failed. Check the connection and try again.');
+      return;
     } finally {
       setSavingAll(false);
       setSaveAllProgress(null);
@@ -819,147 +919,68 @@ export function YieldPricingDashboard({
       {selected && boardActive ? (
         <div
           className={cn(
-            'space-y-4 pb-56 transition-opacity duration-300',
+            'mx-auto flex max-w-3xl flex-col gap-5 pb-8 transition-opacity duration-300',
             animatingOutIds.has(selected.id) && 'opacity-90'
           )}
         >
-          <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1 lg:hidden">
-            {listLogs.map((log) => {
-              const active = log.id === selected.id;
-              const exiting = animatingOutIds.has(log.id);
-              return (
-                <button
-                  key={log.id}
-                  type="button"
-                  onClick={() => setSelectedId(log.id)}
-                  disabled={exiting}
-                  className={cn(
-                    'shrink-0 rounded-2xl border px-3 py-2 text-left transition-all duration-300 ease-out',
-                    exiting && 'pointer-events-none scale-95 opacity-0',
-                    active
-                      ? 'border-emerald-400 bg-emerald-400 text-slate-950'
-                      : 'border-slate-700 bg-slate-900 text-slate-200'
-                  )}
-                >
-                  <span className="block max-w-[11rem] truncate text-xs font-black">{log.itemName}</span>
-                  <span className={`text-[10px] font-bold ${active ? 'text-slate-800' : 'text-slate-500'}`}>
-                    {log.casesReceived} cases · {formatCurrency(log.caseCost)}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
+          <InvoiceItemsCarousel
+            items={listLogs}
+            selectedId={selected.id}
+            animatingOutIds={animatingOutIds}
+            onSelect={setSelectedId}
+          />
 
-          <div className="grid items-start gap-4 lg:grid-cols-[220px_minmax(0,1fr)]">
-          <nav className="sticky top-4 hidden max-h-[calc(100dvh-6rem)] overflow-hidden rounded-3xl border border-slate-800 bg-slate-900/80 lg:block">
-            <p className="border-b border-slate-800 px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-slate-500">
-              Received items
-            </p>
-            <ul className="max-h-[calc(100dvh-9rem)] divide-y divide-slate-800/80 overflow-y-auto">
-              {listLogs.map((log) => {
-                const active = log.id === selected.id;
-                const exiting = animatingOutIds.has(log.id);
-                return (
-                  <li
-                    key={log.id}
-                    className={cn(
-                      'overflow-hidden transition-all duration-300 ease-out',
-                      exiting && 'max-h-0 opacity-0'
-                    )}
-                  >
-                    <button
-                      type="button"
-                      onClick={() => setSelectedId(log.id)}
-                      disabled={exiting}
-                      className={cn(
-                        'block w-full px-4 py-3 text-left transition-colors',
-                        active ? 'bg-emerald-400 text-slate-950' : 'text-slate-200 hover:bg-slate-800/70',
-                        exiting && 'py-0'
-                      )}
-                    >
-                      <span className="block text-sm font-black leading-snug">{log.itemName}</span>
-                      <span className={`mt-1 flex items-center justify-between gap-2 text-[11px] ${active ? 'text-slate-800' : 'text-slate-500'}`}>
-                        <span>
-                          {log.casesReceived} cases
-                        </span>
-                        <span className="font-mono font-bold">{formatCurrency(log.caseCost)}</span>
-                      </span>
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          </nav>
-
-          <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(260px,300px)]">
-          <div id="yield-editor" className="space-y-5 rounded-3xl border border-slate-800 bg-slate-900/80 p-4 sm:p-5">
-            <ReceivingDetails log={selected} />
-            {savedPrefsHint ? (
-              <p className="rounded-2xl border border-blue-900/40 bg-blue-950/30 px-3.5 py-2.5 text-[11px] font-semibold leading-snug text-blue-200/95">
-                {savedPrefsHint}
-              </p>
-            ) : null}
-            <div className="border-t border-slate-800" />
-            <YieldBreakdown
-              packSize={packSize}
-              yieldDivisor={yieldDivisor}
-              packUnit={packUnit}
-              yieldUnit={yieldUnit}
-              caseFloorPrice={currentCaseFloor}
-              onCaseFloorPrice={(value) => {
-                floorFromMargin.current = false;
-                setMarginMode('custom');
-                setCurrentCaseFloor(value);
-                const perUnit = perUnitFloorFromCaseFloor(toPositiveNumber(value), packNum, divNum);
-                if (perUnit !== null && perUnit > 0) setCurrentRetailPrice(perUnit.toFixed(2));
-                setSavedMessage(null);
-              }}
-              onPackSize={(value) => {
-                setPackSize(value);
-                setSavedMessage(null);
-              }}
-              onYieldDivisor={(value) => {
-                setYieldDivisor(value);
-                setSavedMessage(null);
-              }}
-              onPackUnit={(value) => {
-                setPackUnit(value);
-                setSavedMessage(null);
-              }}
-              onYieldUnit={(value) => {
-                setYieldUnit(value);
-                setSavedMessage(null);
-              }}
-            />
-            <div className="border-t border-slate-800" />
-            <PricingStrategy
-              quote={quote}
-              marginMode={marginMode}
-              customMarginPercent={customMarginPercent}
-              currentRetailPrice={currentRetailPrice}
-              onMarginMode={(mode) => {
-                floorFromMargin.current = mode !== 'custom';
-                setMarginMode(mode);
-                setSavedMessage(null);
-              }}
-              onCustomMargin={(value) => {
-                setCustomMarginPercent(value);
-                setSavedMessage(null);
-              }}
-              onCurrentRetailPrice={(value) => {
-                floorFromMargin.current = false;
-                setMarginMode('custom');
-                setCurrentRetailPrice(value);
-                const caseNext = caseFloorFromPerUnitFloor(
-                  toPositiveNumber(value),
-                  packNum,
-                  divNum
-                );
-                if (caseNext !== null && caseNext > 0) setCurrentCaseFloor(caseNext.toFixed(2));
-                setSavedMessage(null);
-              }}
-            />
-          </div>
+          <ReceivingPricingYieldCard
+            compactHeader
+            log={selected}
+            packSize={packSize}
+            splitFactor={splitFactor}
+            packUnit={packUnit}
+            yieldUnit={yieldUnit}
+            caseShelfPrice={currentCaseFloor}
+            currentRetailPrice={currentRetailPrice}
+            marginMode={marginMode}
+            customMarginPercent={customMarginPercent}
+            quote={quote}
+            savedPrefsHint={savedPrefsHint}
+            onPackSize={(value) => {
+              setPackSize(value);
+              setSavedMessage(null);
+            }}
+            onSplitFactor={(value) => {
+              setSplitFactor(value);
+              setSavedMessage(null);
+            }}
+            onPackUnit={(value) => {
+              setPackUnit(value);
+              setSavedMessage(null);
+            }}
+            onYieldUnit={(value) => {
+              setYieldUnit(value);
+              setSavedMessage(null);
+            }}
+            onCaseShelfPrice={(value) => {
+              floorFromMargin.current = false;
+              setMarginMode('custom');
+              setCurrentCaseFloor(value);
+              const perUnit = perUnitFloorFromCaseFloor(toPositiveNumber(value), packNum, divNum);
+              if (perUnit !== null && perUnit > 0) setCurrentRetailPrice(perUnit.toFixed(2));
+              setSavedMessage(null);
+            }}
+            onMarginMode={applyMarginMode}
+            onCustomMargin={(value) => {
+              setCustomMarginPercent(value);
+              setSavedMessage(null);
+            }}
+            onRetailFloorPrice={(value) => {
+              floorFromMargin.current = false;
+              setMarginMode('custom');
+              setCurrentRetailPrice(value);
+              const caseNext = caseFloorFromPerUnitFloor(toPositiveNumber(value), packNum, divNum);
+              if (caseNext !== null && caseNext > 0) setCurrentCaseFloor(caseNext.toFixed(2));
+              setSavedMessage(null);
+            }}
+          />
 
           <PackReceiptCard
             log={selected}
@@ -980,8 +1001,6 @@ export function YieldPricingDashboard({
             onNotReceived={() => void postDisposition('NOT_RECEIVED')}
             onRemoveFromList={() => void postDisposition('REMOVED')}
           />
-          </div>
-          </div>
         </div>
       ) : null}
     </div>

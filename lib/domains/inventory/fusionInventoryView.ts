@@ -23,11 +23,8 @@ function statusForLevel(level: StockLevel, pullDays: number): InventoryStatusTyp
   return 'FRESH';
 }
 
-function levelToFloorItem(
-  level: StockLevel,
-  department: InventoryItem['department'],
-  pullDays: number
-): InventoryItem {
+function levelToFloorItem(level: StockLevel, department: InventoryItem['department']): InventoryItem {
+  const pullDays = level.pullDays;
   const base = stockLevelToFusionItem(level, department);
   return {
     ...base,
@@ -44,7 +41,7 @@ function levelToFloorItem(
  * Pass `productIds` to resolve an explicit selection, including SKUs outside that window.
  */
 export async function getFloorPullFusionItems(
-  pullDays = 3,
+  _pullDays = 3,
   options?: { productIds?: string[] }
 ): Promise<InventoryItem[]> {
   const requested =
@@ -54,7 +51,7 @@ export async function getFloorPullFusionItems(
       if (!(row.onHand > 0)) return false;
       if (requested) return requested.has(row.productId);
       if (row.isMarkdown) return true;
-      return row.daysRemaining <= pullDays + 1;
+      return row.daysRemaining <= row.pullDays + 1;
     })
   );
   if (levels.length === 0) return [];
@@ -66,7 +63,7 @@ export async function getFloorPullFusionItems(
   const deptById = new Map(products.map((p) => [p.id, departmentFromPrisma(p.department)]));
 
   return levels.map((level) =>
-    levelToFloorItem(level, deptById.get(level.productId) ?? 'PRODUCE', pullDays)
+    levelToFloorItem(level, deptById.get(level.productId) ?? 'PRODUCE')
   );
 }
 
@@ -75,7 +72,7 @@ export async function getLedgerInventoryItems(options?: {
   status?: string;
   pullThresholdDays?: number;
 }): Promise<InventoryItem[]> {
-  const pullDays = options?.pullThresholdDays ?? 3;
+  void options?.pullThresholdDays;
   const levels = await getStockLevels();
   const products = await prisma.product.findMany({
     where: { id: { in: levels.map((p) => p.productId) } },
@@ -86,7 +83,7 @@ export async function getLedgerInventoryItems(options?: {
   const items: InventoryItem[] = [];
   for (const level of levels) {
     if (level.onHand > 0) {
-      items.push(levelToFloorItem(level, deptById.get(level.productId) ?? 'PRODUCE', pullDays));
+      items.push(levelToFloorItem(level, deptById.get(level.productId) ?? 'PRODUCE'));
     }
     if (level.kitchenPrepQty > 0) {
       items.push(stockLevelToFusionItem(level, deptById.get(level.productId) ?? 'PRODUCE'));

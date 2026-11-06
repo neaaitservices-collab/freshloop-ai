@@ -4,13 +4,13 @@ End-to-end flow from dock to dollars (aligned with Brynn's Sheets logic).
 
 ## 1. Receive → Floor (`/receive`)
 
-1. Configure **pack size**, **yield divisor**, **margin**, **shelf price** on the yield card.
+1. Configure **pack size**, **split factor**, **margin**, **shelf price** on the yield card.
 2. `POST /api/receiving-logs` → `postReceipt()` writes:
    - `Product.yieldPct`, `targetMargin`, `standardCost`, `retailPrice`
    - `InventoryTransaction` **Receive**: `External_Vendor` → `Retail_Floor`
 3. Uses the signed-in receiver's staff id (not a hardcoded demo user).
 
-**Formula:** `unit cost = case cost ÷ (pack size ÷ yield divisor)` — same as Sheets `InventoryNpricing`.
+**Formula:** `unit cost = case cost ÷ (pack size ÷ split factor)` — same as Sheets `InventoryNpricing`.
 
 ## 2. Floor → Kitchen / Waste
 

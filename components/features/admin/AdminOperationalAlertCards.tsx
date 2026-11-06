@@ -10,7 +10,7 @@ import { cn } from '@/lib/utils/cn';
 export function AdminOperationalAlertCards({ stats }: { stats: StoreStats | null }) {
   const pullCount = stats?.pulls ?? 0;
   const lowCount = stats?.lowCount ?? 0;
-  const pullDays = stats?.pullSensitivityDays ?? 3;
+  const storePullDays = stats?.pullSensitivityDays ?? 3;
 
   return (
     <div className="grid gap-4 sm:grid-cols-2">
@@ -45,8 +45,8 @@ export function AdminOperationalAlertCards({ stats }: { stats: StoreStats | null
                   </>
                 ) : (
                   <>
-                    <strong className="font-mono text-lg text-white">0</strong> SKUs within {pullDays}
-                    d — nothing due for pull right now.
+                    <strong className="font-mono text-lg text-white">0</strong> SKUs in their pull
+                    window — nothing due right now (default ≤{storePullDays}d).
                   </>
                 )}
               </p>

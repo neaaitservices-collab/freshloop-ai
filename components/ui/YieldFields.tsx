@@ -62,9 +62,11 @@ export function UnitSelect({
   'aria-label'?: string;
 }) {
   return (
-    <label htmlFor={id} className="block space-y-1.5">
+    <label htmlFor={id} className="block min-w-0 space-y-1.5">
       {label ? (
-        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{label}</span>
+        <span className="block min-h-[15px] text-[10px] font-bold uppercase tracking-wider text-slate-400">
+          {label}
+        </span>
       ) : null}
       <select
         id={id}
@@ -103,7 +105,9 @@ export function NumberField({
   return (
     <label htmlFor={id} className={className ?? 'block space-y-1.5'}>
       {label ? (
-        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{label}</span>
+        <span className="block min-h-[15px] text-[10px] font-bold uppercase tracking-wider text-slate-400">
+          {label}
+        </span>
       ) : null}
       <input
         id={id}

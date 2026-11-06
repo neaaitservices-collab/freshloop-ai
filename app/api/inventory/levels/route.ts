@@ -139,12 +139,17 @@ export async function PATCH(req: NextRequest) {
       const audit = await getLastStockOverrideAudit(productId);
       return NextResponse.json({ success: true, level, audit });
     }
-    if (body.department !== undefined || body.origin !== undefined) {
+    if (
+      body.department !== undefined ||
+      body.origin !== undefined ||
+      body.pullSensitivityDays !== undefined
+    ) {
       const level = await updateProductCatalogMeta({
         productId,
         department: body.department,
         supplier: typeof body.supplier === 'string' ? body.supplier : undefined,
         origin: body.origin,
+        pullSensitivityDays: body.pullSensitivityDays,
       });
       return NextResponse.json({ success: true, level });
     }
@@ -154,17 +159,42 @@ export async function PATCH(req: NextRequest) {
     }
     if (body.packSize !== undefined) {
       const packSize = Number(body.packSize);
-      const yieldDivisor = Number(body.yieldDivisor);
-      const retailPrice = Number(body.retailPrice);
-      if (![packSize, yieldDivisor, retailPrice].every(Number.isFinite)) {
-        return NextResponse.json({ success: false, error: 'Case numbers must be finite.' }, { status: 400 });
+      const splitFactor = Number(body.splitFactor);
+      if (![packSize, splitFactor].every(Number.isFinite) || packSize <= 0 || splitFactor <= 0) {
+        return NextResponse.json({ success: false, error: 'Pack and split must be valid positive numbers.' }, { status: 400 });
+      }
+      let retailPrice: number | undefined;
+      if (body.retailPrice !== undefined) {
+        retailPrice = Number(body.retailPrice);
+        if (!Number.isFinite(retailPrice)) {
+          return NextResponse.json({ success: false, error: 'retailPrice must be a number.' }, { status: 400 });
+        }
+      }
+      let caseRetailPrice: number | null | undefined;
+      if (body.caseRetailPrice === null) {
+        caseRetailPrice = null;
+      } else if (body.caseRetailPrice !== undefined) {
+        const parsed = Number(body.caseRetailPrice);
+        if (!Number.isFinite(parsed)) {
+          return NextResponse.json({ success: false, error: 'caseRetailPrice must be a number or null.' }, { status: 400 });
+        }
+        caseRetailPrice = parsed > 0 ? parsed : null;
+      }
+      let caseCost: number | undefined;
+      if (body.caseCost !== undefined) {
+        caseCost = Number(body.caseCost);
+        if (!Number.isFinite(caseCost) || caseCost < 0) {
+          return NextResponse.json({ success: false, error: 'caseCost must be zero or greater.' }, { status: 400 });
+        }
       }
       const level = await updateCase({
         productId,
         packSize,
-        yieldDivisor,
+        splitFactor,
         retailUnit: body.retailUnit ?? 'units',
-        retailPrice,
+        ...(retailPrice !== undefined ? { retailPrice } : {}),
+        ...(caseRetailPrice !== undefined ? { caseRetailPrice } : {}),
+        ...(caseCost !== undefined ? { caseCost } : {}),
       });
       return NextResponse.json({ success: true, level });
     }

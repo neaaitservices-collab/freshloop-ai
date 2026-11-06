@@ -88,13 +88,24 @@ model Product {
   department         Department
   targetMargin       Float                  @default(0.4)
   unitType           UnitType               @default(UNIT)
+  /// Sellable catalog units per case (after split): receivePackSize ÷ splitFactor.
   casePackSize       Float?                 @default(1)
+  /// Invoice / receive pack size before split (e.g. lbs or units on the case).
+  receivePackSize    Float?
+  /// Split factor at receive (e.g. 2 when half the case pack is sellable per unit).
+  splitFactor        Float?                 @default(1)
   parCases           Int                    @default(2)
   yieldPct           Float?                 @default(100)
   shelfLifeDays      Int                    @default(7)
+  /// Per-SKU pull/rescue window (2–4 days). Null uses store default.
+  pullSensitivityDays Int?                  @map("pull_sensitivity_days")
   supplier           String?
   origin             String?
   standardCost       Float?
+  /// Invoice or catalog-override cost for one case (source of truth for catalog Case cost column).
+  receiveCaseCost    Float?                 @map("receive_case_cost")
+  /// Invoice / manual shelf price for the full case (independent of unit retailPrice).
+  caseRetailPrice    Float?                 @map("case_retail_price")
   retailPrice        Float?
   regularRetailPrice Float?
   isManufactured    Boolean                @default(false)
@@ -380,9 +391,25 @@ model POSMapping {
   @@map("pos_mappings")
 }
 
+model Supplier {
+  id           String   @id @default(cuid())
+  name         String   @unique
+  contactName  String?  @map("contact_name")
+  contactPhone String?  @map("contact_phone")
+  contactEmail String?  @map("contact_email")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  invoices VendorInvoice[]
+
+  @@map("suppliers")
+}
+
 model VendorInvoice {
   id                  String          @id @default(uuid())
   vendorName          String
+  supplierId          String?         @map("supplier_id")
+  supplier            Supplier?       @relation(fields: [supplierId], references: [id], onDelete: SetNull)
   invoiceNumber       String?
   invoiceDate         DateTime
   totalAmount         Float
@@ -394,6 +421,7 @@ model VendorInvoice {
 
   invoiceLineItems    InvoiceLineItem[]
 
+  @@index([supplierId])
   @@map("vendor_invoices")
 }
 

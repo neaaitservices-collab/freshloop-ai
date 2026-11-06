@@ -142,7 +142,6 @@ async function loadStoreStats(): Promise<StoreStats> {
     setting?.pullSensitivityDays === 4
       ? setting.pullSensitivityDays
       : 3;
-  const pullHorizon = new Date(now.getTime() + pullSensitivityDays * 24 * 60 * 60 * 1000);
   const alerts = new Map<string, DepartmentAlert>();
   for (const department of Object.keys(DEPARTMENT_LABELS)) {
     alerts.set(department, { department: DEPARTMENT_LABELS[department], low: 0, expiring: 0 });
@@ -170,7 +169,7 @@ async function loadStoreStats(): Promise<StoreStats> {
     }
 
     const expiration = expirationById.get(product.id);
-    if (expiration && expiration.getTime() <= pullHorizon.getTime()) pulls += 1;
+    if (level && level.onHand > 0 && level.daysRemaining <= level.pullDays) pulls += 1;
     if (expiration && expiration.getTime() <= horizon.getTime()) {
       expiringWithin48h += 1;
       bucket.expiring += 1;

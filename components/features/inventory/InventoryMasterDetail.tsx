@@ -60,7 +60,7 @@ function dispatchInventoryUpdated() {
 function suggestedRetailPrice(input: {
   caseCost: number;
   packSize: number;
-  yieldDivisor: number;
+  splitFactor: number;
   marginMode: MarginMode;
   customMarginPercent: string;
 }): string | null {
@@ -71,7 +71,7 @@ function suggestedRetailPrice(input: {
   const quote = calculateYieldQuote({
     caseCost: input.caseCost,
     packSize: input.packSize,
-    yieldDivisor: input.yieldDivisor,
+    splitFactor: input.splitFactor,
     targetMargin,
     currentRetailPrice: 0,
   });
@@ -139,7 +139,7 @@ export function InventoryMasterDetail({
   const selectedKey = selected?.productId ?? '';
 
   const [packSize, setPackSize] = useState('1');
-  const [yieldDivisor, setYieldDivisor] = useState('1');
+  const [splitFactor, setSplitFactor] = useState('1');
   const [packUnit, setPackUnit] = useState<RetailUnit>('units');
   const [yieldUnit, setYieldUnit] = useState<RetailUnit>('units');
   const [marginMode, setMarginMode] = useState<MarginMode>('40');
@@ -170,7 +170,7 @@ export function InventoryMasterDetail({
     if (!selected) return;
     const initialPack = selected.casePackSize;
     setPackSize(String(initialPack));
-    setYieldDivisor('1');
+    setSplitFactor('1');
     const unit = retailUnitFor(selected.unitType);
     setPackUnit(unit);
     setYieldUnit(unit);
@@ -180,7 +180,7 @@ export function InventoryMasterDetail({
     const suggested = suggestedRetailPrice({
       caseCost: initialCaseCost,
       packSize: initialPack,
-      yieldDivisor: 1,
+      splitFactor: 1,
       marginMode: '40',
       customMarginPercent: '35',
     });
@@ -196,7 +196,7 @@ export function InventoryMasterDetail({
   const targetMargin = resolveTargetMargin(marginMode, toNumber(customMarginPercent));
   const priceNumber = toNumber(currentRetailPrice);
   const pack = toNumber(packSize);
-  const divisor = toNumber(yieldDivisor);
+  const divisor = toNumber(splitFactor);
   const unitsPerCase =
     selected && pack > 0 && divisor > 0 ? pack / divisor : (selected?.casePackSize ?? 1);
   const caseCost = selected ? selected.unitCost * unitsPerCase : 0;
@@ -206,7 +206,7 @@ export function InventoryMasterDetail({
     const next = suggestedRetailPrice({
       caseCost,
       packSize: pack,
-      yieldDivisor: divisor,
+      splitFactor: divisor,
       marginMode,
       customMarginPercent,
     });
@@ -218,7 +218,7 @@ export function InventoryMasterDetail({
       calculateYieldQuote({
         caseCost,
         packSize: pack,
-        yieldDivisor: divisor,
+        splitFactor: divisor,
         targetMargin,
         currentRetailPrice: priceNumber,
       }),
@@ -235,7 +235,7 @@ export function InventoryMasterDetail({
     const body = {
       productId: selected.productId,
       packSize: pack,
-      yieldDivisor: divisor,
+      splitFactor: divisor,
       retailUnit: yieldUnit,
       retailPrice: priceNumber,
     };
@@ -341,7 +341,7 @@ export function InventoryMasterDetail({
     const next = suggestedRetailPrice({
       caseCost,
       packSize: pack,
-      yieldDivisor: divisor,
+      splitFactor: divisor,
       marginMode: mode,
       customMarginPercent,
     });
@@ -364,7 +364,9 @@ export function InventoryMasterDetail({
         <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <CardTitle>In stock</CardTitle>
-            <CardDescription>{catalog.length} SKUs · pull window ≤ {pullDays}d highlighted</CardDescription>
+            <CardDescription>
+              {catalog.length} SKUs · per-item pull window (2–4d) highlighted
+            </CardDescription>
           </div>
           <label className="relative block w-full sm:max-w-[14rem]">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
@@ -387,7 +389,7 @@ export function InventoryMasterDetail({
           {catalog.map((row) => {
             const active = row.productId === selected?.productId;
             const margin = currentMargin(row);
-            const urgent = row.daysRemaining <= pullDays || row.low;
+            const urgent = row.daysRemaining <= row.pullDays || row.low;
             return (
               <li
                 key={row.productId}
@@ -451,11 +453,11 @@ export function InventoryMasterDetail({
               <CardBody className="space-y-4">
                 <YieldBreakdown
                   packSize={packSize}
-                  yieldDivisor={yieldDivisor}
+                  splitFactor={splitFactor}
                   packUnit={packUnit}
                   yieldUnit={yieldUnit}
                   onPackSize={setPackSize}
-                  onYieldDivisor={setYieldDivisor}
+                  onSplitFactor={setSplitFactor}
                   onPackUnit={setPackUnit}
                   onYieldUnit={setYieldUnit}
                 />

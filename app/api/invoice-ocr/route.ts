@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Department, InventoryLocation } from '@prisma/client';
-import { getMovingAverageCost } from '@/lib/domains/inventory/ledger';
+import { getMovingAverageCostMap } from '@/lib/domains/inventory/ledger';
 import { loadProductCatalog } from '@/lib/domains/catalog/productCatalog';
 import {
   commitInvoiceOcrReceipts,
   type OcrInvoiceMeta,
 } from '@/lib/domains/receiving/invoiceOcrCommit';
 import { generateContentWithFallback, tryParseModelJson } from '@/lib/domains/ai/gemini';
+import { invoiceOcrModelCandidates } from '@/lib/domains/ai/geminiModels';
 import { handleApiRouteError } from '@/lib/domains/ai/apiError';
 import { invoiceOcrErrorResponse } from '@/lib/domains/receiving/invoiceOcrErrors';
 import { authErrorResponse } from '@/lib/auth/http';
@@ -14,6 +15,7 @@ import { requireReceivingStaff } from '@/lib/auth/guardRoute';
 import { requireSessionUser } from '@/lib/auth/session';
 import { findLatestStoreSetting } from '@/lib/domains/stats/storeSettingSelect';
 import { matchProduct } from '@/lib/domains/inventory/productMatching';
+import { upsertSupplierByName } from '@/lib/domains/suppliers/suppliers';
 
 // ============================================================================
 // Types & Interfaces for Phase 3 Invoice OCR + Cost Guardrail (>20% Variance)
@@ -51,6 +53,7 @@ export interface InvoiceOcrApiResponse {
   // Backward-compatible shape for existing UI components
   data: {
     vendorName: string;
+    supplierId?: string;
     invoiceNumber: string;
     invoiceDate: string;
     totalAmount: number;
@@ -123,40 +126,38 @@ function findBestCatalogProduct(
  * compared to the historical Moving Average Cost (`getMovingAverageCost`),
  * flags `requires_approval: true`.
  */
-async function evaluateCostGuardrail(
-  rawItem: {
-    name: string;
-    department: 'PRODUCE' | 'DAIRY' | 'BAKERY' | 'PANTRY';
-    quantity: number;
-    unit: string;
-    casePackSize: number;
-    subUnit: string;
-    unitCost: number;
-    totalCost: number;
-    caseRetailPrice?: number | null;
-  },
-  catalog: CatalogLookupEntry[],
+type RawOcrLineItem = {
+  name: string;
+  department: 'PRODUCE' | 'DAIRY' | 'BAKERY' | 'PANTRY';
+  quantity: number;
+  unit: string;
+  casePackSize: number;
+  subUnit: string;
+  unitCost: number;
+  totalCost: number;
+  caseRetailPrice?: number | null;
+};
+
+function evaluateCostGuardrailSync(
+  rawItem: RawOcrLineItem,
+  matchedProduct: CatalogLookupEntry | null,
+  macPerBaseUnit: number | undefined,
   thresholdPct: number = 20.0
-): Promise<InvoiceOcrLineItemWithGuardrail> {
-  const matchedProduct = findBestCatalogProduct(rawItem.name, catalog);
+): InvoiceOcrLineItemWithGuardrail {
   let historicalAvgCost: number | null = null;
 
   if (matchedProduct) {
-    try {
-      const macPerBaseUnit = await getMovingAverageCost(matchedProduct.id);
-      if (macPerBaseUnit > 0) {
-        // Align unit basis: if invoice unitCost is per case, compare against case-equivalent or unit-equivalent
-        const isCaseInvoice =
-          rawItem.unit.toLowerCase().includes('case') &&
-          rawItem.unitCost > macPerBaseUnit * 2.5 &&
-          matchedProduct.casePackSize > 1;
+    const mac = macPerBaseUnit ?? 0;
+    if (mac > 0) {
+      const isCaseInvoice =
+        rawItem.unit.toLowerCase().includes('case') &&
+        rawItem.unitCost > mac * 2.5 &&
+        matchedProduct.casePackSize > 1;
 
-        historicalAvgCost = isCaseInvoice
-          ? Number((macPerBaseUnit * matchedProduct.casePackSize).toFixed(2))
-          : Number(macPerBaseUnit.toFixed(2));
-      }
-    } catch {
-      // Fallback to catalog baseline cost if DB query fails
+      historicalAvgCost = isCaseInvoice
+        ? Number((mac * matchedProduct.casePackSize).toFixed(2))
+        : Number(mac.toFixed(2));
+    } else {
       const isCaseInvoice =
         rawItem.unit.toLowerCase().includes('case') &&
         rawItem.unitCost > matchedProduct.standardCostPerUnit * 2.5;
@@ -209,8 +210,32 @@ async function evaluateCostGuardrail(
   };
 }
 
+async function evaluateCostGuardrailsBatch(
+  lineItems: RawOcrLineItem[],
+  catalog: CatalogLookupEntry[],
+  thresholdPct: number
+): Promise<InvoiceOcrLineItemWithGuardrail[]> {
+  const matches = lineItems.map((rawItem) => ({
+    rawItem,
+    matchedProduct: findBestCatalogProduct(rawItem.name, catalog),
+  }));
+  const productIds = matches
+    .map((row) => row.matchedProduct?.id)
+    .filter((id): id is string => Boolean(id));
+  const macMap = await getMovingAverageCostMap(productIds);
+
+  return matches.map(({ rawItem, matchedProduct }) =>
+    evaluateCostGuardrailSync(
+      rawItem,
+      matchedProduct,
+      matchedProduct ? macMap.get(matchedProduct.id) : undefined,
+      thresholdPct
+    )
+  );
+}
+
 // ============================================================================
-// Gemini 1.5 Flash Vision Invoice Extraction (`@google/generative-ai`)
+// Gemini Flash Vision Invoice Extraction (`@google/generative-ai`)
 // ============================================================================
 
 function sampleWholesaleInvoice() {
@@ -299,35 +324,30 @@ async function extractInvoiceWithGemini15FlashVision(
     return sampleWholesaleInvoice();
   }
 
-  const visionPrompt = `You are the FreshLoop AI Enterprise Invoice OCR Vision Engine.
-Analyze this supermarket vendor invoice image and return ONLY valid JSON matching this schema:
-{
-  "vendorName": "string",
-  "invoiceNumber": "string",
-  "invoiceDate": "YYYY-MM-DD",
-  "lineItems": [
-    {
-      "name": "string (product name on invoice)",
-      "department": "PRODUCE" | "DAIRY" | "BAKERY" | "PANTRY",
-      "quantity": number,
-      "unit": "cases" | "lbs" | "kg" | "units" | "L" | "bunches" | "tubs" | "loaves",
-      "casePackSize": number,
-      "subUnit": "lbs" | "kg" | "units" | "L" | "bunches" | "tubs" | "loaves",
-      "unitCost": number,
-      "totalCost": number,
-      "caseRetailPrice": number | null
-    }
-  ]
-}
-For caseRetailPrice use the printed case list/shelf price when the invoice shows it; otherwise null.
-Match product identity only (e.g. avocados, blackberries). Pack size on the invoice may differ from the catalog; pack/yield is edited in FreshLoop item controls after match.`;
+  const visionPrompt = `Extract this vendor invoice as JSON only:
+{"vendorName":"","invoiceNumber":"","invoiceDate":"YYYY-MM-DD","lineItems":[{"name":"","department":"PRODUCE|DAIRY|BAKERY|PANTRY","quantity":0,"unit":"cases","casePackSize":0,"subUnit":"lbs|units|L|loaves","unitCost":0,"totalCost":0,"caseRetailPrice":null}]}
+Rules: unitCost/totalCost per case when unit is cases; caseRetailPrice = printed case list price or null; product names only (no pack codes in name).`;
 
   const cleanBase64 = imageBase64.includes(',') ? imageBase64.split(',')[1] : imageBase64;
-  const { text, modelUsed } = await generateContentWithFallback(
-    visionPrompt,
-    { data: cleanBase64, mimeType: mimeType || 'image/jpeg' },
-    ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash']
-  );
+  const ocrModels = invoiceOcrModelCandidates();
+  const ocrOpts = { skipModelDiscovery: true as const, maxModelsToTry: 5 };
+  let text: string;
+  let modelUsed: string;
+  try {
+    ({ text, modelUsed } = await generateContentWithFallback(
+      visionPrompt,
+      { data: cleanBase64, mimeType: mimeType || 'image/jpeg' },
+      ocrModels,
+      ocrOpts
+    ));
+  } catch {
+    ({ text, modelUsed } = await generateContentWithFallback(
+      visionPrompt,
+      { data: cleanBase64, mimeType: mimeType || 'image/jpeg' },
+      ocrModels,
+      { skipModelDiscovery: false, maxModelsToTry: 8 }
+    ));
+  }
 
   const parsed = tryParseModelJson<Record<string, unknown>>(text);
   if (!parsed || !Array.isArray(parsed.lineItems) || parsed.lineItems.length === 0) {
@@ -458,16 +478,11 @@ export async function POST(req: NextRequest) {
       loadCatalogForCostComparison(),
     ]);
 
-    // Evaluate Cost Guardrail (>20% variance vs historical Moving Average Cost) for each item
-    const auditedItems: InvoiceOcrLineItemWithGuardrail[] = [];
-    for (const rawItem of extracted.lineItems) {
-      const audited = await evaluateCostGuardrail(
-        rawItem,
-        catalog,
-        guardrailThresholdPct
-      );
-      auditedItems.push(audited);
-    }
+    const auditedItems = await evaluateCostGuardrailsBatch(
+      extracted.lineItems,
+      catalog,
+      guardrailThresholdPct
+    );
 
     const departmentBreakdown = {
       PRODUCE: 0,
@@ -489,6 +504,8 @@ export async function POST(req: NextRequest) {
       (item) => item.requires_approval
     ).length;
 
+    const globalSupplier = await upsertSupplierByName({ name: extracted.vendorName });
+
     const responsePayload: InvoiceOcrApiResponse = {
       success: true,
       requires_confirmation: true, // Global Rule #4: Never write directly without confirmation
@@ -502,6 +519,7 @@ export async function POST(req: NextRequest) {
       items: auditedItems,
       data: {
         vendorName: extracted.vendorName,
+        supplierId: globalSupplier.id,
         invoiceNumber: extracted.invoiceNumber,
         invoiceDate: extracted.invoiceDate,
         totalAmount,

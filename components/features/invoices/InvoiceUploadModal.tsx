@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import { InvoiceOcrResult } from '@/lib/types';
 import { useRole } from '@/components/auth/RoleProvider';
 import { isManager } from '@/lib/utils/roles';
@@ -8,19 +8,29 @@ import { DepartmentBadge } from '@/components/ui/DepartmentBadge';
 import { prepareImageDataUrlForOcr } from '@/lib/utils/prepareImageForOcr';
 import { AlertTriangle, ArrowRight, Camera, CheckCircle2, FileText, ImagePlus, Loader2, Sparkles, Upload, X } from 'lucide-react';
 import { ModalBody, ModalFooter, ModalHeader, ModalShell, ScrollTable } from '@/components/ui/layout';
+import { SupplierSelect } from '@/components/features/suppliers/SupplierSelect';
+import type { SupplierRecord } from '@/lib/domains/suppliers/suppliers';
 
 interface InvoiceUploadModalProps {
   isOpen: boolean;
   onClose: () => void;
   onInvoiceImported: (result: InvoiceOcrResult) => void;
+  suppliers?: SupplierRecord[];
+  selectedSupplierId?: string;
+  onSupplierChange?: (supplierId: string) => void;
 }
 
 export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
   isOpen,
   onClose,
-  onInvoiceImported
+  onInvoiceImported,
+  suppliers = [],
+  selectedSupplierId = '',
+  onSupplierChange,
 }) => {
   const [loading, setLoading] = useState(false);
+  const [loadingPhase, setLoadingPhase] = useState<'prepare' | 'ocr' | null>(null);
+  const scanGeneration = useRef(0);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [ocrResult, setOcrResult] = useState<InvoiceOcrResult | null>(null);
@@ -29,16 +39,89 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
   const { activeUser } = useRole();
   const managerCanApprove = Boolean(activeUser && isManager(activeUser.role));
 
+  const runInvoiceScan = useCallback(async (useDemo: boolean, previewDataUrl?: string | null) => {
+    const generation = ++scanGeneration.current;
+    if (!useDemo && !previewDataUrl) {
+      setScanError('Take a photo of the invoice, or choose one from your photos.');
+      return;
+    }
+
+    setLoading(true);
+    setScanError(null);
+    try {
+      let imageBase64 = '';
+      let mimeType = selectedFile?.type || 'image/jpeg';
+      if (!useDemo && previewDataUrl) {
+        setLoadingPhase('prepare');
+        const prepared = await prepareImageDataUrlForOcr(previewDataUrl);
+        if (generation !== scanGeneration.current) return;
+        imageBase64 = prepared.dataUrl;
+        mimeType = prepared.mimeType;
+      }
+
+      setLoadingPhase('ocr');
+      const res = await fetch('/api/invoice-ocr', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          imageBase64: useDemo ? '' : imageBase64,
+          mimeType,
+          demo: useDemo,
+        }),
+      });
+
+      if (generation !== scanGeneration.current) return;
+
+      const json = await res.json();
+      if (!res.ok || !json.success || !json.data?.lineItems?.length) {
+        setScanError(
+          (typeof json.error === 'string' && json.error) ||
+            (typeof json.message === 'string' && json.message) ||
+            'The invoice could not be read. Try a clearer photo.'
+        );
+        return;
+      }
+      const parsed = {
+        ...(json.data as InvoiceOcrResult),
+        requiresManagerApproval: Boolean(
+          json.requires_manager_approval ?? json.data?.requiresManagerApproval
+        ),
+        flaggedItemsCount: Number(
+          json.flagged_items_count ?? json.data?.flaggedItemsCount ?? 0
+        ),
+        guardrailThresholdPct: Number(
+          json.guardrail_threshold_pct ?? json.data?.guardrailThresholdPct ?? 20
+        ),
+      };
+      setOcrResult(parsed);
+      if (parsed.supplierId && onSupplierChange) {
+        onSupplierChange(parsed.supplierId);
+      }
+      setManagerApprovedCosts(false);
+    } catch (err) {
+      if (generation !== scanGeneration.current) return;
+      console.error('Invoice OCR scan error:', err);
+      setScanError('The scan did not reach the server. Check the connection and try again.');
+    } finally {
+      if (generation === scanGeneration.current) {
+        setLoading(false);
+        setLoadingPhase(null);
+      }
+    }
+  }, [onSupplierChange, selectedFile?.type]);
+
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0];
       setSelectedFile(file);
-    setScanError(null);
-    setOcrResult(null);
-    setManagerApprovedCosts(false);
+      setScanError(null);
+      setOcrResult(null);
+      setManagerApprovedCosts(false);
       const reader = new FileReader();
       reader.onloadend = () => {
-        setPreviewUrl(reader.result as string);
+        const dataUrl = reader.result as string;
+        setPreviewUrl(dataUrl);
+        void runInvoiceScan(false, dataUrl);
       };
       reader.readAsDataURL(file);
     }
@@ -55,61 +138,8 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
     }
   };
 
-  const handleScanInvoice = async (useDemo: boolean = false) => {
-    if (!useDemo && !previewUrl) {
-      setScanError('Take a photo of the invoice, or choose one from your photos.');
-      return;
-    }
-
-    setLoading(true);
-    setScanError(null);
-    try {
-      let imageBase64 = '';
-      let mimeType = selectedFile?.type || 'image/jpeg';
-      if (!useDemo && previewUrl) {
-        const prepared = await prepareImageDataUrlForOcr(previewUrl);
-        imageBase64 = prepared.dataUrl;
-        mimeType = prepared.mimeType;
-      }
-
-      const res = await fetch('/api/invoice-ocr', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          imageBase64: useDemo ? '' : imageBase64,
-          mimeType,
-          demo: useDemo,
-        }),
-      });
-
-      const json = await res.json();
-      if (!res.ok || !json.success || !json.data?.lineItems?.length) {
-        setScanError(
-          (typeof json.error === 'string' && json.error) ||
-            (typeof json.message === 'string' && json.message) ||
-            'The invoice could not be read. Try a clearer photo.'
-        );
-        return;
-      }
-      setOcrResult({
-        ...(json.data as InvoiceOcrResult),
-        requiresManagerApproval: Boolean(
-          json.requires_manager_approval ?? json.data?.requiresManagerApproval
-        ),
-        flaggedItemsCount: Number(
-          json.flagged_items_count ?? json.data?.flaggedItemsCount ?? 0
-        ),
-        guardrailThresholdPct: Number(
-          json.guardrail_threshold_pct ?? json.data?.guardrailThresholdPct ?? 20
-        ),
-      });
-      setManagerApprovedCosts(false);
-    } catch (err) {
-      console.error('Invoice OCR scan error:', err);
-      setScanError('The scan did not reach the server. Check the connection and try again.');
-    } finally {
-      setLoading(false);
-    }
+  const handleScanInvoice = (useDemo: boolean = false) => {
+    void runInvoiceScan(useDemo, previewUrl);
   };
 
   const flaggedInvoice = Boolean(ocrResult?.requiresManagerApproval);
@@ -118,7 +148,10 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
 
   const handleAddToReceiving = () => {
     if (!ocrResult || needsCostApproval) return;
-    onInvoiceImported(ocrResult);
+    onInvoiceImported({
+      ...ocrResult,
+      supplierId: selectedSupplierId || ocrResult.supplierId,
+    });
     onClose();
   };
 
@@ -170,6 +203,14 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
                   <div className="relative max-h-48 overflow-hidden rounded-xl border border-zinc-800">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img src={previewUrl} alt="Invoice preview" className="max-h-48 object-contain" />
+                    {loading ? (
+                      <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-zinc-950/75 backdrop-blur-[1px]">
+                        <Loader2 className="h-6 w-6 animate-spin text-emerald-400" />
+                        <p className="text-[11px] font-bold text-emerald-200">
+                          {loadingPhase === 'prepare' ? 'Preparing photo…' : 'Reading line items…'}
+                        </p>
+                      </div>
+                    ) : null}
                   </div>
                 ) : (
                   <>
@@ -226,7 +267,7 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
 
               <div className="flex items-center justify-between gap-3 rounded-2xl border border-zinc-800/80 bg-zinc-950/80 p-4">
                 <p className="text-xs text-zinc-400">
-                  The photo stays here until you add the cases to this delivery.
+                  Scan starts automatically when you pick a photo. Use Read this invoice to retry.
                 </p>
                 <button
                   type="button"
@@ -241,6 +282,14 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
           ) : (
             /* OCR Extraction Results View */
             <div className="space-y-5">
+              {suppliers.length > 0 && onSupplierChange ? (
+                <SupplierSelect
+                  suppliers={suppliers}
+                  value={selectedSupplierId}
+                  onChange={onSupplierChange}
+                  label="Catalog supplier for this invoice"
+                />
+              ) : null}
               {ocrResult.source === 'sample' ? (
                 <div className="rounded-2xl border border-zinc-700 bg-zinc-950 px-4 py-3 text-xs text-zinc-300">
                   This list does not change until you photograph a different invoice. Use Take photo, then Read this invoice.
@@ -437,7 +486,9 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
               {loading ? (
                 <>
                   <Loader2 className="h-4 w-4 animate-spin" />
-                  <span>Reading the invoice…</span>
+                  <span>
+                    {loadingPhase === 'prepare' ? 'Preparing photo…' : 'Reading the invoice…'}
+                  </span>
                 </>
               ) : (
                 <>

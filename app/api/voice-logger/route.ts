@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Department, TargetAction } from '@prisma/client';
 import { generateContentWithFallback, parseModelJson } from '@/lib/domains/ai/gemini';
+import { GEMINI_FLASH_MODEL_FALLBACKS } from '@/lib/domains/ai/geminiModels';
 import { prisma } from '@/lib/domains/inventory/ledger';
 import { moveRetailStock } from '@/lib/domains/inventory/stock';
 import { loadProductCatalog as loadCatalogProducts } from '@/lib/domains/catalog/productCatalog';
@@ -286,7 +287,7 @@ async function parseVoiceWithGemini15Flash(
     const { text } = await generateContentWithFallback(
       prompt,
       cleanBase64 ? { data: cleanBase64, mimeType: mimeType || 'audio/webm' } : undefined,
-      ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash']
+      [...GEMINI_FLASH_MODEL_FALLBACKS]
     );
 
     const parsed = parseModelJson<{

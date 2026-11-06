@@ -20,9 +20,9 @@ import { useRole } from '@/components/auth/RoleProvider';
 import { canManageBundleDeals, canViewSetBundlePromos } from '@/lib/auth/staffCapabilities';
 import { cn } from '@/lib/utils/cn';
 
-export function suggestedPullQty(row: StockLevel, pullDays: number): number {
+export function suggestedPullQty(row: StockLevel): number {
   if (row.onHand <= 0) return 0;
-  if (row.daysRemaining <= pullDays || row.low || row.isMarkdown) return row.onHand;
+  if (row.daysRemaining <= row.pullDays || row.low || row.isMarkdown) return row.onHand;
   return Math.min(row.onHand, 1);
 }
 
@@ -144,7 +144,7 @@ export function SubInventoryTransferList({
         const unit = stockUnitLabel(row.unitType);
         const qtyAtLocation = location === 'retail_floor' ? row.onHand : row.kitchenPrepQty;
         const defaultQty =
-          location === 'retail_floor' ? suggestedPullQty(row, pullDays) : Math.min(row.kitchenPrepQty, 1);
+          location === 'retail_floor' ? suggestedPullQty(row) : Math.min(row.kitchenPrepQty, 1);
 
         const rowBody = (
           <div

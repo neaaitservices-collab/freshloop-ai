@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { resolveInvoiceReceipt } from '@/lib/domains/receiving/invoiceOcrCommit';
 
-test('case receipts convert pack quantity and divide case cost into a unit cost', () => {
+test('case receipts use catalog sellable units per case, not raw invoice pack', () => {
   const resolved = resolveInvoiceReceipt(
     {
       product_id: 'sku',
@@ -13,8 +13,8 @@ test('case receipts convert pack quantity and divide case cost into a unit cost'
     },
     6
   );
-  assert.equal(resolved.units, 24);
-  assert.equal(resolved.unitCost, 2);
+  assert.equal(resolved.units, 12);
+  assert.equal(resolved.unitCost, 4);
 });
 
 test('unit receipts keep the quoted unit cost', () => {

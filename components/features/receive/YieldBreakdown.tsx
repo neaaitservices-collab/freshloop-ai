@@ -12,11 +12,11 @@ function toPositiveNumber(raw: string): number {
 
 export function YieldBreakdown({
   packSize,
-  yieldDivisor,
+  splitFactor,
   packUnit,
   yieldUnit,
   onPackSize,
-  onYieldDivisor,
+  onSplitFactor,
   onPackUnit,
   onYieldUnit,
   caseFloorPrice,
@@ -24,11 +24,11 @@ export function YieldBreakdown({
   compact = false,
 }: {
   packSize: string;
-  yieldDivisor: string;
+  splitFactor: string;
   packUnit: RetailUnit;
   yieldUnit: RetailUnit;
   onPackSize: (value: string) => void;
-  onYieldDivisor: (value: string) => void;
+  onSplitFactor: (value: string) => void;
   onPackUnit: (value: RetailUnit) => void;
   onYieldUnit: (value: RetailUnit) => void;
   caseFloorPrice?: string;
@@ -38,10 +38,10 @@ export function YieldBreakdown({
   const showCaseFloor = onCaseFloorPrice != null || caseFloorPrice != null;
   const sellablePerCase = useMemo(() => {
     const pack = toPositiveNumber(packSize);
-    const divisor = toPositiveNumber(yieldDivisor);
+    const divisor = toPositiveNumber(splitFactor);
     if (!(pack > 0) || !(divisor > 0)) return null;
     return pack / divisor;
-  }, [packSize, yieldDivisor]);
+  }, [packSize, splitFactor]);
 
   const unitsMismatch = packUnit !== yieldUnit;
 
@@ -52,15 +52,15 @@ export function YieldBreakdown({
           packSize: 'pack-size',
           packUnit: 'pack-unit',
           caseFloor: 'case-floor-price-yield',
-          yieldDivisor: 'yield-divisor',
+          splitFactor: 'split-factor',
           yieldInto: 'yield-into-unit',
         }}
         packSize={packSize}
-        yieldDivisor={yieldDivisor}
+        splitFactor={splitFactor}
         packUnit={packUnit}
         yieldUnit={yieldUnit}
         onPackSize={onPackSize}
-        onYieldDivisor={onYieldDivisor}
+        onSplitFactor={onSplitFactor}
         onPackUnit={onPackUnit}
         onYieldUnit={onYieldUnit}
         caseFloorPrice={caseFloorPrice}
@@ -75,7 +75,7 @@ export function YieldBreakdown({
       ) : null}
       {!compact ? (
         <p className="text-[11px] text-slate-500">
-          Pack ÷ yield divisor = sellable units on shelf (e.g. {packSize || '40'} ÷ {yieldDivisor || '1'}{' '}
+          Pack ÷ split factor = sellable units on shelf (e.g. {packSize || '40'} ÷ {splitFactor || '1'}{' '}
           {yieldUnit}).
         </p>
       ) : null}
@@ -96,7 +96,7 @@ export function YieldBreakdown({
             <span className="text-slate-500">
               {' '}
               (from {formatUnits(toPositiveNumber(packSize) || 0)} {packUnit} ÷{' '}
-              {formatUnits(toPositiveNumber(yieldDivisor) || 0)})
+              {formatUnits(toPositiveNumber(splitFactor) || 0)})
             </span>
           ) : null}
         </p>
