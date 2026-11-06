@@ -41,13 +41,14 @@ export async function POST(req: NextRequest) {
   const limited = assertHotPathRateLimit(clientIpKey(req), 'posWebhook');
   if (limited) return limited;
 
+  let externalRef = '';
   try {
     const body = (await req.json()) as {
       externalRef?: string;
       lines?: PosWebhookLine[];
     };
 
-    const externalRef = body.externalRef?.trim() ?? '';
+    externalRef = body.externalRef?.trim() ?? '';
     if (!externalRef) {
       return NextResponse.json({ success: false, error: 'externalRef is required.' }, { status: 400 });
     }
@@ -124,6 +125,8 @@ export async function POST(req: NextRequest) {
   } catch (error) {
     return handleApiRouteError('POST /api/pos/webhook', error, 'POS webhook processing failed.', {
       path: '/api/pos/webhook',
+      referenceId: externalRef || undefined,
+      operation: 'pos-webhook-ingest',
     });
   }
 }
