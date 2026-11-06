@@ -25,7 +25,7 @@ import { ModalBody, ModalHeader, ModalShell } from '@/components/ui/layout';
 export function OperationsTransferItemModal({
   row,
   location,
-  pullDays,
+  pullDays: _pullDays,
   staffId,
   performMove,
   busy,
@@ -122,7 +122,7 @@ export function OperationsTransferItemModal({
     } finally {
       setBundleRemoving(false);
     }
-  }, [localBundle?.id, onError, row, showSavedMessage]);
+  }, [localBundle, onError, row, showSavedMessage]);
 
   useEffect(() => {
     setMounted(true);

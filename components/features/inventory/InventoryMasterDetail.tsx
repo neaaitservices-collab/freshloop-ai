@@ -81,7 +81,6 @@ function suggestedRetailPrice(input: {
 export function InventoryMasterDetail({
   levels,
   onLevelsChange,
-  pullDays,
   query,
   departmentFilter,
   onToast,
@@ -92,7 +91,6 @@ export function InventoryMasterDetail({
 }: {
   levels: StockLevel[];
   onLevelsChange: (next: StockLevel[]) => void;
-  pullDays: number;
   query: string;
   departmentFilter: (row: StockLevel) => boolean;
   onToast: (message: string) => void;

@@ -68,7 +68,7 @@ export function RetailFloorTransferPanel({
         (priorityOnly ? a.daysRemaining - b.daysRemaining : 0) ||
         a.name.localeCompare(b.name)
     );
-  }, [levels, pullDays, priorityOnly, query, departmentFilter]);
+  }, [levels, priorityOnly, query, departmentFilter]);
 
   return (
     <div

@@ -236,11 +236,15 @@ export function ItemSettingsModal({
       skipFloorRecalc.current = false;
     }, 0);
     return () => window.clearTimeout(t);
-  }, [open, row?.productId]);
+    // Intentionally omit `row`: only re-hydrate when opening or switching product so polling
+    // does not wipe in-progress edits. applyPresetUnitPrice is stable (useCallback []).
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- see above
+  }, [open, row?.productId, applyPresetUnitPrice]);
 
   useEffect(() => {
-    if (!open || !row) return;
-    setPhysicalCases(String(row.onHandCases));
+    const onHandCases = row?.onHandCases;
+    if (!open || row?.productId == null || onHandCases === undefined) return;
+    setPhysicalCases(String(onHandCases));
   }, [open, row?.productId, row?.onHandCases]);
 
   useEffect(() => {
@@ -258,18 +262,15 @@ export function ItemSettingsModal({
     setCaseCostInput(caseCostBaseline > 0 ? caseCostBaseline.toFixed(2) : '');
   }, [
     open,
-    row?.unitCost,
-    row?.receiveCaseCost,
-    row?.receivePackSize,
-    row?.splitFactor,
-    row?.productId,
+    row,
     caseCostEditing,
     busy,
   ]);
 
   useEffect(() => {
-    if (!open || !row) return;
-    void fetch(`/api/inventory/levels?auditProductId=${encodeURIComponent(row.productId)}`, {
+    const productId = row?.productId;
+    if (!open || !productId) return;
+    void fetch(`/api/inventory/levels?auditProductId=${encodeURIComponent(productId)}`, {
       cache: 'no-store',
     })
       .then((r) => r.json())
@@ -311,7 +312,17 @@ export function ItemSettingsModal({
     if (marginMode === 'custom' || !floorFromMargin.current) return;
     if (sellableCountForPack(pack, divisor) === null) return;
     applyPresetUnitPrice(marginMode, unitCostPerSellable);
-  }, [open, row, packSize, splitFactor, marginMode, unitCostPerSellable, applyPresetUnitPrice]);
+  }, [
+    open,
+    row,
+    packSize,
+    splitFactor,
+    pack,
+    divisor,
+    marginMode,
+    unitCostPerSellable,
+    applyPresetUnitPrice,
+  ]);
 
   useEffect(() => {
     if (!open || !row || skipFloorRecalc.current || marginMode !== 'custom') return;
@@ -319,8 +330,16 @@ export function ItemSettingsModal({
     if (caseVal === null || !(caseVal > 0)) return;
     if (sellableCountForPack(pack, divisor) === null) return;
     setCurrentRetailPrice(formatUnitPriceFromCase(caseVal, pack, divisor));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, row, packSize, splitFactor, marginMode, pack, divisor]);
+  }, [
+    open,
+    row,
+    packSize,
+    splitFactor,
+    marginMode,
+    pack,
+    divisor,
+    currentCaseFloor,
+  ]);
 
   const quote: YieldQuote = useMemo(
     () =>

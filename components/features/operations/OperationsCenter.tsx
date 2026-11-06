@@ -19,14 +19,9 @@ import {
   FileText,
   RefreshCw,
 } from 'lucide-react';
-import { useRole } from '@/components/auth/RoleProvider';
-import { canManageBundleDeals } from '@/lib/auth/staffCapabilities';
-import { SetBundlesListPanel } from '@/components/features/pricing/SetBundlesListPanel';
 
 export default function OperationsCenter() {
   const router = useRouter();
-  const { activeUser } = useRole();
-  const showSetBundles = canManageBundleDeals(activeUser?.role);
   const [pullSensitivityDays, setPullSensitivityDays] = useState<2 | 3 | 4>(3);
   const [settingsLoading, setSettingsLoading] = useState(false);
   const [isInvoiceModalOpen, setIsInvoiceModalOpen] = useState(false);

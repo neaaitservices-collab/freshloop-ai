@@ -6,7 +6,6 @@ import { AlertTriangle, LayoutDashboard, Receipt, RefreshCw, Sheet } from 'lucid
 import {
   calculateYieldQuote,
   caseFloorFromPerUnitFloor,
-  formatCurrency,
   formatUnits,
   perUnitFloorFromCaseFloor,
   resolveTargetMargin,
