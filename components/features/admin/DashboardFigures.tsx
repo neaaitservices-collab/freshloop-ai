@@ -118,7 +118,10 @@ export function DashboardFigures({
       }, 350);
     };
 
-    const unsubInventory = subscribeInventoryUpdated(scheduleRefresh);
+    const unsubInventory = subscribeInventoryUpdated((detail) => {
+      if (detail?.skipStatsRefresh) return;
+      scheduleRefresh();
+    });
     const unsubKpi = subscribeKpiUpdated(scheduleRefresh);
     window.addEventListener(FRESHLOOP_SETTINGS_UPDATED, scheduleRefresh);
 

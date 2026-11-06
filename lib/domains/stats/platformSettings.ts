@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/domains/inventory/ledger';
+import { invalidateInventoryCaches } from '@/lib/domains/inventory/inventoryCache';
 import { invalidateStoreStats } from '@/lib/domains/stats/storeStats';
 import {
   findLatestStoreSetting,
@@ -116,7 +117,7 @@ export async function savePlatformSettings(settings: PlatformSettings): Promise<
         select: storeSettingSafeSelect,
       })
     : await prisma.storeSetting.create({ data, select: storeSettingSafeSelect });
-  invalidateStoreStats();
+  invalidateInventoryCaches();
   return {
     storeName: saved.storeName,
     targetWastePct: saved.targetWastePct,

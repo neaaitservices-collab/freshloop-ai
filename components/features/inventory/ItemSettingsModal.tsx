@@ -1,26 +1,26 @@
 'use client';
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, X } from 'lucide-react';
-import { PricingStrategy } from '@/components/features/receive/PricingStrategy';
-import { CatalogYieldPackFields } from '@/components/features/inventory/CatalogYieldPackFields';
+import { PricingYieldCard } from '@/components/ui/PricingYieldCard';
 import type { StockLevel, StockOverrideAudit } from '@/lib/domains/inventory/stock';
 import {
+  applyPresetMarginToUnitPrice,
+  formatUnitPriceFromCase,
+  parseCatalogPriceInput,
+  sellableCountForPack,
+} from '@/lib/domains/receiving/catalogItemPricing';
+import {
+  catalogCaseFloorPrice,
+  catalogDisplayCaseCost,
   calculateYieldQuote,
-  caseFloorForTargetMargin,
-  caseFloorFromPerUnitFloor,
-  floorPriceForTargetMargin,
-  perUnitFloorFromCaseFloor,
   formatFractionalCases,
-  formatPercent,
   formatUnits,
   inferMarginModeFromFloorPrice,
-  marginTone,
   normalizeStoredUnitFloorPrice,
   resolvePricingEconomics,
   resolveTargetMargin,
   retailUnitForUnitType,
-  sellableUnitShortLabel,
   sellableUnitsPerCase,
   stockUnitLabel,
   type MarginMode,
@@ -29,6 +29,12 @@ import {
 } from '@/lib/domains/receiving/yieldPricing';
 import { departmentLabel } from '@/lib/domains/inventory/inventoryCatalog';
 import { ModalBody, ModalFooter, ModalHeader, ModalShell } from '@/components/ui/layout';
+import { PullDaysToggle } from '@/components/ui/PullDaysToggle';
+import { useStorePullSensitivityDays } from '@/hooks/use-store-pull-sensitivity-days';
+import {
+  parseProductPullOverride,
+  type PullSensitivityDays,
+} from '@/lib/domains/inventory/pullSensitivity';
 import { cn } from '@/lib/utils/cn';
 
 const DEPARTMENTS = ['PRODUCE', 'DAIRY', 'BAKERY', 'PANTRY', 'DELI_KITCHEN'] as const;
@@ -113,12 +119,15 @@ export function ItemSettingsModal({
     department: string;
     supplier: string;
     origin: string;
+    pullSensitivityDays: PullSensitivityDays | null;
   }) => Promise<void>;
   onSaveCase: (payload: {
     packSize: number;
-    yieldDivisor: number;
+    splitFactor: number;
     retailUnit: RetailUnit;
     retailPrice: number;
+    caseRetailPrice?: number | null;
+    caseCost: number;
   }) => Promise<void>;
   onUpdatePhysicalCount: (cases: number) => Promise<StockOverrideAudit | null>;
 }) {
@@ -126,8 +135,10 @@ export function ItemSettingsModal({
   const [department, setDepartment] = useState('');
   const [supplier, setSupplier] = useState('');
   const [origin, setOrigin] = useState('');
+  const storePullDefault = useStorePullSensitivityDays();
+  const [pullSensitivityDays, setPullSensitivityDays] = useState<PullSensitivityDays | null>(null);
   const [packSize, setPackSize] = useState('1');
-  const [yieldDivisor, setYieldDivisor] = useState('1');
+  const [splitFactor, setSplitFactor] = useState('1');
   const [packUnit, setPackUnit] = useState<RetailUnit>('units');
   const [yieldUnit, setYieldUnit] = useState<RetailUnit>('units');
   const [marginMode, setMarginMode] = useState<MarginMode>('40');
@@ -139,27 +150,19 @@ export function ItemSettingsModal({
   const [error, setError] = useState<string | null>(null);
   const skipFloorRecalc = useRef(true);
   const floorFromMargin = useRef(true);
+  /** True after user edits case cost — blocks row sync from wiping pending value before save. */
+  const caseCostDirtyRef = useRef(false);
   const [anchoredCaseCost, setAnchoredCaseCost] = useState(0);
+  const [catalogCaseCostBaseline, setCatalogCaseCostBaseline] = useState(0);
+  const [caseCostEditing, setCaseCostEditing] = useState(false);
+  const [caseCostInput, setCaseCostInput] = useState('');
   const [currentCaseFloor, setCurrentCaseFloor] = useState('');
 
-  const syncFloorFromMargin = (
-    mode: MarginMode,
-    packVal: number,
-    divisorVal: number,
-    caseCostTotal: number
-  ) => {
-    if (mode === 'custom') return;
-    const next = floorPriceForTargetMargin({
-      caseCost: caseCostTotal,
-      packSize: packVal,
-      yieldDivisor: divisorVal,
-      marginMode: mode,
-      customMarginPercent: 0,
-    });
-    if (next !== null && next > 0) setCurrentRetailPrice(next.toFixed(2));
-    const caseNext = caseFloorForTargetMargin({ caseCost: caseCostTotal, marginMode: mode });
-    if (caseNext !== null && caseNext > 0) setCurrentCaseFloor(caseNext.toFixed(2));
-  };
+  const applyPresetUnitPrice = useCallback((mode: MarginMode, unitCost: number) => {
+    if (mode !== '35' && mode !== '40') return;
+    const unitPrice = applyPresetMarginToUnitPrice({ mode, unitCost });
+    if (unitPrice) setCurrentRetailPrice(unitPrice);
+  }, []);
 
   useEffect(() => {
     if (!open || !row) return;
@@ -169,44 +172,103 @@ export function ItemSettingsModal({
     setDepartment(row.department);
     setSupplier(row.supplier);
     setOrigin(row.origin ?? '');
-    const packVal = row.casePackSize > 0 ? row.casePackSize : 1;
-    const divVal = 1;
+    setPullSensitivityDays(parseProductPullOverride(row.pullSensitivityDays));
+    const packVal = row.receivePackSize > 0 ? row.receivePackSize : row.casePackSize > 0 ? row.casePackSize : 1;
+    const divVal = row.splitFactor > 0 ? row.splitFactor : 1;
     setPackSize(String(packVal));
-    setYieldDivisor(String(divVal));
+    setSplitFactor(String(divVal));
     const unit = retailUnitForUnitType(row.unitType);
     setPackUnit(unit);
     setYieldUnit(unit);
     const econ = resolvePricingEconomics({
       standardCost: row.unitCost,
       packSize: packVal,
-      yieldDivisor: divVal,
+      splitFactor: divVal,
     });
-    setAnchoredCaseCost(econ.caseCost);
+    const caseCostBaseline = catalogDisplayCaseCost({
+      receiveCaseCost: row.receiveCaseCost,
+      standardCost: row.unitCost,
+      packSize: packVal,
+      splitFactor: divVal,
+    });
+    setAnchoredCaseCost(caseCostBaseline);
+    setCatalogCaseCostBaseline(caseCostBaseline);
+    setCaseCostInput(caseCostBaseline > 0 ? caseCostBaseline.toFixed(2) : '');
+    setCaseCostEditing(false);
+    caseCostDirtyRef.current = false;
     const unitFloor =
       normalizeStoredUnitFloorPrice({
         retailPrice: row.retailPrice,
         unitCostPerSellable: econ.unitCostPerSellable,
         packSize: packVal,
-        yieldDivisor: divVal,
+        splitFactor: divVal,
       }) ?? row.retailPrice;
     const inferred = inferMarginModeFromFloorPrice({
-      unitCostPerSellable: row.unitCost,
+      unitCostPerSellable: econ.unitCostPerSellable,
       retailPrice: unitFloor,
       packSize: packVal,
-      yieldDivisor: divVal,
+      splitFactor: divVal,
     });
     setMarginMode(inferred);
+    if (row.caseRetailPrice != null && row.caseRetailPrice > 0) {
+      setCurrentCaseFloor(row.caseRetailPrice.toFixed(2));
+    } else {
+      const impliedCase = catalogCaseFloorPrice({
+        unitCostPerSellable: econ.unitCostPerSellable,
+        casePackSize: row.casePackSize,
+        receivePackSize: packVal,
+        splitFactor: divVal,
+        caseRetailPrice: null,
+        retailPrice: row.retailPrice,
+        marginMode: inferred === 'custom' ? undefined : inferred,
+      });
+      setCurrentCaseFloor(impliedCase != null && impliedCase > 0 ? impliedCase.toFixed(2) : '');
+    }
     if (inferred === 'custom') {
       setCurrentRetailPrice(unitFloor != null && unitFloor > 0 ? unitFloor.toFixed(2) : '0');
-      const caseFromUnit = caseFloorFromPerUnitFloor(unitFloor ?? 0, packVal, divVal);
-      setCurrentCaseFloor(caseFromUnit !== null && caseFromUnit > 0 ? caseFromUnit.toFixed(2) : '0');
       floorFromMargin.current = false;
     } else {
-      syncFloorFromMargin(inferred, packVal, divVal, econ.caseCost);
+      applyPresetUnitPrice(inferred, econ.unitCostPerSellable);
     }
-    setPhysicalCases(String(row.onHandCases));
     setMessage(null);
     setError(null);
+    const t = window.setTimeout(() => {
+      skipFloorRecalc.current = false;
+    }, 0);
+    return () => window.clearTimeout(t);
+  }, [open, row?.productId]);
+
+  useEffect(() => {
+    if (!open || !row) return;
+    setPhysicalCases(String(row.onHandCases));
+  }, [open, row?.productId, row?.onHandCases]);
+
+  useEffect(() => {
+    if (!open || !row || caseCostEditing || busy === 'case' || caseCostDirtyRef.current) return;
+    const packVal = row.receivePackSize > 0 ? row.receivePackSize : row.casePackSize > 0 ? row.casePackSize : 1;
+    const divVal = row.splitFactor > 0 ? row.splitFactor : 1;
+    const caseCostBaseline = catalogDisplayCaseCost({
+      receiveCaseCost: row.receiveCaseCost,
+      standardCost: row.unitCost,
+      packSize: packVal,
+      splitFactor: divVal,
+    });
+    setAnchoredCaseCost(caseCostBaseline);
+    setCatalogCaseCostBaseline(caseCostBaseline);
+    setCaseCostInput(caseCostBaseline > 0 ? caseCostBaseline.toFixed(2) : '');
+  }, [
+    open,
+    row?.unitCost,
+    row?.receiveCaseCost,
+    row?.receivePackSize,
+    row?.splitFactor,
+    row?.productId,
+    caseCostEditing,
+    busy,
+  ]);
+
+  useEffect(() => {
+    if (!open || !row) return;
     void fetch(`/api/inventory/levels?auditProductId=${encodeURIComponent(row.productId)}`, {
       cache: 'no-store',
     })
@@ -216,18 +278,11 @@ export function ItemSettingsModal({
         else setAudit(null);
       })
       .catch(() => setAudit(null));
-    const t = window.setTimeout(() => {
-      skipFloorRecalc.current = false;
-    }, 0);
-    return () => window.clearTimeout(t);
-  }, [open, row]);
+  }, [open, row?.productId]);
 
   const pack = toNumber(packSize);
-  const divisor = toNumber(yieldDivisor);
+  const divisor = toNumber(splitFactor);
   const priceNumber = toNumber(currentRetailPrice);
-  const sellableCount =
-    sellableUnitsPerCase(pack, divisor) ||
-    (row && row.casePackSize > 0 ? row.casePackSize : 1);
   const pricingEconomics = useMemo(() => {
     if (!row) return { caseCost: 0, unitCostPerSellable: 0 };
     const sellable = sellableUnitsPerCase(pack, divisor);
@@ -240,10 +295,11 @@ export function ItemSettingsModal({
     return resolvePricingEconomics({
       standardCost: row.unitCost,
       packSize: pack,
-      yieldDivisor: divisor,
+      splitFactor: divisor,
     });
   }, [row, pack, divisor, anchoredCaseCost]);
   const { caseCost, unitCostPerSellable } = pricingEconomics;
+  const caseCostOverridden = Math.abs(caseCost - catalogCaseCostBaseline) >= 0.005;
 
   const targetMargin =
     marginMode === 'custom' && priceNumber > 0 && unitCostPerSellable > 0
@@ -251,47 +307,72 @@ export function ItemSettingsModal({
       : resolveTargetMargin(marginMode, 0);
 
   useEffect(() => {
-    if (!open || !row || skipFloorRecalc.current || marginMode === 'custom' || !floorFromMargin.current) {
-      return;
-    }
-    syncFloorFromMargin(marginMode, pack, divisor, caseCost);
+    if (!open || !row || skipFloorRecalc.current) return;
+    if (marginMode === 'custom' || !floorFromMargin.current) return;
+    if (sellableCountForPack(pack, divisor) === null) return;
+    applyPresetUnitPrice(marginMode, unitCostPerSellable);
+  }, [open, row, packSize, splitFactor, marginMode, unitCostPerSellable, applyPresetUnitPrice]);
+
+  useEffect(() => {
+    if (!open || !row || skipFloorRecalc.current || marginMode !== 'custom') return;
+    const caseVal = parseCatalogPriceInput(currentCaseFloor);
+    if (caseVal === null || !(caseVal > 0)) return;
+    if (sellableCountForPack(pack, divisor) === null) return;
+    setCurrentRetailPrice(formatUnitPriceFromCase(caseVal, pack, divisor));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [packSize, yieldDivisor, marginMode, caseCost, open, row?.productId]);
+  }, [open, row, packSize, splitFactor, marginMode, pack, divisor]);
 
   const quote: YieldQuote = useMemo(
     () =>
       calculateYieldQuote({
         caseCost,
         packSize: pack,
-        yieldDivisor: divisor,
+        splitFactor: divisor,
         targetMargin,
         currentRetailPrice: priceNumber,
       }),
     [caseCost, pack, divisor, targetMargin, priceNumber]
   );
-  const tone = marginTone(quote.currentMarginPct);
   const applyMarginMode = (mode: MarginMode) => {
     floorFromMargin.current = mode !== 'custom';
     setMarginMode(mode);
-    if (mode !== 'custom') {
-      syncFloorFromMargin(mode, pack, divisor, caseCost);
+    if (mode === '35' || mode === '40') {
+      applyPresetUnitPrice(mode, unitCostPerSellable);
     }
+  };
+
+  const syncCaseToUnit = (caseRaw: string, caseDisplay: string) => {
+    setCurrentCaseFloor(caseDisplay);
+    const caseVal = parseCatalogPriceInput(caseRaw);
+    if (caseVal === null) {
+      setCurrentRetailPrice('');
+      return;
+    }
+    if (caseVal === 0) {
+      setCurrentRetailPrice('');
+      return;
+    }
+    if (sellableCountForPack(pack, divisor) === null) return;
+    setCurrentRetailPrice(formatUnitPriceFromCase(caseVal, pack, divisor));
   };
 
   const onFloorPriceChange = (value: string) => {
     floorFromMargin.current = false;
     setMarginMode('custom');
-    setCurrentRetailPrice(value);
-    const caseNext = caseFloorFromPerUnitFloor(toNumber(value), pack, divisor);
-    if (caseNext !== null && caseNext > 0) setCurrentCaseFloor(caseNext.toFixed(2));
+    setCurrentRetailPrice(value.trim() ? value : '');
   };
 
-  const onCaseFloorPriceChange = (value: string) => {
-    floorFromMargin.current = false;
-    setMarginMode('custom');
+  const onCaseShelfPriceChange = (value: string) => {
+    if (!value.trim()) {
+      setCurrentCaseFloor('');
+      if (marginMode === 'custom') setCurrentRetailPrice('');
+      return;
+    }
     setCurrentCaseFloor(value);
-    const perUnit = perUnitFloorFromCaseFloor(toNumber(value), pack, divisor);
-    if (perUnit !== null && perUnit > 0) setCurrentRetailPrice(perUnit.toFixed(2));
+    if (marginMode === 'custom') {
+      floorFromMargin.current = false;
+      syncCaseToUnit(value, value);
+    }
   };
 
   if (!open || !row) return null;
@@ -390,13 +471,29 @@ export function ItemSettingsModal({
                     <input value={supplier} onChange={(e) => setSupplier(e.target.value)} className={INPUT} />
                   </label>
                 </div>
+                <div className="mt-5 border-t border-slate-800/80 pt-5">
+                  <p className={LABEL}>Pull / freshness window</p>
+                  <p className="mt-1 text-xs leading-relaxed text-slate-500">
+                    Flag this SKU for rescue when shelf life is within N days. Active window: ≤
+                    {pullSensitivityDays ?? storePullDefault}d
+                    {pullSensitivityDays === null ? ' (store default)' : ''}.
+                  </p>
+                  <PullDaysToggle
+                    className="mt-3"
+                    idPrefix="catalog-pull"
+                    allowStoreDefault
+                    storeDefault={storePullDefault}
+                    value={pullSensitivityDays}
+                    onChange={setPullSensitivityDays}
+                  />
+                </div>
                 <button
                   type="button"
                   disabled={busy === 'meta'}
                   onClick={() => {
                     setBusy('meta');
                     setError(null);
-                    void onSaveMetadata({ department, supplier, origin })
+                    void onSaveMetadata({ department, supplier, origin, pullSensitivityDays })
                       .then(() => setMessage('Metadata saved.'))
                       .catch((e: Error) => setError(e.message))
                       .finally(() => setBusy(null));
@@ -580,84 +677,84 @@ export function ItemSettingsModal({
           ) : null}
 
           {tab === 'pricing' ? (
-            <div className="space-y-6">
-              <SubCard title="Yield & pack">
-                <CatalogYieldPackFields
-                  packSize={packSize}
-                  yieldDivisor={yieldDivisor}
-                  packUnit={packUnit}
-                  yieldUnit={yieldUnit}
-                  caseFloorPrice={currentCaseFloor}
-                  onCaseFloorPrice={onCaseFloorPriceChange}
-                  onPackSize={setPackSize}
-                  onYieldDivisor={setYieldDivisor}
-                  onPackUnit={setPackUnit}
-                  onYieldUnit={setYieldUnit}
-                />
-              </SubCard>
-
-              <SubCard
-                title="Floor price & margin"
-                description={`Shelf price is per sellable ${sellableUnitShortLabel(yieldUnit)} (yield divisor unit). The catalog shows case price (× pack ÷ yield).`}
-              >
-                <PricingStrategy
-                  quote={quote}
-                  marginMode={marginMode}
-                  customMarginPercent=""
-                  currentRetailPrice={currentRetailPrice}
-                  floorPriceFromMargin
-                  floorPriceUnitLabel={sellableUnitShortLabel(yieldUnit)}
-                  onMarginMode={applyMarginMode}
-                  onCustomMargin={() => {}}
-                  onCurrentRetailPrice={onFloorPriceChange}
-                />
-                {unitCostPerSellable > 0 ? (
-                  <p className="mt-4 text-xs text-slate-500">
-                    Unit cost{' '}
-                    <span className="font-mono font-semibold text-slate-300">
-                      ${unitCostPerSellable.toFixed(2)}
-                    </span>{' '}
-                    / {sellableUnitShortLabel(yieldUnit)} · case cost{' '}
-                    <span className="font-mono font-semibold text-slate-300">${caseCost.toFixed(2)}</span>
-                  </p>
-                ) : null}
-                <div className="mt-6 flex items-end justify-between gap-4 rounded-xl border border-slate-800 bg-slate-900/70 px-5 py-4">
-                  <div>
-                    <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
-                      Margin at floor price (per {sellableUnitShortLabel(yieldUnit)})
-                    </p>
-                    <p
-                      className={cn(
-                        'mt-1 font-mono text-3xl font-black tabular-nums',
-                        tone === 'healthy' ? 'text-emerald-300' : tone === 'thin' ? 'text-amber-300' : 'text-slate-400'
-                      )}
-                    >
-                      {formatPercent(quote.currentMarginPct)}%
-                    </p>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  disabled={busy === 'case' || !(pack > 0) || !(divisor > 0)}
-                  onClick={() => {
-                    setBusy('case');
-                    setError(null);
-                    void onSaveCase({
-                      packSize: pack,
-                      yieldDivisor: divisor,
-                      retailUnit: yieldUnit,
-                      retailPrice: priceNumber,
+            <PricingYieldCard
+              compactHeader
+              showCaseShelf={false}
+              caseCostEditToggle
+              caseCostEditing={caseCostEditing}
+              onCaseCostEditingChange={(editing) => {
+                setCaseCostEditing(editing);
+                if (editing) {
+                  setCaseCostInput(caseCost > 0 ? caseCost.toFixed(2) : caseCostInput);
+                }
+              }}
+              caseCostInput={caseCostInput}
+              onCaseCostInput={(value) => {
+                caseCostDirtyRef.current = true;
+                setCaseCostInput(value);
+                setAnchoredCaseCost(toNumber(value));
+              }}
+              onResetCaseCost={() => {
+                caseCostDirtyRef.current = false;
+                setAnchoredCaseCost(catalogCaseCostBaseline);
+                setCaseCostInput(
+                  catalogCaseCostBaseline > 0 ? catalogCaseCostBaseline.toFixed(2) : ''
+                );
+              }}
+              caseCostOverridden={caseCostOverridden}
+              caseCost={caseCost}
+              packSize={packSize}
+              splitFactor={splitFactor}
+              packUnit={packUnit}
+              yieldUnit={yieldUnit}
+              caseShelfPrice={currentCaseFloor}
+              currentRetailPrice={currentRetailPrice}
+              marginMode={marginMode}
+              customMarginPercent=""
+              quote={quote}
+              onPackSize={setPackSize}
+              onSplitFactor={setSplitFactor}
+              onPackUnit={setPackUnit}
+              onYieldUnit={setYieldUnit}
+              onCaseShelfPrice={onCaseShelfPriceChange}
+              onMarginMode={applyMarginMode}
+              onCustomMargin={() => {}}
+              onRetailFloorPrice={onFloorPriceChange}
+              idPrefix="catalog"
+            >
+              <button
+                type="button"
+                disabled={busy === 'case' || !(pack > 0) || !(divisor > 0)}
+                onClick={() => {
+                  const caseCostToSave =
+                    caseCost > 0 ? caseCost : toNumber(caseCostInput);
+                  setBusy('case');
+                  setError(null);
+                  void onSaveCase({
+                    packSize: pack,
+                    splitFactor: divisor,
+                    retailUnit: yieldUnit,
+                    retailPrice: priceNumber,
+                    caseCost: caseCostToSave,
+                  })
+                    .then(() => {
+                      caseCostDirtyRef.current = false;
+                      setCatalogCaseCostBaseline(caseCostToSave);
+                      setAnchoredCaseCost(caseCostToSave);
+                      setCaseCostInput(
+                        caseCostToSave > 0 ? caseCostToSave.toFixed(2) : ''
+                      );
+                      setCaseCostEditing(false);
+                      setMessage('Pricing & pack saved.');
                     })
-                      .then(() => setMessage('Pricing & pack saved.'))
-                      .catch((e: Error) => setError(e.message))
-                      .finally(() => setBusy(null));
-                  }}
-                  className="mt-6 w-full rounded-xl bg-emerald-400 py-3.5 text-sm font-black text-slate-950 transition hover:bg-emerald-300 disabled:opacity-50"
-                >
-                  {busy === 'case' ? 'Saving…' : 'Save pricing & pack'}
-                </button>
-              </SubCard>
-            </div>
+                    .catch((e: Error) => setError(e.message))
+                    .finally(() => setBusy(null));
+                }}
+                className="w-full rounded-xl bg-emerald-400 py-3.5 text-sm font-black text-slate-950 transition hover:bg-emerald-300 disabled:opacity-50"
+              >
+                {busy === 'case' ? 'Saving…' : 'Save pricing & pack'}
+              </button>
+            </PricingYieldCard>
           ) : null}
         </ModalBody>
 

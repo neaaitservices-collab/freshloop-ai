@@ -1,17 +1,12 @@
 'use client';
 
-import React, { useCallback, useState, useEffect } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { stashInvoiceForReceiving } from '@/lib/domains/receiving/receivingBridge';
 import type { InvoiceOcrResult } from '@/lib/types';
-import { useRegisterAppVoice } from '@/components/layout/AppVoiceOverrideContext';
-import {
-  notifyInventoryUpdated,
-} from '@/lib/domains/inventory/inventoryMoveClient';
 import { PageMain } from '@/components/ui/layout';
 import { InvoiceUploadModal } from '@/components/features/invoices/InvoiceUploadModal';
-import { VoiceLoggerModal } from '@/components/features/voice/VoiceLoggerModal';
 import {
   FRESHLOOP_SETTINGS_UPDATED,
   readSettingsUpdatedEvent,
@@ -22,7 +17,6 @@ import {
   Activity,
   DollarSign,
   FileText,
-  Mic,
   RefreshCw,
 } from 'lucide-react';
 import { useRole } from '@/components/auth/RoleProvider';
@@ -36,9 +30,6 @@ export default function OperationsCenter() {
   const [pullSensitivityDays, setPullSensitivityDays] = useState<2 | 3 | 4>(3);
   const [settingsLoading, setSettingsLoading] = useState(false);
   const [isInvoiceModalOpen, setIsInvoiceModalOpen] = useState(false);
-  const [isVoiceModalOpen, setIsVoiceModalOpen] = useState(false);
-  const openVoiceModal = useCallback(() => setIsVoiceModalOpen(true), []);
-  useRegisterAppVoice(openVoiceModal);
 
   const syncStoreSettings = useCallback(async (showSpinner = false) => {
     if (showSpinner) setSettingsLoading(true);
@@ -108,15 +99,6 @@ export default function OperationsCenter() {
 
               <button
                 type="button"
-                onClick={() => setIsVoiceModalOpen(true)}
-                className="flex min-h-11 items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-teal-500 to-emerald-400 px-3 py-2.5 text-xs font-extrabold text-slate-950 shadow-lg shadow-teal-500/20 transition-all hover:from-teal-400 hover:to-emerald-300 active:scale-95 sm:px-4"
-              >
-                <Mic className="w-4 h-4 fill-slate-950" />
-                <span>Voice Logger</span>
-              </button>
-
-              <button
-                type="button"
                 onClick={() => setIsInvoiceModalOpen(true)}
                 className="flex min-h-11 items-center justify-center gap-2 rounded-2xl border border-slate-700/80 bg-slate-900 px-3 py-2.5 text-xs font-bold text-slate-100 shadow-inner transition-all hover:bg-slate-800 active:scale-95 sm:px-4"
               >
@@ -151,14 +133,6 @@ export default function OperationsCenter() {
           stashInvoiceForReceiving(result);
           setIsInvoiceModalOpen(false);
           router.push('/receive');
-        }}
-      />
-
-      <VoiceLoggerModal
-        isOpen={isVoiceModalOpen}
-        onClose={() => setIsVoiceModalOpen(false)}
-        onVoiceConfirmed={() => {
-          notifyInventoryUpdated();
         }}
       />
     </div>

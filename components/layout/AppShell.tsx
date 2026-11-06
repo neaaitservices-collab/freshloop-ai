@@ -1,29 +1,15 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { Navigation } from '@/components/layout/Navigation';
 import { useRole } from '@/components/auth/RoleProvider';
-import { VoiceLoggerModal } from '@/components/features/voice/VoiceLoggerModal';
-import { useAppVoiceOverride } from '@/components/layout/AppVoiceOverrideContext';
-import { notifyInventoryUpdated } from '@/lib/domains/inventory/inventoryMoveClient';
 import { canVisit, homeForRole } from '@/lib/utils/roles';
 
-export function AppShell({
-  children,
-  onVoice,
-}: {
-  children: React.ReactNode;
-  /** Prefer `useRegisterAppVoice` from a page when using AppShellLayout. */
-  onVoice?: () => void;
-}) {
+export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const { activeUser, loading } = useRole();
-  const [voiceOpen, setVoiceOpen] = useState(false);
-  const voiceOverride = useAppVoiceOverride();
-  const openVoice = onVoice ?? voiceOverride ?? (() => setVoiceOpen(true));
-  const useBuiltInVoiceModal = !onVoice && !voiceOverride;
 
   useEffect(() => {
     if (loading || !activeUser) return;
@@ -34,17 +20,8 @@ export function AppShell({
 
   return (
     <div className="flex min-h-screen flex-col bg-slate-950 text-slate-100 md:flex-row">
-      <Navigation onVoice={openVoice} />
+      <Navigation />
       <div className="flex min-w-0 flex-1 flex-col pb-20 md:pb-0">{children}</div>
-      {useBuiltInVoiceModal ? (
-        <VoiceLoggerModal
-          isOpen={voiceOpen}
-          onClose={() => setVoiceOpen(false)}
-          onVoiceConfirmed={() => {
-            notifyInventoryUpdated();
-          }}
-        />
-      ) : null}
     </div>
   );
 }

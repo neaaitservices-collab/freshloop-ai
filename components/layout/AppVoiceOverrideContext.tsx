@@ -1,6 +1,7 @@
 'use client';
 
 import React, { createContext, useCallback, useContext, useMemo, useState } from 'react';
+import { VOICE_UI_ENABLED } from '@/lib/features/voiceUiEnabled';
 
 type VoiceHandler = (() => void) | null;
 
@@ -31,7 +32,7 @@ export function useAppVoiceOverride(): VoiceHandler {
 export function useRegisterAppVoice(handler: (() => void) | null) {
   const ctx = useContext(AppVoiceOverrideContext);
   React.useEffect(() => {
-    if (!ctx) return;
+    if (!VOICE_UI_ENABLED || !ctx) return;
     ctx.setHandler(handler);
     return () => {
       ctx.setHandler(null);

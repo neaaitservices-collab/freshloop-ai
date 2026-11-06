@@ -1,7 +1,13 @@
 import { Department, InventoryLocation } from '@prisma/client';
 import { prisma } from '@/lib/domains/inventory/ledger';
 import { invalidateInventoryCaches } from '@/lib/domains/inventory/inventoryCache';
-import { findOrCreatePurchaseProduct, postProductReceipt } from '@/lib/domains/inventory/stock';
+import {
+  findOrCreatePurchaseProduct,
+  normalizeProductPackFields,
+  postProductReceipt,
+  productPackWriteData,
+} from '@/lib/domains/inventory/stock';
+import { resolveSupplierIdForVendorName } from '@/lib/domains/suppliers/suppliers';
 
 export type OcrQuantityKind = 'units' | 'cases';
 
@@ -18,6 +24,7 @@ export interface OcrCommitLine {
 
 export interface OcrInvoiceMeta {
   vendorName: string;
+  supplierId?: string | null;
   invoiceNumber: string;
   invoiceDate: string;
   totalAmount: number;
@@ -25,25 +32,19 @@ export interface OcrInvoiceMeta {
   rawOcrJson?: unknown;
 }
 
-function packSizeFor(line: OcrCommitLine, casePackSize: number): number {
-  if (line.case_pack_size && line.case_pack_size > 0) return line.case_pack_size;
-  return casePackSize > 0 ? casePackSize : 1;
-}
-
 /** Case invoices quote a cost per case; inventory stores a per-unit cost and retail units. */
 export function resolveInvoiceReceipt(
   line: OcrCommitLine,
-  casePackSize: number
+  sellableUnitsPerCase: number
 ): { units: number; unitCost: number } {
   const raw = Math.abs(Number(line.quantity) || 0);
   const rawCost = Math.max(0, Number.isFinite(Number(line.unit_cost)) ? Number(line.unit_cost) : 0);
   if (!(raw > 0)) return { units: 0, unitCost: 0 };
-  const pack = packSizeFor(line, casePackSize);
+  const pack = sellableUnitsPerCase > 0 ? sellableUnitsPerCase : 1;
   if ((line.quantity_kind ?? 'units') === 'cases') {
-    const safePack = pack > 0 ? pack : 1;
     return {
-      units: Number((raw * safePack).toFixed(4)),
-      unitCost: Number((rawCost / safePack).toFixed(4)),
+      units: Number((raw * pack).toFixed(4)),
+      unitCost: Number((rawCost / pack).toFixed(4)),
     };
   }
   return {
@@ -67,9 +68,13 @@ export async function commitInvoiceOcrReceipts(input: {
       let invoiceId: string | null = null;
       if (input.invoiceMeta) {
         const meta = input.invoiceMeta;
+        const supplierId =
+          meta.supplierId?.trim() ||
+          (await resolveSupplierIdForVendorName(meta.vendorName, tx));
         const invoice = await tx.vendorInvoice.create({
           data: {
             vendorName: meta.vendorName,
+            supplierId,
             invoiceNumber: meta.invoiceNumber,
             invoiceDate: new Date(meta.invoiceDate),
             totalAmount: meta.totalAmount,
@@ -89,11 +94,14 @@ export async function commitInvoiceOcrReceipts(input: {
           if (!lineName) {
             throw new Error('Each invoice line needs a catalog match or a line name to create a product.');
           }
+          const linePack =
+            item.case_pack_size && item.case_pack_size > 0 ? item.case_pack_size : undefined;
           const ensured = await findOrCreatePurchaseProduct(
             {
               itemName: lineName,
               department: item.department,
-              casePackSize: item.case_pack_size,
+              receivePackSize: linePack,
+              casePackSize: linePack,
               unitCost: Number(item.unit_cost) > 0 ? Number(item.unit_cost) : undefined,
             },
             tx
@@ -101,16 +109,43 @@ export async function commitInvoiceOcrReceipts(input: {
           productId = ensured.id;
         }
 
-        const product = await tx.product.findUnique({
+        let product = await tx.product.findUnique({
           where: { id: productId },
-          select: { casePackSize: true, name: true, department: true },
+          select: {
+            casePackSize: true,
+            receivePackSize: true,
+            splitFactor: true,
+            name: true,
+            department: true,
+          },
         });
         if (!product) {
           throw new Error(`Product was not found: ${productId}`);
         }
 
-        const pack = product.casePackSize && product.casePackSize > 0 ? product.casePackSize : 1;
-        const { units, unitCost } = resolveInvoiceReceipt(item, pack);
+        if (item.case_pack_size && item.case_pack_size > 0) {
+          const divisor =
+            product.splitFactor && product.splitFactor > 0 ? product.splitFactor : 1;
+          const packData = productPackWriteData(item.case_pack_size, divisor);
+          product = await tx.product.update({
+            where: { id: productId },
+            data: packData,
+            select: {
+              casePackSize: true,
+              receivePackSize: true,
+              splitFactor: true,
+              name: true,
+              department: true,
+            },
+          });
+        }
+
+        const packFields = normalizeProductPackFields({
+          receivePackSize: product.receivePackSize,
+          splitFactor: product.splitFactor,
+          casePackSize: product.casePackSize,
+        });
+        const { units, unitCost } = resolveInvoiceReceipt(item, packFields.casePackSize);
         if (!(units > 0)) {
           throw new Error(`Receive quantity must be greater than zero for ${product.name}.`);
         }
@@ -139,7 +174,7 @@ export async function commitInvoiceOcrReceipts(input: {
               unit: 'units',
               unitCost,
               totalCost: Number((unitCost * units).toFixed(2)),
-              casePackSize: pack,
+              casePackSize: packFields.receivePackSize,
             },
           });
         }

@@ -52,6 +52,8 @@ export interface InvoiceLineItemExtract {
 
 export interface InvoiceOcrResult {
   vendorName: string;
+  /** Global supplier row (upserted from OCR vendor name). */
+  supplierId?: string;
   invoiceNumber: string;
   invoiceDate: string;
   totalAmount: number;

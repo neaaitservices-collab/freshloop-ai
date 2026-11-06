@@ -23,14 +23,17 @@ export const inventoryLevelsPatchSchema = z
     parCases: z.number().finite().min(0).max(100_000).optional(),
     supplier: optionalSafeText(200),
     packSize: z.number().finite().positive().max(1_000_000).optional(),
-    yieldDivisor: z.number().finite().positive().max(1_000_000).optional(),
+    splitFactor: z.number().finite().positive().max(1_000_000).optional(),
     retailUnit: optionalSafeText(32),
     retailPrice: z.number().finite().min(0).max(1_000_000).optional(),
+    caseRetailPrice: z.union([z.number().finite().min(0).max(1_000_000), z.null()]).optional(),
+    caseCost: z.number().finite().min(0).max(1_000_000).optional(),
     casesOnHand: z.number().finite().min(0).max(1_000_000).optional(),
     quantity: z.number().finite().positive().max(1_000_000).optional(),
     discountPct: z.number().finite().min(0).max(100).optional(),
     department: optionalSafeText(64),
     origin: z.union([safeText(120), z.null()]).optional(),
+    pullSensitivityDays: z.union([z.literal(2), z.literal(3), z.literal(4), z.null()]).optional(),
   })
   .strict();
 

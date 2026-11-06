@@ -23,6 +23,14 @@ import {
   serializeVolumetricScrapNotes,
 } from '@/lib/domains/inventory/volumetricScrapLedger';
 import { departmentLabel } from '@/lib/domains/inventory/inventoryCatalog';
+import {
+  effectivePullDays,
+  normalizePullSensitivityDays,
+  parseProductPullOverride,
+  type PullSensitivityDays,
+} from '@/lib/domains/inventory/pullSensitivity';
+import { matchProduct } from '@/lib/domains/inventory/productMatching';
+import { sellableUnitsPerCase } from '@/lib/domains/receiving/yieldPricing';
 
 export const PAR_CASES = DEFAULT_PAR_CASES;
 
@@ -40,6 +48,9 @@ export interface StockLevel {
   origin: string | null;
   unitType: string;
   casePackSize: number;
+  /** Invoice/receive pack before yield (defaults to casePackSize when unset). */
+  receivePackSize: number;
+  splitFactor: number;
   unitCost: number;
   /** Shopper-facing units: `Retail_Floor` plus `Deli_Grab_N_Go`. */
   onHand: number;
@@ -50,6 +61,12 @@ export interface StockLevel {
   orderCases: number;
   orderCost: number;
   low: boolean;
+  receiveCaseCost: number | null;
+  /** Per-SKU override (2–4). Null = store default. */
+  pullSensitivityDays: number | null;
+  /** Resolved pull window for alerts and floor rescue (2–4). */
+  pullDays: number;
+  caseRetailPrice: number | null;
   retailPrice: number | null;
   regularRetailPrice: number | null;
   isMarkdown: boolean;
@@ -74,8 +91,6 @@ export interface SkippedReceipt {
   reason: string;
 }
 
-import { matchProduct } from '@/lib/domains/inventory/productMatching';
-
 export { matchProduct };
 
 /** Match by name or insert a purchasable SKU (invoice receive, OCR commit). */
@@ -86,6 +101,8 @@ export async function findOrCreatePurchaseProduct(
     department?: Department;
     supplier?: string | null;
     casePackSize?: number;
+    receivePackSize?: number;
+    splitFactor?: number;
     unitCost?: number;
     retailUnit?: string;
   },
@@ -123,14 +140,20 @@ export async function findOrCreatePurchaseProduct(
     return { id: match.id, name: match.name, created: false };
   }
 
-  const pack = packSizeOf(input.casePackSize);
+  const packFields = normalizeProductPackFields({
+    receivePackSize: coalesceReceivePack(input.receivePackSize, input.casePackSize),
+    splitFactor: input.splitFactor,
+    casePackSize: input.casePackSize,
+  });
   const unitCost = input.unitCost && input.unitCost > 0 ? Number(input.unitCost.toFixed(4)) : null;
   const created = await client.product.create({
     data: {
       name,
       department: input.department ?? departmentFor(name),
       unitType: unitTypeFor(input.retailUnit ?? 'units'),
-      casePackSize: pack,
+      casePackSize: packFields.casePackSize,
+      receivePackSize: packFields.receivePackSize,
+      splitFactor: packFields.splitFactor,
       standardCost: unitCost,
       supplier: input.supplier?.trim() || null,
       shelfLifeDays: 7,
@@ -141,8 +164,64 @@ export async function findOrCreatePurchaseProduct(
   return { id: created.id, name: created.name, created: true };
 }
 
-function packSizeOf(value: number | null | undefined): number {
-  return value && value > 0 ? value : 1;
+function positiveOrOne(value: number | null | undefined): number {
+  return value != null && value > 0 ? value : 1;
+}
+
+/** Prefer explicit receive pack; else sellable-only legacy `casePackSize`. */
+function coalesceReceivePack(
+  receivePackSize: number | undefined,
+  casePackSize: number | undefined
+): number | null | undefined {
+  if (receivePackSize != null && receivePackSize > 0) return receivePackSize;
+  if (casePackSize != null && casePackSize > 0) return casePackSize;
+  return undefined;
+}
+
+export type ProductPackFields = {
+  receivePackSize: number;
+  splitFactor: number;
+  /** Sellable units per case (ledger, POS, par math). */
+  casePackSize: number;
+};
+
+/**
+ * Read path: use persisted receive pack + split when present; otherwise treat
+ * `casePackSize` as both receive pack and sellable (splitFactor = 1).
+ * Recomputes sellable from receive ÷ split when receive is set; falls back to DB
+ * `casePackSize` if the formula yields zero.
+ */
+export function normalizeProductPackFields(input: {
+  receivePackSize?: number | null;
+  splitFactor?: number | null;
+  casePackSize?: number | null;
+}): ProductPackFields {
+  const storedSellable = positiveOrOne(input.casePackSize);
+  const hasReceive = input.receivePackSize != null && input.receivePackSize > 0;
+  const receivePackSize = hasReceive ? positiveOrOne(input.receivePackSize) : storedSellable;
+  const splitFactor = hasReceive ? positiveOrOne(input.splitFactor) : 1;
+  const sellable = sellableUnitsPerCase(receivePackSize, splitFactor);
+  return {
+    receivePackSize,
+    splitFactor,
+    casePackSize: sellable > 0 ? sellable : storedSellable,
+  };
+}
+
+/** Write path: all three Product columns stay in sync (receive, split, sellable). */
+export function productPackWriteData(packSize: number, splitFactor: number): ProductPackFields {
+  if (!(packSize > 0) || !(splitFactor > 0)) {
+    throw new Error('Pack size and split factor must be greater than 0.');
+  }
+  const unitsPerCase = sellableUnitsPerCase(packSize, splitFactor);
+  if (!(unitsPerCase > 0)) {
+    throw new Error('Pack size and split factor did not produce sellable units.');
+  }
+  return {
+    receivePackSize: packSize,
+    splitFactor,
+    casePackSize: unitsPerCase,
+  };
 }
 
 /**
@@ -180,16 +259,27 @@ export function buildStockLevel(input: {
   origin?: string | null;
   unitType: string;
   casePackSize: number | null;
+  receivePackSize?: number | null;
+  splitFactor?: number | null;
   unitCost: number | null;
   onHand: number;
   kitchenPrepQty?: number;
   parCases?: number | null;
+  receiveCaseCost?: number | null;
+  caseRetailPrice?: number | null;
   retailPrice?: number | null;
   regularRetailPrice?: number | null;
   daysRemaining?: number | null;
+  pullSensitivityDays?: number | null;
+  pullDays?: number;
 }): StockLevel {
   const department = input.department?.trim() || 'PRODUCE';
-  const casePackSize = packSizeOf(input.casePackSize);
+  const packFields = normalizeProductPackFields({
+    receivePackSize: input.receivePackSize,
+    splitFactor: input.splitFactor,
+    casePackSize: input.casePackSize,
+  });
+  const { casePackSize, receivePackSize, splitFactor } = packFields;
   const unitCost = input.unitCost && input.unitCost > 0 ? input.unitCost : 0;
   const onHand = Number(input.onHand.toFixed(2));
   const kitchenPrepQty = Number((input.kitchenPrepQty ?? 0).toFixed(2));
@@ -229,15 +319,31 @@ export function buildStockLevel(input: {
     origin: input.origin?.trim() || null,
     unitType: input.unitType,
     casePackSize,
+    receivePackSize,
+    splitFactor,
     unitCost,
     onHand,
     kitchenPrepQty,
     ...rated,
+    receiveCaseCost:
+      input.receiveCaseCost !== null &&
+      input.receiveCaseCost !== undefined &&
+      input.receiveCaseCost > 0
+        ? input.receiveCaseCost
+        : null,
+    caseRetailPrice:
+      input.caseRetailPrice !== null &&
+      input.caseRetailPrice !== undefined &&
+      input.caseRetailPrice > 0
+        ? input.caseRetailPrice
+        : null,
     retailPrice,
     regularRetailPrice,
     isMarkdown,
     markdownPct,
     daysRemaining: Number.isFinite(input.daysRemaining) ? Number(input.daysRemaining) : 7,
+    pullSensitivityDays: parseProductPullOverride(input.pullSensitivityDays),
+    pullDays: normalizePullSensitivityDays(input.pullDays ?? 3),
   };
   return {
     ...base,
@@ -279,11 +385,13 @@ export async function updateProductCatalogMeta(input: {
   department?: string;
   supplier?: string;
   origin?: string | null;
+  pullSensitivityDays?: number | null;
 }): Promise<StockLevel> {
   const data: {
     department?: Department;
     supplier?: string;
     origin?: string | null;
+    pullSensitivityDays?: number | null;
   } = {};
   if (input.department) {
     const allowed = new Set(Object.values(Department));
@@ -299,6 +407,12 @@ export async function updateProductCatalogMeta(input: {
   }
   if (input.origin !== undefined) {
     data.origin = input.origin?.trim() || null;
+  }
+  if (input.pullSensitivityDays !== undefined) {
+    data.pullSensitivityDays =
+      input.pullSensitivityDays === null
+        ? null
+        : parseProductPullOverride(input.pullSensitivityDays);
   }
   await prisma.product.update({
     where: { id: input.productId },
@@ -327,34 +441,54 @@ interface StockLevelRow {
   origin: string | null;
   unitType: string;
   casePackSize: number | null;
+  receivePackSize: number | null;
+  splitFactor: number | null;
   standardCost: number | null;
+  receiveCaseCost: number | null;
   parCases: number | null;
+  caseRetailPrice: number | null;
   retailPrice: number | null;
   regularRetailPrice: number | null;
   shelfLifeDays: number | null;
+  pullSensitivityDays: number | null;
   expirationDate: Date | null;
   onHand: number;
   kitchenPrepQty: number;
   posSoldInWindow?: number | null;
 }
 
-function stockLevelFromRow(row: StockLevelRow): StockLevel {
-  return buildStockLevel({
-    productId: row.productId,
-    name: row.name,
-    supplier: row.supplier,
-    department: row.department,
-    origin: row.origin,
-    unitType: row.unitType,
-    casePackSize: row.casePackSize,
-    unitCost: row.standardCost,
-    onHand: Number(row.onHand) || 0,
-    kitchenPrepQty: Number(row.kitchenPrepQty) || 0,
-    parCases: row.parCases,
-    retailPrice: row.retailPrice,
-    regularRetailPrice: row.regularRetailPrice,
-    daysRemaining: daysUntil(row.expirationDate, row.shelfLifeDays ?? 7),
-  });
+function stockLevelFromRow(row: StockLevelRow, storePullDefault: PullSensitivityDays): StockLevel {
+  const pullOverride = parseProductPullOverride(row.pullSensitivityDays);
+  const pullDays = effectivePullDays(pullOverride, storePullDefault);
+  return {
+    ...buildStockLevel({
+      productId: row.productId,
+      name: row.name,
+      supplier: row.supplier,
+      department: row.department,
+      origin: row.origin,
+      unitType: row.unitType,
+      casePackSize: row.casePackSize,
+      receivePackSize: row.receivePackSize,
+      splitFactor: row.splitFactor,
+      unitCost: row.standardCost,
+      onHand: Number(row.onHand) || 0,
+      kitchenPrepQty: Number(row.kitchenPrepQty) || 0,
+      parCases: row.parCases,
+      receiveCaseCost: row.receiveCaseCost,
+      caseRetailPrice: row.caseRetailPrice,
+      retailPrice: row.retailPrice,
+      regularRetailPrice: row.regularRetailPrice,
+      daysRemaining: daysUntil(row.expirationDate, row.shelfLifeDays ?? 7),
+    }),
+    pullSensitivityDays: pullOverride,
+    pullDays,
+  };
+}
+
+async function loadStorePullDefault(): Promise<PullSensitivityDays> {
+  const setting = await findLatestStoreSetting();
+  return normalizePullSensitivityDays(setting?.pullSensitivityDays);
 }
 
 function posSoldSubselect(posSalesFrom: Date) {
@@ -382,11 +516,16 @@ async function queryStockLevelRows(
         p.origin,
         p."unitType"::text AS "unitType",
         p."casePackSize",
+        p."receivePackSize",
+        p."splitFactor",
         p."standardCost",
+        p."receive_case_cost" AS "receiveCaseCost",
         p."parCases",
+        p."case_retail_price" AS "caseRetailPrice",
         p."retailPrice",
         p."regularRetailPrice",
         p."shelfLifeDays",
+        p."pull_sensitivity_days" AS "pullSensitivityDays",
         (
           SELECT t2."expirationDate"
           FROM "Inventory_Transactions" t2
@@ -427,11 +566,16 @@ async function queryStockLevelRows(
       p.origin,
       p."unitType"::text AS "unitType",
       p."casePackSize",
+      p."receivePackSize",
+      p."splitFactor",
       p."standardCost",
+      p."receive_case_cost" AS "receiveCaseCost",
       p."parCases",
+      p."case_retail_price" AS "caseRetailPrice",
       p."retailPrice",
       p."regularRetailPrice",
       p."shelfLifeDays",
+      p."pull_sensitivity_days" AS "pullSensitivityDays",
       (
         SELECT t2."expirationDate"
         FROM "Inventory_Transactions" t2
@@ -467,10 +611,13 @@ async function queryStockLevelRows(
 export async function getStockLevelsWithPosSales(lookbackDays: number): Promise<StockLevel[]> {
   const salesDays = parsePosSalesDaysParam(String(lookbackDays), 7);
   const from = posSalesWindowStart(salesDays);
-  const rows = await queryStockLevelRows(undefined, from);
+  const [rows, storePullDefault] = await Promise.all([
+    queryStockLevelRows(undefined, from),
+    loadStorePullDefault(),
+  ]);
   return rows
     .map((row) => ({
-      ...stockLevelFromRow(row),
+      ...stockLevelFromRow(row, storePullDefault),
       posSalesDays: salesDays,
       posSoldInWindow: Number(row.posSoldInWindow ?? 0),
     }))
@@ -483,16 +630,22 @@ export async function getStockLevelsWithPosSales(lookbackDays: number): Promise<
 }
 
 async function loadStockLevelById(productId: string): Promise<StockLevel> {
-  const rows = await queryStockLevelRows(productId);
+  const [rows, storePullDefault] = await Promise.all([
+    queryStockLevelRows(productId),
+    loadStorePullDefault(),
+  ]);
   const row = rows[0];
   if (!row) throw new Error('Item was not found.');
-  return stockLevelFromRow(row);
+  return stockLevelFromRow(row, storePullDefault);
 }
 
 async function loadStockLevels(): Promise<StockLevel[]> {
-  const rows = await queryStockLevelRows();
+  const [rows, storePullDefault] = await Promise.all([
+    queryStockLevelRows(),
+    loadStorePullDefault(),
+  ]);
   return rows
-    .map(stockLevelFromRow)
+    .map((row) => stockLevelFromRow(row, storePullDefault))
     .sort(
       (a, b) =>
         Number(b.low) - Number(a.low) ||
@@ -572,6 +725,69 @@ export async function applyRetailMarkdown(
   return { level: await readStockLevel(productId) };
 }
 
+async function applyAdminShelfLocationDelta(
+  tx: LotTx,
+  input: {
+    productId: string;
+    staffId: string;
+    referenceId: string;
+    unitCost: number;
+    location: InventoryLocation;
+    delta: number;
+    shelfLabel: 'floor' | 'deli';
+  }
+): Promise<void> {
+  const delta = Number(input.delta.toFixed(4));
+  if (Math.abs(delta) < 0.0001) return;
+
+  if (delta > 0) {
+    const created = await tx.inventoryTransaction.create({
+      data: {
+        productId: input.productId,
+        staffId: input.staffId,
+        qtyChange: delta,
+        transactionType: TransactionType.Receive,
+        fromLocation: InventoryLocation.External_Vendor,
+        toLocation: input.location,
+        unitCostAtTime: input.unitCost,
+        referenceId: input.referenceId,
+        notes: `Admin stock override: add cases (${input.shelfLabel})`,
+      },
+    });
+    await createLotOnReceive(tx, {
+      productId: input.productId,
+      location: input.location,
+      qty: delta,
+      unitCostAtTime: input.unitCost,
+      receiveReferenceId: input.referenceId,
+      receiveTransactionId: created.id,
+    });
+    return;
+  }
+
+  const qty = Math.abs(delta);
+  await consumeLotsFifo(tx, {
+    productId: input.productId,
+    location: input.location,
+    qty,
+    unitCost: input.unitCost,
+  });
+  await tx.inventoryTransaction.create({
+    data: {
+      productId: input.productId,
+      staffId: input.staffId,
+      qtyChange: delta,
+      transactionType: TransactionType.Waste,
+      fromLocation: input.location,
+      toLocation: InventoryLocation.Waste_Bin,
+      unitCostAtTime: input.unitCost,
+      referenceId: input.referenceId,
+      notes: `Admin stock override: shrink (${input.shelfLabel})`,
+    },
+  });
+}
+
+/** Manager override: set shopper-facing cases (floor + deli). Kitchen prep is unchanged. */
 export async function setStockCases(productId: string, cases: number, staffId: string): Promise<StockLevel> {
   if (!Number.isFinite(cases) || cases < 0) {
     throw new Error('Cases must be zero or greater.');
@@ -580,34 +796,38 @@ export async function setStockCases(productId: string, cases: number, staffId: s
   if (!product) throw new Error('Item was not found.');
   const pack = product.casePackSize && product.casePackSize > 0 ? product.casePackSize : 1;
   const targetUnits = Number((cases * pack).toFixed(4));
-  const onHand = await getCurrentStock(productId);
-  const delta = Number((targetUnits - onHand).toFixed(4));
-  if (Math.abs(delta) >= 0.0001) {
-    const shrink = delta < 0;
+  const floorOnHand = await getCurrentStock(productId, InventoryLocation.Retail_Floor);
+  const deliOnHand = await getCurrentStock(productId, InventoryLocation.Deli_Grab_N_Go);
+  const { floorDelta, deliDelta } = planShelfAdjustment({
+    targetUnits,
+    floorOnHand,
+    deliOnHand,
+  });
+
+  if (Math.abs(floorDelta) >= 0.0001 || Math.abs(deliDelta) >= 0.0001) {
     const unitCost = product.standardCost && product.standardCost > 0 ? product.standardCost : 0;
     const referenceId = `ADJ-${Date.now()}`;
+    const actor = staffId.trim() || 'staff-admin';
     await prisma.$transaction(async (tx) => {
-      const created = await tx.inventoryTransaction.create({
-        data: {
-          productId,
-          staffId: staffId.trim() || 'staff-admin',
-          qtyChange: delta,
-          transactionType: shrink ? TransactionType.Waste : TransactionType.Receive,
-          fromLocation: shrink ? InventoryLocation.Retail_Floor : InventoryLocation.External_Vendor,
-          toLocation: shrink ? InventoryLocation.Waste_Bin : InventoryLocation.Retail_Floor,
-          unitCostAtTime: unitCost,
-          referenceId,
-          notes: shrink ? 'Admin stock override: shrink' : 'Admin stock override: add cases',
-        },
-      });
-      await alignLotsToLedger(tx, {
+      await applyAdminShelfLocationDelta(tx, {
         productId,
-        location: InventoryLocation.Retail_Floor,
+        staffId: actor,
+        referenceId,
         unitCost,
-        receiveReferenceId: referenceId,
-        receiveTransactionId: created.id,
+        location: InventoryLocation.Retail_Floor,
+        delta: floorDelta,
+        shelfLabel: 'floor',
       });
-    });
+      await applyAdminShelfLocationDelta(tx, {
+        productId,
+        staffId: actor,
+        referenceId,
+        unitCost,
+        location: InventoryLocation.Deli_Grab_N_Go,
+        delta: deliDelta,
+        shelfLabel: 'deli',
+      });
+    }, LEDGER_WRITE_TX);
   }
   invalidateInventoryCaches();
   return readStockLevel(productId);
@@ -646,20 +866,40 @@ export async function setSupplier(productId: string, supplier: string): Promise<
 export async function updateCase(input: {
   productId: string;
   packSize: number;
-  yieldDivisor: number;
+  splitFactor: number;
   retailUnit: string;
-  retailPrice: number;
+  retailPrice?: number;
+  caseRetailPrice?: number | null;
+  caseCost?: number;
 }): Promise<StockLevel> {
-  if (!(input.packSize > 0) || !(input.yieldDivisor > 0)) {
-    throw new Error('Pack size and yield divisor must be greater than 0.');
+  const packData = productPackWriteData(input.packSize, input.splitFactor);
+  const caseRetail =
+    input.caseRetailPrice !== undefined && input.caseRetailPrice !== null && input.caseRetailPrice > 0
+      ? input.caseRetailPrice
+      : input.caseRetailPrice === null
+        ? null
+        : undefined;
+  let standardCost: number | undefined;
+  if (input.caseCost !== undefined && Number.isFinite(input.caseCost) && input.caseCost >= 0) {
+    const sellable = sellableUnitsPerCase(input.packSize, input.splitFactor);
+    standardCost =
+      sellable > 0
+        ? Number((input.caseCost / sellable).toFixed(4))
+        : Number(input.caseCost.toFixed(4));
   }
-  const unitsPerCase = input.packSize / input.yieldDivisor;
   await prisma.product.update({
     where: { id: input.productId },
     data: {
-      casePackSize: unitsPerCase,
+      ...packData,
       unitType: unitTypeFor(input.retailUnit),
-      retailPrice: input.retailPrice > 0 ? input.retailPrice : null,
+      ...(input.retailPrice !== undefined
+        ? { retailPrice: input.retailPrice > 0 ? input.retailPrice : null }
+        : {}),
+      ...(caseRetail !== undefined ? { caseRetailPrice: caseRetail } : {}),
+      ...(standardCost !== undefined ? { standardCost } : {}),
+      ...(input.caseCost !== undefined && Number.isFinite(input.caseCost) && input.caseCost >= 0
+        ? { receiveCaseCost: Number(input.caseCost.toFixed(4)) }
+        : {}),
     },
   });
   invalidateInventoryCaches();
@@ -720,42 +960,57 @@ export async function postReceipt(input: {
   casesReceived: number;
   caseCost: number;
   packSize: number;
-  yieldDivisor: number;
+  splitFactor: number;
   retailPrice: number;
+  caseRetailPrice?: number | null;
   retailUnit?: string;
   staffId?: string;
   targetMargin?: number;
+  supplier?: string | null;
 }): Promise<PostedReceipt | SkippedReceipt> {
-  const unitsPerCase = input.yieldDivisor > 0 ? input.packSize / input.yieldDivisor : 0;
+  let packData: ReturnType<typeof productPackWriteData>;
+  try {
+    packData = productPackWriteData(input.packSize, input.splitFactor);
+  } catch {
+    return { posted: false, reason: 'Pack size did not produce any retail units.' };
+  }
+  const unitsPerCase = packData.casePackSize;
   const unitsAdded = Number((input.casesReceived * unitsPerCase).toFixed(4));
   if (!(unitsAdded > 0)) {
     return { posted: false, reason: 'Pack size did not produce any retail units.' };
   }
 
   const unitCost = unitsPerCase > 0 ? input.caseCost / unitsPerCase : input.caseCost;
+  const supplierLabel = input.supplier?.trim() || 'Received at the dock';
   const posted = await prisma.$transaction(async (tx) => {
     const ensured = await findOrCreatePurchaseProduct(
       {
         itemName: input.itemName,
         productId: input.productId,
+        receivePackSize: input.packSize,
+        splitFactor: input.splitFactor,
         casePackSize: unitsPerCase,
         unitCost: Number(unitCost.toFixed(4)),
         retailUnit: input.retailUnit,
-        supplier: 'Received at the dock',
+        supplier: supplierLabel,
       },
       tx
     );
     const productId = ensured.id;
-    const yieldPct =
-      input.yieldDivisor > 0 ? Number((100 / input.yieldDivisor).toFixed(2)) : undefined;
     const product = await tx.product.update({
       where: { id: productId },
       data: {
-        casePackSize: unitsPerCase,
+        ...packData,
         unitType: unitTypeFor(input.retailUnit ?? 'units'),
         standardCost: Number(unitCost.toFixed(4)),
+        receiveCaseCost: Number(input.caseCost.toFixed(4)),
+        supplier: supplierLabel,
         ...(input.retailPrice > 0 ? { retailPrice: input.retailPrice } : {}),
-        ...(yieldPct !== undefined ? { yieldPct } : {}),
+        ...(input.caseRetailPrice !== undefined &&
+        input.caseRetailPrice !== null &&
+        input.caseRetailPrice > 0
+          ? { caseRetailPrice: input.caseRetailPrice }
+          : {}),
         ...(input.targetMargin !== undefined && input.targetMargin >= 0
           ? { targetMargin: input.targetMargin }
           : {}),

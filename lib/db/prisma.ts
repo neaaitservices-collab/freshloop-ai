@@ -1,46 +1,87 @@
+import { createRequire } from 'node:module';
+import { existsSync, statSync } from 'node:fs';
+import { join } from 'node:path';
 import type { PrismaClient } from '@prisma/client';
 
-const globalForPrisma = globalThis as unknown as {
+type PrismaGlobal = {
   prismaClientFreshloop?: PrismaClient;
-  /** Legacy dev cache — drop so new models are picked up after generate. */
+  prismaGenerationKey?: string;
+  prismaClientArtifactMtime?: number;
   prismaClientV3?: PrismaClient;
 };
 
-function loadPrismaClientClass(): typeof PrismaClient {
-  // Runtime require so Next/Turbopack does not embed an outdated generated client.
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  return require('@prisma/client').PrismaClient as typeof PrismaClient;
+const globalForPrisma = globalThis as unknown as PrismaGlobal;
+
+const projectRoot = process.cwd();
+const projectRequire = createRequire(join(projectRoot, 'package.json'));
+const GENERATED_CLIENT_ENTRY = join(projectRoot, 'node_modules/.prisma/client/index.js');
+
+function clearPrismaModuleCache(): void {
+  for (const key of Object.keys(require.cache)) {
+    if (
+      key.includes(`${join('node_modules', '.prisma', 'client')}`) ||
+      key.includes(`${join('node_modules', '@prisma', 'client')}`)
+    ) {
+      delete require.cache[key];
+    }
+  }
 }
 
-function clientHasCurrentModels(client: PrismaClient | undefined): client is PrismaClient {
-  const record = client as unknown as {
-    floorBundlePromo?: { findMany?: unknown };
-  } | undefined;
-  return typeof record?.floorBundlePromo?.findMany === 'function';
+function loadPrismaModule(): typeof import('@prisma/client') {
+  if (existsSync(GENERATED_CLIENT_ENTRY)) {
+    const mtime = statSync(GENERATED_CLIENT_ENTRY).mtimeMs;
+    if (globalForPrisma.prismaClientArtifactMtime !== mtime) {
+      clearPrismaModuleCache();
+      globalForPrisma.prismaClientArtifactMtime = mtime;
+      delete globalForPrisma.prismaClientFreshloop;
+      delete globalForPrisma.prismaGenerationKey;
+    }
+  }
+  // Resolve from project root so Next/Turbopack never serves an inlined stale client.
+  return projectRequire('@prisma/client') as typeof import('@prisma/client');
+}
+
+function prismaGenerationKey(): string {
+  const { Prisma } = loadPrismaModule();
+  const productFields = Object.keys(Prisma.ProductScalarFieldEnum).sort().join(',');
+  const hasSupplier = 'Supplier' in Prisma.ModelName;
+  const artifactMtime = existsSync(GENERATED_CLIENT_ENTRY)
+    ? String(statSync(GENERATED_CLIENT_ENTRY).mtimeMs)
+    : '0';
+  return `${artifactMtime}|${productFields}|supplier:${hasSupplier}`;
 }
 
 function createPrismaClient(): PrismaClient {
-  const PrismaClientCtor = loadPrismaClientClass();
+  const { PrismaClient: PrismaClientCtor } = loadPrismaModule();
   return new PrismaClientCtor({
     log: process.env.NODE_ENV === 'development' ? ['error', 'warn'] : ['error'],
   });
 }
 
+function assertRequiredDelegates(client: PrismaClient): void {
+  const withDelegates = client as unknown as { floorBundlePromo?: { findMany?: unknown } };
+  if (typeof withDelegates.floorBundlePromo?.findMany !== 'function') {
+    throw new Error(
+      'Prisma client is out of date (missing FloorBundlePromo). Run: npm run db:generate — then restart the dev server.'
+    );
+  }
+}
+
 function getPrismaClient(): PrismaClient {
   delete globalForPrisma.prismaClientV3;
 
-  const cached = globalForPrisma.prismaClientFreshloop;
-  if (clientHasCurrentModels(cached)) {
-    return cached;
+  const generationKey = prismaGenerationKey();
+  if (
+    globalForPrisma.prismaClientFreshloop &&
+    globalForPrisma.prismaGenerationKey === generationKey
+  ) {
+    return globalForPrisma.prismaClientFreshloop;
   }
 
   const client = createPrismaClient();
-  if (!clientHasCurrentModels(client)) {
-    throw new Error(
-      'Prisma client is missing FloorBundlePromo. Run: npm run db:generate — then restart the dev server.'
-    );
-  }
+  assertRequiredDelegates(client);
   globalForPrisma.prismaClientFreshloop = client;
+  globalForPrisma.prismaGenerationKey = generationKey;
   return client;
 }
 
@@ -49,9 +90,8 @@ export const prisma: PrismaClient = new Proxy({} as PrismaClient, {
   get(_target, prop) {
     const client = getPrismaClient();
     const value = Reflect.get(client as object, prop, client);
-    if (typeof value === 'function') {
-      return (value as (...args: unknown[]) => unknown).bind(client);
-    }
-    return value;
+    return typeof value === 'function'
+      ? (value as (...args: unknown[]) => unknown).bind(client)
+      : value;
   },
 });

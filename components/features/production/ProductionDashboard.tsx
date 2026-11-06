@@ -4,7 +4,6 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { stashInvoiceForReceiving } from '@/lib/domains/receiving/receivingBridge';
 import type { InvoiceOcrResult } from '@/lib/types';
-import { useRegisterAppVoice } from '@/components/layout/AppVoiceOverrideContext';
 import { useRole } from '@/components/auth/RoleProvider';
 import { RecipeFusionCard } from '@/components/features/recipes/RecipeFusionCard';
 import {
@@ -13,7 +12,6 @@ import {
 } from '@/components/features/production/ProductionBomKpiBadges';
 import { PageMain } from '@/components/ui/layout';
 import { InvoiceUploadModal } from '@/components/features/invoices/InvoiceUploadModal';
-import { VoiceRecorderModal } from '@/components/features/voice/VoiceRecorderModal';
 import { DeliLabelModal } from '@/components/features/recipes/DeliLabelModal';
 import { LiveSubInventoryTransfers } from '@/components/features/inventory/LiveSubInventoryTransfers';
 import { ProductionActiveBomPanel } from '@/components/features/production/ProductionActiveBomPanel';
@@ -35,7 +33,7 @@ import {
   type ProductionBatchExecutedSummary,
 } from '@/components/features/recipes/RecipeProductionModal';
 import { ManualRecipeCreatorModal } from '@/components/features/recipes/ManualRecipeCreatorModal';
-import { Search, Mic, ChefHat, Plus, CheckCircle2, BookOpen } from 'lucide-react';
+import { Search, ChefHat, Plus, CheckCircle2, BookOpen } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Toast } from '@/components/ui/Toast';
@@ -79,7 +77,6 @@ function ProductionDashboardContent() {
   const [scrapToast, setScrapToast] = useState<string | null>(null);
 
   const [isInvoiceModalOpen, setIsInvoiceModalOpen] = useState(false);
-  const [isVoiceModalOpen, setIsVoiceModalOpen] = useState(false);
   const [isCreateRecipeModalOpen, setIsCreateRecipeModalOpen] = useState(false);
   const [editRecipeId, setEditRecipeId] = useState<string | null>(null);
   const [selectedDeliRecipe, setSelectedDeliRecipe] = useState<RecipeFusionResult | null>(null);
@@ -95,9 +92,6 @@ function ProductionDashboardContent() {
     avgMargin: 0,
   });
   const [mobileSection, setMobileSection] = useState<ProductionMobileSection>('bom');
-
-  const openVoiceModal = useCallback(() => setIsVoiceModalOpen(true), []);
-  useRegisterAppVoice(openVoiceModal);
 
   const fetchRecipes = useCallback(async () => {
     try {
@@ -236,14 +230,6 @@ function ProductionDashboardContent() {
                 >
                   <BookOpen className="h-4 w-4" />
                   Catalog
-                </Button>
-                <Button
-                  variant="primary"
-                  className="min-h-11 text-xs font-bold sm:min-h-10"
-                  onClick={() => setIsVoiceModalOpen(true)}
-                >
-                  <Mic className="h-4 w-4" />
-                  Voice
                 </Button>
               </div>
             </div>
@@ -404,12 +390,6 @@ function ProductionDashboardContent() {
           setIsInvoiceModalOpen(false);
           router.push('/receive');
         }}
-      />
-
-      <VoiceRecorderModal
-        isOpen={isVoiceModalOpen}
-        onClose={() => setIsVoiceModalOpen(false)}
-        onVoiceLogged={fetchRecipes}
       />
 
       <DeliLabelModal

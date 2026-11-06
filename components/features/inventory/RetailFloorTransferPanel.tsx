@@ -60,7 +60,7 @@ export function RetailFloorTransferPanel({
     }
     if (priorityOnly) {
       list = list.filter(
-        (row) => row.daysRemaining <= pullDays || row.low || row.isMarkdown
+        (row) => row.daysRemaining <= row.pullDays || row.low || row.isMarkdown
       );
     }
     return list.sort(

@@ -1,5 +1,4 @@
 import { getStockLevels } from '@/lib/domains/inventory/stock';
-import { findLatestStoreSetting } from '@/lib/domains/stats/storeSettingSelect';
 
 export interface MarkdownSuggestion {
   productId: string;
@@ -21,16 +20,15 @@ function suggestDiscount(daysRemaining: number, pullDays: number): number {
 }
 
 export async function listMarkdownSuggestions(limit = 12): Promise<MarkdownSuggestion[]> {
-  const setting = await findLatestStoreSetting();
-  const pullDays = setting?.pullSensitivityDays ?? 3;
   const levels = await getStockLevels();
 
   const candidates = levels
-    .filter((row) => row.onHand > 0 && row.daysRemaining <= pullDays + 2)
+    .filter((row) => row.onHand > 0 && row.daysRemaining <= row.pullDays + 2)
     .sort((a, b) => a.daysRemaining - b.daysRemaining || b.onHand - a.onHand)
     .slice(0, limit);
 
   return candidates.map((row) => {
+    const pullDays = row.pullDays;
     const discount = suggestDiscount(row.daysRemaining, pullDays);
     const regular = row.regularRetailPrice ?? row.retailPrice;
     const suggestedPrice =

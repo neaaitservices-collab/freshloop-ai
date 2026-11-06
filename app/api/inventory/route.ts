@@ -108,7 +108,8 @@ async function loadInventoryPayload(
         expirationDate: expDate.toISOString().split('T')[0],
         supplier: prod.supplier || level?.supplier || 'Direct Store Vendor',
         isManufactured: prod.isManufactured,
-        isFlaggedForPull: daysRemaining <= pullDays && retailStock > 0,
+        isFlaggedForPull:
+          daysRemaining <= (level?.pullDays ?? pullDays) && retailStock > 0,
       };
     })
       .filter(

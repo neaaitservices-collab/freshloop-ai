@@ -14,6 +14,11 @@ import {
   uniqueFilterOptions,
 } from '@/lib/domains/inventory/inventoryCatalog';
 import type { StockLevel, StockOverrideAudit } from '@/lib/domains/inventory/stock';
+import { applyOptimisticStockCases } from '@/lib/domains/inventory/optimisticStock';
+import {
+  notifyInventoryUpdated,
+  type InventoryUpdatedDetail,
+} from '@/lib/domains/inventory/inventoryMoveClient';
 import { canOverrideInventoryStock } from '@/lib/auth/staffCapabilities';
 import { CatalogDuplicateMergePanel } from '@/components/features/inventory/CatalogDuplicateMergePanel';
 
@@ -45,7 +50,14 @@ export function AdminInventoryWorkspace({
   }, [initialLevels]);
 
   useEffect(() => {
-    const refreshLevels = () => {
+    const refreshLevels = (event: Event) => {
+      const detail = (event as CustomEvent<InventoryUpdatedDetail>).detail;
+      if (detail?.source === 'level-patch' && detail.level) {
+        setLevels((current) =>
+          current.map((row) => (row.productId === detail.level!.productId ? detail.level! : row))
+        );
+        return;
+      }
       void fetch('/api/inventory/levels', { cache: 'no-store' })
         .then((res) => res.json())
         .then((json) => {
@@ -129,7 +141,9 @@ export function AdminInventoryWorkspace({
           }
           setLevels((current) => current.filter((row) => row.productId !== modalRow.productId));
           setModalRow(null);
-          window.dispatchEvent(new CustomEvent('freshloop-inventory-updated'));
+          notifyInventoryUpdated({
+            productId: modalRow.productId,
+          });
         }}
         onSaveMetadata={async (payload) => {
           if (!modalRow) return;
@@ -141,12 +155,17 @@ export function AdminInventoryWorkspace({
               department: payload.department,
               supplier: payload.supplier,
               origin: payload.origin || null,
+              pullSensitivityDays: payload.pullSensitivityDays,
             }),
           });
           const json = await res.json();
           if (!res.ok || !json.success) throw new Error(json.error || 'Could not save metadata.');
           patchLevel(json.level as StockLevel);
-          window.dispatchEvent(new CustomEvent('freshloop-inventory-updated'));
+          notifyInventoryUpdated({
+            level: json.level as StockLevel,
+            productId: modalRow.productId,
+            source: 'level-patch',
+          });
         }}
         onSaveCase={async (payload) => {
           if (!modalRow) return;
@@ -156,30 +175,48 @@ export function AdminInventoryWorkspace({
             body: JSON.stringify({
               productId: modalRow.productId,
               packSize: payload.packSize,
-              yieldDivisor: payload.yieldDivisor,
+              splitFactor: payload.splitFactor,
               retailUnit: payload.retailUnit,
               retailPrice: payload.retailPrice,
+              ...(payload.caseRetailPrice !== undefined
+                ? { caseRetailPrice: payload.caseRetailPrice }
+                : {}),
+              caseCost: payload.caseCost,
             }),
           });
           const json = await res.json();
           if (!res.ok || !json.success) throw new Error(json.error || 'Could not save case.');
           patchLevel(json.level as StockLevel);
-          window.dispatchEvent(new CustomEvent('freshloop-inventory-updated'));
+          notifyInventoryUpdated({
+            level: json.level as StockLevel,
+            productId: modalRow.productId,
+            source: 'level-patch',
+          });
         }}
         onUpdatePhysicalCount={async (cases) => {
           if (!modalRow) throw new Error('No item selected.');
+          const snapshot = modalRow;
+          patchLevel(applyOptimisticStockCases(snapshot, cases));
           const res = await fetch('/api/inventory/levels', {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              productId: modalRow.productId,
+              productId: snapshot.productId,
               casesOnHand: cases,
             }),
           });
           const json = await res.json();
-          if (!res.ok || !json.success) throw new Error(json.error || 'Stock could not be updated.');
+          if (!res.ok || !json.success) {
+            patchLevel(snapshot);
+            throw new Error(json.error || 'Stock could not be updated.');
+          }
           patchLevel(json.level as StockLevel);
-          window.dispatchEvent(new CustomEvent('freshloop-inventory-updated'));
+          notifyInventoryUpdated({
+            level: json.level as StockLevel,
+            productId: snapshot.productId,
+            source: 'level-patch',
+            skipStatsRefresh: true,
+          });
           return (json.audit as StockOverrideAudit | undefined) ?? null;
         }}
       />

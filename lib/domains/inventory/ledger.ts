@@ -300,6 +300,57 @@ export async function getMovingAverageCost(
   }
 }
 
+/** Batch MAC for invoice guardrails (one receive query + one product fallback query). */
+export async function getMovingAverageCostMap(
+  productIds: string[],
+  client: Prisma.TransactionClient | PrismaClient = prisma
+): Promise<Map<string, number>> {
+  const ids = [...new Set(productIds.map((id) => id.trim()).filter(Boolean))];
+  const result = new Map<string, number>();
+  if (ids.length === 0) return result;
+
+  const receiveLogs = await client.inventoryTransaction.findMany({
+    where: {
+      productId: { in: ids },
+      transactionType: TransactionType.Receive,
+      qtyChange: { gt: 0 },
+    },
+    select: {
+      productId: true,
+      qtyChange: true,
+      unitCostAtTime: true,
+    },
+  });
+
+  const buckets = new Map<string, { cost: number; qty: number }>();
+  for (const log of receiveLogs) {
+    if (!(log.qtyChange > 0) || log.unitCostAtTime < 0) continue;
+    const prev = buckets.get(log.productId) ?? { cost: 0, qty: 0 };
+    prev.cost += log.qtyChange * log.unitCostAtTime;
+    prev.qty += log.qtyChange;
+    buckets.set(log.productId, prev);
+  }
+
+  for (const [productId, bucket] of buckets) {
+    if (bucket.qty > 0) {
+      result.set(productId, Number((bucket.cost / bucket.qty).toFixed(4)));
+    }
+  }
+
+  const missing = ids.filter((id) => !result.has(id));
+  if (missing.length > 0) {
+    const products = await client.product.findMany({
+      where: { id: { in: missing } },
+      select: { id: true, standardCost: true },
+    });
+    for (const product of products) {
+      result.set(product.id, Number((product.standardCost ?? 0).toFixed(4)));
+    }
+  }
+
+  return result;
+}
+
 // ============================================================================
 // 3. executeBundleSale(bundleId, externalRef, options)
 // ============================================================================

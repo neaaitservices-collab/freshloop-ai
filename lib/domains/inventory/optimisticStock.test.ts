@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { applyOptimisticMove } from '@/lib/domains/inventory/optimisticStock';
+import { applyOptimisticMove, applyOptimisticStockCases } from '@/lib/domains/inventory/optimisticStock';
 import type { StockLevel } from '@/lib/domains/inventory/stock';
 
 function level(partial: Partial<StockLevel> & Pick<StockLevel, 'productId'>): StockLevel {
@@ -15,6 +15,8 @@ function level(partial: Partial<StockLevel> & Pick<StockLevel, 'productId'>): St
     origin: null,
     unitType: 'EACH',
     casePackSize: 12,
+    receivePackSize: 12,
+    splitFactor: 1,
     unitCost: 1,
     onHand: partial.onHand ?? 10,
     kitchenPrepQty: partial.kitchenPrepQty ?? 0,
@@ -24,6 +26,10 @@ function level(partial: Partial<StockLevel> & Pick<StockLevel, 'productId'>): St
     orderCases: 0,
     orderCost: 0,
     low: false,
+    receiveCaseCost: null,
+    pullSensitivityDays: null,
+    pullDays: 3,
+    caseRetailPrice: null,
     retailPrice: 3,
     regularRetailPrice: 3,
     isMarkdown: false,
@@ -49,4 +55,11 @@ test('applyOptimisticMove waste never goes negative on floor', () => {
   const row = level({ productId: 'x', onHand: 2 });
   const next = applyOptimisticMove(row, 'waste', 5);
   assert.equal(next.onHand, 0);
+});
+
+test('applyOptimisticStockCases sets shelf units from cases × pack', () => {
+  const row = level({ productId: 'x', onHand: 5, onHandCases: 5 / 12 });
+  const next = applyOptimisticStockCases(row, 3);
+  assert.equal(next.onHand, 36);
+  assert.equal(next.onHandCases, 3);
 });

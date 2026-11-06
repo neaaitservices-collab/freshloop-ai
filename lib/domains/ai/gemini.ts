@@ -4,6 +4,7 @@ import {
   RecipeFusionResult,
   InventoryItem,
 } from '@/lib/types';
+import { GEMINI_FLASH_MODEL_FALLBACKS } from '@/lib/domains/ai/geminiModels';
 
 /**
  * Parses model output that should be JSON (handles markdown fences and common wrappers).
@@ -74,13 +75,60 @@ function getGenAIClient(apiKey: string): { client: any } | null {
   return null;
 }
 
+export type GenerateContentOptions = {
+  /** Skip the models.list API round-trip (saves ~200–800ms on hot paths like invoice OCR). */
+  skipModelDiscovery?: boolean;
+  /** Cap how many models to attempt before failing. */
+  maxModelsToTry?: number;
+};
+
+const MODEL_LIST_TTL_MS = 30 * 60 * 1000;
+let cachedListedModels: { fetchedAt: number; names: string[] } | null = null;
+
+async function discoverGenerativeModels(apiKey: string): Promise<string[]> {
+  if (cachedListedModels && Date.now() - cachedListedModels.fetchedAt < MODEL_LIST_TTL_MS) {
+    return cachedListedModels.names;
+  }
+  try {
+    const listResponse = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey)}&pageSize=100`
+    );
+    if (!listResponse.ok) return [];
+    const listed = await listResponse.json();
+    const names = (listed.models || [])
+      .filter((model: { supportedGenerationMethods?: string[] }) =>
+        model.supportedGenerationMethods?.includes('generateContent')
+      )
+      .map((model: { name?: string }) => String(model.name || '').replace(/^models\//, ''))
+      .filter(Boolean);
+    cachedListedModels = { fetchedAt: Date.now(), names };
+    return names;
+  } catch {
+    return [];
+  }
+}
+
+function rankFlashModels(names: string[]): string[] {
+  return names.slice().sort((a, b) => {
+    const score = (name: string) => {
+      if (/gemini-3\.8-flash/.test(name)) return -3;
+      if (/gemini-3[.-]\d+-flash/.test(name) && !/lite|image|tts|live/.test(name)) return -2;
+      if (/flash/.test(name) && !/lite|image|tts|live/.test(name)) return 0;
+      if (/flash/.test(name)) return 1;
+      return 2;
+    };
+    return score(a) - score(b);
+  });
+}
+
 /**
  * Direct REST API fallback supporting OAuth Bearer tokens (AQ.xxx) & API keys (AIzaSyxxx)
  */
 export async function generateContentWithFallback(
   promptText: string,
   inlinePart?: { data: string; mimeType: string },
-  preferredModels: string[] = ['gemini-2.5-flash', 'gemini-1.5-flash', 'gemini-2.0-flash']
+  preferredModels: string[] = [...GEMINI_FLASH_MODEL_FALLBACKS],
+  options?: GenerateContentOptions
 ): Promise<{ text: string; modelUsed: string }> {
   const apiKey = getApiKey();
   if (!apiKey) {
@@ -94,37 +142,19 @@ export async function generateContentWithFallback(
     failures.push(`${modelName}: ${safe}`);
   };
 
-  let listedModels: string[] = [];
-  try {
-    const listResponse = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey)}&pageSize=100`
+  const maxTry = options?.maxModelsToTry ?? 4;
+  let modelsToTry: string[];
+
+  if (options?.skipModelDiscovery) {
+    modelsToTry = rankFlashModels(preferredModels).slice(0, maxTry);
+  } else {
+    const listedModels = await discoverGenerativeModels(apiKey);
+    const ranked = rankFlashModels(listedModels.length ? listedModels : preferredModels).slice(
+      0,
+      maxTry
     );
-    if (listResponse.ok) {
-      const listed = await listResponse.json();
-      listedModels = (listed.models || [])
-        .filter((model: { supportedGenerationMethods?: string[] }) =>
-          model.supportedGenerationMethods?.includes('generateContent')
-        )
-        .map((model: { name?: string }) => String(model.name || '').replace(/^models\//, ''))
-        .filter(Boolean);
-    }
-  } catch {
-    listedModels = [];
+    modelsToTry = ranked.length ? ranked : preferredModels.slice(0, maxTry);
   }
-
-  const ranked = (listedModels.length ? listedModels : preferredModels)
-    .slice()
-    .sort((a, b) => {
-      const score = (name: string) => {
-        if (/flash/.test(name) && !/lite|image|tts|live/.test(name)) return 0;
-        if (/flash/.test(name)) return 1;
-        return 2;
-      };
-      return score(a) - score(b);
-    })
-    .slice(0, 4);
-
-  const modelsToTry = ranked.length ? ranked : preferredModels;
 
   for (const modelName of modelsToTry) {
     try {
@@ -221,10 +251,20 @@ export async function generateContentWithFallback(
     keyLines.every(
       (line) => line.includes('401') || line.includes('403') || line.includes('API_KEY_INVALID')
     );
+  const modelUnavailable =
+    failures.length > 0 &&
+    failures.every(
+      (line) =>
+        line.includes('404') ||
+        line.includes('no longer available') ||
+        line.includes('not found')
+    );
   throw new Error(
     rejected
       ? 'The photo could not be read. The Gemini key on this store was rejected.'
-      : failures[0] || 'The invoice reader could not reach the model.'
+      : modelUnavailable
+        ? 'The vision model is unavailable on this API key. Set GEMINI_OCR_MODEL=gemini-3.8-flash and restart the dev server.'
+        : failures[0] || 'The invoice reader could not reach the model.'
   );
 }
 

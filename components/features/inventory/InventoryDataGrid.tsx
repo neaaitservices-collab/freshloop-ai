@@ -6,6 +6,7 @@ import type { StockLevel } from '@/lib/domains/inventory/stock';
 import { itemOriginLabel } from '@/components/features/inventory/RetailFloorItemCardMeta';
 import {
   catalogCaseFloorPrice,
+  catalogDisplayCaseCost,
   caseCostForPricing,
   formatCurrency,
   formatPercent,
@@ -18,12 +19,20 @@ import { cn } from '@/lib/utils/cn';
 
 const CATALOG_COLUMN_COUNT = 7;
 
+function packForPricing(row: StockLevel): number {
+  return row.receivePackSize > 0 ? row.receivePackSize : row.casePackSize > 0 ? row.casePackSize : 1;
+}
+
+function splitForPricing(row: StockLevel): number {
+  return row.splitFactor > 0 ? row.splitFactor : 1;
+}
+
 function caseCost(row: StockLevel): number {
-  const pack = row.casePackSize > 0 ? row.casePackSize : 1;
-  return caseCostForPricing({
+  return catalogDisplayCaseCost({
+    receiveCaseCost: row.receiveCaseCost,
     standardCost: row.unitCost,
-    packSize: pack,
-    yieldDivisor: 1,
+    packSize: packForPricing(row),
+    splitFactor: splitForPricing(row),
   });
 }
 
@@ -31,6 +40,9 @@ function casePrice(row: StockLevel): number | null {
   return catalogCaseFloorPrice({
     unitCostPerSellable: row.unitCost,
     casePackSize: row.casePackSize,
+    receivePackSize: row.receivePackSize,
+    splitFactor: row.splitFactor,
+    caseRetailPrice: row.caseRetailPrice,
     retailPrice: row.retailPrice,
   });
 }
@@ -41,8 +53,12 @@ function marginPct(row: StockLevel): number | null {
   return marginAtCaseFloorPrice(price, caseCost(row));
 }
 
+function displayCaseCost(row: StockLevel): string {
+  const cost = caseCost(row);
+  return cost > 0 ? formatCurrency(cost) : '—';
+}
+
 function CatalogItemCard({ row, onSelect }: { row: StockLevel; onSelect: () => void }) {
-  const floorCasePrice = casePrice(row);
   const margin = marginPct(row);
   const unit = stockUnitLabel(row.unitType);
 
@@ -93,10 +109,8 @@ function CatalogItemCard({ row, onSelect }: { row: StockLevel; onSelect: () => v
           </dd>
         </div>
         <div>
-          <dt className="text-[9px] font-bold uppercase tracking-wider text-slate-500">Case price</dt>
-          <dd className="font-mono tabular-nums text-slate-300">
-            {floorCasePrice === null ? '—' : formatCurrency(floorCasePrice)}
-          </dd>
+          <dt className="text-[9px] font-bold uppercase tracking-wider text-slate-500">Case cost</dt>
+          <dd className="font-mono tabular-nums text-slate-300">{displayCaseCost(row)}</dd>
         </div>
         <div>
           <dt className="text-[9px] font-bold uppercase tracking-wider text-slate-500">Shelf</dt>
@@ -152,7 +166,7 @@ export function InventoryDataGrid({
               <th className="px-4 py-3">Origin</th>
               <th className="px-4 py-3 text-right">On hand</th>
               <th className="px-4 py-3 text-right">Margin</th>
-              <th className="px-4 py-3 text-right">Case price</th>
+              <th className="px-4 py-3 text-right">Case cost</th>
               <th className="px-4 py-3 text-right">Shelf</th>
             </tr>
           </thead>
@@ -232,7 +246,6 @@ function GroupTableBlock({
       ) : null}
       {open
         ? group.rows.map((row, index) => {
-            const floorCasePrice = casePrice(row);
             return (
               <tr
                 key={row.productId}
@@ -276,9 +289,21 @@ function GroupTableBlock({
                   {marginPct(row) === null ? '—' : `${formatPercent(marginPct(row)!)}%`}
                 </td>
                 <td className="px-4 py-3 text-right font-mono tabular-nums text-slate-300">
-                  {floorCasePrice === null ? '—' : formatCurrency(floorCasePrice)}
+                  {displayCaseCost(row)}
                 </td>
-                <td className="px-4 py-3 text-right text-xs text-slate-500">{row.daysRemaining}d</td>
+                <td
+                  className={cn(
+                    'px-4 py-3 text-right text-xs font-mono tabular-nums',
+                    row.daysRemaining <= row.pullDays
+                      ? 'font-bold text-amber-300'
+                      : 'text-slate-500'
+                  )}
+                >
+                  {row.daysRemaining}d
+                  {row.daysRemaining <= row.pullDays ? (
+                    <span className="ml-1 text-[10px] text-amber-400/90">≤{row.pullDays}d</span>
+                  ) : null}
+                </td>
               </tr>
             );
           })
