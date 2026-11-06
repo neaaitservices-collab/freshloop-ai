@@ -12,6 +12,13 @@ const hasDb =
   !databaseUrl.includes('freshloop_ci');
 
 test('ledger integration (requires DATABASE_URL)', { skip: !hasDb }, async (t) => {
+  try {
+    await prisma.$connect();
+  } catch {
+    t.skip('Database unreachable (offline or wrong DATABASE_URL).');
+    return;
+  }
+
   const stamp = `test-${Date.now()}`;
   const product = await prisma.product.create({
     data: {

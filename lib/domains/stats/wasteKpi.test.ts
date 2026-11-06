@@ -26,7 +26,10 @@ test('computeWastePct caps extreme ratios', () => {
 test('kpiLookbackRange spans DEFAULT_KPI_LOOKBACK_DAYS inclusive', () => {
   const end = new Date('2026-03-15T15:30:00Z');
   const { startDate, endDate } = kpiLookbackRange(DEFAULT_KPI_LOOKBACK_DAYS, end);
-  const days =
-    Math.round((endDate.getTime() - startDate.getTime()) / (24 * 60 * 60 * 1000)) + 1;
-  assert.equal(days, DEFAULT_KPI_LOOKBACK_DAYS);
+  /** UTC calendar-day anchors — raw ms span rounds wrong when endDate keeps a time-of-day. */
+  const utcMidnight = (d: Date) =>
+    Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+  const inclusiveCalendarDays =
+    (utcMidnight(endDate) - utcMidnight(startDate)) / (24 * 60 * 60 * 1000) + 1;
+  assert.equal(inclusiveCalendarDays, DEFAULT_KPI_LOOKBACK_DAYS);
 });
