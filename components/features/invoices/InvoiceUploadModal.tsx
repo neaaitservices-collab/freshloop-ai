@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { InvoiceOcrResult } from '@/lib/types';
 import { useRole } from '@/components/auth/RoleProvider';
 import { isManager } from '@/lib/utils/roles';
@@ -33,11 +33,21 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
   const scanGeneration = useRef(0);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [rawPreviewUrl, setRawPreviewUrl] = useState<string | null>(null);
+  const [compressingImage, setCompressingImage] = useState(false);
   const [ocrResult, setOcrResult] = useState<InvoiceOcrResult | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
   const [managerApprovedCosts, setManagerApprovedCosts] = useState(false);
   const { activeUser } = useRole();
   const managerCanApprove = Boolean(activeUser && isManager(activeUser.role));
+
+  useEffect(() => {
+    return () => {
+      if (rawPreviewUrl?.startsWith('blob:')) URL.revokeObjectURL(rawPreviewUrl);
+    };
+  }, [rawPreviewUrl]);
+
+  const busyWithImage = compressingImage || loading;
 
   const runInvoiceScan = useCallback(async (useDemo: boolean, previewDataUrl?: string | null) => {
     const generation = ++scanGeneration.current;
@@ -124,10 +134,16 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
     setScanError(null);
     setOcrResult(null);
     setManagerApprovedCosts(false);
+    setPreviewUrl(null);
+    setCompressingImage(true);
     setLoading(true);
     setLoadingPhase('prepare');
+    if (rawPreviewUrl?.startsWith('blob:')) URL.revokeObjectURL(rawPreviewUrl);
+    const instant = URL.createObjectURL(file);
+    setRawPreviewUrl(instant);
     void prepareImageFileForOcr(file)
       .then((prepared) => {
+        setCompressingImage(false);
         setPreviewUrl(prepared.previewUrl);
         void runInvoiceScan(false, prepared.dataUrl);
       })
@@ -136,6 +152,7 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
         setScanError(
           err instanceof Error ? err.message : 'Could not prepare the photo. Try another image.'
         );
+        setCompressingImage(false);
         setLoading(false);
         setLoadingPhase(null);
       });
@@ -144,6 +161,9 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
   const handleResetScanner = () => {
     setOcrResult(null);
     setPreviewUrl(null);
+    if (rawPreviewUrl?.startsWith('blob:')) URL.revokeObjectURL(rawPreviewUrl);
+    setRawPreviewUrl(null);
+    setCompressingImage(false);
     setSelectedFile(null);
     setScanError(null);
     for (const id of ['invoice-file-input', 'invoice-camera-input']) {
@@ -215,15 +235,21 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
             <div className="space-y-5">
               {/* Dropzone */}
               <div className="border-2 border-dashed border-zinc-700 hover:border-emerald-500/50 rounded-2xl p-8 text-center transition-all bg-zinc-950/40 flex flex-col items-center justify-center gap-3">
-                {previewUrl ? (
-                  <div className="relative max-h-48 overflow-hidden rounded-xl border border-zinc-800">
+                {previewUrl || rawPreviewUrl ? (
+                  <div className="relative max-h-48 w-full overflow-hidden rounded-xl border border-zinc-800 bg-zinc-950">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={previewUrl} alt="Invoice preview" className="max-h-48 object-contain" />
-                    {loading ? (
-                      <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-zinc-950/75 backdrop-blur-[1px]">
+                    <img
+                      src={previewUrl ?? rawPreviewUrl ?? ''}
+                      alt="Invoice preview"
+                      className="mx-auto max-h-48 w-full object-contain"
+                    />
+                    {busyWithImage ? (
+                      <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-zinc-950/80 backdrop-blur-[2px]">
                         <Loader2 className="h-6 w-6 animate-spin text-emerald-400" />
                         <p className="text-[11px] font-bold text-emerald-200">
-                          {loadingPhase === 'prepare' ? 'Preparing photo…' : 'Reading line items…'}
+                          {compressingImage || loadingPhase === 'prepare'
+                            ? 'Compressing image…'
+                            : 'Reading line items…'}
                         </p>
                       </div>
                     ) : null}
@@ -259,14 +285,20 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
                 <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
                   <label
                     htmlFor="invoice-camera-input"
-                    className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl bg-emerald-400 px-4 py-3 text-xs font-black text-zinc-950"
+                    aria-disabled={busyWithImage}
+                    className={`inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-400 px-4 py-3 text-xs font-black text-zinc-950 ${
+                      busyWithImage ? 'pointer-events-none cursor-not-allowed opacity-50' : 'cursor-pointer'
+                    }`}
                   >
                     <Camera className="h-4 w-4" />
                     {previewUrl ? 'Retake photo' : 'Take photo'}
                   </label>
                   <label
                     htmlFor="invoice-file-input"
-                    className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-zinc-700 bg-zinc-800 px-4 py-3 text-xs font-bold text-zinc-100"
+                    aria-disabled={busyWithImage}
+                    className={`inline-flex items-center justify-center gap-2 rounded-xl border border-zinc-700 bg-zinc-800 px-4 py-3 text-xs font-bold text-zinc-100 ${
+                      busyWithImage ? 'pointer-events-none cursor-not-allowed opacity-50' : 'cursor-pointer'
+                    }`}
                   >
                     <ImagePlus className="h-4 w-4" />
                     {previewUrl ? 'Choose another photo' : 'Choose photo'}

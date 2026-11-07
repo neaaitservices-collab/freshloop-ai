@@ -21,6 +21,17 @@ export const EMPTY_INVENTORY_FILTERS: InventoryFilters = {
   supplier: 'ALL',
 };
 
+export function inventoryFiltersAreDefault(filters: InventoryFilters): boolean {
+  return (
+    filters.query.trim() === '' &&
+    filters.department === 'ALL' &&
+    filters.category === 'ALL' &&
+    filters.productType === 'ALL' &&
+    filters.origin === 'ALL' &&
+    filters.supplier === 'ALL'
+  );
+}
+
 const DEPARTMENT_LABELS: Record<string, string> = {
   PRODUCE: 'Produce',
   DAIRY: 'Dairy',

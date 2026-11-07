@@ -1,5 +1,6 @@
 'use client';
 
+import React, { Suspense } from 'react';
 import dynamic from 'next/dynamic';
 import type { ComponentProps } from 'react';
 
@@ -22,22 +23,36 @@ type DeptProps = ComponentProps<
   typeof import('@/components/features/admin/DepartmentAlertsChart').DepartmentAlertsChart
 >;
 
-export const LazyRescueOutcomeChart = dynamic<RescueProps>(
+const RescueOutcomeChartDynamic = dynamic<RescueProps>(
   () =>
     import('@/components/features/admin/RescueOutcomeChart').then((m) => m.RescueOutcomeChart),
-  {
-    loading: () => <ChartSkeleton className="min-h-[360px] rounded-2xl border border-slate-800 bg-slate-900/50" />,
-    ssr: false,
-  }
+  { ssr: false }
 );
 
-export const LazyDepartmentAlertsChart = dynamic<DeptProps>(
+const DepartmentAlertsChartDynamic = dynamic<DeptProps>(
   () =>
     import('@/components/features/admin/DepartmentAlertsChart').then(
       (m) => m.DepartmentAlertsChart
     ),
-  {
-    loading: () => <ChartSkeleton />,
-    ssr: false,
-  }
+  { ssr: false }
 );
+
+export function LazyRescueOutcomeChart(props: RescueProps) {
+  return (
+    <Suspense
+      fallback={
+        <ChartSkeleton className="min-h-[360px] rounded-2xl border border-slate-800 bg-slate-900/50" />
+      }
+    >
+      <RescueOutcomeChartDynamic {...props} />
+    </Suspense>
+  );
+}
+
+export function LazyDepartmentAlertsChart(props: DeptProps) {
+  return (
+    <Suspense fallback={<ChartSkeleton />}>
+      <DepartmentAlertsChartDynamic {...props} />
+    </Suspense>
+  );
+}

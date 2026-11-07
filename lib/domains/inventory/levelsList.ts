@@ -2,6 +2,9 @@ import type { StockLevel } from '@/lib/domains/inventory/stock';
 
 const DEFAULT_MAX_LIMIT = 500;
 
+/** Default admin catalog page size (must match client pagination UI). */
+export const INVENTORY_CATALOG_PAGE_SIZE = 100;
+
 export function parseLevelsPagination(
   limitRaw: string | null,
   offsetRaw: string | null

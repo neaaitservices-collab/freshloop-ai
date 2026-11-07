@@ -10,8 +10,10 @@ import { createClientMutationId } from '@/lib/offline/queue';
 import { OFFLINE_MUTATION_KIND } from '@/lib/offline/types';
 import { DepartmentType } from '@/lib/types';
 import { ModalBody, ModalFooter, ModalHeader, ModalShell } from '@/components/ui/layout';
-import { PushToTalkRecorder } from '@/lib/features/voiceCapture';
+import { PushToTalkRecorder, VOICE_MAX_RECORDING_SECONDS } from '@/lib/features/voiceCapture';
 import { postVoiceLoggerParse } from '@/lib/features/voiceLoggerClient';
+import type { VoicePipelinePhase } from '@/lib/features/voicePipelineUi';
+import { VoicePipelineStatusBar } from '@/components/ui/VoicePipelineStatusBar';
 import {
   Mic,
   Square,
@@ -105,6 +107,8 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
   const [isRecording, setIsRecording] = useState(false);
   const [toggleRecordMode, setToggleRecordMode] = useState(false);
   const [processingAudio, setProcessingAudio] = useState(false);
+  const [pipelinePhase, setPipelinePhase] = useState<VoicePipelinePhase>('idle');
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [lastAudioBlob, setLastAudioBlob] = useState<Blob | null>(null);
   const [spokenText, setSpokenText] = useState(
     'Retirar 12 unidades de aguacate hass muy maduro para rescate en cocina y descartar 3 lbs de tomates aplastados'
@@ -126,6 +130,7 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
 
   const pttRecorderRef = useRef<PushToTalkRecorder | null>(null);
   const holdActiveRef = useRef(false);
+  const parseVoiceRef = useRef<(audioBlob?: Blob | null) => void>(() => {});
 
   useEffect(() => {
     if (!isOpen) return;
@@ -186,21 +191,45 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
 
   if (!isOpen) return null;
 
+  const wireRecorderCallbacks = (recorder: PushToTalkRecorder) => {
+    recorder.setCallbacks({
+      onDurationTick: (elapsed, max) => {
+        setRecordingSeconds(elapsed);
+        setPipelinePhase('recording');
+      },
+      onMaxDurationReached: (blob) => {
+        setIsRecording(false);
+        setPipelinePhase('idle');
+        setRecordingSeconds(0);
+        if (blob && blob.size > 0) {
+          setLastAudioBlob(blob);
+          parseVoiceRef.current(blob);
+        } else {
+          setErrorMsg('Se alcanzó el límite de tiempo sin audio capturado.');
+        }
+      },
+    });
+  };
+
   const ensureRecorder = () => {
     if (!pttRecorderRef.current) {
       pttRecorderRef.current = new PushToTalkRecorder();
     }
+    wireRecorderCallbacks(pttRecorderRef.current);
     return pttRecorderRef.current;
   };
 
   const beginRecording = async () => {
     if (parsing || processingAudio) return;
     setErrorMsg(null);
+    setRecordingSeconds(0);
     try {
       await ensureRecorder().start();
       setIsRecording(true);
+      setPipelinePhase('recording');
     } catch {
       setIsRecording(false);
+      setPipelinePhase('idle');
       setErrorMsg('No se pudo acceder al micrófono. Usa el simulador de texto o revisa permisos.');
     }
   };
@@ -209,6 +238,8 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
     const recorder = pttRecorderRef.current;
     if (!recorder?.active && !isRecording) return;
     setIsRecording(false);
+    setPipelinePhase('idle');
+    setRecordingSeconds(0);
     const blob = await recorder?.stop().catch(() => null);
     if (blob && blob.size > 0) {
       setLastAudioBlob(blob);
@@ -250,14 +281,18 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
   const handleParseVoiceWithAI = async (audioBlob?: Blob | null) => {
     const blob = audioBlob ?? lastAudioBlob;
     setParsing(true);
-    setProcessingAudio(Boolean(blob && blob.size > 0));
+    const hasAudio = Boolean(blob && blob.size > 0);
+    setProcessingAudio(hasAudio);
     setErrorMsg(null);
+    setPipelinePhase(hasAudio ? 'uploading' : 'parsing');
     try {
+      if (hasAudio) setPipelinePhase('transcribing');
       const res = await postVoiceLoggerParse({
         audioBlob: blob,
         spokenText,
       });
 
+      setPipelinePhase('parsing');
       const json = await res.json();
       if (!json.success) {
         throw new Error(json.error || 'Error al analizar comando de voz');
@@ -304,7 +339,11 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
     } finally {
       setParsing(false);
       setProcessingAudio(false);
+      setPipelinePhase('idle');
     }
+  };
+  parseVoiceRef.current = (audioBlob) => {
+    void handleParseVoiceWithAI(audioBlob);
   };
 
   // STEP 2 -> STEP 3: Physical user confirmation [CONFIRMAR Y REGISTRAR] writes to DB
@@ -441,6 +480,12 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
           {step === 'CAPTURE' && (
             <div className="space-y-5">
               <div className="flex flex-col items-center justify-center py-8 px-4 bg-zinc-950/60 border border-zinc-800/90 rounded-2xl text-center">
+                <VoicePipelineStatusBar
+                  phase={pipelinePhase}
+                  recordingSeconds={recordingSeconds}
+                  maxRecordingSeconds={VOICE_MAX_RECORDING_SECONDS}
+                  className="mb-4 w-full max-w-sm"
+                />
                 <div className="relative mb-5">
                   {isRecording && (
                     <div className="absolute inset-0 rounded-full bg-rose-500/35 animate-ping" />
