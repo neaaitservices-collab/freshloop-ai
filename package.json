@@ -14,7 +14,7 @@
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:seed": "prisma db seed",
-    "db:push:prod": "prisma migrate deploy",
+    "db:push:prod": "node scripts/prisma-migrate-deploy.mjs",
     "db:seed:prod": "NODE_ENV=production prisma db seed"
   },
   "prisma": {
