@@ -24,6 +24,7 @@ import {
 } from '@/lib/domains/stats/scrapBucketEconomics';
 
 import { prisma } from '@/lib/db/prisma';
+import { rememberLedgerRead } from '@/lib/domains/inventory/ledgerCache';
 
 export { prisma } from '@/lib/db/prisma';
 
@@ -753,4 +754,17 @@ export async function calculateRealTimeWastePct(
       500
     );
   }
+}
+
+const wasteKpiCache = new Map<
+  string,
+  { at: number; gen: number; value: Promise<WasteKpiReport> }
+>();
+const WASTE_KPI_CACHE_MS = 30_000;
+
+/** Default KPI window only — custom date ranges bypass cache. */
+export function getCachedRealTimeWastePct(): Promise<WasteKpiReport> {
+  return rememberLedgerRead(wasteKpiCache, 'waste-kpi-default', WASTE_KPI_CACHE_MS, () =>
+    calculateRealTimeWastePct()
+  );
 }

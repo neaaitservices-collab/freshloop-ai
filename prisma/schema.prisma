@@ -127,6 +127,7 @@ model Product {
 
   @@index([department])
   @@index([name])
+  @@index([catalogActive, isManufactured])
   @@map("products")
 }
 
@@ -238,6 +239,7 @@ model StoreSetting {
   defaultParCases           Int      @default(2) @map("default_par_cases")
   updatedAt                 DateTime @updatedAt
 
+  @@index([updatedAt])
   @@map("store_settings")
 }
 

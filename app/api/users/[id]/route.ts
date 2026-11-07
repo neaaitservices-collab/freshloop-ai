@@ -6,6 +6,7 @@ import { authErrorResponse } from '@/lib/auth/http';
 import { AuthError, requireRoles, requireSessionUser } from '@/lib/auth/session';
 import { MANAGER_ROLES } from '@/lib/auth/permissions';
 import { getStaffHourlyRate, setStaffHourlyRate } from '@/lib/auth/staffHourlyRate';
+import { invalidateReferenceDataCaches } from '@/lib/domains/inventory/inventoryCache';
 import { positionByLabel } from '@/lib/utils/positions';
 import { isManager, isRoleName, type StaffUser } from '@/lib/utils/roles';
 
@@ -141,6 +142,7 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
         ? await setStaffHourlyRate(id, hourlyRateUpdate)
         : await getStaffHourlyRate(id);
 
+    invalidateReferenceDataCaches();
     return NextResponse.json({
       success: true,
       user: toStaffUser(user, finalHourlyRate),
@@ -176,6 +178,7 @@ export async function DELETE(_req: NextRequest, context: { params: Promise<{ id:
       }
     }
     await prisma.user.delete({ where: { id } });
+    invalidateReferenceDataCaches();
     return NextResponse.json({ success: true });
   } catch (error) {
     const authRes = authErrorResponse(error);

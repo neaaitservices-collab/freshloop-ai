@@ -43,6 +43,7 @@ import {
   type PullSensitivityDays,
 } from '@/lib/domains/inventory/pullSensitivity';
 import { matchProduct } from '@/lib/domains/inventory/productMatching';
+import { getCatalogProductNames } from '@/lib/domains/inventory/catalogProductIndex';
 import { sellableUnitsPerCase } from '@/lib/domains/receiving/yieldPricing';
 
 export const PAR_CASES = DEFAULT_PAR_CASES;
@@ -648,8 +649,12 @@ async function queryStockLevelRows(
   `;
 }
 
-/** Fresh catalog + POS sold in one query (not cached — for transfer UI). */
-export async function getStockLevelsWithPosSales(lookbackDays: number): Promise<StockLevel[]> {
+const posSalesCache = new Map<
+  string,
+  { at: number; gen: number; value: Promise<StockLevel[]> }
+>();
+
+async function loadStockLevelsWithPosSales(lookbackDays: number): Promise<StockLevel[]> {
   const salesDays = parsePosSalesDaysParam(String(lookbackDays), 7);
   const from = posSalesWindowStart(salesDays);
   const [rows, storeDefaults] = await Promise.all([
@@ -668,6 +673,15 @@ export async function getStockLevelsWithPosSales(lookbackDays: number): Promise<
         a.supplier.localeCompare(b.supplier) ||
         a.name.localeCompare(b.name)
     );
+}
+
+/** Fresh catalog + POS sold in one query (cached per lookback window). */
+export function getStockLevelsWithPosSales(lookbackDays: number): Promise<StockLevel[]> {
+  const salesDays = parsePosSalesDaysParam(String(lookbackDays), 7);
+  const key = `levels-pos-${salesDays}`;
+  return rememberLedgerRead(posSalesCache, key, STOCK_CACHE_MS, () =>
+    loadStockLevelsWithPosSales(lookbackDays)
+  );
 }
 
 async function loadStockLevelById(productId: string): Promise<StockLevel> {
@@ -1006,11 +1020,33 @@ export interface OnHandLookup {
 }
 
 export async function lookupOnHand(itemName: string): Promise<OnHandLookup> {
-  const products = await prisma.product.findMany({
-    where: { isManufactured: false },
-    select: { id: true, name: true },
-  });
-  const match = matchProduct(itemName, products);
+  const trimmed = itemName.trim();
+  if (!trimmed) {
+    return { matched: false, productId: null, productName: null, onHand: 0 };
+  }
+
+  const needle = trimmed.toLowerCase();
+  const [catalog, prefixHits] = await Promise.all([
+    getCatalogProductNames(),
+    prisma.product.findMany({
+      where: {
+        isManufactured: false,
+        catalogActive: true,
+        name: { contains: needle, mode: 'insensitive' },
+      },
+      select: { id: true, name: true },
+      take: 40,
+    }),
+  ]);
+
+  const candidatePool =
+    prefixHits.length > 0
+      ? prefixHits
+      : catalog.length <= 600
+        ? catalog
+        : catalog.filter((row) => row.name.toLowerCase().includes(needle.slice(0, 24)));
+
+  const match = matchProduct(trimmed, candidatePool.length > 0 ? candidatePool : catalog);
   if (!match) {
     return { matched: false, productId: null, productName: null, onHand: 0 };
   }

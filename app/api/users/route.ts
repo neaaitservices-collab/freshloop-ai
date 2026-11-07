@@ -2,10 +2,12 @@ import { NextRequest, NextResponse } from 'next/server';
 import { Role } from '@prisma/client';
 import { prisma } from '@/lib/domains/inventory/ledger';
 import { handleApiRouteError } from '@/lib/domains/ai/apiError';
+import { getStaffDirectory } from '@/lib/domains/auth/staffDirectory';
 import { authErrorResponse } from '@/lib/auth/http';
 import { requireRoles, requireSessionUser } from '@/lib/auth/session';
 import { MANAGER_ROLES } from '@/lib/auth/permissions';
-import { getStaffHourlyRateMap, setStaffHourlyRate } from '@/lib/auth/staffHourlyRate';
+import { setStaffHourlyRate } from '@/lib/auth/staffHourlyRate';
+import { invalidateReferenceDataCaches } from '@/lib/domains/inventory/inventoryCache';
 import { findLatestStoreSetting } from '@/lib/domains/stats/storeSettingSelect';
 import { positionByLabel } from '@/lib/utils/positions';
 import type { StaffUser } from '@/lib/utils/roles';
@@ -18,7 +20,14 @@ const staffCoreSelect = {
   email: true,
   position: true,
   role: true,
+  hourlyRate: true,
 } as const;
+
+function normalizeHourlyRate(hourlyRate: number | null | undefined): number | null {
+  return hourlyRate != null && Number.isFinite(hourlyRate) && hourlyRate > 0
+    ? Number(hourlyRate.toFixed(2))
+    : null;
+}
 
 function toStaffUser(
   user: {
@@ -27,6 +36,7 @@ function toStaffUser(
     email: string;
     position: string;
     role: Role;
+    hourlyRate?: number | null;
   },
   hourlyRate: number | null
 ): StaffUser {
@@ -46,14 +56,10 @@ export async function GET() {
     if (!MANAGER_ROLES.includes(sessionUser.role)) {
       return NextResponse.json({ success: true, users: [sessionUser] });
     }
-    const users = await prisma.user.findMany({
-      orderBy: [{ role: 'asc' }, { name: 'asc' }],
-      select: staffCoreSelect,
-    });
-    const rateMap = await getStaffHourlyRateMap(users.map((u) => u.id));
+    const users = await getStaffDirectory();
     return NextResponse.json({
       success: true,
-      users: users.map((u) => toStaffUser(u, rateMap.get(u.id) ?? null)),
+      users,
     });
   } catch (error) {
     const authRes = authErrorResponse(error);
@@ -108,6 +114,7 @@ export async function POST(req: NextRequest) {
       select: staffCoreSelect,
     });
     const savedRate = await setStaffHourlyRate(user.id, hourlyRate);
+    invalidateReferenceDataCaches();
     return NextResponse.json({
       success: true,
       user: toStaffUser(user, savedRate),

@@ -10,3 +10,9 @@ export function invalidateInventoryCaches(): void {
   invalidateStoreSettingCache();
   invalidateDuplicateCatalogCache();
 }
+
+/** Staff roster + platform settings share ledger cache generation — call after user CRUD. */
+export function invalidateReferenceDataCaches(): void {
+  invalidateLedgerReads();
+  invalidateStoreSettingCache();
+}

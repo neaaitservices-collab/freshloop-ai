@@ -1,5 +1,5 @@
-import type { StockLevel } from '@/lib/domains/inventory/stock';
-import { getStockLevelsWithPosSales } from '@/lib/domains/inventory/stock';
+import { rememberLedgerRead } from '@/lib/domains/inventory/ledgerCache';
+import { getStockLevelsWithPosSales, type StockLevel } from '@/lib/domains/inventory/stock';
 import { normalizeParCases, stockFromPar } from '@/lib/domains/inventory/parLevel';
 
 /** Default POS lookback for velocity (days). */
@@ -295,8 +295,13 @@ export function applyBuyForecastBatch(
   return levels.map((row) => applyBuyForecastToLevel(row, config, now));
 }
 
-/** POS-enriched levels + in-memory forecast (read-only, no extra DB locks). */
-export async function getBuyListLevelsWithForecast(
+const BUY_LIST_CACHE_MS = 60_000;
+const buyListCache = new Map<
+  string,
+  { at: number; gen: number; value: Promise<StockLevel[]> }
+>();
+
+async function loadBuyListLevelsWithForecast(
   partialConfig?: Partial<BuyForecastConfig> & { hooks?: Partial<BuyForecastHooks> }
 ): Promise<StockLevel[]> {
   const config = resolveBuyForecastConfig(partialConfig);
@@ -308,5 +313,28 @@ export async function getBuyListLevelsWithForecast(
       Number(b.forecastDriven) - Number(a.forecastDriven) ||
       a.supplier.localeCompare(b.supplier) ||
       a.name.localeCompare(b.name)
+  );
+}
+
+function buyListCacheKey(
+  partialConfig?: Partial<BuyForecastConfig> & { hooks?: Partial<BuyForecastHooks> }
+): string {
+  const config = resolveBuyForecastConfig(partialConfig);
+  const seasonal = config.hooks.seasonalFactor ?? 1;
+  return `buy-${config.velocityLookbackDays}-${config.leadTimeDays}-${config.safetyStockDays}-${seasonal}`;
+}
+
+/** POS-enriched levels + in-memory forecast (cached per config fingerprint). */
+export function getBuyListLevelsWithForecast(
+  partialConfig?: Partial<BuyForecastConfig> & { hooks?: Partial<BuyForecastHooks> }
+): Promise<StockLevel[]> {
+  if (partialConfig) {
+    return loadBuyListLevelsWithForecast(partialConfig);
+  }
+  return rememberLedgerRead(
+    buyListCache,
+    buyListCacheKey(partialConfig),
+    BUY_LIST_CACHE_MS,
+    () => loadBuyListLevelsWithForecast(partialConfig)
   );
 }

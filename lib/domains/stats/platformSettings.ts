@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/domains/inventory/ledger';
 import { invalidateInventoryCaches } from '@/lib/domains/inventory/inventoryCache';
+import { rememberLedgerRead } from '@/lib/domains/inventory/ledgerCache';
 import { invalidateStoreStats } from '@/lib/domains/stats/storeStats';
 import {
   findLatestStoreSetting,
@@ -91,7 +92,13 @@ export function parsePlatformSettings(body: unknown): { settings: PlatformSettin
   };
 }
 
-export async function getPlatformSettings(): Promise<PlatformSettings> {
+const platformSettingsCache = new Map<
+  string,
+  { at: number; gen: number; value: Promise<PlatformSettings> }
+>();
+const PLATFORM_SETTINGS_CACHE_MS = 30_000;
+
+async function loadPlatformSettings(): Promise<PlatformSettings> {
   const row = await findLatestStoreSetting();
   if (!row) return { ...PLATFORM_DEFAULTS };
   return {
@@ -105,6 +112,15 @@ export async function getPlatformSettings(): Promise<PlatformSettings> {
     costGuardrailVariancePct: row.costGuardrailVariancePct,
     defaultParCases: row.defaultParCases ?? PLATFORM_DEFAULTS.defaultParCases,
   };
+}
+
+export function getPlatformSettings(): Promise<PlatformSettings> {
+  return rememberLedgerRead(
+    platformSettingsCache,
+    'platform-settings',
+    PLATFORM_SETTINGS_CACHE_MS,
+    loadPlatformSettings
+  );
 }
 
 export async function savePlatformSettings(settings: PlatformSettings): Promise<PlatformSettings> {
