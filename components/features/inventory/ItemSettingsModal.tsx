@@ -29,8 +29,11 @@ import {
 } from '@/lib/domains/receiving/yieldPricing';
 import { departmentLabel } from '@/lib/domains/inventory/inventoryCatalog';
 import { ModalBody, ModalFooter, ModalHeader, ModalShell } from '@/components/ui/layout';
+import { ParCasesToggle } from '@/components/ui/ParCasesToggle';
 import { PullDaysToggle } from '@/components/ui/PullDaysToggle';
+import { useStoreDefaultParCases } from '@/hooks/use-store-default-par-cases';
 import { useStorePullSensitivityDays } from '@/hooks/use-store-pull-sensitivity-days';
+import { normalizeParCases } from '@/lib/domains/inventory/parLevel';
 import {
   parseProductPullOverride,
   type PullSensitivityDays,
@@ -120,6 +123,7 @@ export function ItemSettingsModal({
     supplier: string;
     origin: string;
     pullSensitivityDays: PullSensitivityDays | null;
+    parCases: number;
   }) => Promise<void>;
   onSaveCase: (payload: {
     packSize: number;
@@ -136,7 +140,10 @@ export function ItemSettingsModal({
   const [supplier, setSupplier] = useState('');
   const [origin, setOrigin] = useState('');
   const storePullDefault = useStorePullSensitivityDays();
+  const storeDefaultParCases = useStoreDefaultParCases();
   const [pullSensitivityDays, setPullSensitivityDays] = useState<PullSensitivityDays | null>(null);
+  const [followStorePar, setFollowStorePar] = useState(true);
+  const [customParCases, setCustomParCases] = useState('2');
   const [packSize, setPackSize] = useState('1');
   const [splitFactor, setSplitFactor] = useState('1');
   const [packUnit, setPackUnit] = useState<RetailUnit>('units');
@@ -158,6 +165,12 @@ export function ItemSettingsModal({
   const [caseCostInput, setCaseCostInput] = useState('');
   const [currentCaseFloor, setCurrentCaseFloor] = useState('');
 
+  const effectiveParCases = useMemo(() => {
+    if (followStorePar) return storeDefaultParCases;
+    const raw = Number(customParCases);
+    return normalizeParCases(Number.isFinite(raw) ? raw : storeDefaultParCases);
+  }, [followStorePar, customParCases, storeDefaultParCases]);
+
   const applyPresetUnitPrice = useCallback((mode: MarginMode, unitCost: number) => {
     if (mode !== '35' && mode !== '40') return;
     const unitPrice = applyPresetMarginToUnitPrice({ mode, unitCost });
@@ -173,6 +186,9 @@ export function ItemSettingsModal({
     setSupplier(row.supplier);
     setOrigin(row.origin ?? '');
     setPullSensitivityDays(parseProductPullOverride(row.pullSensitivityDays));
+    const atStorePar = row.parCases === storeDefaultParCases;
+    setFollowStorePar(atStorePar);
+    setCustomParCases(String(row.parCases > 0 ? row.parCases : storeDefaultParCases));
     const packVal = row.receivePackSize > 0 ? row.receivePackSize : row.casePackSize > 0 ? row.casePackSize : 1;
     const divVal = row.splitFactor > 0 ? row.splitFactor : 1;
     setPackSize(String(packVal));
@@ -506,13 +522,38 @@ export function ItemSettingsModal({
                     onChange={setPullSensitivityDays}
                   />
                 </div>
+                <div className="mt-5 border-t border-slate-800/80 pt-5">
+                  <p className={LABEL}>Order minimum (cases)</p>
+                  <p className="mt-1 text-xs leading-relaxed text-slate-500">
+                    Orders and low-stock alerts when on-hand cases fall below this level. Use store
+                    default unless this SKU needs a different par.
+                  </p>
+                  <ParCasesToggle
+                    className="mt-3"
+                    idPrefix="catalog-par"
+                    storeDefault={storeDefaultParCases}
+                    followStoreDefault={followStorePar}
+                    onFollowStoreDefaultChange={setFollowStorePar}
+                    customCases={customParCases}
+                    onCustomCasesChange={setCustomParCases}
+                  />
+                </div>
                 <button
                   type="button"
                   disabled={busy === 'meta'}
                   onClick={() => {
                     setBusy('meta');
                     setError(null);
-                    void onSaveMetadata({ department, supplier, origin, pullSensitivityDays })
+                    const parCases = followStorePar
+                      ? storeDefaultParCases
+                      : normalizeParCases(Number(customParCases));
+                    void onSaveMetadata({
+                      department,
+                      supplier,
+                      origin,
+                      pullSensitivityDays,
+                      parCases,
+                    })
                       .then(() => setMessage('Metadata saved.'))
                       .catch((e: Error) => setError(e.message))
                       .finally(() => setBusy(null));
@@ -533,14 +574,14 @@ export function ItemSettingsModal({
                     <div>
                       <p className="text-sm font-black text-rose-100">Below par</p>
                       <p className="mt-0.5 text-xs text-rose-200/85">
-                        {formatUnits(systemCases)} cases on hand · par {formatUnits(row.parCases)} cases — consider
-                        ordering
+                        {formatUnits(systemCases)} cases on hand · par {formatUnits(effectiveParCases)} cases —
+                        consider ordering
                       </p>
                     </div>
                   </div>
                 ) : (
                   <p className="mb-5 rounded-xl border border-slate-800 bg-slate-900/50 px-4 py-3 text-xs text-slate-400">
-                    Stock is at or above par ({formatUnits(row.parCases)} cases).
+                    Stock is at or above par ({formatUnits(effectiveParCases)} cases).
                   </p>
                 )}
 
@@ -630,6 +671,7 @@ export function ItemSettingsModal({
                   </label>
                   <button
                     type="button"
+                    aria-busy={busy === 'stock'}
                     disabled={!canOverride || busy === 'stock' || physicalCasesNum < 0}
                     onClick={() => {
                       setBusy('stock');

@@ -4,6 +4,10 @@ import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { DepartmentBadge } from '@/components/ui/DepartmentBadge';
 import { useRole } from '@/components/auth/RoleProvider';
 import { notifyInventoryUpdated } from '@/lib/domains/inventory/inventoryMoveClient';
+import { OfflineSyncBadge } from '@/components/ui/OfflineSyncBadge';
+import { postJsonOrQueue } from '@/lib/offline/mutationClient';
+import { createClientMutationId } from '@/lib/offline/queue';
+import { OFFLINE_MUTATION_KIND } from '@/lib/offline/types';
 import { DepartmentType } from '@/lib/types';
 import { ModalBody, ModalFooter, ModalHeader, ModalShell } from '@/components/ui/layout';
 import {
@@ -113,6 +117,7 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
   const [draftItems, setDraftItems] = useState<EditableVoiceDraftItem[]>([]);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [catalogLoadWarning, setCatalogLoadWarning] = useState<string | null>(null);
+  const [savedOffline, setSavedOffline] = useState(false);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -284,25 +289,33 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
       return;
     }
     try {
-      const res = await fetch('/api/voice-logger', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      const clientMutationId = createClientMutationId();
+      const result = await postJsonOrQueue<{ success?: boolean; error?: string }>({
+        kind: OFFLINE_MUTATION_KIND.VOICE_COMMIT,
+        url: '/api/voice-logger',
+        label: 'Voice floor log',
+        body: {
           confirmCommit: true,
           staffId: activeUser?.id ?? 'staff-floor-voice',
           transcript,
+          clientMutationId,
           confirmedItems: draftItems.map((item) => ({
             product_id: item.product_id,
             quantity: item.quantity,
             target_action: item.target_action,
             condition: item.condition,
           })),
-        }),
+        },
       });
 
-      const json = await res.json();
-      if (!res.ok || !json.success) {
-        throw new Error(json.error || 'Ledger commit failed.');
+      if (!result.ok) {
+        throw new Error(result.error || 'Ledger commit failed.');
+      }
+
+      if (result.offline) {
+        setSavedOffline(true);
+      } else if (!result.data.success) {
+        throw new Error(result.data.error || 'Ledger commit failed.');
       }
 
       notifyInventoryUpdated();
@@ -337,6 +350,7 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
     setIsEditMode(false);
     setDraftItems([]);
     setErrorMsg(null);
+    setSavedOffline(false);
   };
 
   return (
@@ -360,6 +374,7 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
                 <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-full bg-teal-950 text-teal-300 border border-teal-500/40">
                   Async Confirmation Loop
                 </span>
+                <OfflineSyncBadge />
               </div>
               <p className="text-xs text-zinc-400">
                 Gemini 1.5 Flash Audio + Búsqueda Difusa • Ningún dato se guarda sin tu confirmación
@@ -659,8 +674,17 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
                   ¡Confirmado y Registrado en el Ledger Inmutable!
                 </h4>
                 <p className="text-xs text-zinc-400 max-w-md mx-auto">
-                  Se registraron <strong className="text-emerald-400">{draftItems.length}</strong> movimientos verificados por humano en{' '}
-                  <code className="text-zinc-200">Inventory_Transactions</code>.
+                  {savedOffline ? (
+                    <>
+                      Saved offline — syncing when Wi‑Fi returns.{' '}
+                      <strong className="text-amber-300">{draftItems.length}</strong> moves queued with your confirmation.
+                    </>
+                  ) : (
+                    <>
+                      Se registraron <strong className="text-emerald-400">{draftItems.length}</strong> movimientos verificados por humano en{' '}
+                      <code className="text-zinc-200">Inventory_Transactions</code>.
+                    </>
+                  )}
                 </p>
               </div>
             </div>

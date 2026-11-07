@@ -161,11 +161,11 @@ export function catalogDuplicateScore(itemName: string, productName: string): nu
   return Number((forward * 60 + reverse * 40).toFixed(2));
 }
 
-export function matchProduct<T extends { name: string }>(
+export function matchProductWithScore<T extends { name: string }>(
   itemName: string,
   products: T[],
   options?: { minScore?: number }
-): T | null {
+): { product: T; score: number } | null {
   const minScore = options?.minScore ?? 52;
   const trimmed = itemName.trim();
   if (!trimmed) return null;
@@ -181,5 +181,13 @@ export function matchProduct<T extends { name: string }>(
     }
   }
 
-  return best?.product ?? null;
+  return best ? { product: best.product, score: best.score } : null;
+}
+
+export function matchProduct<T extends { name: string }>(
+  itemName: string,
+  products: T[],
+  options?: { minScore?: number }
+): T | null {
+  return matchProductWithScore(itemName, products, options)?.product ?? null;
 }

@@ -11,34 +11,29 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   ...authConfig,
   callbacks: {
     ...authConfig.callbacks,
-    async session({ session, token }) {
-      if (session.user) {
-        session.user.id = (token.id as string) ?? token.sub ?? '';
-        session.user.position =
-          typeof token.position === 'string' ? token.position : '';
-        const rate = token.hourlyRate;
-        session.user.hourlyRate =
-          typeof rate === 'number' && Number.isFinite(rate) && rate > 0 ? rate : null;
+    async jwt({ token, user, trigger }) {
+      authConfig.callbacks.jwt({ token, user });
+      if (trigger === 'update' && token.id) {
+        const row = await prisma.user.findUnique({
+          where: { id: token.id as string },
+          select: { role: true },
+        });
+        if (row && isRoleName(row.role)) {
+          token.role = row.role;
+        }
       }
-
-      const userId = session.user?.id;
+      return token;
+    },
+    session(...args) {
+      const next = authConfig.callbacks.session(...args);
+      const userId = next.user?.id;
       if (!userId) {
         throw new Error('Session invalid — missing user id.');
       }
-
-      const row = await prisma.user.findUnique({
-        where: { id: userId },
-        select: { role: true },
-      });
-      if (!row) {
-        throw new Error('Session invalid — user not found.');
-      }
-      if (!isRoleName(row.role)) {
+      if (!isRoleName(next.user!.role)) {
         throw new Error('Session invalid — unknown role.');
       }
-      session.user!.role = row.role;
-
-      return session;
+      return next;
     },
   },
   providers: [

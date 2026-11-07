@@ -12,10 +12,10 @@ export function StoreSettingsEntryCard() {
             <Settings2 className="h-4 w-4" />
             Store settings
           </p>
-          <h2 className="mt-1 text-xl font-black text-white">Waste goal, pulls, scrap &amp; receiving</h2>
+          <h2 className="mt-1 text-xl font-black text-white">Waste goal, pulls, scrap, orders &amp; receiving</h2>
           <p className="mt-1 max-w-xl text-sm text-zinc-400">
-            Open the dedicated settings page instead of scrolling this dashboard. Bucket $, pull window,
-            and invoice alerts live there.
+            Open the dedicated settings page. Minimum stock for Orders, bucket $, pull window, and invoice
+            alerts live there.
           </p>
         </div>
         <Link

@@ -1,9 +1,4 @@
-import {
-  InvoiceOcrResult,
-  VoiceLoggerResult,
-  RecipeFusionResult,
-  InventoryItem,
-} from '@/lib/types';
+import { RecipeFusionResult, InventoryItem } from '@/lib/types';
 import { GEMINI_FLASH_MODEL_FALLBACKS } from '@/lib/domains/ai/geminiModels';
 
 /**
@@ -59,7 +54,22 @@ function getApiKey(): string | null {
 /**
  * Loads `@google/generative-ai` at runtime so bundlers stay resilient while dependencies settle.
  */
-function getGenAIClient(apiKey: string): { client: any } | null {
+type GeminiSdkClient = {
+  getGenerativeModel: (opts: {
+    model: string;
+    generationConfig: Record<string, unknown>;
+  }) => {
+    generateContent: (parts: GeminiContentPart[]) => Promise<{
+      response: { text: () => string };
+    }>;
+  };
+};
+
+type GeminiContentPart =
+  | { text: string }
+  | { inlineData: { data: string; mimeType: string } };
+
+function getGenAIClient(apiKey: string): { client: GeminiSdkClient } | null {
   try {
     const safeRequire = new Function(
       'name',
@@ -148,7 +158,7 @@ async function tryGeminiRestGenerateContent(
   genConfig: Record<string, unknown>,
   remember: (model: string, detail: string) => void
 ): Promise<string | null> {
-  const parts: any[] = [{ text: promptText }];
+  const parts: GeminiContentPart[] = [{ text: promptText }];
   if (inlinePart) {
     parts.push({ inlineData: inlinePart });
   }
@@ -198,8 +208,9 @@ async function tryGeminiRestGenerateContent(
         }
         remember(modelName, `${attempt.label} ${response.status} ${raw.slice(0, 180)}`);
       }
-    } catch (e: any) {
-      remember(modelName, `${attempt.label} ${e?.message || 'request failed'}`);
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : 'request failed';
+      remember(modelName, `${attempt.label} ${message}`);
     }
   }
   return null;
@@ -221,7 +232,7 @@ function tryGeminiSdkGenerateContent(
         model: modelName,
         generationConfig: genConfig,
       });
-      const parts: any[] = [{ text: promptText }];
+      const parts: GeminiContentPart[] = [{ text: promptText }];
       if (inlinePart) {
         parts.push({
           inlineData: {
@@ -233,8 +244,9 @@ function tryGeminiSdkGenerateContent(
       const result = await model.generateContent(parts);
       const text = result.response.text();
       return text || null;
-    } catch (e: any) {
-      remember(modelName, e?.message || 'SDK request failed');
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : 'SDK request failed';
+      remember(modelName, message);
       return null;
     }
   })();
@@ -322,8 +334,9 @@ export async function generateContentWithFallback(
       if (text) {
         return { text, modelUsed: modelName };
       }
-    } catch (err: any) {
-      remember(modelName, err?.message || 'request failed');
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'request failed';
+      remember(modelName, message);
     }
   }
 
@@ -352,164 +365,10 @@ export async function generateContentWithFallback(
   );
 }
 
-/**
- * Extract Vendor Invoice details using Gemini Vision OCR
- */
 function rejectProductionAiMock(feature: string): never {
   throw new Error(
     `${feature} is unavailable. Configure GEMINI_API_KEY or try again later.`
   );
-}
-
-export async function processInvoiceOcr(base64Image: string, mimeType: string = 'image/jpeg'): Promise<InvoiceOcrResult> {
-  const apiKey = getApiKey();
-  if (!apiKey) {
-    if (process.env.NODE_ENV === 'production') {
-      rejectProductionAiMock('Invoice OCR');
-    }
-    const mock = getMockOcrResult();
-    if (base64Image) {
-      mock.rawSummary = '⚠️ GEMINI_API_KEY is missing in .env.local. Set your GEMINI_API_KEY to analyze uploaded invoice images.';
-    }
-    return mock;
-  }
-
-  try {
-    const prompt = `You are an expert Grocery Vendor Invoice OCR system for FreshLoop AI.
-Analyze this invoice image and extract structured data in JSON format adhering strictly to this schema:
-{
-  "vendorName": "string (e.g. Organic Produce Co, Golden State Dairy, Sunset Bakery Supplies)",
-  "invoiceNumber": "string",
-  "invoiceDate": "YYYY-MM-DD",
-  "totalAmount": number,
-  "departmentBreakdown": {
-    "PRODUCE": number,
-    "DAIRY": number,
-    "BAKERY": number,
-    "PANTRY": number
-  },
-  "lineItems": [
-    {
-      "name": "string (item description)",
-      "department": "PRODUCE" | "DAIRY" | "BAKERY" | "PANTRY",
-      "quantity": number (number of cases/crates),
-      "unit": "cases",
-      "casePackSize": number (e.g. 40 for 40lb case, 7 for 7ct case, 24 for 24 bunch case, 4 for 4L case),
-      "subUnit": "lbs" | "kg" | "g" | "oz" | "units" | "ml" | "L" | "fl oz" | "bunches" | "loaves" | "tubs" | "boxes",
-      "unitCost": number (cost per case),
-      "totalCost": number
-    }
-  ]
-}
-
-Classification rules:
-- Classify fresh fruit, vegetables, herbs as "PRODUCE".
-- Classify milk, cream, cheese, yogurt, butter, eggs as "DAIRY".
-- Classify bread, pastries, flour, yeast, buns as "BAKERY".
-- Classify oils, spices, canned goods, sauces, grains as "PANTRY".
-Make sure totalAmount equals sum of department totals and line item costs. Format costs as float numbers.`;
-
-    const cleanData = base64Image.includes(',') ? base64Image.split(',')[1] : base64Image;
-
-    const { text, modelUsed } = await generateContentWithFallback(
-      prompt,
-      cleanData ? { data: cleanData, mimeType: mimeType || 'image/jpeg' } : undefined,
-      [...GEMINI_FLASH_MODEL_FALLBACKS],
-      {
-        skipModelDiscovery: true,
-        maxModelsToTry: 4,
-        preferRestApi: Boolean(cleanData),
-        generationConfig: { temperature: 0, maxOutputTokens: 8192 },
-      }
-    );
-
-    const parsed = parseModelJson<Record<string, unknown>>(text);
-
-    const dept = parsed.departmentBreakdown as InvoiceOcrResult['departmentBreakdown'] | undefined;
-
-    return {
-      vendorName: String(parsed.vendorName || 'Fresh Grocer Wholesale'),
-      invoiceNumber: String(
-        parsed.invoiceNumber || `INV-${Math.floor(Math.random() * 90000 + 10000)}`
-      ),
-      invoiceDate: String(parsed.invoiceDate || new Date().toISOString().split('T')[0]),
-      totalAmount: Number(parsed.totalAmount) || 0,
-      departmentBreakdown: dept || { PRODUCE: 0, DAIRY: 0, BAKERY: 0, PANTRY: 0 },
-      lineItems: (parsed.lineItems as InvoiceOcrResult['lineItems']) || [],
-      rawSummary: `Extracted ${Array.isArray(parsed.lineItems) ? parsed.lineItems.length : 0} line items with ${modelUsed}.`
-    };
-  } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.error('Error in processInvoiceOcr Gemini call:', message);
-    throw error instanceof Error ? error : new Error(message);
-  }
-}
-
-/**
- * Ambient Voice Floor Logger using Gemini Audio parsing
- */
-export async function processVoiceFloorLog(
-  audioBase64?: string,
-  mimeType: string = 'audio/webm',
-  spokenText?: string
-): Promise<VoiceLoggerResult> {
-  const apiKey = getApiKey();
-  if (!apiKey) {
-    return getMockVoiceResult(spokenText);
-  }
-
-  try {
-    const prompt = `You are Ambient Voice Floor Logger for FreshLoop AI in a fresh grocery store / kitchen.
-Your task is to listen to spoken floor audio or transcript (e.g., "Logged 10 lbs bruised apples and 4L heavy cream") and return structured JSON adhering to this schema:
-{
-  "transcript": "string (verbatim transcript of spoken audio)",
-  "targetAction": "KITCHEN_RESCUE" | "MARKDOWN" | "DISCARD",
-  "parsedItems": [
-    {
-      "name": "string",
-      "quantity": number,
-      "unit": "lbs" | "Liters" | "kg" | "units" | "cases" | "loaves",
-      "department": "PRODUCE" | "DAIRY" | "BAKERY" | "PANTRY",
-      "condition": "Pristine" | "Slightly Blemished" | "Bruised" | "Overripe" | "Near Expiry",
-      "allergenWarnings": ["string"]
-    }
-  ],
-  "kitchenRescueNotes": "string (suggested immediate kitchen action or store markdown note)",
-  "estimatedWasteSavedValue": number
-}
-
-Rules:
-- If items are bruised, overripe, or short-dated but safe for cooking, recommend targetAction = "KITCHEN_RESCUE".
-- If items are pristine or slightly past display peak, recommend targetAction = "MARKDOWN".
-- If items are spoiled/damaged beyond safe use, recommend targetAction = "DISCARD".
-- Identify allergens (Milk, Eggs, Wheat, Soy, Tree Nuts, Peanuts, Fish, Shellfish).`;
-
-    let cleanAudio = '';
-    if (audioBase64) {
-      cleanAudio = audioBase64.includes(',') ? audioBase64.split(',')[1] : audioBase64;
-    }
-
-    const { text } = await generateContentWithFallback(
-      prompt + (spokenText ? `\nSpoken Text: "${spokenText}"` : ''),
-      cleanAudio ? { data: cleanAudio, mimeType: mimeType || 'audio/webm' } : undefined
-    );
-
-    const parsed = parseModelJson<Record<string, unknown>>(text);
-
-    return {
-      transcript: String(parsed.transcript || spokenText || 'Logged 10 lbs bruised apples and 4L heavy cream'),
-      targetAction: (parsed.targetAction as VoiceLoggerResult['targetAction']) || 'KITCHEN_RESCUE',
-      parsedItems: (parsed.parsedItems as VoiceLoggerResult['parsedItems']) || [],
-      kitchenRescueNotes: String(
-        parsed.kitchenRescueNotes ||
-          'Transfer items immediately to prep kitchen for Recipe Fusion.'
-      ),
-      estimatedWasteSavedValue: Number(parsed.estimatedWasteSavedValue) || 38.5,
-    };
-  } catch (error) {
-    console.error('Error in processVoiceFloorLog Gemini call:', error);
-    return getMockVoiceResult(spokenText);
-  }
 }
 
 /**
@@ -567,7 +426,7 @@ Return a JSON array of recipes adhering strictly to this schema:
     const { text } = await generateContentWithFallback(prompt);
     const parsed = parseModelJson<unknown>(text);
 
-    let rawList: any[] = [];
+    let rawList: unknown[] = [];
     if (Array.isArray(parsed)) {
       rawList = parsed;
     } else if (
@@ -575,7 +434,7 @@ Return a JSON array of recipes adhering strictly to this schema:
       typeof parsed === 'object' &&
       Array.isArray((parsed as Record<string, unknown>).recipes)
     ) {
-      rawList = (parsed as Record<string, unknown>).recipes as any[];
+      rawList = (parsed as Record<string, unknown>).recipes as unknown[];
     } else {
       if (process.env.NODE_ENV === 'production') {
         rejectProductionAiMock('Recipe fusion');
@@ -583,12 +442,18 @@ Return a JSON array of recipes adhering strictly to this schema:
       return getMockRecipeFusion();
     }
 
-    return rawList.map((r: any, idx: number) => ({
-      ...r,
-      id: r.id && typeof r.id === 'string' && !r.id.includes('string')
-        ? r.id
-        : `rec-gen-${Date.now()}-${idx}-${Math.floor(Math.random() * 1000)}`
-    }));
+    return rawList.map((entry, idx) => {
+      const r =
+        entry && typeof entry === 'object'
+          ? (entry as Record<string, unknown>)
+          : ({} as Record<string, unknown>);
+      const id = r.id;
+      const recipeId =
+        typeof id === 'string' && id.length > 0 && !id.includes('string')
+          ? id
+          : `rec-gen-${Date.now()}-${idx}-${Math.floor(Math.random() * 1000)}`;
+      return { ...r, id: recipeId } as RecipeFusionResult;
+    });
   } catch (error) {
     console.error('Error in processRecipeFusion Gemini call:', error);
     if (process.env.NODE_ENV === 'production') {
@@ -596,63 +461,6 @@ Return a JSON array of recipes adhering strictly to this schema:
     }
     return getMockRecipeFusion();
   }
-}
-
-// Fallback Mock Generators
-function getMockOcrResult(): InvoiceOcrResult {
-  return {
-    vendorName: 'GAMBLES Produce Wholesalers',
-    invoiceNumber: 'INV-2026-0707-GAMB',
-    invoiceDate: '2026-07-07',
-    totalAmount: 1759.00,
-    departmentBreakdown: {
-      PRODUCE: 1759.00,
-      DAIRY: 0.00,
-      BAKERY: 0.00,
-      PANTRY: 0.00
-    },
-    lineItems: [
-      { name: 'PEPPER-TX SERRANO 1/2 CTN', department: 'PRODUCE', quantity: 1, unit: 'cases', casePackSize: 40, subUnit: 'lbs', unitCost: 40.00, totalCost: 40.00 },
-      { name: 'PINEAPPLE-CRI GOLD DOLE 7', department: 'PRODUCE', quantity: 5, unit: 'cases', casePackSize: 7, subUnit: 'units', unitCost: 23.00, totalCost: 115.00 },
-      { name: 'POMEGRANATE-PER SZ 7 3.8KG', department: 'PRODUCE', quantity: 4, unit: 'cases', casePackSize: 4, subUnit: 'kg', unitCost: 28.00, totalCost: 112.00 },
-      { name: 'POTATO-CAN FINGERLING 50LB', department: 'PRODUCE', quantity: 1, unit: 'cases', casePackSize: 50, subUnit: 'lbs', unitCost: 111.00, totalCost: 111.00 },
-      { name: 'RADISH-QC BUNCH 24', department: 'PRODUCE', quantity: 2, unit: 'cases', casePackSize: 24, subUnit: 'bunches', unitCost: 28.00, totalCost: 56.00 },
-      { name: 'RAPINI-CA ANDY BOY 26', department: 'PRODUCE', quantity: 1, unit: 'cases', casePackSize: 26, subUnit: 'bunches', unitCost: 62.00, totalCost: 62.00 },
-      { name: 'SPINACH-CA BUNCH 24', department: 'PRODUCE', quantity: 1, unit: 'cases', casePackSize: 24, subUnit: 'bunches', unitCost: 29.00, totalCost: 29.00 },
-      { name: 'SWISS CHARD-QC RED 24', department: 'PRODUCE', quantity: 1, unit: 'cases', casePackSize: 24, subUnit: 'bunches', unitCost: 38.00, totalCost: 38.00 },
-      { name: 'TAMARIND-THA SWEET 20X500G', department: 'PRODUCE', quantity: 1, unit: 'cases', casePackSize: 10, subUnit: 'kg', unitCost: 128.00, totalCost: 128.00 },
-      { name: 'TOMATILLO-MEX 35LB', department: 'PRODUCE', quantity: 1, unit: 'cases', casePackSize: 35, subUnit: 'lbs', unitCost: 55.00, totalCost: 55.00 }
-    ],
-    rawSummary: 'Extracted 10 Produce line items from GAMBLES vendor delivery receipt.'
-  };
-}
-
-function getMockVoiceResult(spokenText?: string): VoiceLoggerResult {
-  const text = spokenText || 'Logged 10 lbs bruised apples and 4L heavy cream';
-  return {
-    transcript: text,
-    targetAction: 'KITCHEN_RESCUE',
-    parsedItems: [
-      {
-        name: 'Bruised Honeycrisp Apples',
-        quantity: 10,
-        unit: 'lbs',
-        department: 'PRODUCE',
-        condition: 'Bruised',
-        allergenWarnings: []
-      },
-      {
-        name: 'Whole Heavy Cream 40%',
-        quantity: 4,
-        unit: 'Liters',
-        department: 'DAIRY',
-        condition: 'Near Expiry',
-        allergenWarnings: ['Milk / Dairy']
-      }
-    ],
-    kitchenRescueNotes: 'Spoken items flagged on floor. Transfer to kitchen prep station immediately for Parfait or Spiced Apple Bakery Soup.',
-    estimatedWasteSavedValue: 42.80
-  };
 }
 
 function getMockRecipeFusion(): RecipeFusionResult[] {

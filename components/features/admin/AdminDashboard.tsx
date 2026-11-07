@@ -1,0 +1,75 @@
+'use client';
+
+import React from 'react';
+import { AdminMetricGrid } from '@/components/features/admin/AdminStats';
+import { RescueOutcomeChart } from '@/components/features/admin/RescueOutcomeChart';
+import { WasteVsGoalChart } from '@/components/features/admin/WasteVsGoalChart';
+import { AdminActionCenter } from '@/components/features/admin/AdminActionCenter';
+import { DashboardCard } from '@/components/features/admin/DashboardCard';
+import type { StoreStats } from '@/lib/domains/stats/storeStatsTypes';
+import type { WasteKpiReport } from '@/lib/domains/inventory/ledger';
+import { cn } from '@/lib/utils/cn';
+
+export function AdminDashboard({
+  stats,
+  wasteKpi,
+  refreshing = false,
+  showActionLoadingPlaceholders = false,
+  className,
+}: {
+  stats: StoreStats | null;
+  wasteKpi: WasteKpiReport | null;
+  refreshing?: boolean;
+  showActionLoadingPlaceholders?: boolean;
+  className?: string;
+}) {
+  const goalPct = wasteKpi?.targetWastePct ?? stats?.targetWastePct ?? 2.5;
+  const outcomeDays = stats?.outcomeDays ?? [];
+
+  return (
+    <div
+      className={cn(
+        'space-y-6 rounded-3xl border border-slate-800/60 bg-gradient-to-br from-slate-950 via-slate-950 to-slate-900/50 p-4 shadow-inner shadow-black/20 sm:p-6',
+        className
+      )}
+      aria-label="Admin dashboard"
+      aria-busy={refreshing || undefined}
+    >
+      <header className="border-b border-slate-800/80 pb-4">
+        <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-emerald-400/90">
+          Executive overview
+        </p>
+        <h2 className="mt-1 text-2xl font-black tracking-tight text-white sm:text-3xl">
+          Action center &amp; KPIs
+        </h2>
+        <p className="mt-2 max-w-2xl text-sm leading-relaxed text-slate-400">
+          Pending decisions, department risk, and waste/rescue performance.
+        </p>
+      </header>
+
+      <AdminActionCenter
+        stats={stats}
+        showLoadingPlaceholders={showActionLoadingPlaceholders}
+      />
+
+      <AdminMetricGrid stats={stats} />
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-12 lg:gap-6">
+        <div className="lg:col-span-5">
+          {stats ? (
+            <WasteVsGoalChart days={outcomeDays} goalPct={goalPct} className="min-h-[360px]" />
+          ) : (
+            <DashboardCard className="min-h-[360px] animate-pulse bg-slate-900/40" aria-busy />
+          )}
+        </div>
+        <div className="lg:col-span-7">
+          {stats ? (
+            <RescueOutcomeChart data={outcomeDays} tall variant="dashboard" />
+          ) : (
+            <DashboardCard className="min-h-[360px] animate-pulse bg-slate-900/40" aria-busy />
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}

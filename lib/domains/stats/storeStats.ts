@@ -5,6 +5,7 @@ import { calculateRealTimeWastePct } from '@/lib/domains/inventory/ledger';
 import { getStockLevels } from '@/lib/domains/inventory/stock';
 import type { DepartmentAlert, StoreStats } from '@/lib/domains/stats/storeStatsTypes';
 import { findLatestStoreSetting } from '@/lib/domains/stats/storeSettingSelect';
+import { resolveParCases } from '@/lib/domains/inventory/parLevel';
 import { DEFAULT_KPI_LOOKBACK_DAYS, kpiLookbackRange } from '@/lib/domains/stats/wasteKpi';
 
 export type {
@@ -89,9 +90,9 @@ async function loadStoreStats(): Promise<StoreStats> {
     now
   );
 
-  const [products, stockLevels, expirations, movements, setting] = await Promise.all([
+  const [products, stockLevels, expirations, movements, setting, pendingCredits] = await Promise.all([
     prisma.product.findMany({
-      where: { isManufactured: false },
+      where: { isManufactured: false, catalogActive: true },
       select: {
         id: true,
         department: true,
@@ -127,6 +128,9 @@ async function loadStoreStats(): Promise<StoreStats> {
       },
     }),
     findLatestStoreSetting(),
+    prisma.receivingDisposition.count({
+      where: { reason: 'NOT_RECEIVED', status: 'PENDING_CREDIT' },
+    }),
   ]);
 
   const levelById = new Map(stockLevels.map((row) => [row.productId, row]));
@@ -142,6 +146,7 @@ async function loadStoreStats(): Promise<StoreStats> {
     setting?.pullSensitivityDays === 4
       ? setting.pullSensitivityDays
       : 3;
+  const storeDefaultParCases = resolveParCases(null, setting?.defaultParCases ?? 2);
   const alerts = new Map<string, DepartmentAlert>();
   for (const department of Object.keys(DEPARTMENT_LABELS)) {
     alerts.set(department, { department: DEPARTMENT_LABELS[department], low: 0, expiring: 0 });
@@ -162,7 +167,8 @@ async function loadStoreStats(): Promise<StoreStats> {
     const bucket = alerts.get(product.department);
     if (!bucket || onHand <= 0) continue;
 
-    const parUnits = level?.parUnits ?? (product.parCases ?? 2) * pack;
+    const parCases = resolveParCases(product.parCases, storeDefaultParCases);
+    const parUnits = level?.parUnits ?? parCases * pack;
     if (onHand < parUnits) {
       bucket.low += 1;
       lowCount += 1;
@@ -236,6 +242,7 @@ async function loadStoreStats(): Promise<StoreStats> {
 
   return {
     rescuedValue: money(rescuedValue),
+    lostValue: money(discardValue),
     expiringWithin48h,
     inventoryValue: money(inventoryValue),
     wasteReductionPct,
@@ -246,6 +253,7 @@ async function loadStoreStats(): Promise<StoreStats> {
     pullSensitivityDays,
     pulls,
     lowCount,
+    pendingApprovalsCount: pendingCredits,
     rescueVsDiscard: [
       { name: 'Kitchen rescue', units: Number(rescuedUnits.toFixed(2)) },
       { name: 'Discard', units: Number(discardedUnits.toFixed(2)) },

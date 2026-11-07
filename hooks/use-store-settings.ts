@@ -1,22 +1,13 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import type { PlatformSettings } from '@/lib/domains/stats/platformSettings';
+import { PLATFORM_DEFAULTS, type PlatformSettings } from '@/lib/domains/stats/platformSettings';
 import {
   FRESHLOOP_SETTINGS_UPDATED,
   readSettingsUpdatedEvent,
 } from '@/lib/domains/stats/settingsEvents';
 
-const DEFAULT_CLIENT_SETTINGS: PlatformSettings = {
-  storeName: 'FreshLoop Independent Market',
-  targetWastePct: 2.5,
-  scrapBucketVolumeL: 20,
-  estimatedWeightPerLiterKg: 0.65,
-  defaultScrapCostPerKg: 3.5,
-  defaultLaborRatePerHour: 17.6,
-  pullSensitivityDays: 3,
-  costGuardrailVariancePct: 20,
-};
+const DEFAULT_CLIENT_SETTINGS: PlatformSettings = { ...PLATFORM_DEFAULTS };
 
 let cachedSettings: PlatformSettings | null = null;
 let inflightSettingsPromise: Promise<PlatformSettings | null> | null = null;

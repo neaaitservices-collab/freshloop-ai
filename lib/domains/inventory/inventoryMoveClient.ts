@@ -1,5 +1,16 @@
 import type { StockLevel } from '@/lib/domains/inventory/stock';
+import {
+  notifyInventoryUpdated,
+  subscribeInventoryUpdated,
+  type InventoryUpdatedDetail,
+} from '@/lib/domains/inventory/inventoryEvents';
 import { formatCurrency, formatUnits, stockUnitLabel } from '@/lib/domains/receiving/yieldPricing';
+import { OFFLINE_MUTATION_KIND } from '@/lib/offline/types';
+import { postJsonOrQueue } from '@/lib/offline/mutationClient';
+import { createClientMutationId } from '@/lib/offline/queue';
+
+export type { InventoryUpdatedDetail };
+export { notifyInventoryUpdated, subscribeInventoryUpdated };
 
 export type InventoryMoveAction = 'rescue' | 'waste' | 'markdown' | 'kitchen_waste' | 'sale';
 
@@ -43,91 +54,37 @@ export function stockLevelToTransferRow(level: StockLevel): SubInventoryTransfer
   };
 }
 
-export type InventoryUpdatedDetail = {
-  level?: StockLevel;
-  productId?: string;
-  /** List already patched this level (skip duplicate merges in listeners). */
-  source?: 'level-patch';
-  /** Waste KPI state already returned from volumetric-scrap POST. */
-  skipWasteKpiRefresh?: boolean;
-  /** Skip debounced `/api/admin/stats` refresh (e.g. single-SKU case override). */
-  skipStatsRefresh?: boolean;
-};
-
-const INVENTORY_UPDATED_CHANNEL = 'freshloop-inventory-updated';
-
-export function notifyInventoryUpdated(detail?: InventoryUpdatedDetail): void {
-  if (typeof window === 'undefined') return;
-  window.dispatchEvent(new CustomEvent('freshloop-inventory-updated', { detail }));
-  try {
-    const channel = new BroadcastChannel(INVENTORY_UPDATED_CHANNEL);
-    channel.postMessage({ type: 'inventory-updated' });
-    channel.close();
-  } catch {
-    /* BroadcastChannel unavailable */
-  }
-}
-
-/** Same-tab + other browser tabs (Admin while logging on Production). */
-export function subscribeInventoryUpdated(
-  handler: (detail?: InventoryUpdatedDetail) => void
-): () => void {
-  if (typeof window === 'undefined') return () => {};
-
-  const onWindow = (event: Event) => {
-    const detail = (event as CustomEvent<InventoryUpdatedDetail>).detail;
-    handler(detail);
-  };
-  window.addEventListener('freshloop-inventory-updated', onWindow);
-
-  let channel: BroadcastChannel | null = null;
-  try {
-    channel = new BroadcastChannel(INVENTORY_UPDATED_CHANNEL);
-    channel.onmessage = () => handler();
-  } catch {
-    /* ignore */
-  }
-
-  return () => {
-    window.removeEventListener('freshloop-inventory-updated', onWindow);
-    channel?.close();
-  };
-}
-
 export async function executeInventoryMove(input: {
   productId: string;
   action: InventoryMoveAction;
   quantity?: number;
   staffId?: string;
   discountPct?: number;
+  label?: string;
   /** When false, caller owns `freshloop-inventory-updated` (avoids double UI patches). */
   broadcast?: boolean;
-}): Promise<InventoryMoveResult> {
-  try {
-    const response = await fetch('/api/inventory/move', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        productId: input.productId,
-        action: input.action,
-        quantity: input.quantity,
-        discountPct: input.discountPct,
-      }),
-    });
-    const json = (await response.json()) as InventoryMoveResult & { level?: StockLevel };
-    if (!response.ok || !json.success || !json.level) {
-      return {
-        success: false,
-        action: input.action,
-        error: json.error ?? 'The transfer could not be saved.',
-      };
-    }
+}): Promise<InventoryMoveResult & { queuedOffline?: boolean }> {
+  const clientMutationId = createClientMutationId();
+  const result = await postJsonOrQueue<InventoryMoveResult & { level?: StockLevel }>({
+    kind: OFFLINE_MUTATION_KIND.INVENTORY_MOVE,
+    url: '/api/inventory/move',
+    label: input.label ?? `Transfer ${input.action}`,
+    body: {
+      productId: input.productId,
+      action: input.action,
+      quantity: input.quantity,
+      discountPct: input.discountPct,
+      clientMutationId,
+    },
+  });
+
+  if (result.ok && result.offline) {
     if (input.broadcast !== false) {
-      notifyInventoryUpdated({ level: json.level, productId: input.productId });
+      notifyInventoryUpdated({ productId: input.productId });
       if (input.action === 'rescue' && typeof window !== 'undefined') {
         window.dispatchEvent(
           new CustomEvent('freshloop-kitchen-inbox', {
-            detail: { productId: input.productId, units: json.units },
+            detail: { productId: input.productId, units: input.quantity },
           })
         );
       }
@@ -135,16 +92,42 @@ export async function executeInventoryMove(input: {
     return {
       success: true,
       action: input.action,
-      level: json.level,
-      units: json.units,
+      queuedOffline: true,
     };
-  } catch {
+  }
+
+  if (!result.ok) {
     return {
       success: false,
       action: input.action,
-      error: 'The transfer could not reach the server.',
+      error: result.error,
     };
   }
+
+  const json = result.data;
+  if (!json.success || !json.level) {
+    return {
+      success: false,
+      action: input.action,
+      error: json.error ?? 'The transfer could not be saved.',
+    };
+  }
+  if (input.broadcast !== false) {
+    notifyInventoryUpdated({ level: json.level, productId: input.productId });
+    if (input.action === 'rescue' && typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new CustomEvent('freshloop-kitchen-inbox', {
+          detail: { productId: input.productId, units: json.units },
+        })
+      );
+    }
+  }
+  return {
+    success: true,
+    action: input.action,
+    level: json.level,
+    units: json.units,
+  };
 }
 
 export function transferSuccessMessage(

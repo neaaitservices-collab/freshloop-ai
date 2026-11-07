@@ -48,6 +48,13 @@ export interface InvoiceLineItemExtract {
   costVariancePct?: number | null;
   requires_approval?: boolean;
   guardrailReason?: string | null;
+  /** Model OCR certainty for this line (0–1). */
+  extractionConfidence?: number;
+  /** Catalog fuzzy-match certainty (0–1). */
+  matchConfidence?: number | null;
+  /** Blended score used for review threshold (0–1). */
+  lineConfidence?: number;
+  needsManualReview?: boolean;
 }
 
 export interface InvoiceOcrResult {
@@ -69,6 +76,9 @@ export interface InvoiceOcrResult {
   requiresManagerApproval?: boolean;
   flaggedItemsCount?: number;
   guardrailThresholdPct?: number;
+  needsManualReview?: boolean;
+  lowConfidenceItemsCount?: number;
+  ocrConfidenceThreshold?: number;
 }
 
 export interface VoiceParsedItem {

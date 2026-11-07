@@ -1,9 +1,23 @@
 import { Department, InventoryLocation, Prisma, TransactionType, UnitType } from '@prisma/client';
 import { parsePosSalesDaysParam, posSalesWindowStart } from '@/lib/domains/inventory/posSalesUnits';
-import { getCurrentStock, prisma, VOLUMETRIC_SCRAP_REF_PREFIX } from '@/lib/domains/inventory/ledger';
+import {
+  getCurrentStock,
+  prisma,
+  readShelfOnHandPair,
+  VOLUMETRIC_SCRAP_REF_PREFIX,
+} from '@/lib/domains/inventory/ledger';
 import { rememberLedgerRead } from '@/lib/domains/inventory/ledgerCache';
 import { invalidateInventoryCaches } from '@/lib/domains/inventory/inventoryCache';
-import { DEFAULT_PAR_CASES, normalizeParCases, stockFromPar } from '@/lib/domains/inventory/parLevel';
+import {
+  DEFAULT_PAR_CASES,
+  normalizeParCases,
+  resolveParCases,
+  stockFromPar,
+} from '@/lib/domains/inventory/parLevel';
+import {
+  hasOfflineMutationReference,
+  offlineReferenceId,
+} from '@/lib/domains/inventory/offlineMutation';
 import {
   ensureProductMarkdownColumn,
   readProductRetailPrices,
@@ -74,6 +88,13 @@ export interface StockLevel {
   /** Read-only: units sold in the POS lookback window (Sale + POS_Sale). */
   posSoldInWindow?: number;
   posSalesDays?: number;
+  /** Velocity-based buy suggestion copy for the orders UI. */
+  forecastRationale?: string;
+  forecastDailyVelocity?: number;
+  /** Consumption-based par hint (does not auto-write catalog). */
+  suggestedParCases?: number;
+  /** True when forecast raised order qty or flagged low ahead of static par. */
+  forecastDriven?: boolean;
 }
 
 export interface PostedReceipt {
@@ -151,6 +172,7 @@ export async function findOrCreatePurchaseProduct(
     casePackSize: input.casePackSize,
   });
   const unitCost = input.unitCost && input.unitCost > 0 ? Number(input.unitCost.toFixed(4)) : null;
+  const storeDefaultPar = await loadStoreStockDefaults().then((d) => d.defaultParCases);
   const created = await client.product.create({
     data: {
       name,
@@ -162,6 +184,7 @@ export async function findOrCreatePurchaseProduct(
       standardCost: unitCost,
       supplier: input.supplier?.trim() || null,
       shelfLifeDays: 7,
+      parCases: storeDefaultPar,
       isManufactured: false,
     },
     select: { id: true, name: true },
@@ -465,7 +488,11 @@ interface StockLevelRow {
   posSoldInWindow?: number | null;
 }
 
-function stockLevelFromRow(row: StockLevelRow, storePullDefault: PullSensitivityDays): StockLevel {
+function stockLevelFromRow(
+  row: StockLevelRow,
+  storePullDefault: PullSensitivityDays,
+  storeDefaultParCases: number
+): StockLevel {
   const pullOverride = parseProductPullOverride(row.pullSensitivityDays);
   const pullDays = effectivePullDays(pullOverride, storePullDefault);
   return {
@@ -482,7 +509,7 @@ function stockLevelFromRow(row: StockLevelRow, storePullDefault: PullSensitivity
       unitCost: row.standardCost,
       onHand: Number(row.onHand) || 0,
       kitchenPrepQty: Number(row.kitchenPrepQty) || 0,
-      parCases: row.parCases,
+      parCases: resolveParCases(row.parCases, storeDefaultParCases),
       receiveCaseCost: row.receiveCaseCost,
       caseRetailPrice: row.caseRetailPrice,
       retailPrice: row.retailPrice,
@@ -494,9 +521,15 @@ function stockLevelFromRow(row: StockLevelRow, storePullDefault: PullSensitivity
   };
 }
 
-async function loadStorePullDefault(): Promise<PullSensitivityDays> {
+async function loadStoreStockDefaults(): Promise<{
+  pullDays: PullSensitivityDays;
+  defaultParCases: number;
+}> {
   const setting = await findLatestStoreSetting();
-  return normalizePullSensitivityDays(setting?.pullSensitivityDays);
+  return {
+    pullDays: normalizePullSensitivityDays(setting?.pullSensitivityDays),
+    defaultParCases: normalizeParCases(setting?.defaultParCases ?? DEFAULT_PAR_CASES),
+  };
 }
 
 function posSoldSubselect(posSalesFrom: Date) {
@@ -619,13 +652,13 @@ async function queryStockLevelRows(
 export async function getStockLevelsWithPosSales(lookbackDays: number): Promise<StockLevel[]> {
   const salesDays = parsePosSalesDaysParam(String(lookbackDays), 7);
   const from = posSalesWindowStart(salesDays);
-  const [rows, storePullDefault] = await Promise.all([
+  const [rows, storeDefaults] = await Promise.all([
     queryStockLevelRows(undefined, from),
-    loadStorePullDefault(),
+    loadStoreStockDefaults(),
   ]);
   return rows
     .map((row) => ({
-      ...stockLevelFromRow(row, storePullDefault),
+      ...stockLevelFromRow(row, storeDefaults.pullDays, storeDefaults.defaultParCases),
       posSalesDays: salesDays,
       posSoldInWindow: Number(row.posSoldInWindow ?? 0),
     }))
@@ -638,22 +671,22 @@ export async function getStockLevelsWithPosSales(lookbackDays: number): Promise<
 }
 
 async function loadStockLevelById(productId: string): Promise<StockLevel> {
-  const [rows, storePullDefault] = await Promise.all([
+  const [rows, storeDefaults] = await Promise.all([
     queryStockLevelRows(productId),
-    loadStorePullDefault(),
+    loadStoreStockDefaults(),
   ]);
   const row = rows[0];
   if (!row) throw new Error('Item was not found.');
-  return stockLevelFromRow(row, storePullDefault);
+  return stockLevelFromRow(row, storeDefaults.pullDays, storeDefaults.defaultParCases);
 }
 
 async function loadStockLevels(): Promise<StockLevel[]> {
-  const [rows, storePullDefault] = await Promise.all([
+  const [rows, storeDefaults] = await Promise.all([
     queryStockLevelRows(),
-    loadStorePullDefault(),
+    loadStoreStockDefaults(),
   ]);
   return rows
-    .map((row) => stockLevelFromRow(row, storePullDefault))
+    .map((row) => stockLevelFromRow(row, storeDefaults.pullDays, storeDefaults.defaultParCases))
     .sort(
       (a, b) =>
         Number(b.low) - Number(a.low) ||
@@ -795,27 +828,53 @@ async function applyAdminShelfLocationDelta(
   });
 }
 
+export interface SetStockCasesResult {
+  level: StockLevel;
+  audit: StockOverrideAudit | null;
+}
+
 /** Manager override: set shopper-facing cases (floor + deli). Kitchen prep is unchanged. */
-export async function setStockCases(productId: string, cases: number, staffId: string): Promise<StockLevel> {
+export async function setStockCases(
+  productId: string,
+  cases: number,
+  staffId: string,
+  staffName?: string | null,
+  clientMutationId?: string | null
+): Promise<SetStockCasesResult> {
+  if (clientMutationId?.trim()) {
+    const ref = offlineReferenceId(clientMutationId);
+    if (await hasOfflineMutationReference(ref)) {
+      return { level: await readStockLevel(productId), audit: null };
+    }
+  }
   if (!Number.isFinite(cases) || cases < 0) {
     throw new Error('Cases must be zero or greater.');
   }
-  const product = await prisma.product.findUnique({ where: { id: productId } });
+  const actor = staffId.trim() || 'staff-admin';
+  const [product, shelf, storeDefaults] = await Promise.all([
+    prisma.product.findUnique({ where: { id: productId } }),
+    readShelfOnHandPair(productId),
+    loadStoreStockDefaults(),
+  ]);
   if (!product) throw new Error('Item was not found.');
   const pack = product.casePackSize && product.casePackSize > 0 ? product.casePackSize : 1;
   const targetUnits = Number((cases * pack).toFixed(4));
-  const floorOnHand = await getCurrentStock(productId, InventoryLocation.Retail_Floor);
-  const deliOnHand = await getCurrentStock(productId, InventoryLocation.Deli_Grab_N_Go);
   const { floorDelta, deliDelta } = planShelfAdjustment({
     targetUnits,
-    floorOnHand,
-    deliOnHand,
+    floorOnHand: shelf.floor,
+    deliOnHand: shelf.deli,
   });
 
-  if (Math.abs(floorDelta) >= 0.0001 || Math.abs(deliDelta) >= 0.0001) {
+  let audit: StockOverrideAudit | null = null;
+  const wroteOverride =
+    Math.abs(floorDelta) >= 0.0001 || Math.abs(deliDelta) >= 0.0001;
+
+  if (wroteOverride) {
     const unitCost = product.standardCost && product.standardCost > 0 ? product.standardCost : 0;
-    const referenceId = `ADJ-${Date.now()}`;
-    const actor = staffId.trim() || 'staff-admin';
+    const referenceId = clientMutationId?.trim()
+      ? offlineReferenceId(clientMutationId)
+      : `ADJ-${Date.now()}`;
+    const overrideTs = new Date();
     await prisma.$transaction(async (tx) => {
       await applyAdminShelfLocationDelta(tx, {
         productId,
@@ -836,9 +895,24 @@ export async function setStockCases(productId: string, cases: number, staffId: s
         shelfLabel: 'deli',
       });
     }, LEDGER_WRITE_TX);
+    audit = {
+      timestamp: overrideTs.toISOString(),
+      staffId: actor,
+      staffName: staffName?.trim() || null,
+      notes: 'Admin stock override',
+    };
+  } else {
+    audit = await getLastStockOverrideAudit(productId);
   }
+
   invalidateInventoryCaches();
-  return readStockLevel(productId);
+  const rows = await queryStockLevelRows(productId);
+  const row = rows[0];
+  if (!row) throw new Error('Item was not found.');
+  return {
+    level: stockLevelFromRow(row, storeDefaults.pullDays, storeDefaults.defaultParCases),
+    audit,
+  };
 }
 
 /** Admin-only: hide SKU from catalogs. Does not delete ledger history. */
@@ -1149,8 +1223,15 @@ export async function moveRetailStock(
   productId: string,
   action: 'waste' | 'rescue',
   staffId: string,
-  quantity?: number
+  quantity?: number,
+  clientMutationId?: string | null
 ): Promise<{ level: StockLevel; units: number }> {
+  if (clientMutationId?.trim()) {
+    const ref = offlineReferenceId(clientMutationId);
+    if (await hasOfflineMutationReference(ref)) {
+      return { level: await readStockLevel(productId), units: 0 };
+    }
+  }
   const product = await prisma.product.findUnique({ where: { id: productId } });
   if (!product) throw new Error('Item was not found.');
   const floorQty = await getCurrentStock(productId, InventoryLocation.Retail_Floor);
@@ -1163,7 +1244,9 @@ export async function moveRetailStock(
   if (!(qty > 0)) throw new Error('Transfer quantity must be greater than zero.');
   const cost = product.standardCost && product.standardCost > 0 ? product.standardCost : 0;
   const actor = staffId.trim() || 'staff-floor';
-  const referenceId = `${action === 'waste' ? 'WASTE' : 'RESCUE'}-${Date.now()}`;
+  const referenceId = clientMutationId?.trim()
+    ? offlineReferenceId(clientMutationId)
+    : `${action === 'waste' ? 'WASTE' : 'RESCUE'}-${Date.now()}`;
   const shared = {
     productId,
     staffId: actor,

@@ -39,7 +39,13 @@ export async function POST(req: NextRequest) {
         kitchenPrepQty: moved.level.kitchenPrepQty,
       });
     }
-    const moved = await moveRetailStock(productId, action, actor.id, body.quantity);
+    const moved = await moveRetailStock(
+      productId,
+      action,
+      actor.id,
+      body.quantity,
+      body.clientMutationId
+    );
     return NextResponse.json({
       success: true,
       action,

@@ -1,11 +1,11 @@
 import { Suspense } from 'react';
 import { BuyList } from '@/components/features/orders/BuyList';
-import { getStockLevels } from '@/lib/domains/inventory/stock';
+import { getBuyListLevelsWithForecast } from '@/lib/domains/inventory/forecasting';
 
 export const dynamic = 'force-dynamic';
 
 async function LiveOrders() {
-  const levels = await getStockLevels();
+  const levels = await getBuyListLevelsWithForecast();
   return <BuyList levels={levels} />;
 }
 

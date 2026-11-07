@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/domains/inventory/ledger';
 import { invalidateInventoryCaches } from '@/lib/domains/inventory/inventoryCache';
+import { invalidateStoreStats } from '@/lib/domains/stats/storeStats';
 import {
   findLatestStoreSetting,
   storeSettingSafeSelect,
@@ -14,6 +15,8 @@ export interface PlatformSettings {
   defaultLaborRatePerHour: number;
   pullSensitivityDays: number;
   costGuardrailVariancePct: number;
+  /** Default minimum stock in cases (Orders par / low-stock alerts). */
+  defaultParCases: number;
 }
 
 export const PLATFORM_DEFAULTS: PlatformSettings = {
@@ -25,6 +28,7 @@ export const PLATFORM_DEFAULTS: PlatformSettings = {
   defaultLaborRatePerHour: 17.6,
   pullSensitivityDays: 3,
   costGuardrailVariancePct: 20,
+  defaultParCases: 2,
 };
 
 const PULL_DAYS = new Set([2, 3, 4]);
@@ -44,6 +48,7 @@ export function parsePlatformSettings(body: unknown): { settings: PlatformSettin
   const defaultLaborRatePerHour = finite(source.defaultLaborRatePerHour);
   const pullSensitivityDays = finite(source.pullSensitivityDays);
   const costGuardrailVariancePct = finite(source.costGuardrailVariancePct);
+  const defaultParCases = finite(source.defaultParCases);
 
   if (!storeName) return { error: 'Store name is required.' };
   if (targetWastePct === null || targetWastePct < 0 || targetWastePct > 100) {
@@ -67,6 +72,9 @@ export function parsePlatformSettings(body: unknown): { settings: PlatformSettin
   if (costGuardrailVariancePct === null || costGuardrailVariancePct < 0 || costGuardrailVariancePct > 100) {
     return { error: 'Invoice alert must be between 0 and 100.' };
   }
+  if (defaultParCases === null || defaultParCases < 0 || defaultParCases > 999) {
+    return { error: 'Minimum stock must be between 0 and 999 cases.' };
+  }
 
   return {
     settings: {
@@ -78,6 +86,7 @@ export function parsePlatformSettings(body: unknown): { settings: PlatformSettin
       defaultLaborRatePerHour,
       pullSensitivityDays,
       costGuardrailVariancePct,
+      defaultParCases: Math.round(defaultParCases),
     },
   };
 }
@@ -94,11 +103,15 @@ export async function getPlatformSettings(): Promise<PlatformSettings> {
     defaultLaborRatePerHour: row.defaultLaborRatePerHour ?? 17.6,
     pullSensitivityDays: row.pullSensitivityDays,
     costGuardrailVariancePct: row.costGuardrailVariancePct,
+    defaultParCases: row.defaultParCases ?? PLATFORM_DEFAULTS.defaultParCases,
   };
 }
 
 export async function savePlatformSettings(settings: PlatformSettings): Promise<PlatformSettings> {
   const existing = await findLatestStoreSetting();
+  const previousDefaultParCases =
+    existing?.defaultParCases ?? PLATFORM_DEFAULTS.defaultParCases;
+  const nextDefaultParCases = Math.round(settings.defaultParCases);
   const data = {
     storeName: settings.storeName,
     targetWastePct: settings.targetWastePct,
@@ -108,6 +121,7 @@ export async function savePlatformSettings(settings: PlatformSettings): Promise<
     defaultLaborRatePerHour: settings.defaultLaborRatePerHour,
     pullSensitivityDays: settings.pullSensitivityDays,
     costGuardrailVariancePct: settings.costGuardrailVariancePct,
+    defaultParCases: nextDefaultParCases,
   };
   const saved = existing
     ? await prisma.storeSetting.update({
@@ -116,7 +130,19 @@ export async function savePlatformSettings(settings: PlatformSettings): Promise<
         select: storeSettingSafeSelect,
       })
     : await prisma.storeSetting.create({ data, select: storeSettingSafeSelect });
+
+  if (nextDefaultParCases !== previousDefaultParCases) {
+    await prisma.product.updateMany({
+      where: {
+        isManufactured: false,
+        parCases: previousDefaultParCases,
+      },
+      data: { parCases: nextDefaultParCases },
+    });
+  }
+
   invalidateInventoryCaches();
+  invalidateStoreStats();
   return {
     storeName: saved.storeName,
     targetWastePct: saved.targetWastePct,
@@ -126,5 +152,6 @@ export async function savePlatformSettings(settings: PlatformSettings): Promise<
     defaultLaborRatePerHour: saved.defaultLaborRatePerHour,
     pullSensitivityDays: saved.pullSensitivityDays,
     costGuardrailVariancePct: saved.costGuardrailVariancePct,
+    defaultParCases: saved.defaultParCases,
   };
 }

@@ -40,10 +40,12 @@ export function RescueOutcomeChart({
   data,
   className,
   tall = false,
+  variant = 'default',
 }: {
   data: RescueOutcomeDay[];
   className?: string;
   tall?: boolean;
+  variant?: 'default' | 'dashboard';
 }) {
   const [measure, setMeasure] = useState<Measure>('usd');
 
@@ -70,9 +72,11 @@ export function RescueOutcomeChart({
           <p className="mt-1 text-sm text-slate-400">
             Last 7 days · floor → kitchen rescue vs floor waste (ledger)
           </p>
-          <p className="mt-0.5 text-xs text-slate-500">
-            Product moves only — volumetric scrap buckets count toward waste % above, not here.
-          </p>
+          {variant === 'default' ? (
+            <p className="mt-0.5 text-xs text-slate-500">
+              Product moves only — volumetric scrap buckets count toward waste % above, not here.
+            </p>
+          ) : null}
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
@@ -115,22 +119,60 @@ export function RescueOutcomeChart({
         </div>
 
         {hasData ? (
-          <dl className="grid grid-cols-2 gap-2 text-[11px] sm:grid-cols-4">
-            <div className="rounded-lg border border-slate-800 bg-slate-950/60 px-2.5 py-2">
-              <dt className="font-bold uppercase tracking-wide text-slate-500">Recovered</dt>
-              <dd className="font-mono text-sm font-black tabular-nums text-emerald-300">
+          <dl
+            className={cn(
+              'grid grid-cols-2 gap-3',
+              variant === 'dashboard' ? 'sm:max-w-md' : 'gap-2 text-[11px] sm:grid-cols-4'
+            )}
+          >
+            <div
+              className={cn(
+                'rounded-xl px-3 py-3',
+                variant === 'dashboard'
+                  ? 'border-2 border-emerald-500/50 bg-emerald-950/20'
+                  : 'border border-slate-800 bg-slate-950/60 px-2.5 py-2'
+              )}
+            >
+              <dt className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                Recovered
+              </dt>
+              <dd
+                className={cn(
+                  'font-mono font-black tabular-nums text-emerald-300',
+                  variant === 'dashboard' ? 'text-2xl' : 'text-sm'
+                )}
+              >
                 {measure === 'usd'
                   ? `$${summary.recoveredUsd.toFixed(0)}`
                   : summary.rescueUnits.toFixed(0)}
               </dd>
             </div>
-            <div className="rounded-lg border border-slate-800 bg-slate-950/60 px-2.5 py-2">
-              <dt className="font-bold uppercase tracking-wide text-slate-500">Lost</dt>
-              <dd className="font-mono text-sm font-black tabular-nums text-rose-300">
+            <div
+              className={cn(
+                'rounded-xl px-3 py-3',
+                variant === 'dashboard'
+                  ? 'border-2 border-slate-600/80 bg-slate-950/60'
+                  : 'border border-slate-800 bg-slate-950/60 px-2.5 py-2'
+              )}
+            >
+              <dt className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Lost</dt>
+              <dd
+                className={cn(
+                  'font-mono font-black tabular-nums text-slate-200',
+                  variant === 'dashboard' ? 'text-2xl' : 'text-sm text-rose-300'
+                )}
+              >
                 {measure === 'usd' ? `$${summary.lostUsd.toFixed(0)}` : summary.discardUnits.toFixed(0)}
               </dd>
             </div>
           </dl>
+        ) : null}
+        {hasData && variant === 'dashboard' ? (
+          <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+            <span className="text-emerald-400/90">Recovered</span>
+            <span className="mx-2 text-slate-600">|</span>
+            <span className="text-slate-400">Lost</span>
+          </p>
         ) : null}
       </header>
 

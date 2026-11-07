@@ -1,11 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { Department, InventoryLocation } from '@prisma/client';
+import { Department } from '@prisma/client';
 import { getMovingAverageCostMap } from '@/lib/domains/inventory/ledger';
 import { loadProductCatalog } from '@/lib/domains/catalog/productCatalog';
-import {
-  commitInvoiceOcrReceipts,
-  type OcrInvoiceMeta,
-} from '@/lib/domains/receiving/invoiceOcrCommit';
+import { commitInvoiceOcrReceipts } from '@/lib/domains/receiving/invoiceOcrCommit';
 import { generateContentWithFallback, tryParseModelJson } from '@/lib/domains/ai/gemini';
 import { invoiceOcrModelCandidates } from '@/lib/domains/ai/geminiModels';
 import { handleApiRouteError, logServerError } from '@/lib/domains/ai/apiError';
@@ -14,9 +11,20 @@ import { authErrorResponse } from '@/lib/auth/http';
 import { requireReceivingStaff } from '@/lib/auth/guardRoute';
 import { requireSessionUser } from '@/lib/auth/session';
 import { findLatestStoreSetting } from '@/lib/domains/stats/storeSettingSelect';
-import { matchProduct } from '@/lib/domains/inventory/productMatching';
+import { matchProductWithScore } from '@/lib/domains/inventory/productMatching';
+import { recordOcrScanAnalytics } from '@/lib/domains/suppliers/analyticsPersistence';
+import { VENDOR_PRICE_ALERT_DEFAULT_PCT } from '@/lib/domains/suppliers/vendorAnalyticsTypes';
 import { upsertSupplierByName } from '@/lib/domains/suppliers/suppliers';
 import { assertHotPathRateLimit } from '@/lib/security/rateLimit';
+import { invoiceOcrCommitBodySchema } from '@/lib/security/schemas/invoiceOcr';
+import {
+  INVOICE_OCR_CONFIDENCE_THRESHOLD,
+  combineLineConfidence,
+  lineNeedsManualReview,
+  matchConfidenceFromCatalogScore,
+  normalizeExtractionConfidence,
+} from '@/lib/domains/receiving/invoiceOcrConfidence';
+import type { RoleName } from '@/lib/utils/roles';
 
 export const maxDuration = 60;
 export const dynamic = 'force-dynamic';
@@ -41,6 +49,10 @@ export interface InvoiceOcrLineItemWithGuardrail {
   cost_variance_pct: number | null;
   requires_approval: boolean;
   guardrail_reason: string | null;
+  extraction_confidence: number;
+  match_confidence: number | null;
+  line_confidence: number;
+  needs_manual_review: boolean;
 }
 
 export interface InvoiceOcrApiResponse {
@@ -53,6 +65,9 @@ export interface InvoiceOcrApiResponse {
   guardrail_threshold_pct: number;
   requires_manager_approval: boolean;
   flagged_items_count: number;
+  needs_manual_review: boolean;
+  low_confidence_items_count: number;
+  ocr_confidence_threshold: number;
   items: InvoiceOcrLineItemWithGuardrail[];
   // Backward-compatible shape for existing UI components
   data: {
@@ -82,12 +97,19 @@ export interface InvoiceOcrApiResponse {
       costVariancePct?: number | null;
       requires_approval?: boolean;
       guardrailReason?: string | null;
+      extractionConfidence?: number;
+      matchConfidence?: number | null;
+      lineConfidence?: number;
+      needsManualReview?: boolean;
     }>;
     rawSummary: string;
     source: 'sample' | 'photo';
     requiresManagerApproval?: boolean;
     flaggedItemsCount?: number;
     guardrailThresholdPct?: number;
+    needsManualReview?: boolean;
+    lowConfidenceItemsCount?: number;
+    ocrConfidenceThreshold?: number;
   };
   timestamp: string;
 }
@@ -117,13 +139,6 @@ async function loadCatalogForCostComparison(): Promise<CatalogLookupEntry[]> {
   }));
 }
 
-function findBestCatalogProduct(
-  ocrItemName: string,
-  catalog: CatalogLookupEntry[]
-): CatalogLookupEntry | null {
-  return matchProduct(ocrItemName, catalog);
-}
-
 /**
  * Evaluates the Cost Guardrail for an extracted invoice line item.
  * If the new unit_cost varies by more than `thresholdPct` (default 20%)
@@ -140,13 +155,16 @@ type RawOcrLineItem = {
   unitCost: number;
   totalCost: number;
   caseRetailPrice?: number | null;
+  extractionConfidence?: number;
 };
 
 function evaluateCostGuardrailSync(
   rawItem: RawOcrLineItem,
   matchedProduct: CatalogLookupEntry | null,
+  matchScore: number | null,
   macPerBaseUnit: number | undefined,
-  thresholdPct: number = 20.0
+  thresholdPct: number = 20.0,
+  ocrSource: 'sample' | 'photo' = 'photo'
 ): InvoiceOcrLineItemWithGuardrail {
   let historicalAvgCost: number | null = null;
 
@@ -192,6 +210,15 @@ function evaluateCostGuardrailSync(
     }
   }
 
+  const extractionConfidence = normalizeExtractionConfidence(
+    rawItem.extractionConfidence,
+    ocrSource
+  );
+  const matchConfidence =
+    matchScore !== null ? matchConfidenceFromCatalogScore(matchScore) : null;
+  const lineConfidence = combineLineConfidence(extractionConfidence, matchConfidence);
+  const needsManualReview = lineNeedsManualReview(lineConfidence);
+
   return {
     item_name: rawItem.name,
     product_id: matchedProduct?.id ?? null,
@@ -211,29 +238,40 @@ function evaluateCostGuardrailSync(
     cost_variance_pct: costVariancePct,
     requires_approval: requiresApproval,
     guardrail_reason: guardrailReason,
+    extraction_confidence: extractionConfidence,
+    match_confidence: matchConfidence,
+    line_confidence: lineConfidence,
+    needs_manual_review: needsManualReview,
   };
 }
 
 async function evaluateCostGuardrailsBatch(
   lineItems: RawOcrLineItem[],
   catalog: CatalogLookupEntry[],
-  thresholdPct: number
+  thresholdPct: number,
+  ocrSource: 'sample' | 'photo'
 ): Promise<InvoiceOcrLineItemWithGuardrail[]> {
-  const matches = lineItems.map((rawItem) => ({
-    rawItem,
-    matchedProduct: findBestCatalogProduct(rawItem.name, catalog),
-  }));
+  const matches = lineItems.map((rawItem) => {
+    const hit = matchProductWithScore(rawItem.name, catalog);
+    return {
+      rawItem,
+      matchedProduct: hit?.product ?? null,
+      matchScore: hit?.score ?? null,
+    };
+  });
   const productIds = matches
     .map((row) => row.matchedProduct?.id)
     .filter((id): id is string => Boolean(id));
   const macMap = await getMovingAverageCostMap(productIds);
 
-  return matches.map(({ rawItem, matchedProduct }) =>
+  return matches.map(({ rawItem, matchedProduct, matchScore }) =>
     evaluateCostGuardrailSync(
       rawItem,
       matchedProduct,
+      matchScore,
       matchedProduct ? macMap.get(matchedProduct.id) : undefined,
-      thresholdPct
+      thresholdPct,
+      ocrSource
     )
   );
 }
@@ -329,8 +367,8 @@ async function extractInvoiceWithGemini15FlashVision(
   }
 
   const visionPrompt = `Extract this vendor invoice as JSON only:
-{"vendorName":"","invoiceNumber":"","invoiceDate":"YYYY-MM-DD","lineItems":[{"name":"","department":"PRODUCE|DAIRY|BAKERY|PANTRY","quantity":0,"unit":"cases","casePackSize":0,"subUnit":"lbs|units|L|loaves","unitCost":0,"totalCost":0,"caseRetailPrice":null}]}
-Rules: unitCost/totalCost per case when unit is cases; caseRetailPrice = printed case list price or null; product names only (no pack codes in name).`;
+{"vendorName":"","invoiceNumber":"","invoiceDate":"YYYY-MM-DD","lineItems":[{"name":"","department":"PRODUCE|DAIRY|BAKERY|PANTRY","quantity":0,"unit":"cases","casePackSize":0,"subUnit":"lbs|units|L|loaves","unitCost":0,"totalCost":0,"caseRetailPrice":null,"extractionConfidence":0.0}]}
+Rules: unitCost/totalCost per case when unit is cases; caseRetailPrice = printed case list price or null; product names only (no pack codes in name). extractionConfidence = your certainty for that row (0.0-1.0).`;
 
   const cleanBase64 = imageBase64.includes(',') ? imageBase64.split(',')[1] : imageBase64;
   const ocrModels = invoiceOcrModelCandidates();
@@ -402,6 +440,10 @@ Rules: unitCost/totalCost per case when unit is cases; caseRetailPrice = printed
         unitCost,
         totalCost,
         caseRetailPrice,
+        extractionConfidence: normalizeExtractionConfidence(
+          li.extractionConfidence ?? li.extraction_confidence ?? li.confidence,
+          'photo'
+        ),
       };
     }),
     modelNote: `Read from the photo with ${modelUsed}.`,
@@ -420,50 +462,26 @@ export async function POST(req: NextRequest) {
     const actor = await requireSessionUser();
     const limited = assertHotPathRateLimit(actor.id, 'invoiceOcr');
     if (limited) return limited;
-    const body = await req.json();
-    const {
-      imageBase64,
-      mimeType,
-      demo,
-      confirmCommit,
-      confirmedItems,
-      invoiceNumber: confirmedInvoiceNum,
-      invoiceMeta,
-    } = body as {
-      imageBase64?: string;
-      mimeType?: string;
-      demo?: boolean;
-      confirmCommit?: boolean;
-      confirmedItems?: Array<{
-        product_id: string;
-        quantity: number;
-        quantity_kind?: 'units' | 'cases';
-        unit_cost: number;
-        to_location?: InventoryLocation;
-        line_name?: string;
-        department?: Department;
-        case_pack_size?: number;
-      }>;
-      invoiceNumber?: string;
-      staffId?: string;
-      invoiceMeta?: OcrInvoiceMeta;
-    };
-
-    // ------------------------------------------------------------------------
-    // Optional Step 2 of Async Confirmation Loop:
-    // Commits Receive transactions into `Inventory_Transactions` ONLY when
-    // explicitly confirmed by the user/manager (`confirmCommit: true`).
-    // ------------------------------------------------------------------------
-    if (confirmCommit && Array.isArray(confirmedItems) && confirmedItems.length > 0) {
+    const rawBody = await req.json();
+    if (
+      rawBody &&
+      typeof rawBody === 'object' &&
+      (rawBody as { confirmCommit?: boolean }).confirmCommit === true
+    ) {
       operation = 'commit';
+      const commitBody = invoiceOcrCommitBodySchema.parse(rawBody);
       const commitActor = await requireReceivingStaff();
       actorId = commitActor.id;
-      referenceId = confirmedInvoiceNum || `INV-OCR-${Date.now()}`;
+      const managerRoles: RoleName[] = ['ADMIN', 'STORE_MANAGER'];
+      const actorIsManager = managerRoles.includes(commitActor.role);
+      referenceId = commitBody.invoiceNumber || `INV-OCR-${Date.now()}`;
       const committed = await commitInvoiceOcrReceipts({
         staffId: commitActor.id,
         referenceId,
-        confirmedItems,
-        invoiceMeta: invoiceMeta ?? null,
+        confirmedItems: commitBody.confirmedItems,
+        invoiceMeta: commitBody.invoiceMeta ?? null,
+        manualReviewOverride: commitBody.manualReviewOverride,
+        actorIsManager,
       });
 
       return NextResponse.json({
@@ -475,6 +493,12 @@ export async function POST(req: NextRequest) {
         timestamp: new Date().toISOString(),
       });
     }
+
+    const { imageBase64, mimeType, demo } = rawBody as {
+      imageBase64?: string;
+      mimeType?: string;
+      demo?: boolean;
+    };
 
     if (!imageBase64 && !demo) {
       return NextResponse.json(
@@ -503,10 +527,12 @@ export async function POST(req: NextRequest) {
       loadCatalogForCostComparison(),
     ]);
 
+    const ocrSource: 'sample' | 'photo' = demo || !imageBase64 ? 'sample' : 'photo';
     const auditedItems = await evaluateCostGuardrailsBatch(
       extracted.lineItems,
       catalog,
-      guardrailThresholdPct
+      guardrailThresholdPct,
+      ocrSource
     );
 
     const departmentBreakdown = {
@@ -528,8 +554,29 @@ export async function POST(req: NextRequest) {
     const flaggedItemsCount = auditedItems.filter(
       (item) => item.requires_approval
     ).length;
+    const lowConfidenceItemsCount = auditedItems.filter((item) => item.needs_manual_review).length;
+    const needsManualReview = lowConfidenceItemsCount > 0;
 
     const globalSupplier = await upsertSupplierByName({ name: extracted.vendorName });
+
+    void recordOcrScanAnalytics({
+      supplierId: globalSupplier.id,
+      lines: auditedItems.map((item) => ({
+        item_name: item.item_name,
+        product_id: item.product_id,
+        unit_cost: item.unit_cost,
+        historical_avg_cost: item.historical_avg_cost,
+        cost_variance_pct: item.cost_variance_pct,
+        line_confidence: item.line_confidence,
+        needs_manual_review: item.needs_manual_review,
+      })),
+      analyticsThresholdPct: VENDOR_PRICE_ALERT_DEFAULT_PCT,
+    }).catch((err: unknown) => {
+      logServerError('POST /api/invoice-ocr analytics', err, {
+        path: '/api/invoice-ocr',
+        operation: 'vendor-analytics-persist',
+      });
+    });
 
     const responsePayload: InvoiceOcrApiResponse = {
       success: true,
@@ -539,8 +586,11 @@ export async function POST(req: NextRequest) {
       invoice_date: extracted.invoiceDate,
       total_amount: totalAmount,
       guardrail_threshold_pct: guardrailThresholdPct,
-      requires_manager_approval: flaggedItemsCount > 0,
+      requires_manager_approval: flaggedItemsCount > 0 || needsManualReview,
       flagged_items_count: flaggedItemsCount,
+      needs_manual_review: needsManualReview,
+      low_confidence_items_count: lowConfidenceItemsCount,
+      ocr_confidence_threshold: INVOICE_OCR_CONFIDENCE_THRESHOLD,
       items: auditedItems,
       data: {
         vendorName: extracted.vendorName,
@@ -565,15 +615,35 @@ export async function POST(req: NextRequest) {
           costVariancePct: item.cost_variance_pct,
           requires_approval: item.requires_approval,
           guardrailReason: item.guardrail_reason,
+          extractionConfidence: item.extraction_confidence,
+          matchConfidence: item.match_confidence,
+          lineConfidence: item.line_confidence,
+          needsManualReview: item.needs_manual_review,
         })),
-        rawSummary:
-          flaggedItemsCount > 0
-            ? `Cost Guardrail Alert: ${flaggedItemsCount} item(s) vary by >${guardrailThresholdPct}% from historical Moving Average Cost and require approval.`
-            : extracted.modelNote,
-        source: demo || !imageBase64 ? 'sample' : 'photo',
-        requiresManagerApproval: flaggedItemsCount > 0,
+        rawSummary: (() => {
+          const parts: string[] = [];
+          if (needsManualReview) {
+            parts.push(
+              `Manual review: ${lowConfidenceItemsCount} line(s) are below ${Math.round(
+                INVOICE_OCR_CONFIDENCE_THRESHOLD * 100
+              )}% OCR confidence.`
+            );
+          }
+          if (flaggedItemsCount > 0) {
+            parts.push(
+              `Cost Guardrail: ${flaggedItemsCount} item(s) vary by >${guardrailThresholdPct}% from historical moving average cost.`
+            );
+          }
+          if (parts.length > 0) return parts.join(' ');
+          return extracted.modelNote;
+        })(),
+        source: ocrSource,
+        requiresManagerApproval: flaggedItemsCount > 0 || needsManualReview,
         flaggedItemsCount,
         guardrailThresholdPct: guardrailThresholdPct,
+        needsManualReview,
+        lowConfidenceItemsCount,
+        ocrConfidenceThreshold: INVOICE_OCR_CONFIDENCE_THRESHOLD,
       },
       timestamp: new Date().toISOString(),
     };

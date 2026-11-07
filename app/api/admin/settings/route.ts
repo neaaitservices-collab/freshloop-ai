@@ -12,7 +12,14 @@ export async function GET() {
   try {
     await requireSessionUser();
     const settings = await getPlatformSettings();
-    return NextResponse.json({ success: true, settings });
+    return NextResponse.json(
+      { success: true, settings },
+      {
+        headers: {
+          'Cache-Control': 'private, max-age=15, stale-while-revalidate=30',
+        },
+      }
+    );
   } catch (error) {
     const authRes = authErrorResponse(error);
     if (authRes) return authRes;
