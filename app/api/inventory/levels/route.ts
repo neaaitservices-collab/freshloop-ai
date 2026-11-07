@@ -64,7 +64,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({
       success: true,
       parCases: PAR_CASES,
-      count: page.length,
+      count: total,
       lowCount: low.length,
       orderCost: Number(low.reduce((sum, row) => sum + row.orderCost, 0).toFixed(2)),
       levels: page,

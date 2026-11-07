@@ -423,6 +423,19 @@ async function readVoiceLoggerRequest(req: NextRequest): Promise<VoiceLoggerBody
     const spokenText = form.get('spokenText')?.toString();
     const transcript = form.get('transcript')?.toString();
     const clientMutationId = form.get('clientMutationId')?.toString();
+    /** Ignored for ledger auth (session user is canonical); kept for response parity with JSON bodies. */
+    const staffId = form.get('staffId')?.toString();
+
+    const multipartBase = (): Pick<
+      VoiceLoggerBody,
+      'confirmCommit' | 'confirmedItems' | 'transcript' | 'clientMutationId' | 'staffId'
+    > => ({
+      confirmCommit,
+      confirmedItems,
+      transcript,
+      clientMutationId,
+      staffId,
+    });
 
     let confirmedItems: VoiceLoggerBody['confirmedItems'];
     const confirmedRaw = form.get('confirmedItems');
@@ -444,24 +457,33 @@ async function readVoiceLoggerRequest(req: NextRequest): Promise<VoiceLoggerBody
           audio.type || 'audio/webm'
         );
         return {
+          ...multipartBase(),
           spokenText: whisperText || spokenText,
-          confirmCommit,
-          confirmedItems,
-          transcript,
-          clientMutationId,
+          transcript: transcript?.trim() || whisperText || spokenText,
         };
       } catch (err) {
         if (err instanceof WhisperNotConfiguredError && spokenText?.trim()) {
-          return { spokenText, confirmCommit, confirmedItems, transcript, clientMutationId };
+          return {
+            ...multipartBase(),
+            spokenText,
+            transcript: transcript?.trim() || spokenText,
+          };
         }
         throw err;
       }
     }
 
-    return { spokenText, confirmCommit, confirmedItems, transcript, clientMutationId };
+    return {
+      ...multipartBase(),
+      spokenText,
+    };
   }
 
-  return (await req.json()) as VoiceLoggerBody;
+  try {
+    return (await req.json()) as VoiceLoggerBody;
+  } catch {
+    throw new Error('Request body must be valid JSON or multipart form-data with an audio field.');
+  }
 }
 
 export async function POST(req: NextRequest) {

@@ -8,11 +8,11 @@ export function parseLevelsPagination(
 ): { limit?: number; offset: number } {
   const offset = Math.max(0, Number.parseInt(offsetRaw ?? '0', 10) || 0);
   if (limitRaw === null || limitRaw.trim() === '') {
-    return { offset: 0 };
+    return { offset };
   }
   const parsed = Number.parseInt(limitRaw, 10);
   if (!Number.isFinite(parsed) || parsed <= 0) {
-    return { offset: 0 };
+    return { offset };
   }
   return {
     limit: Math.min(parsed, DEFAULT_MAX_LIMIT),
@@ -26,10 +26,11 @@ export function paginateStockLevels<T extends StockLevel>(
   offset = 0
 ): { page: T[]; total: number; limit: number; offset: number } {
   const total = levels.length;
-  if (limit === undefined) {
-    return { page: levels, total, limit: total, offset: 0 };
-  }
   const safeOffset = Math.min(Math.max(0, offset), total);
+  if (limit === undefined) {
+    const page = safeOffset > 0 ? levels.slice(safeOffset) : levels;
+    return { page, total, limit: page.length, offset: safeOffset };
+  }
   return {
     page: levels.slice(safeOffset, safeOffset + limit),
     total,
