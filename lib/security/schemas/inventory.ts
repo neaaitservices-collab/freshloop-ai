@@ -1,12 +1,15 @@
 import { z } from 'zod';
 import { optionalSafeText, productIdSchema, safeText } from '@/lib/security/schemas/common';
 
+const clientMutationIdSchema = z.string().trim().min(8).max(128).optional();
+
 export const inventoryMoveBodySchema = z
   .object({
     productId: productIdSchema,
     action: z.enum(['rescue', 'waste', 'kitchen_waste', 'markdown']),
     quantity: z.number().finite().positive().max(1_000_000).optional(),
     discountPct: z.number().finite().min(0).max(100).optional(),
+    clientMutationId: clientMutationIdSchema,
   })
   .strip();
 
@@ -34,6 +37,7 @@ export const inventoryLevelsPatchSchema = z
     department: optionalSafeText(64),
     origin: z.union([safeText(120), z.null()]).optional(),
     pullSensitivityDays: z.union([z.literal(2), z.literal(3), z.literal(4), z.null()]).optional(),
+    clientMutationId: clientMutationIdSchema,
   })
   .strict();
 

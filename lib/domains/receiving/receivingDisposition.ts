@@ -1,4 +1,8 @@
 import { prisma } from '@/lib/domains/inventory/ledger';
+import {
+  recordReceivingDispositionAnalytics,
+  resolveSupplierIdForProductName,
+} from '@/lib/domains/suppliers/analyticsPersistence';
 
 export type ReceivingDispositionReason = 'NOT_RECEIVED' | 'REMOVED';
 export type ReceivingDispositionStatus = 'PENDING_CREDIT' | 'RESOLVED';
@@ -63,9 +67,13 @@ export async function createReceivingDisposition(input: {
   casesReceived: number;
   caseCost: number;
   reason: ReceivingDispositionReason;
+  supplierId?: string | null;
   note?: string | null;
 }): Promise<ReceivingDispositionRow> {
   const isRemoved = input.reason === 'REMOVED';
+  const supplierId =
+    input.supplierId?.trim() ||
+    (await resolveSupplierIdForProductName(input.itemName));
   const row = await prisma.receivingDisposition.upsert({
     where: { externalLogId: input.externalLogId },
     create: {
@@ -74,6 +82,7 @@ export async function createReceivingDisposition(input: {
       casesReceived: input.casesReceived,
       caseCost: input.caseCost,
       reason: input.reason,
+      supplierId,
       status: isRemoved ? 'RESOLVED' : 'PENDING_CREDIT',
       note: input.note ?? null,
       resolvedAt: isRemoved ? new Date() : null,
@@ -83,11 +92,18 @@ export async function createReceivingDisposition(input: {
       casesReceived: input.casesReceived,
       caseCost: input.caseCost,
       reason: input.reason,
+      supplierId,
       status: isRemoved ? 'RESOLVED' : 'PENDING_CREDIT',
       note: input.note ?? null,
       resolvedAt: isRemoved ? new Date() : null,
     },
   });
+  void recordReceivingDispositionAnalytics({
+    dispositionId: row.id,
+    supplierId,
+    itemName: input.itemName,
+    reason: input.reason,
+  }).catch(() => undefined);
   return toRow(row);
 }
 

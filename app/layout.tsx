@@ -1,20 +1,13 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { GeistMono } from "geist/font/mono";
+import { GeistSans } from "geist/font/sans";
+import { auth } from "@/auth";
 import { RoleProvider } from "@/components/auth/RoleProvider";
+import { OfflineSyncProvider } from "@/components/offline/OfflineSyncProvider";
 import { getPublicSiteUrl } from "@/lib/env/server";
 import "./globals.css";
 
 const siteUrl = getPublicSiteUrl();
-
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
@@ -34,18 +27,21 @@ export const viewport = {
   userScalable: false,
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  const session = await auth();
   return (
     <html
       lang="en"
       suppressHydrationWarning
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      className={`${GeistSans.variable} ${GeistMono.variable} h-full antialiased`}
     >
       <body
         suppressHydrationWarning
         className="flex min-h-full flex-col bg-slate-950 text-slate-100"
       >
-        <RoleProvider>{children}</RoleProvider>
+        <RoleProvider session={session}>
+          <OfflineSyncProvider>{children}</OfflineSyncProvider>
+        </RoleProvider>
       </body>
     </html>
   );

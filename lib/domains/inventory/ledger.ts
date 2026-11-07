@@ -137,6 +137,37 @@ export const VOLUMETRIC_SCRAP_REF_PREFIX = 'VOL-SCRAP-BUCKET';
  *     (`fromLocation = location AND qtyChange < 0`) in a single Prisma SUM aggregation.
  *   - When `location` is omitted, sums `qtyChange` across all store locations.
  */
+/** Floor + deli on-hand in one aggregation (admin case override hot path). */
+export async function readShelfOnHandPair(
+  productId: string,
+  client: Prisma.TransactionClient | PrismaClient = prisma
+): Promise<{ floor: number; deli: number }> {
+  const rows = await client.$queryRaw<Array<{ floor: number; deli: number }>>`
+    SELECT
+      COALESCE(SUM(
+        CASE
+          WHEN t."To_Location" = 'Retail_Floor'::"InventoryLocation" AND t."Qty_Change" > 0 THEN t."Qty_Change"
+          WHEN t."From_Location" = 'Retail_Floor'::"InventoryLocation" AND t."Qty_Change" < 0 THEN t."Qty_Change"
+          ELSE 0
+        END
+      ), 0)::float8 AS floor,
+      COALESCE(SUM(
+        CASE
+          WHEN t."To_Location" = 'Deli_Grab_N_Go'::"InventoryLocation" AND t."Qty_Change" > 0 THEN t."Qty_Change"
+          WHEN t."From_Location" = 'Deli_Grab_N_Go'::"InventoryLocation" AND t."Qty_Change" < 0 THEN t."Qty_Change"
+          ELSE 0
+        END
+      ), 0)::float8 AS deli
+    FROM "Inventory_Transactions" t
+    WHERE t."Product_ID" = ${productId.trim()}
+  `;
+  const row = rows[0];
+  return {
+    floor: Number((row?.floor ?? 0).toFixed(4)),
+    deli: Number((row?.deli ?? 0).toFixed(4)),
+  };
+}
+
 export async function getCurrentStock(
   productId: string,
   location?: InventoryLocation,

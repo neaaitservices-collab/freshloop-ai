@@ -5,6 +5,17 @@ export function normalizeParCases(value: number): number {
   return Math.max(0, Math.min(999, Math.round(value)));
 }
 
+/** Effective par for a SKU: catalog value, or store default when unset/zero. */
+export function resolveParCases(
+  productParCases: number | null | undefined,
+  storeDefaultParCases?: number | null
+): number {
+  const storeDefault = normalizeParCases(storeDefaultParCases ?? DEFAULT_PAR_CASES);
+  if (productParCases === null || productParCases === undefined) return storeDefault;
+  const normalized = normalizeParCases(productParCases);
+  return normalized > 0 ? normalized : storeDefault;
+}
+
 export function stockFromPar(input: {
   onHand: number;
   casePackSize: number;

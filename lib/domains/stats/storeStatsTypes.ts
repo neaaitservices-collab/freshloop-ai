@@ -28,6 +28,8 @@ export interface DepartmentAlert {
 
 export interface StoreStats {
   rescuedValue: number;
+  /** 30-day retail $ lost to floor discard (excludes volumetric scrap). */
+  lostValue: number;
   expiringWithin48h: number;
   inventoryValue: number;
   wasteReductionPct: number | null;
@@ -41,6 +43,8 @@ export interface StoreStats {
   pullSensitivityDays: number;
   pulls: number;
   lowCount: number;
+  /** Vendor credits / invoice dispositions awaiting manager review. */
+  pendingApprovalsCount: number;
   rescueVsDiscard: RescueSlice[];
   revenueDays: RevenueDay[];
   /** Last 7 days — single source for rescue/discard chart (units + retail $). */

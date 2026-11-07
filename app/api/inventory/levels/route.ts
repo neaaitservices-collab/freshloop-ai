@@ -133,7 +133,8 @@ export async function PATCH(req: NextRequest) {
         productId,
         body.action,
         actor.id,
-        body.quantity
+        body.quantity,
+        body.clientMutationId
       );
       return NextResponse.json({
         success: true,
@@ -156,22 +157,35 @@ export async function PATCH(req: NextRequest) {
       if (!Number.isFinite(casesOnHand) || casesOnHand < 0) {
         return NextResponse.json({ success: false, error: 'Cases must be zero or greater.' }, { status: 400 });
       }
-      const level = await setStockCases(productId, casesOnHand, actor.id);
-      const audit = await getLastStockOverrideAudit(productId);
+      const { level, audit } = await setStockCases(
+        productId,
+        casesOnHand,
+        actor.id,
+        actor.name,
+        body.clientMutationId
+      );
       return NextResponse.json({ success: true, level, audit });
     }
     if (
       body.department !== undefined ||
       body.origin !== undefined ||
-      body.pullSensitivityDays !== undefined
+      body.pullSensitivityDays !== undefined ||
+      body.parCases !== undefined
     ) {
-      const level = await updateProductCatalogMeta({
+      let level = await updateProductCatalogMeta({
         productId,
         department: body.department,
         supplier: typeof body.supplier === 'string' ? body.supplier : undefined,
         origin: body.origin,
         pullSensitivityDays: body.pullSensitivityDays,
       });
+      if (body.parCases !== undefined) {
+        const parCases = Number(body.parCases);
+        if (!Number.isFinite(parCases)) {
+          return NextResponse.json({ success: false, error: 'parCases must be a number.' }, { status: 400 });
+        }
+        level = await setParCases(productId, parCases);
+      }
       return NextResponse.json({ success: true, level });
     }
     if (typeof body.supplier === 'string') {

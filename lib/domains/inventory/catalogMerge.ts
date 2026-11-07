@@ -254,17 +254,29 @@ export async function mergeCatalogProducts(input: {
   return { primaryId, mergedIds: mergeProductIds, unitsMoved };
 }
 
-export async function listDuplicateCatalogGroups(): Promise<DuplicateCatalogGroup[]> {
+const DUPLICATE_CATALOG_CACHE_MS = 60_000;
+let duplicateCatalogCache: { at: number; value: Promise<DuplicateCatalogGroup[]> } | null = null;
+
+export function invalidateDuplicateCatalogCache(): void {
+  duplicateCatalogCache = null;
+}
+
+async function loadDuplicateCatalogGroups(): Promise<DuplicateCatalogGroup[]> {
   const rows = await prisma.product.findMany({
-    where: { isManufactured: false },
+    where: { isManufactured: false, catalogActive: true },
     select: { id: true, name: true, department: true, catalogActive: true },
     orderBy: { name: 'asc' },
   });
 
-  const stockRows = await prisma.inventoryTransaction.groupBy({
-    by: ['productId'],
-    _sum: { qtyChange: true },
-  });
+  const productIds = rows.map((row) => row.id);
+  const stockRows =
+    productIds.length === 0
+      ? []
+      : await prisma.inventoryTransaction.groupBy({
+          by: ['productId'],
+          where: { productId: { in: productIds } },
+          _sum: { qtyChange: true },
+        });
   const onHandByProduct = new Map(
     stockRows.map((row) => [row.productId, Number((row._sum.qtyChange ?? 0).toFixed(2))])
   );
@@ -278,4 +290,17 @@ export async function listDuplicateCatalogGroups(): Promise<DuplicateCatalogGrou
   }));
 
   return findDuplicateCatalogGroups(refs);
+}
+
+export function listDuplicateCatalogGroups(): Promise<DuplicateCatalogGroup[]> {
+  const now = Date.now();
+  if (duplicateCatalogCache && now - duplicateCatalogCache.at < DUPLICATE_CATALOG_CACHE_MS) {
+    return duplicateCatalogCache.value;
+  }
+  const value = loadDuplicateCatalogGroups().catch((error: unknown) => {
+    duplicateCatalogCache = null;
+    throw error;
+  });
+  duplicateCatalogCache = { at: now, value };
+  return value;
 }

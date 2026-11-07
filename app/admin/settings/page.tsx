@@ -26,7 +26,7 @@ export default function AdminStoreSettingsPage() {
       <PageIntro
         step="Settings"
         title="Store"
-        description="Waste traffic light goal, default pull window, production scrap $ per bucket, labor, and receiving alerts."
+        description="Waste goal, pull window, production scrap & labor, default order minimum stock (cases), and receiving alerts."
       />
       <Suspense fallback={<SettingsForm settings={null} layout="page" />}>
         <LiveSettings />

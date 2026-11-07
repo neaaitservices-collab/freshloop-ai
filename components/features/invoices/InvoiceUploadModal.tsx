@@ -92,6 +92,13 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
         guardrailThresholdPct: Number(
           json.guardrail_threshold_pct ?? json.data?.guardrailThresholdPct ?? 20
         ),
+        needsManualReview: Boolean(json.needs_manual_review ?? json.data?.needsManualReview),
+        lowConfidenceItemsCount: Number(
+          json.low_confidence_items_count ?? json.data?.lowConfidenceItemsCount ?? 0
+        ),
+        ocrConfidenceThreshold: Number(
+          json.ocr_confidence_threshold ?? json.data?.ocrConfidenceThreshold ?? 0.85
+        ),
       };
       setOcrResult(parsed);
       if (parsed.supplierId && onSupplierChange) {
@@ -143,11 +150,13 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
   };
 
   const flaggedInvoice = Boolean(ocrResult?.requiresManagerApproval);
-  const needsCostApproval =
+  const needsManualReviewInvoice = Boolean(ocrResult?.needsManualReview);
+  const ocrThresholdPct = Math.round((ocrResult?.ocrConfidenceThreshold ?? 0.85) * 100);
+  const needsManagerGate =
     flaggedInvoice && (!managerCanApprove || !managerApprovedCosts);
 
   const handleAddToReceiving = () => {
-    if (!ocrResult || needsCostApproval) return;
+    if (!ocrResult || needsManagerGate) return;
     onInvoiceImported({
       ...ocrResult,
       supplierId: selectedSupplierId || ocrResult.supplierId,
@@ -296,6 +305,17 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
                 </div>
               ) : null}
 
+              {needsManualReviewInvoice ? (
+                <div className="flex items-start gap-2.5 rounded-2xl border border-rose-500/40 bg-rose-950/50 p-3.5 text-xs text-rose-100">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-rose-300" />
+                  <p>
+                    <span className="font-bold text-rose-200">Low OCR confidence: </span>
+                    {ocrResult.lowConfidenceItemsCount ?? 0} line(s) are below {ocrThresholdPct}%
+                    extraction/match certainty. Confirm line names and catalog matches before receiving.
+                  </p>
+                </div>
+              ) : null}
+
               {ocrResult.rawSummary ? (
                 <div className="flex items-start gap-2.5 rounded-2xl border border-amber-500/40 bg-amber-950/60 p-3.5 text-xs text-amber-100">
                   <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-300" />
@@ -370,6 +390,7 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
                         <th className="p-2 sm:p-2.5">Qty</th>
                         <th className="p-2 sm:p-2.5">Cost</th>
                         <th className="p-2 sm:p-2.5">Vs avg</th>
+                        <th className="p-2 sm:p-2.5">OCR</th>
                         <th className="p-2 sm:p-2.5 text-right">Total</th>
                       </tr>
                     </thead>
@@ -378,11 +399,13 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
                         <tr
                           key={idx}
                           className={
-                            item.requires_approval
-                              ? (item.costVariancePct ?? 0) > 0
-                                ? 'bg-rose-950/25 hover:bg-rose-950/35'
-                                : 'bg-amber-950/30 hover:bg-amber-950/40'
-                              : 'hover:bg-zinc-800/40'
+                            item.needsManualReview
+                              ? 'bg-rose-950/30 hover:bg-rose-950/40'
+                              : item.requires_approval
+                                ? (item.costVariancePct ?? 0) > 0
+                                  ? 'bg-rose-950/25 hover:bg-rose-950/35'
+                                  : 'bg-amber-950/30 hover:bg-amber-950/40'
+                                : 'hover:bg-zinc-800/40'
                           }
                         >
                           <td className="p-2 sm:p-2.5 font-semibold text-white">
@@ -399,6 +422,14 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
                                 No catalog match — confirm name or add SKU in Admin catalog first.
                               </p>
                             )}
+                            {item.needsManualReview ? (
+                              <p className="mt-1 inline-flex items-center gap-1 text-[10px] font-semibold text-rose-300">
+                                Review OCR ·{' '}
+                                {item.lineConfidence != null
+                                  ? `${Math.round(item.lineConfidence * 100)}%`
+                                  : 'low confidence'}
+                              </p>
+                            ) : null}
                             {item.requires_approval ? (
                               <p className="mt-1 text-[10px] font-normal text-amber-200/90">
                                 {item.guardrailReason || 'Cost varies from historical average.'}
@@ -430,6 +461,21 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
                               <span className="text-zinc-600">—</span>
                             )}
                           </td>
+                          <td className="p-2 sm:p-2.5 whitespace-nowrap">
+                            {item.lineConfidence != null ? (
+                              <span
+                                className={`inline-flex min-h-8 items-center rounded-lg px-2 font-mono text-[11px] font-bold tabular-nums ${
+                                  item.needsManualReview
+                                    ? 'border border-rose-500/40 bg-rose-950/50 text-rose-200'
+                                    : 'border border-emerald-500/30 bg-emerald-950/40 text-emerald-200'
+                                }`}
+                              >
+                                {Math.round(item.lineConfidence * 100)}%
+                              </span>
+                            ) : (
+                              <span className="text-zinc-600">—</span>
+                            )}
+                          </td>
                           <td className="p-2 sm:p-2.5 text-right font-mono font-bold tabular-nums text-white">
                             ${item.totalCost.toFixed(2)}
                           </td>
@@ -451,15 +497,29 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
                     />
                     <span>
                       <span className="font-bold text-amber-200">Manager approval: </span>
-                      {ocrResult.flaggedItemsCount ?? 0} line(s) exceed ±
-                      {ocrResult.guardrailThresholdPct ?? 20}% vs moving average cost. I confirm
-                      these case costs before adding to receiving.
+                      {(ocrResult.flaggedItemsCount ?? 0) > 0 ? (
+                        <>
+                          {ocrResult.flaggedItemsCount} line(s) exceed ±
+                          {ocrResult.guardrailThresholdPct ?? 20}% vs moving average cost.
+                        </>
+                      ) : null}
+                      {(ocrResult.flaggedItemsCount ?? 0) > 0 && needsManualReviewInvoice
+                        ? ' '
+                        : null}
+                      {needsManualReviewInvoice ? (
+                        <>
+                          {ocrResult.lowConfidenceItemsCount ?? 0} line(s) below {ocrThresholdPct}%
+                          OCR confidence.
+                        </>
+                      ) : null}{' '}
+                      I confirm these lines before adding to receiving.
                     </span>
                   </label>
                 ) : (
                   <p className="rounded-2xl border border-rose-900/50 bg-rose-950/30 px-4 py-3 text-xs text-rose-200">
-                    {ocrResult.flaggedItemsCount ?? 0} line(s) exceed the cost guardrail. A store
-                    manager or admin must review this invoice before receiving.
+                    This invoice needs store manager review
+                    {(ocrResult.flaggedItemsCount ?? 0) > 0 ? ' (cost guardrail)' : ''}
+                    {needsManualReviewInvoice ? ' (low OCR confidence)' : ''} before receiving.
                   </p>
                 )
               ) : null}
@@ -501,10 +561,10 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
             <button
               type="button"
               onClick={handleAddToReceiving}
-              disabled={needsCostApproval}
+              disabled={needsManagerGate}
               title={
-                needsCostApproval
-                  ? 'Check manager approval for flagged costs first'
+                needsManagerGate
+                  ? 'Manager must confirm flagged costs and low-confidence OCR lines'
                   : undefined
               }
               className="flex min-h-12 items-center gap-2 rounded-xl bg-emerald-400 px-5 py-3 text-xs font-black text-zinc-950 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400"

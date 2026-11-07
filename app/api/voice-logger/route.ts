@@ -423,8 +423,26 @@ export async function POST(req: NextRequest) {
     // Only writes to InventoryTransaction when the user explicitly confirms
     // in the [CONFIRMAR] / [EDITAR] UI modal (`confirmCommit: true`).
     // ------------------------------------------------------------------------
+    const clientMutationId =
+      typeof (body as { clientMutationId?: string }).clientMutationId === 'string'
+        ? String((body as { clientMutationId?: string }).clientMutationId).trim()
+        : '';
+
     if (confirmCommit && Array.isArray(confirmedItems) && confirmedItems.length > 0) {
       const actor = await requireSessionUser();
+      if (clientMutationId && confirmedItems[0]?.product_id) {
+        const { isOfflineMutationApplied } = await import('@/lib/domains/inventory/offlineMutation');
+        const batchProbe = `${clientMutationId}:0:${confirmedItems[0].product_id}`;
+        if (await isOfflineMutationApplied(batchProbe)) {
+          return NextResponse.json({
+            success: true,
+            committed: true,
+            deduped: true,
+            transactionsCreated: 0,
+            timestamp: new Date().toISOString(),
+          });
+        }
+      }
       const invalid = confirmedItems.find(
         (item) => !item.product_id?.trim() || !Number.isFinite(Number(item.quantity)) || Number(item.quantity) <= 0
       );
@@ -440,10 +458,20 @@ export async function POST(req: NextRequest) {
 
       let ledgerMoves = 0;
 
-      for (const item of confirmedItems) {
+      for (let index = 0; index < confirmedItems.length; index += 1) {
+        const item = confirmedItems[index]!;
         const absQty = Math.abs(Number(item.quantity) || 1);
         const ledgerAction = item.target_action === 'DISCARD' ? 'waste' : 'rescue';
-        await moveRetailStock(item.product_id, ledgerAction, actor.id, absQty);
+        const lineMutationId = clientMutationId
+          ? `${clientMutationId}:${index}:${item.product_id}`
+          : undefined;
+        await moveRetailStock(
+          item.product_id,
+          ledgerAction,
+          actor.id,
+          absQty,
+          lineMutationId
+        );
         ledgerMoves += ledgerAction === 'rescue' ? 2 : 1;
       }
 

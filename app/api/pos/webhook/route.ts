@@ -4,20 +4,13 @@ import { executeBundleSale, prisma } from '@/lib/domains/inventory/ledger';
 import { invalidateInventoryCaches } from '@/lib/domains/inventory/inventoryCache';
 import { recordProductSale } from '@/lib/domains/inventory/recordSale';
 import { handleApiRouteError } from '@/lib/domains/ai/apiError';
+import { parseJsonBody } from '@/lib/security/parseJsonBody';
+import { posWebhookBodySchema } from '@/lib/security/schemas/posWebhook';
 import { assertHotPathRateLimit, clientIpKey } from '@/lib/security/rateLimit';
 
 export const dynamic = 'force-dynamic';
 
 const POS_WEBHOOK_ACTOR = 'pos-webhook';
-
-type PosWebhookLine = {
-  externalSku?: string;
-  productId?: string;
-  bundleSku?: string;
-  quantity?: number;
-  unitPrice?: number;
-  location?: 'floor' | 'deli';
-};
 
 function webhookAuthorized(header: string | null, secret: string): boolean {
   const expected = Buffer.from(`Bearer ${secret}`);
@@ -43,24 +36,13 @@ export async function POST(req: NextRequest) {
 
   let externalRef = '';
   try {
-    const body = (await req.json()) as {
-      externalRef?: string;
-      lines?: PosWebhookLine[];
-    };
-
-    externalRef = body.externalRef?.trim() ?? '';
-    if (!externalRef) {
-      return NextResponse.json({ success: false, error: 'externalRef is required.' }, { status: 400 });
-    }
-
-    const lines = Array.isArray(body.lines) ? body.lines : [];
-    if (lines.length === 0) {
-      return NextResponse.json({ success: false, error: 'lines array is required.' }, { status: 400 });
-    }
+    const body = await parseJsonBody(req, posWebhookBodySchema);
+    externalRef = body.externalRef;
+    const lines = body.lines;
 
     const outcome = await prisma.$transaction(
       async (db) => {
-        await db.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${externalRef}))`;
+        await db.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${externalRef}))`;
         const existing = await db.inventoryTransaction.findFirst({
           where: { referenceId: externalRef },
           select: { id: true },
@@ -71,11 +53,12 @@ export async function POST(req: NextRequest) {
 
         const results: unknown[] = [];
         for (const line of lines) {
+          const lineQty = line.quantity ?? 1;
           if (line.bundleSku) {
             results.push(
               await executeBundleSale(line.bundleSku, externalRef, {
                 staffId: POS_WEBHOOK_ACTOR,
-                quantitySold: line.quantity,
+                quantitySold: lineQty,
                 db,
               })
             );
@@ -99,7 +82,7 @@ export async function POST(req: NextRequest) {
           results.push(
             await recordProductSale({
               productId,
-              quantity: Number(line.quantity) || 1,
+              quantity: lineQty,
               staffId: POS_WEBHOOK_ACTOR,
               location: line.location,
               unitPriceOverride: line.unitPrice,

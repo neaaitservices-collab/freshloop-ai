@@ -1,9 +1,4 @@
-import {
-  InvoiceOcrResult,
-  VoiceLoggerResult,
-  RecipeFusionResult,
-  InventoryItem,
-} from '@/lib/types';
+import { RecipeFusionResult, InventoryItem } from '@/lib/types';
 import { GEMINI_FLASH_MODEL_FALLBACKS } from '@/lib/domains/ai/geminiModels';
 
 /**
@@ -59,7 +54,22 @@ function getApiKey(): string | null {
 /**
  * Loads `@google/generative-ai` at runtime so bundlers stay resilient while dependencies settle.
  */
-function getGenAIClient(apiKey: string): { client: any } | null {
+type GeminiSdkClient = {
+  getGenerativeModel: (opts: {
+    model: string;
+    generationConfig: Record<string, unknown>;
+  }) => {
+    generateContent: (parts: GeminiContentPart[]) => Promise<{
+      response: { text: () => string };
+    }>;
+  };
+};
+
+type GeminiContentPart =
+  | { text: string }
+  | { inlineData: { data: string; mimeType: string } };
+
+function getGenAIClient(apiKey: string): { client: GeminiSdkClient } | null {
   try {
     const safeRequire = new Function(
       'name',
@@ -322,8 +332,9 @@ export async function generateContentWithFallback(
       if (text) {
         return { text, modelUsed: modelName };
       }
-    } catch (err: any) {
-      remember(modelName, err?.message || 'request failed');
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'request failed';
+      remember(modelName, message);
     }
   }
 
@@ -352,9 +363,6 @@ export async function generateContentWithFallback(
   );
 }
 
-/**
- * Extract Vendor Invoice details using Gemini Vision OCR
- */
 function rejectProductionAiMock(feature: string): never {
   throw new Error(
     `${feature} is unavailable. Configure GEMINI_API_KEY or try again later.`
@@ -567,7 +575,7 @@ Return a JSON array of recipes adhering strictly to this schema:
     const { text } = await generateContentWithFallback(prompt);
     const parsed = parseModelJson<unknown>(text);
 
-    let rawList: any[] = [];
+    let rawList: unknown[] = [];
     if (Array.isArray(parsed)) {
       rawList = parsed;
     } else if (
@@ -575,7 +583,7 @@ Return a JSON array of recipes adhering strictly to this schema:
       typeof parsed === 'object' &&
       Array.isArray((parsed as Record<string, unknown>).recipes)
     ) {
-      rawList = (parsed as Record<string, unknown>).recipes as any[];
+      rawList = (parsed as Record<string, unknown>).recipes as unknown[];
     } else {
       if (process.env.NODE_ENV === 'production') {
         rejectProductionAiMock('Recipe fusion');
@@ -583,12 +591,18 @@ Return a JSON array of recipes adhering strictly to this schema:
       return getMockRecipeFusion();
     }
 
-    return rawList.map((r: any, idx: number) => ({
-      ...r,
-      id: r.id && typeof r.id === 'string' && !r.id.includes('string')
-        ? r.id
-        : `rec-gen-${Date.now()}-${idx}-${Math.floor(Math.random() * 1000)}`
-    }));
+    return rawList.map((entry, idx) => {
+      const r =
+        entry && typeof entry === 'object'
+          ? (entry as Record<string, unknown>)
+          : ({} as Record<string, unknown>);
+      const id = r.id;
+      const recipeId =
+        typeof id === 'string' && id.length > 0 && !id.includes('string')
+          ? id
+          : `rec-gen-${Date.now()}-${idx}-${Math.floor(Math.random() * 1000)}`;
+      return { ...r, id: recipeId } as RecipeFusionResult;
+    });
   } catch (error) {
     console.error('Error in processRecipeFusion Gemini call:', error);
     if (process.env.NODE_ENV === 'production') {
@@ -596,63 +610,6 @@ Return a JSON array of recipes adhering strictly to this schema:
     }
     return getMockRecipeFusion();
   }
-}
-
-// Fallback Mock Generators
-function getMockOcrResult(): InvoiceOcrResult {
-  return {
-    vendorName: 'GAMBLES Produce Wholesalers',
-    invoiceNumber: 'INV-2026-0707-GAMB',
-    invoiceDate: '2026-07-07',
-    totalAmount: 1759.00,
-    departmentBreakdown: {
-      PRODUCE: 1759.00,
-      DAIRY: 0.00,
-      BAKERY: 0.00,
-      PANTRY: 0.00
-    },
-    lineItems: [
-      { name: 'PEPPER-TX SERRANO 1/2 CTN', department: 'PRODUCE', quantity: 1, unit: 'cases', casePackSize: 40, subUnit: 'lbs', unitCost: 40.00, totalCost: 40.00 },
-      { name: 'PINEAPPLE-CRI GOLD DOLE 7', department: 'PRODUCE', quantity: 5, unit: 'cases', casePackSize: 7, subUnit: 'units', unitCost: 23.00, totalCost: 115.00 },
-      { name: 'POMEGRANATE-PER SZ 7 3.8KG', department: 'PRODUCE', quantity: 4, unit: 'cases', casePackSize: 4, subUnit: 'kg', unitCost: 28.00, totalCost: 112.00 },
-      { name: 'POTATO-CAN FINGERLING 50LB', department: 'PRODUCE', quantity: 1, unit: 'cases', casePackSize: 50, subUnit: 'lbs', unitCost: 111.00, totalCost: 111.00 },
-      { name: 'RADISH-QC BUNCH 24', department: 'PRODUCE', quantity: 2, unit: 'cases', casePackSize: 24, subUnit: 'bunches', unitCost: 28.00, totalCost: 56.00 },
-      { name: 'RAPINI-CA ANDY BOY 26', department: 'PRODUCE', quantity: 1, unit: 'cases', casePackSize: 26, subUnit: 'bunches', unitCost: 62.00, totalCost: 62.00 },
-      { name: 'SPINACH-CA BUNCH 24', department: 'PRODUCE', quantity: 1, unit: 'cases', casePackSize: 24, subUnit: 'bunches', unitCost: 29.00, totalCost: 29.00 },
-      { name: 'SWISS CHARD-QC RED 24', department: 'PRODUCE', quantity: 1, unit: 'cases', casePackSize: 24, subUnit: 'bunches', unitCost: 38.00, totalCost: 38.00 },
-      { name: 'TAMARIND-THA SWEET 20X500G', department: 'PRODUCE', quantity: 1, unit: 'cases', casePackSize: 10, subUnit: 'kg', unitCost: 128.00, totalCost: 128.00 },
-      { name: 'TOMATILLO-MEX 35LB', department: 'PRODUCE', quantity: 1, unit: 'cases', casePackSize: 35, subUnit: 'lbs', unitCost: 55.00, totalCost: 55.00 }
-    ],
-    rawSummary: 'Extracted 10 Produce line items from GAMBLES vendor delivery receipt.'
-  };
-}
-
-function getMockVoiceResult(spokenText?: string): VoiceLoggerResult {
-  const text = spokenText || 'Logged 10 lbs bruised apples and 4L heavy cream';
-  return {
-    transcript: text,
-    targetAction: 'KITCHEN_RESCUE',
-    parsedItems: [
-      {
-        name: 'Bruised Honeycrisp Apples',
-        quantity: 10,
-        unit: 'lbs',
-        department: 'PRODUCE',
-        condition: 'Bruised',
-        allergenWarnings: []
-      },
-      {
-        name: 'Whole Heavy Cream 40%',
-        quantity: 4,
-        unit: 'Liters',
-        department: 'DAIRY',
-        condition: 'Near Expiry',
-        allergenWarnings: ['Milk / Dairy']
-      }
-    ],
-    kitchenRescueNotes: 'Spoken items flagged on floor. Transfer to kitchen prep station immediately for Parfait or Spiced Apple Bakery Soup.',
-    estimatedWasteSavedValue: 42.80
-  };
 }
 
 function getMockRecipeFusion(): RecipeFusionResult[] {

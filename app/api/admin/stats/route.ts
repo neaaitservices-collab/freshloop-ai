@@ -10,7 +10,14 @@ export async function GET() {
   try {
     await requireManagerStaff();
     const { stats, wasteKpi } = await getAdminStoreStatsBundle();
-    return NextResponse.json({ success: true, stats, wasteKpi });
+    return NextResponse.json(
+      { success: true, stats, wasteKpi },
+      {
+        headers: {
+          'Cache-Control': 'private, max-age=10, stale-while-revalidate=20',
+        },
+      }
+    );
   } catch (error) {
     const authRes = authErrorResponse(error);
     if (authRes) return authRes;

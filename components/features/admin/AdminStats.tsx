@@ -1,8 +1,7 @@
 'use client';
 
 import React from 'react';
-import { Clock, DollarSign, Leaf, Percent } from 'lucide-react';
-import { RescueOutcomeChart } from '@/components/features/admin/RescueOutcomeChart';
+import { DollarSign, Leaf, Percent, TrendingDown } from 'lucide-react';
 import { Card, CardBody } from '@/components/ui/Card';
 import { formatCurrency } from '@/lib/domains/receiving/yieldPricing';
 import type { StoreStats } from '@/lib/domains/stats/storeStatsTypes';
@@ -55,21 +54,21 @@ export function AdminMetricGrid({ stats }: { stats: StoreStats | null }) {
   return (
     <div className="grid grid-cols-2 gap-3 lg:grid-cols-4 lg:gap-4">
       <Metric
-        label="Value rescued"
+        label="Value rescued (30d)"
         value={formatCurrency(stats.rescuedValue)}
-        detail="30-day retail $ to kitchen — chart below is last 7 days."
+        detail="Retail $ sent floor → kitchen in the last 30 days."
         icon={DollarSign}
-        accent="text-emerald-400/90"
+        accent="text-emerald-400"
       />
       <Metric
-        label="Due within 48h"
-        value={String(stats.expiringWithin48h)}
-        detail="On-hand lots inside the next 48 hours."
-        icon={Clock}
-        accent="text-rose-400"
+        label="Value lost (30d)"
+        value={formatCurrency(stats.lostValue)}
+        detail="Retail $ written off as floor discard (excludes volumetric scrap)."
+        icon={TrendingDown}
+        accent="text-slate-300"
       />
       <Metric
-        label="Inventory value"
+        label="Inventory value (cost)"
         value={formatCurrency(stats.inventoryValue)}
         detail="On-hand units at stored unit cost."
         icon={Leaf}
@@ -78,37 +77,11 @@ export function AdminMetricGrid({ stats }: { stats: StoreStats | null }) {
       <Metric
         label="Rescue rate"
         value={stats.wasteReductionPct === null ? '—' : `${stats.wasteReductionPct.toFixed(1)}%`}
-        detail="30-day share rescued vs discard (retail $)."
+        detail="Share of handled retail $ rescued vs discard (30d)."
         icon={Percent}
-        accent="text-blue-300"
+        accent="text-emerald-400"
       />
     </div>
   );
 }
 
-/** @deprecated Prefer `DashboardFigures` two-column layout. */
-export function AdminChartGrid({ stats }: { stats: StoreStats | null }) {
-  if (!stats) {
-    return (
-      <div className="grid gap-6 lg:grid-cols-12">
-        <div className="h-80 animate-pulse rounded-2xl border border-slate-800 bg-slate-900/50 lg:col-span-5" />
-        <div className="h-80 animate-pulse rounded-2xl border border-slate-800 bg-slate-900/50 lg:col-span-7" />
-      </div>
-    );
-  }
-
-  return (
-    <div className="grid grid-cols-1 gap-6">
-      <RescueOutcomeChart data={stats.outcomeDays ?? []} tall />
-    </div>
-  );
-}
-
-export function AdminStats({ stats }: { stats: StoreStats | null }) {
-  return (
-    <section className="space-y-3" aria-label="Store KPIs and charts">
-      <AdminMetricGrid stats={stats} />
-      <AdminChartGrid stats={stats} />
-    </section>
-  );
-}

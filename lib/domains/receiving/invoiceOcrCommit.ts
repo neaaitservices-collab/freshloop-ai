@@ -9,6 +9,11 @@ import {
   type PurchaseProductNameCatalog,
 } from '@/lib/domains/inventory/stock';
 import { resolveSupplierIdForVendorName } from '@/lib/domains/suppliers/suppliers';
+import {
+  INVOICE_OCR_CONFIDENCE_THRESHOLD,
+  computeCommitLineConfidence,
+  lineNeedsManualReview,
+} from '@/lib/domains/receiving/invoiceOcrConfidence';
 
 export type OcrQuantityKind = 'units' | 'cases';
 
@@ -21,6 +26,10 @@ export interface OcrCommitLine {
   line_name?: string;
   department?: Department;
   case_pack_size?: number;
+  extraction_confidence?: number;
+  match_confidence?: number;
+  line_confidence?: number;
+  needs_manual_review?: boolean;
 }
 
 export interface OcrInvoiceMeta {
@@ -71,15 +80,79 @@ export function resolveInvoiceReceipt(
   };
 }
 
+export function lowConfidenceCommitLines(
+  lines: OcrCommitLine[],
+  productNames: Map<string, string>
+): OcrCommitLine[] {
+  return lines.filter((line) => {
+    if (line.needs_manual_review === true) return true;
+    if (
+      typeof line.line_confidence === 'number' &&
+      lineNeedsManualReview(line.line_confidence)
+    ) {
+      return true;
+    }
+    const productName = productNames.get(line.product_id);
+    const confidence = computeCommitLineConfidence(line, productName);
+    return lineNeedsManualReview(confidence);
+  });
+}
+
+export function assertInvoiceOcrCommitAllowed(input: {
+  confirmedItems: OcrCommitLine[];
+  productNames: Map<string, string>;
+  manualReviewOverride?: boolean;
+  actorIsManager: boolean;
+}): void {
+  const lowConfidence = lowConfidenceCommitLines(input.confirmedItems, input.productNames);
+  if (lowConfidence.length === 0) return;
+
+  if (!input.manualReviewOverride) {
+    throw new Error(
+      `${lowConfidence.length} invoice line(s) are below ${Math.round(
+        INVOICE_OCR_CONFIDENCE_THRESHOLD * 100
+      )}% OCR confidence. Human review is required before posting to inventory.`
+    );
+  }
+  if (!input.actorIsManager) {
+    throw new Error(
+      'Only a store manager or admin may override low-confidence OCR lines and post to inventory.'
+    );
+  }
+}
+
 export async function commitInvoiceOcrReceipts(input: {
   staffId: string;
   referenceId: string;
   confirmedItems: OcrCommitLine[];
   invoiceMeta?: OcrInvoiceMeta | null;
+  manualReviewOverride?: boolean;
+  actorIsManager?: boolean;
 }) {
   if (input.confirmedItems.length === 0) {
     throw new Error('No confirmed invoice lines to receive.');
   }
+
+  const explicitProductIds = [
+    ...new Set(
+      input.confirmedItems
+        .map((item) => String(item.product_id ?? '').trim())
+        .filter(Boolean)
+    ),
+  ];
+  const prefetchedNames = explicitProductIds.length
+    ? await prisma.product.findMany({
+        where: { id: { in: explicitProductIds } },
+        select: { id: true, name: true },
+      })
+    : [];
+  const productNames = new Map(prefetchedNames.map((row) => [row.id, row.name]));
+  assertInvoiceOcrCommitAllowed({
+    confirmedItems: input.confirmedItems,
+    productNames,
+    manualReviewOverride: input.manualReviewOverride,
+    actorIsManager: Boolean(input.actorIsManager),
+  });
 
   const result = await prisma.$transaction(
     async (tx) => {
@@ -202,6 +275,10 @@ export async function commitInvoiceOcrReceipts(input: {
         receipts.push(receipt);
 
         if (invoiceId) {
+          const lineConfidence = computeCommitLineConfidence(
+            item,
+            productNames.get(productId) ?? product.name
+          );
           await tx.invoiceLineItem.create({
             data: {
               invoiceId,
@@ -212,6 +289,7 @@ export async function commitInvoiceOcrReceipts(input: {
               unitCost,
               totalCost: Number((unitCost * units).toFixed(2)),
               casePackSize: packFields.receivePackSize,
+              ocrLineConfidence: lineConfidence,
             },
           });
         }

@@ -1,16 +1,11 @@
 'use client';
 
 import React, { useCallback, useEffect, useState } from 'react';
-import { ChevronDown } from 'lucide-react';
-import { AdminMetricGrid } from '@/components/features/admin/AdminStats';
-import { AdminOperationalAlertCards } from '@/components/features/admin/AdminOperationalAlertCards';
+import { AdminDashboard } from '@/components/features/admin/AdminDashboard';
 import { DepartmentAlertsChart } from '@/components/features/admin/DepartmentAlertsChart';
-import { RescueOutcomeChart } from '@/components/features/admin/RescueOutcomeChart';
 import { DashboardCard } from '@/components/features/admin/DashboardCard';
 import type { StoreStats } from '@/lib/domains/stats/storeStatsTypes';
-import { WasteSemaphoreCard } from '@/components/features/admin/WasteSemaphoreCard';
 import type { WasteKpiReport } from '@/lib/domains/inventory/ledger';
-import { cn } from '@/lib/utils/cn';
 import { subscribeInventoryUpdated } from '@/lib/domains/inventory/inventoryMoveClient';
 import { subscribeKpiUpdated } from '@/lib/domains/stats/kpiEvents';
 import { FRESHLOOP_SETTINGS_UPDATED } from '@/lib/domains/stats/settingsEvents';
@@ -47,18 +42,7 @@ async function fetchAdminStatsCoalesced(): Promise<{
 
 export function DashboardFiguresSkeleton() {
   return (
-    <section className="space-y-6" aria-label="Store KPI dashboard loading" aria-busy="true">
-      <AdminMetricGrid stats={null} />
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-12 lg:items-stretch">
-        <div className="flex flex-col gap-6 lg:col-span-5">
-          <DashboardCard className="min-h-[340px] animate-pulse bg-slate-900/40" aria-busy />
-        </div>
-        <div className="flex flex-col gap-4 lg:col-span-7 lg:gap-6">
-          <DashboardCard className="h-72 animate-pulse bg-slate-900/40" aria-busy />
-          <DashboardCard className="min-h-[140px] animate-pulse bg-slate-900/40" aria-busy />
-        </div>
-      </div>
-    </section>
+    <AdminDashboard stats={null} wasteKpi={null} refreshing className="animate-pulse" />
   );
 }
 
@@ -69,11 +53,11 @@ export function DashboardFigures({
   stats: StoreStats | null;
   initialWasteKpi?: WasteKpiReport | null;
 }) {
+  const expectsServerStats = initialStats !== null;
   const [stats, setStats] = useState<StoreStats | null>(initialStats);
   const [wasteKpi, setWasteKpi] = useState<WasteKpiReport | null>(initialWasteKpi);
   const [statsRefreshing, setStatsRefreshing] = useState(false);
   const [statsError, setStatsError] = useState<string | null>(null);
-  const [alertsOpen, setAlertsOpen] = useState(false);
 
   useEffect(() => {
     setStats(initialStats);
@@ -104,9 +88,9 @@ export function DashboardFigures({
   }, []);
 
   useEffect(() => {
-    if (initialStats && initialWasteKpi) return;
+    if (initialStats !== null) return;
     void refreshStats({ silent: true });
-  }, [refreshStats, initialStats, initialWasteKpi]);
+  }, [refreshStats, initialStats]);
 
   useEffect(() => {
     let debounceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -147,45 +131,20 @@ export function DashboardFigures({
         </p>
       ) : null}
 
-      <AdminMetricGrid stats={stats} />
-
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-12 lg:items-start lg:gap-6">
-        {/* Left: waste KPI + unit breakdown */}
-        <div className="flex flex-col gap-6 lg:col-span-5">
-          <WasteSemaphoreCard
-            wasteKpi={wasteKpi}
-            goalPct={stats?.targetWastePct}
-            refreshing={statsRefreshing}
-          />
-        </div>
-
-        <div className="flex flex-col gap-4 lg:col-span-7 lg:gap-6">
-          {stats ? (
-            <RescueOutcomeChart data={stats.outcomeDays ?? []} tall />
-          ) : (
-            <DashboardCard className="h-64 animate-pulse bg-slate-900/40" aria-busy />
-          )}
-          <AdminOperationalAlertCards stats={stats} />
-        </div>
-      </div>
+      <AdminDashboard
+        stats={stats}
+        wasteKpi={wasteKpi}
+        refreshing={statsRefreshing}
+        showActionLoadingPlaceholders={!expectsServerStats && stats === null}
+      />
 
       {stats ? (
-        <DashboardCard className="overflow-hidden p-0">
-          <button
-            type="button"
-            onClick={() => setAlertsOpen((open) => !open)}
-            className="flex w-full items-center justify-between px-6 py-4 text-left text-sm font-bold text-slate-200 hover:bg-slate-800/40"
-          >
-            Alerts by department
-            <ChevronDown
-              className={cn('h-4 w-4 text-slate-400 transition', alertsOpen && 'rotate-180')}
-            />
-          </button>
-          {alertsOpen ? (
-            <div className="border-t border-slate-800/80 px-6 pb-6 pt-2">
-              <DepartmentAlertsChart data={stats.departmentAlerts} compact />
-            </div>
-          ) : null}
+        <DashboardCard className="p-4 sm:p-6">
+          <h2 className="text-sm font-black text-slate-100">Alerts by department</h2>
+          <p className="mt-1 text-xs text-slate-400">SKUs below par and short-dated by department.</p>
+          <div className="mt-4">
+            <DepartmentAlertsChart data={stats.departmentAlerts} compact />
+          </div>
         </DashboardCard>
       ) : null}
     </section>

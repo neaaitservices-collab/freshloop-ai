@@ -185,6 +185,10 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
   const lowCount = activeOrders.reduce((sum, group) => sum + group.open.length, 0);
   const orderCost = activeOrders.reduce((sum, group) => sum + group.suggested, 0);
   const approvedCount = activeOrders.reduce((sum, group) => sum + group.approved.length, 0);
+  const forecastLines = useMemo(
+    () => orderingLevels.filter((row) => row.low && row.forecastDriven && marks[row.productId] !== 'sent'),
+    [orderingLevels, marks]
+  );
 
   const changePar = (productId: string, raw: string) => {
     const parCases = raw === '' ? 0 : Number(raw);
@@ -278,6 +282,12 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
     });
   };
 
+  const approveAllForecasted = () => {
+    if (forecastLines.length === 0) return;
+    approveRows(forecastLines);
+    setToast(`${forecastLines.length} forecasted line${forecastLines.length === 1 ? '' : 's'} approved`);
+  };
+
   const openDraft = (next: PoDraft) => {
     if (next.productIds.length === 0) return;
     setDraft(next);
@@ -335,7 +345,7 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
               </p>
               <div className="flex items-center justify-between gap-3">
                 <OrderAmount row={row} />
-                <AlertField
+                <ParForecastField
                   row={row}
                   saving={savingId === row.productId}
                   onChange={changePar}
@@ -387,7 +397,7 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
                     <OrderAmount row={row} />
                   </td>
                   <td className="px-4 py-2.5 text-center">
-                    <AlertField
+                    <ParForecastField
                       row={row}
                       saving={savingId === row.productId}
                       onChange={changePar}
@@ -494,7 +504,7 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
           <PageIntro
             step="Orders"
             title="What to buy"
-            description="Search for an item and add it to the order. Change its supplier and the line moves to that supplier's list."
+            description="Forecasted case counts use POS velocity, lead time, and day-of-week demand. Search for an item to add it manually; supplier edits regroup lines instantly."
             action={
               <Button variant="secondary" className="text-xs" disabled={lowCount === 0} onClick={() => window.print()}>
                 <Printer className="h-3.5 w-3.5" />
@@ -522,6 +532,7 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
             )}
           >
             <CardBody className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between py-3">
+            <div className="min-w-0 space-y-2">
             <p className="flex items-start gap-2 text-sm font-semibold text-slate-100">
               <AlertTriangle
                 className={`mt-0.5 h-4 w-4 shrink-0 ${lowCount > 0 ? 'text-amber-400/90' : 'text-emerald-400/90'}`}
@@ -534,9 +545,25 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
                     : 'Every item is at or above its alert level.'}
               </span>
             </p>
+            {forecastLines.length > 0 ? (
+              <p className="text-[11px] text-slate-400">
+                {forecastLines.length} line{forecastLines.length === 1 ? '' : 's'} driven by velocity forecast.
+              </p>
+            ) : null}
+            </div>
+            <div className="flex shrink-0 flex-wrap items-center gap-2">
+            <Button
+              variant="primary"
+              className="text-xs"
+              disabled={forecastLines.length === 0}
+              onClick={approveAllForecasted}
+            >
+              <Check className="h-3.5 w-3.5" />
+              Approve forecasted POs
+            </Button>
             <Button
               variant="success"
-              className="shrink-0 text-xs"
+              className="text-xs"
               disabled={lowCount === 0}
               onClick={() =>
                 openDraft(draftForAll(activeOrders.map((group) => ({ supplier: group.supplier, rows: group.open }))))
@@ -545,6 +572,7 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
               <Mail className="h-3.5 w-3.5" />
               Send bulk email
             </Button>
+            </div>
             </CardBody>
           </Card>
 
@@ -790,11 +818,16 @@ function OrderAmount({ row }: { row: StockLevel }) {
     <span className="font-mono text-xs font-bold text-amber-400/90">
       {row.orderCases} {caseWord(row.orderCases)}
       <span className="mt-0.5 block text-[11px] text-slate-400">{formatCurrency(row.orderCost)}</span>
+      {row.forecastRationale ? (
+        <span className="mt-1 block max-w-[14rem] text-left text-[10px] font-normal normal-case tracking-normal text-blue-300/85">
+          {row.forecastRationale}
+        </span>
+      ) : null}
     </span>
   );
 }
 
-function AlertField({
+function ParForecastField({
   row,
   saving,
   onChange,
@@ -824,6 +857,14 @@ function AlertField({
         className="h-8 w-14 rounded-xl border border-slate-700 bg-slate-950 text-center font-mono text-xs font-bold text-slate-100 outline-none focus:border-blue-800/80 focus:ring-1 focus:ring-blue-900/40"
       />
       {saving ? <span className="mt-0.5 text-[10px] font-bold text-slate-500">Saving</span> : null}
+      {row.suggestedParCases != null && row.suggestedParCases > row.parCases ? (
+        <span
+          className="mt-1 max-w-[9rem] text-center text-[10px] font-semibold text-emerald-400/90"
+          title="Suggested from recent consumption — edit alert level to adopt"
+        >
+          Trend par {row.suggestedParCases} cs
+        </span>
+      ) : null}
     </label>
   );
 }

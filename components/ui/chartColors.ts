@@ -3,6 +3,7 @@ export const OCEAN = '#3B82F6';
 export const CORAL = '#F43F5E';
 export const STEEL = '#475569';
 export const EMERALD = '#34d399';
+export const TEAL = '#14b8a6';
 export const AMBER = '#fbbf24';
 export const GRID = '#1e293b';
 export const TICK = '#94a3b8';

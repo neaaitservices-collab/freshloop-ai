@@ -9,6 +9,7 @@ import React, {
   useRef,
   useState,
 } from 'react';
+import type { Session } from 'next-auth';
 import { SessionProvider, signOut, useSession } from 'next-auth/react';
 import type { StaffUser } from '@/lib/utils/roles';
 import { isManager, isRoleName } from '@/lib/utils/roles';
@@ -139,9 +140,15 @@ function RoleContextInner({ children }: { children: React.ReactNode }) {
   return <RoleContext.Provider value={value}>{children}</RoleContext.Provider>;
 }
 
-export function RoleProvider({ children }: { children: React.ReactNode }) {
+export function RoleProvider({
+  children,
+  session,
+}: {
+  children: React.ReactNode;
+  session?: Session | null;
+}) {
   return (
-    <SessionProvider refetchOnWindowFocus={false}>
+    <SessionProvider session={session} refetchOnWindowFocus={false}>
       <RoleContextInner>{children}</RoleContextInner>
     </SessionProvider>
   );

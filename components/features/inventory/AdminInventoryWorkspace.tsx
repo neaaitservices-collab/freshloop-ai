@@ -2,6 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { useRole } from '@/components/auth/RoleProvider';
+import { useStableNavRole } from '@/hooks/use-stable-nav-role';
 import { InventoryFilterBar } from '@/components/features/inventory/InventoryFilterBar';
 import { InventoryDataGrid } from '@/components/features/inventory/InventoryDataGrid';
 import { ItemSettingsModal } from '@/components/features/inventory/ItemSettingsModal';
@@ -21,6 +22,9 @@ import {
 } from '@/lib/domains/inventory/inventoryMoveClient';
 import { canOverrideInventoryStock } from '@/lib/auth/staffCapabilities';
 import { CatalogDuplicateMergePanel } from '@/components/features/inventory/CatalogDuplicateMergePanel';
+import { OFFLINE_MUTATION_KIND } from '@/lib/offline/types';
+import { patchJsonOrQueue } from '@/lib/offline/mutationClient';
+import { createClientMutationId } from '@/lib/offline/queue';
 
 export function AdminInventoryWorkspace({
   levels: initialLevels,
@@ -34,16 +38,14 @@ export function AdminInventoryWorkspace({
   const [modalRow, setModalRow] = useState<StockLevel | null>(null);
   const [levelsRefreshError, setLevelsRefreshError] = useState<string | null>(null);
 
-  const { activeUser, loading: roleLoading } = useRole();
-  const [roleReady, setRoleReady] = useState(false);
-  useEffect(() => setRoleReady(true), []);
-  const canOverride =
-    roleReady &&
-    !roleLoading &&
-    Boolean(activeUser && canOverrideInventoryStock(activeUser.role));
-  const canRemoveFromCatalog =
-    roleReady && !roleLoading && Boolean(activeUser && activeUser.role === 'ADMIN');
-  const isAdmin = roleReady && !roleLoading && activeUser?.role === 'ADMIN';
+  const { activeUser } = useRole();
+  const { role: stableRole } = useStableNavRole();
+  const effectiveRole = activeUser?.role ?? stableRole;
+  const canOverride = Boolean(
+    effectiveRole && canOverrideInventoryStock(effectiveRole)
+  );
+  const canRemoveFromCatalog = effectiveRole === 'ADMIN';
+  const isAdmin = effectiveRole === 'ADMIN';
 
   useEffect(() => {
     if (!initialLevels) return;
@@ -191,6 +193,7 @@ export function AdminInventoryWorkspace({
               supplier: payload.supplier,
               origin: payload.origin || null,
               pullSensitivityDays: payload.pullSensitivityDays,
+              parCases: payload.parCases,
             }),
           });
           const json = await res.json();
@@ -232,27 +235,47 @@ export function AdminInventoryWorkspace({
           if (!modalRow) throw new Error('No item selected.');
           const snapshot = modalRow;
           patchLevel(applyOptimisticStockCases(snapshot, cases));
-          const res = await fetch('/api/inventory/levels', {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
+          const clientMutationId = createClientMutationId();
+          const result = await patchJsonOrQueue<{
+            success: boolean;
+            level?: StockLevel;
+            audit?: StockOverrideAudit;
+            error?: string;
+          }>({
+            kind: OFFLINE_MUTATION_KIND.STOCK_COUNT,
+            url: '/api/inventory/levels',
+            label: `Count ${snapshot.name}`,
+            body: {
               productId: snapshot.productId,
               casesOnHand: cases,
-            }),
+              clientMutationId,
+            },
           });
-          const json = await res.json();
-          if (!res.ok || !json.success) {
+          if (result.ok && result.offline) {
+            notifyInventoryUpdated({
+              productId: snapshot.productId,
+              source: 'level-patch',
+              skipStatsRefresh: true,
+            });
+            return null;
+          }
+          if (!result.ok) {
+            patchLevel(snapshot);
+            throw new Error(result.error || 'Stock could not be updated.');
+          }
+          const json = result.data;
+          if (!json.success || !json.level) {
             patchLevel(snapshot);
             throw new Error(json.error || 'Stock could not be updated.');
           }
-          patchLevel(json.level as StockLevel);
+          patchLevel(json.level);
           notifyInventoryUpdated({
-            level: json.level as StockLevel,
+            level: json.level,
             productId: snapshot.productId,
             source: 'level-patch',
             skipStatsRefresh: true,
           });
-          return (json.audit as StockOverrideAudit | undefined) ?? null;
+          return json.audit ?? null;
         }}
       />
     </section>

@@ -14,6 +14,7 @@ import {
   stockUnitLabel,
 } from '@/lib/domains/receiving/yieldPricing';
 import { ScrollTable } from '@/components/ui/layout';
+import { OfflineSyncBadge } from '@/components/ui/OfflineSyncBadge';
 import { cn } from '@/lib/utils/cn';
 
 const CATALOG_COLUMN_COUNT = 7;
@@ -150,6 +151,9 @@ export function InventoryDataGrid({
 
   return (
     <div className="min-w-0 overflow-hidden rounded-2xl border border-slate-800/90 bg-slate-900/50 shadow-lg shadow-black/10">
+      <div className="flex items-center justify-end border-b border-slate-800/80 px-3 py-2">
+        <OfflineSyncBadge />
+      </div>
       <div className="space-y-3 p-3 md:hidden">
         {groups.map((group) => (
           <MobileGroupBlock key={group.key} group={group} onSelect={onSelect} />
