@@ -5,12 +5,9 @@ import { ChevronDown } from 'lucide-react';
 import type { StockLevel } from '@/lib/domains/inventory/stock';
 import { itemOriginLabel } from '@/components/features/inventory/RetailFloorItemCardMeta';
 import {
-  catalogCaseFloorPrice,
   catalogDisplayCaseCost,
   formatCurrency,
-  formatPercent,
   formatUnits,
-  marginAtCaseFloorPrice,
   stockUnitLabel,
 } from '@/lib/domains/receiving/yieldPricing';
 import { ScrollTable } from '@/components/ui/layout';
@@ -18,6 +15,9 @@ import { OfflineSyncBadge } from '@/components/ui/OfflineSyncBadge';
 import { cn } from '@/lib/utils/cn';
 
 const CATALOG_COLUMN_COUNT = 7;
+
+const TH =
+  'px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-slate-500 whitespace-nowrap';
 
 function packForPricing(row: StockLevel): number {
   return row.receivePackSize > 0 ? row.receivePackSize : row.casePackSize > 0 ? row.casePackSize : 1;
@@ -27,40 +27,49 @@ function splitForPricing(row: StockLevel): number {
   return row.splitFactor > 0 ? row.splitFactor : 1;
 }
 
-function caseCost(row: StockLevel): number {
-  return catalogDisplayCaseCost({
+function displayCaseCost(row: StockLevel): string {
+  const cost = catalogDisplayCaseCost({
     receiveCaseCost: row.receiveCaseCost,
     standardCost: row.unitCost,
     packSize: packForPricing(row),
     splitFactor: splitForPricing(row),
   });
-}
-
-function casePrice(row: StockLevel): number | null {
-  return catalogCaseFloorPrice({
-    unitCostPerSellable: row.unitCost,
-    casePackSize: row.casePackSize,
-    receivePackSize: row.receivePackSize,
-    splitFactor: row.splitFactor,
-    caseRetailPrice: row.caseRetailPrice,
-    retailPrice: row.retailPrice,
-  });
-}
-
-function marginPct(row: StockLevel): number | null {
-  const price = casePrice(row);
-  if (price === null || price <= 0) return null;
-  return marginAtCaseFloorPrice(price, caseCost(row));
-}
-
-function displayCaseCost(row: StockLevel): string {
-  const cost = caseCost(row);
   return cost > 0 ? formatCurrency(cost) : '—';
 }
 
+function shelfTone(row: StockLevel): { cell: string; sub?: React.ReactNode } {
+  const inPullWindow = row.daysRemaining <= row.pullDays;
+  return {
+    cell: cn(
+      'font-mono tabular-nums',
+      inPullWindow ? 'font-bold text-amber-300' : 'text-slate-500'
+    ),
+    sub: inPullWindow ? (
+      <span className="ml-1 text-[10px] font-bold text-amber-400/90">≤{row.pullDays}d pull</span>
+    ) : undefined,
+  };
+}
+
+function OnHandBadges({ row }: { row: StockLevel }) {
+  return (
+    <>
+      {row.onHand <= 0 ? (
+        <span className="ml-2 rounded-md bg-slate-800 px-1.5 py-0.5 text-[10px] font-bold text-slate-400">
+          Out
+        </span>
+      ) : null}
+      {row.low && row.onHand > 0 ? (
+        <span className="ml-2 rounded-md bg-rose-950/80 px-1.5 py-0.5 text-[10px] font-bold text-rose-300">
+          Low
+        </span>
+      ) : null}
+    </>
+  );
+}
+
 function CatalogItemCard({ row, onSelect }: { row: StockLevel; onSelect: () => void }) {
-  const margin = marginPct(row);
   const unit = stockUnitLabel(row.unitType);
+  const shelf = shelfTone(row);
 
   return (
     <button
@@ -81,7 +90,7 @@ function CatalogItemCard({ row, onSelect }: { row: StockLevel; onSelect: () => v
       </div>
 
       <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 text-[11px]">
-        <div className="min-w-0">
+        <div className="min-w-0 sm:col-span-2">
           <dt className="text-[9px] font-bold uppercase tracking-wider text-slate-500">Supplier</dt>
           <dd className="truncate text-slate-300" title={row.supplier}>
             {row.supplier}
@@ -94,18 +103,22 @@ function CatalogItemCard({ row, onSelect }: { row: StockLevel; onSelect: () => v
           </dd>
         </div>
         <div>
-          <dt className="text-[9px] font-bold uppercase tracking-wider text-slate-500">On hand</dt>
-          <dd className="font-mono font-bold tabular-nums text-slate-200">
-            {formatUnits(row.onHand)} {unit}
-            {row.onHand <= 0 ? (
-              <span className="ml-1 text-[10px] font-bold text-slate-500">Out</span>
-            ) : null}
+          <dt className="text-[9px] font-bold uppercase tracking-wider text-slate-500">On cases</dt>
+          <dd className="font-mono tabular-nums text-slate-300">
+            {row.onHandCases > 0 ? `${formatUnits(row.onHandCases)} cases` : '—'}
           </dd>
         </div>
         <div>
-          <dt className="text-[9px] font-bold uppercase tracking-wider text-slate-500">Margin</dt>
-          <dd className="font-mono font-bold tabular-nums text-emerald-300/90">
-            {margin === null ? '—' : `${formatPercent(margin)}%`}
+          <dt className="text-[9px] font-bold uppercase tracking-wider text-slate-500">On hand</dt>
+          <dd className="font-mono font-bold tabular-nums text-slate-200">
+            {row.onHand > 0 ? (
+              <>
+                {formatUnits(row.onHand)} {unit}
+              </>
+            ) : (
+              <span className="text-slate-500">—</span>
+            )}
+            <OnHandBadges row={row} />
           </dd>
         </div>
         <div>
@@ -113,8 +126,10 @@ function CatalogItemCard({ row, onSelect }: { row: StockLevel; onSelect: () => v
           <dd className="font-mono tabular-nums text-slate-300">{displayCaseCost(row)}</dd>
         </div>
         <div>
-          <dt className="text-[9px] font-bold uppercase tracking-wider text-slate-500">Shelf</dt>
-          <dd className="font-mono tabular-nums text-slate-400">{row.daysRemaining}d</dd>
+          <dt className="text-[9px] font-bold uppercase tracking-wider text-slate-500">Shelf life</dt>
+          <dd className={cn('text-xs', shelf.cell)}>
+            {row.daysRemaining}d{shelf.sub}
+          </dd>
         </div>
       </dl>
     </button>
@@ -161,16 +176,30 @@ export function InventoryDataGrid({
       </div>
 
       <ScrollTable className="hidden md:block">
-        <table className="w-full min-w-[820px] text-left text-sm">
-          <thead className="border-b border-slate-800 bg-slate-950/80 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+        <table className="w-full min-w-[980px] border-collapse text-left text-sm">
+          <thead className="sticky top-0 z-10 border-b border-slate-800 bg-slate-950/95 backdrop-blur-sm">
             <tr>
-              <th className="px-4 py-3">Item</th>
-              <th className="px-4 py-3">Supplier</th>
-              <th className="px-4 py-3">Origin</th>
-              <th className="px-4 py-3 text-right">On hand</th>
-              <th className="px-4 py-3 text-right">Margin</th>
-              <th className="px-4 py-3 text-right">Case cost</th>
-              <th className="px-4 py-3 text-right">Shelf</th>
+              <th scope="col" className={cn(TH, 'min-w-[11rem]')}>
+                Item
+              </th>
+              <th scope="col" className={cn(TH, 'min-w-[7rem]')}>
+                Supplier
+              </th>
+              <th scope="col" className={cn(TH, 'min-w-[5.5rem]')}>
+                Origin
+              </th>
+              <th scope="col" className={cn(TH, 'text-right')}>
+                On cases
+              </th>
+              <th scope="col" className={cn(TH, 'text-right')}>
+                On hand
+              </th>
+              <th scope="col" className={cn(TH, 'text-right')}>
+                Case cost
+              </th>
+              <th scope="col" className={cn(TH, 'text-right')}>
+                Shelf life
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -249,6 +278,9 @@ function GroupTableBlock({
       ) : null}
       {open
         ? group.rows.map((row, index) => {
+            const shelf = shelfTone(row);
+            const unit = stockUnitLabel(row.unitType);
+
             return (
               <tr
                 key={row.productId}
@@ -258,54 +290,44 @@ function GroupTableBlock({
                   index % 2 === 0 ? 'bg-slate-900/20' : 'bg-transparent'
                 )}
               >
-                <td className="px-4 py-3">
-                  <p className="font-bold text-slate-100">{row.name}</p>
-                  <p className="text-[11px] text-slate-500">{row.category}</p>
+                <td className="min-w-0 px-4 py-2.5">
+                  <p className="truncate text-sm font-semibold text-slate-100" title={row.name}>
+                    {row.name}
+                  </p>
+                  <p className="truncate text-[10px] text-slate-500">{row.category}</p>
                 </td>
-                <td className="max-w-[10rem] px-4 py-3">
+                <td className="max-w-[9rem] px-4 py-2.5">
                   <span className="block truncate text-slate-400" title={row.supplier}>
                     {row.supplier}
                   </span>
                 </td>
-                <td className="max-w-[8rem] px-4 py-3">
+                <td className="max-w-[7rem] px-4 py-2.5">
                   <span
-                    className="block truncate font-semibold text-slate-300"
+                    className="block truncate text-slate-300"
                     title={itemOriginLabel(row)}
                   >
                     {itemOriginLabel(row)}
                   </span>
                 </td>
-                <td className="px-4 py-3 text-right font-mono tabular-nums text-slate-200">
-                  {formatUnits(row.onHand)} {stockUnitLabel(row.unitType)}
-                  {row.onHand <= 0 ? (
-                    <span className="ml-2 rounded-md bg-slate-800 px-1.5 py-0.5 text-[10px] font-bold text-slate-400">
-                      Out of stock
-                    </span>
-                  ) : null}
-                  {row.low && row.onHand > 0 ? (
-                    <span className="ml-2 rounded-md bg-rose-950/80 px-1.5 py-0.5 text-[10px] font-bold text-rose-300">
-                      Low
-                    </span>
-                  ) : null}
+                <td className="whitespace-nowrap px-4 py-2.5 text-right font-mono text-xs tabular-nums text-slate-300">
+                  {row.onHandCases > 0 ? `${formatUnits(row.onHandCases)} cases` : '—'}
                 </td>
-                <td className="px-4 py-3 text-right font-mono tabular-nums text-emerald-300/90">
-                  {marginPct(row) === null ? '—' : `${formatPercent(marginPct(row)!)}%`}
+                <td className="whitespace-nowrap px-4 py-2.5 text-right font-mono text-xs tabular-nums text-slate-200">
+                  {row.onHand > 0 ? (
+                    <>
+                      {formatUnits(row.onHand)} {unit}
+                    </>
+                  ) : (
+                    <span className="text-slate-500">—</span>
+                  )}
+                  <OnHandBadges row={row} />
                 </td>
-                <td className="px-4 py-3 text-right font-mono tabular-nums text-slate-300">
+                <td className="px-4 py-2.5 text-right font-mono text-xs tabular-nums text-slate-300">
                   {displayCaseCost(row)}
                 </td>
-                <td
-                  className={cn(
-                    'px-4 py-3 text-right text-xs font-mono tabular-nums',
-                    row.daysRemaining <= row.pullDays
-                      ? 'font-bold text-amber-300'
-                      : 'text-slate-500'
-                  )}
-                >
+                <td className={cn('px-4 py-2.5 text-right text-xs', shelf.cell)}>
                   {row.daysRemaining}d
-                  {row.daysRemaining <= row.pullDays ? (
-                    <span className="ml-1 text-[10px] text-amber-400/90">≤{row.pullDays}d</span>
-                  ) : null}
+                  {shelf.sub}
                 </td>
               </tr>
             );

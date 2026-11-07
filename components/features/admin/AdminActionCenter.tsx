@@ -4,7 +4,6 @@ import React from 'react';
 import Link from 'next/link';
 import { AlertTriangle, ClipboardList } from 'lucide-react';
 import type { StoreStats } from '@/lib/domains/stats/storeStatsTypes';
-import { AdminWorkflowShortcuts } from '@/components/features/admin/AdminWorkflowShortcuts';
 import { DashboardCard } from '@/components/features/admin/DashboardCard';
 import { cn } from '@/lib/utils/cn';
 
@@ -35,7 +34,7 @@ export function AdminActionCenter({
     <DashboardCard className="border-slate-800/90 bg-gradient-to-br from-slate-900/90 via-slate-950/80 to-slate-900/70">
       <h2 className="text-lg font-black tracking-tight text-slate-100">Operational control deck</h2>
       <p className="mt-1 text-sm text-slate-400">
-        Decisions for today, critical stock alerts, and workflow launch points
+        Decisions for today and critical stock alerts
       </p>
 
       <div className="mt-5 grid gap-4 md:grid-cols-2">
@@ -103,7 +102,6 @@ export function AdminActionCenter({
           <ReviewButton href="/orders" />
         </div>
       </div>
-      <AdminWorkflowShortcuts />
     </DashboardCard>
   );
 }

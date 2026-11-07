@@ -25,17 +25,18 @@ export function WasteSemaphoreCard({
   wasteKpi,
   goalPct,
   refreshing = false,
+  className,
 }: {
   wasteKpi: WasteKpiReport | null;
   /** From store settings when KPI still loading */
   goalPct?: number;
   refreshing?: boolean;
+  className?: string;
 }) {
   const [scrapModalOpen, setScrapModalOpen] = useState(false);
   const target = wasteKpi?.targetWastePct ?? goalPct ?? 2.5;
   const bucketCount = wasteKpi?.volumetricScrapBucketsCount ?? 0;
   const wastePct = wasteKpi?.wastePct ?? null;
-  const over = wasteKpi?.isExceedingTarget ?? false;
   const discard = wasteKpi?.totalDiscardValue ?? 0;
   const scrap = wasteKpi?.volumetricScrapValue ?? 0;
   const sales = wasteKpi?.grossSalesRevenue ?? 0;
@@ -43,6 +44,12 @@ export function WasteSemaphoreCard({
   const implied = wastePct === null ? impliedWastePct(totalWaste, sales) : null;
   const salesShort = sales > 0 && sales < MIN_GROSS_SALES_FOR_WASTE_RATIO;
   const salesRemaining = Math.max(0, MIN_GROSS_SALES_FOR_WASTE_RATIO - sales);
+  const over =
+    wastePct != null
+      ? (wasteKpi?.isExceedingTarget ?? wastePct > target)
+      : !salesShort && implied != null
+        ? implied > target
+        : false;
 
   const scaleMax = Math.max(target * 1.5, target + 5, 10);
   const barPct =
@@ -55,13 +62,19 @@ export function WasteSemaphoreCard({
   const displayPct =
     wastePct != null
       ? formatRatioDisplay(wastePct)
-      : salesShort && implied != null
+      : implied != null && (salesShort || sales >= MIN_GROSS_SALES_FOR_WASTE_RATIO)
         ? formatRatioDisplay(implied)
-        : '—';
+        : wastePct === 0
+          ? '0.0%'
+          : '—';
 
   return (
     <DashboardCard
-      className={cn(over ? 'border-rose-900/45' : 'border-slate-800/90')}
+      className={cn(
+        'flex min-h-0 flex-col',
+        over ? 'border-rose-900/45' : 'border-slate-800/90',
+        className
+      )}
       aria-label="Waste traffic light"
     >
       <div className="space-y-4">
@@ -73,14 +86,20 @@ export function WasteSemaphoreCard({
                   'h-2.5 w-2.5 rounded-full',
                   wastePct != null
                     ? over
-                      ? 'bg-rose-500 shadow-[0_0_8px_2px_rgba(244,63,94,0.7)]'
+                      ? 'animate-pulse bg-rose-500 shadow-[0_0_8px_2px_rgba(244,63,94,0.7)]'
                       : 'bg-emerald-400 shadow-[0_0_8px_2px_rgba(52,211,153,0.6)]'
-                    : 'bg-amber-400 shadow-[0_0_8px_2px_rgba(251,191,36,0.5)]'
+                    : salesShort
+                      ? 'bg-amber-400 shadow-[0_0_8px_2px_rgba(251,191,36,0.5)]'
+                      : implied != null
+                        ? over
+                          ? 'bg-rose-500 shadow-[0_0_8px_2px_rgba(244,63,94,0.7)]'
+                          : 'bg-emerald-400 shadow-[0_0_8px_2px_rgba(52,211,153,0.6)]'
+                        : 'bg-slate-600'
                 )}
                 aria-hidden
               />
               <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
-                Waste vs Goal
+                Waste semáforo
               </p>
               {salesShort ? (
                 <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold text-amber-300">
@@ -103,9 +122,15 @@ export function WasteSemaphoreCard({
                       ? over
                         ? 'text-rose-400'
                         : 'text-emerald-400'
-                      : implied != null
+                      : salesShort && implied != null
                         ? 'text-amber-300'
-                        : 'text-slate-500'
+                        : implied != null
+                          ? over
+                            ? 'text-rose-400'
+                            : 'text-emerald-400'
+                          : wastePct === 0
+                            ? 'text-emerald-400'
+                            : 'text-slate-500'
                   )}
                 >
                   {displayPct}

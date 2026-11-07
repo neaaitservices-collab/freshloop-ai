@@ -1,4 +1,9 @@
-import { RecipeFusionResult, InventoryItem } from '@/lib/types';
+import {
+  InventoryItem,
+  InvoiceOcrResult,
+  RecipeFusionResult,
+  VoiceLoggerResult,
+} from '@/lib/types';
 import { GEMINI_FLASH_MODEL_FALLBACKS } from '@/lib/domains/ai/geminiModels';
 
 /**
@@ -367,6 +372,31 @@ function rejectProductionAiMock(feature: string): never {
   throw new Error(
     `${feature} is unavailable. Configure GEMINI_API_KEY or try again later.`
   );
+}
+
+function getMockOcrResult(): InvoiceOcrResult {
+  const today = new Date().toISOString().split('T')[0];
+  return {
+    vendorName: 'Demo Produce Co',
+    invoiceNumber: `DEMO-${Date.now()}`,
+    invoiceDate: today,
+    totalAmount: 0,
+    departmentBreakdown: { PRODUCE: 0, DAIRY: 0, BAKERY: 0, PANTRY: 0 },
+    lineItems: [],
+    rawSummary: 'Demo OCR (no API key). Set GEMINI_API_KEY to analyze invoice images.',
+    source: 'sample',
+  };
+}
+
+function getMockVoiceResult(spokenText?: string): VoiceLoggerResult {
+  return {
+    transcript:
+      spokenText?.trim() || 'Logged 10 lbs bruised apples and 4L heavy cream',
+    targetAction: 'KITCHEN_RESCUE',
+    parsedItems: [],
+    kitchenRescueNotes: 'Demo voice parse (no API key).',
+    estimatedWasteSavedValue: 0,
+  };
 }
 
 export async function processInvoiceOcr(base64Image: string, mimeType: string = 'image/jpeg'): Promise<InvoiceOcrResult> {
