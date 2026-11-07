@@ -15,7 +15,7 @@ import type { ProductionBomSummary } from '@/components/features/production/Prod
 interface ProductionActiveBomPanelProps {
   recipes: RecipeFusionResult[];
   onExecuteProduction: () => void;
-  onPrintDeliLabel: (recipe: RecipeFusionResult) => void;
+  onPrintDeliLabel?: (recipe: RecipeFusionResult) => void;
   onEditRecipe: (recipe: RecipeFusionResult) => void;
   onBulkPrintDeliLabels?: (recipes: RecipeFusionResult[]) => void;
   onBrowseAll?: () => void;
@@ -27,6 +27,9 @@ interface ProductionActiveBomPanelProps {
   canExecuteBatch?: boolean;
   /** Hydrated from `/api/production/bootstrap` to skip mount `GET /api/manufacturing`. */
   initialManufacturingCatalog?: KitchenRecipeDefinition[] | null;
+  /** Wide main column vs omitted (legacy `dense` still tightens table padding). */
+  layout?: 'wide' | 'compact';
+  onCreateBom?: () => void;
 }
 
 function categoryTone(category: string): string {
@@ -157,10 +160,13 @@ export function ProductionActiveBomPanel({
   hideExecutiveSummary = false,
   onSummaryChange,
   dense = false,
+  layout = 'wide',
   canEditRecipes = true,
   canExecuteBatch = true,
   initialManufacturingCatalog = null,
+  onCreateBom,
 }: ProductionActiveBomPanelProps) {
+  const isCompactLayout = layout === 'compact' || dense;
   const [search, setSearch] = useState('');
   const [sortKey, setSortKey] = useState<BomSortKey>('status');
   const [sortDir, setSortDir] = useState<SortDir>('asc');
@@ -305,11 +311,13 @@ export function ProductionActiveBomPanel({
     [recipes, selectedIds]
   );
 
+  const labelPrintEnabled = Boolean(onPrintDeliLabel || onBulkPrintDeliLabels);
+
   const handleBulkPrint = () => {
     if (selectedRecipes.length === 0) return;
     if (onBulkPrintDeliLabels) {
       onBulkPrintDeliLabels(selectedRecipes);
-    } else {
+    } else if (onPrintDeliLabel) {
       for (const r of selectedRecipes) onPrintDeliLabel(r);
     }
   };
@@ -317,51 +325,75 @@ export function ProductionActiveBomPanel({
   return (
     <section className="overflow-hidden rounded-2xl border border-slate-800/90 bg-slate-900/80 shadow-xl lg:rounded-3xl">
       {/* Header */}
-      <div className="border-b border-slate-800/90 px-3 py-3 sm:px-6 sm:py-5">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex min-w-0 items-start gap-3">
-            <div className="hidden shrink-0 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-2.5 text-emerald-400 sm:flex">
-              <UtensilsCrossed className="h-5 w-5" />
+      <div className="border-b border-slate-800/90 px-3 py-3 sm:px-5 sm:py-4">
+        <div
+          className={cn(
+            'flex flex-col gap-3',
+            !isCompactLayout && 'xl:flex-row xl:items-end xl:justify-between'
+          )}
+        >
+          <div className="flex min-w-0 items-start gap-2.5">
+            <div className="hidden shrink-0 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-2 text-emerald-400 sm:flex">
+              <UtensilsCrossed className="h-5 w-5" aria-hidden />
             </div>
-            <h2 className="text-base font-black leading-tight text-white sm:text-lg">
-              <span className="md:hidden">Active BOM &amp; labels</span>
-              <span className="hidden md:inline">
-                Active BOM in Production &amp; Grab-n-Go Labels
-              </span>
-            </h2>
+            <div className="min-w-0">
+              <h2 className="text-base font-black leading-snug text-white sm:text-lg">
+                {isCompactLayout ? (
+                  'Recipes &amp; BOM labels'
+                ) : (
+                  <>
+                    <span className="sm:hidden">Active BOM &amp; labels</span>
+                    <span className="hidden sm:inline">
+                      Active BOM in Production &amp; Grab-n-Go Labels
+                    </span>
+                  </>
+                )}
+              </h2>
+              <p className="mt-0.5 text-[11px] text-slate-500">
+                Print deli tags and check ingredient readiness before batching.
+              </p>
+            </div>
           </div>
 
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
-            <div className="relative min-w-0 flex-1 sm:w-56 lg:w-64">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+          <div
+            className={cn(
+              'flex w-full min-w-0 flex-col gap-2',
+              !isCompactLayout && 'xl:max-w-xl xl:flex-1 xl:flex-row xl:items-center xl:justify-end'
+            )}
+          >
+            <div className="relative z-40 min-w-0 w-full flex-1">
+              <Search
+                className="pointer-events-none absolute left-3 top-1/2 z-10 h-4 w-4 -translate-y-1/2 text-slate-500"
+                aria-hidden
+              />
               <input
                 type="search"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Search recipes…"
                 aria-label="Search recipes"
-                className="w-full rounded-xl border border-slate-700 bg-slate-950 py-2.5 pl-9 pr-3 text-xs font-medium text-white placeholder:text-slate-500 focus:border-emerald-500/50 focus:outline-none"
+                className="w-full min-h-11 rounded-xl border border-slate-700 bg-slate-950 py-2.5 pl-9 pr-3 text-xs font-medium text-white placeholder:text-slate-500 focus:border-emerald-500/50 focus:outline-none"
               />
             </div>
 
-            {someSelected ? (
+            {labelPrintEnabled && someSelected ? (
               <Button
                 type="button"
                 variant="secondary"
-                className="min-h-10 shrink-0 border-emerald-500/40 bg-emerald-500/15 text-xs font-bold text-emerald-200 hover:bg-emerald-500/25"
+                className="min-h-11 w-full shrink-0 border-emerald-500/40 bg-emerald-500/15 text-xs font-bold text-emerald-200 hover:bg-emerald-500/25 sm:w-auto"
                 onClick={handleBulkPrint}
               >
                 <Printer className="h-3.5 w-3.5" />
-                Bulk print selected ({selectedIds.size})
+                Bulk print ({selectedIds.size})
               </Button>
             ) : null}
 
-            <div className="hidden shrink-0 gap-2 lg:flex">
+            <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:justify-end">
               {canExecuteBatch ? (
                 <Button
                   type="button"
                   variant="secondary"
-                  className="min-h-10 flex-1 border-amber-500/40 bg-amber-400/90 text-xs font-black text-slate-950 hover:bg-amber-300 sm:flex-none"
+                  className="min-h-11 border-amber-500/40 bg-amber-400/90 text-xs font-black text-slate-950 hover:bg-amber-300"
                   onClick={onExecuteProduction}
                 >
                   <ChefHat className="h-3.5 w-3.5" />
@@ -372,7 +404,7 @@ export function ProductionActiveBomPanel({
                 <Button
                   type="button"
                   variant="secondary"
-                  className="min-h-10 text-xs font-bold"
+                  className="min-h-11 text-xs font-bold"
                   onClick={onBrowseAll}
                 >
                   Full catalog
@@ -417,19 +449,41 @@ export function ProductionActiveBomPanel({
 
       {/* Table */}
       {rows.length === 0 ? (
-        <p className="px-6 py-12 text-center text-sm text-slate-500">
+        <div className="flex flex-col items-center gap-3 px-4 py-12 text-center sm:px-8">
+          <div className="rounded-2xl border border-slate-800 bg-slate-950/80 p-3 text-emerald-400">
+            <ChefHat className="h-8 w-8" aria-hidden />
+          </div>
           {recipes.length === 0 ? (
             <>
-              No saved BOM recipes yet — create one with{' '}
-              <strong className="text-emerald-300">New Recipe (BOM)</strong>.
+              <p className="text-sm font-bold text-slate-200">No BOM recipes yet</p>
+              <p className="max-w-sm text-xs leading-relaxed text-slate-500">
+                Add ingredients, yield, and grab-and-go pricing with{' '}
+                <span className="font-semibold text-emerald-300">New BOM</span> in the header.
+              </p>
+              {canEditRecipes && onCreateBom ? (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="mt-1 min-h-11 border-emerald-500/40 text-xs font-bold text-emerald-200"
+                  onClick={onCreateBom}
+                >
+                  <ChefHat className="h-4 w-4" />
+                  Create BOM
+                </Button>
+              ) : null}
             </>
           ) : (
-            'No recipes match your search.'
+            <p className="text-sm text-slate-500">No recipes match your search.</p>
           )}
-        </p>
+        </div>
       ) : (
         <>
-        <ul className="divide-y divide-slate-800/80 md:hidden">
+        <ul
+          className={cn(
+            'divide-y divide-slate-800/80',
+            isCompactLayout ? 'block' : 'md:hidden'
+          )}
+        >
           {rows.map(({ recipe, portions, status, retailTotal }) => (
             <li
               key={recipe.id}
@@ -493,20 +547,22 @@ export function ProductionActiveBomPanel({
                   </span>
                 </div>
               </div>
-              <Button
-                type="button"
-                variant="secondary"
-                className="h-10 w-10 min-h-0 shrink-0 border-emerald-500/35 bg-emerald-500/10 p-0 text-emerald-300"
-                aria-label={`Print label for ${recipe.recipeName}`}
-                onClick={() => onPrintDeliLabel(recipe)}
-              >
-                <Printer className="h-4 w-4" />
-              </Button>
+              {onPrintDeliLabel ? (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="h-10 w-10 min-h-0 shrink-0 border-emerald-500/35 bg-emerald-500/10 p-0 text-emerald-300"
+                  aria-label={`Print label for ${recipe.recipeName}`}
+                  onClick={() => onPrintDeliLabel(recipe)}
+                >
+                  <Printer className="h-4 w-4" />
+                </Button>
+              ) : null}
             </li>
           ))}
         </ul>
-        <ScrollTable className="hidden md:block">
-          <table className="w-full min-w-[720px] border-collapse text-left">
+        <ScrollTable className={cn(isCompactLayout ? 'hidden' : 'hidden md:block')}>
+          <table className="w-full min-w-[640px] border-collapse text-left">
             <thead>
               <tr className="border-b border-slate-800 bg-slate-950/80 text-[10px] font-bold uppercase tracking-wider text-slate-500">
                 <th className="w-12 px-4 py-4 sm:px-6">
@@ -557,7 +613,9 @@ export function ProductionActiveBomPanel({
                   sortDir={sortDir}
                   onToggle={toggleSort}
                 />
-                <th className="px-4 py-4 text-right sm:px-6">Actions</th>
+                {onPrintDeliLabel ? (
+                  <th className="px-4 py-4 text-right sm:px-6">Actions</th>
+                ) : null}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/80">
@@ -627,20 +685,22 @@ export function ProductionActiveBomPanel({
                       </span>
                     ) : null}
                   </td>
-                  <td
-                    className="px-4 py-4 text-right sm:px-6"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      className="inline-flex h-9 min-h-0 shrink-0 gap-1.5 border-emerald-500/35 bg-emerald-500/10 px-3 text-[11px] font-bold text-emerald-300 hover:bg-emerald-500/20"
-                      onClick={() => onPrintDeliLabel(recipe)}
+                  {onPrintDeliLabel ? (
+                    <td
+                      className="px-4 py-4 text-right sm:px-6"
+                      onClick={(e) => e.stopPropagation()}
                     >
-                      <Printer className="h-3.5 w-3.5" />
-                      Print label
-                    </Button>
-                  </td>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        className="inline-flex h-9 min-h-0 shrink-0 gap-1.5 border-emerald-500/35 bg-emerald-500/10 px-3 text-[11px] font-bold text-emerald-300 hover:bg-emerald-500/20"
+                        onClick={() => onPrintDeliLabel(recipe)}
+                      >
+                        <Printer className="h-3.5 w-3.5" />
+                        Print label
+                      </Button>
+                    </td>
+                  ) : null}
                 </tr>
               ))}
             </tbody>

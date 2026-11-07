@@ -105,7 +105,7 @@ export function AdminInventoryWorkspace({
   };
 
   return (
-    <section id="inventory-catalog" className="scroll-mt-24 min-w-0 space-y-4">
+    <section className="min-w-0 space-y-4">
       <div>
         <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-emerald-300/90">Inventory catalog</p>
         <h2 className="mt-1 text-xl font-black tracking-tight text-white sm:text-2xl">Stock & margin control</h2>

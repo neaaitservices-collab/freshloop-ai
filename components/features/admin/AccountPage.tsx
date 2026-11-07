@@ -1,8 +1,6 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import Link from 'next/link';
-import { ArrowRight, ChefHat, Package, Store } from 'lucide-react';
 import { PageIntro } from '@/components/layout/PageIntro';
 import { AdminViewTabs } from '@/components/features/admin/AdminViewTabs';
 import { UserManagementTable } from '@/components/features/admin/UserManagementTable';
@@ -364,66 +362,6 @@ export function SettingsForm({
   );
 }
 
-const STEPS = [
-  {
-    href: '/receive',
-    step: '1',
-    title: 'Receive',
-    text: 'Read the delivery, turn each case into retail units, and set the floor price.',
-    icon: Package,
-  },
-  {
-    href: '/admin#inventory-catalog',
-    step: '2',
-    title: 'Catalog & margins',
-    text: 'Full product catalog from the database—zero-stock SKUs stay listed; adjust margin and shelf settings.',
-    icon: Store,
-  },
-  {
-    href: '/production',
-    step: '3',
-    title: 'Production',
-    text: 'Cook rescued product into a prepared item and log scrap buckets.',
-    icon: ChefHat,
-  },
-];
-
-function DaySteps() {
-  return (
-    <nav
-      className="mt-4 flex flex-col gap-2 rounded-2xl border border-slate-800/80 bg-slate-900/40 p-3 sm:flex-row sm:flex-wrap sm:items-center"
-      aria-label="Daily workflow"
-    >
-      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 sm:mr-1">
-        Today
-      </span>
-      {STEPS.map((step) => {
-        const Icon = step.icon;
-        return (
-          <Link
-            key={step.href}
-            href={step.href}
-            className="inline-flex items-center gap-2 rounded-xl border border-slate-800 bg-slate-950/60 px-3 py-2 text-xs font-bold text-slate-200 transition hover:border-blue-800/60 hover:bg-slate-800/50"
-          >
-            <span className="flex h-6 w-6 items-center justify-center rounded-full bg-blue-900/40 text-[10px] font-black text-blue-200">
-              {step.step}
-            </span>
-            <Icon className="h-3.5 w-3.5 text-blue-300/90" />
-            {step.title}
-            <ArrowRight className="h-3 w-3 text-slate-500" />
-          </Link>
-        );
-      })}
-      <Link
-        href="/operations"
-        className="text-xs font-bold text-slate-400 underline-offset-2 hover:text-slate-200 hover:underline sm:ml-auto"
-      >
-        Full ledger
-      </Link>
-    </nav>
-  );
-}
-
 export function AccountPage({
   settings,
   figures,
@@ -441,28 +379,21 @@ export function AccountPage({
 
   return (
       <PageMain className="py-4 pb-24 sm:py-6">
-        <PageIntro
-          step={showControls ? 'Store dashboard' : 'Account'}
-          title={title}
-          description={
-            showControls
-              ? 'Live ledger KPIs first. Expand sections below for profile, staff, and the inventory catalog.'
-              : 'Your name, email, and position.'
-          }
-          action={showControls ? <AdminViewTabs /> : undefined}
-        />
+        {showControls ? (
+          <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <AdminViewTabs />
+          </div>
+        ) : (
+          <PageIntro
+            step="Account"
+            title={title}
+            description="Your name, email, and position."
+          />
+        )}
         {showControls ? (
           <>
-            <div className="mt-3 space-y-3">{figures}</div>
-            <CollapsibleSection
-              className="mt-3"
-              title="Workflow shortcuts"
-              description="Receive → catalog → production"
-              defaultOpen={false}
-            >
-              <DaySteps />
-            </CollapsibleSection>
-            <div className="mt-3 space-y-3">
+            <div className="space-y-6">{figures}</div>
+            <div className="mt-6 space-y-3">
               {settings}
               <CollapsibleSection
                 title="Personal profile"
@@ -480,6 +411,7 @@ export function AccountPage({
               </CollapsibleSection>
               {children ? (
                 <CollapsibleSection
+                  anchorId="inventory-catalog"
                   title="Inventory catalog"
                   description="Stock & margin control — full SKU list from the database"
                   defaultOpen={false}

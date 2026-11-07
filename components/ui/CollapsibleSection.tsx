@@ -10,18 +10,24 @@ export function CollapsibleSection({
   defaultOpen = false,
   children,
   className,
+  anchorId,
 }: {
   title: string;
   description?: string;
   defaultOpen?: boolean;
   children: React.ReactNode;
   className?: string;
+  /** Deep-link target (e.g. `/admin#inventory-catalog`). */
+  anchorId?: string;
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const panelId = useId();
 
   return (
-    <section className={cn('rounded-2xl border border-slate-800/80 bg-slate-900/40', className)}>
+    <section
+      id={anchorId}
+      className={cn('rounded-2xl border border-slate-800/80 bg-slate-900/40', anchorId && 'scroll-mt-24', className)}
+    >
       <button
         type="button"
         aria-expanded={open}

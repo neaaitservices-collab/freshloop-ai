@@ -337,7 +337,7 @@ export function ManualRecipeCreatorModal({
 
           <div className="grid grid-cols-3 gap-3">
             <div>
-              <label className="mb-1 block text-xs font-bold text-slate-300">Batch Yield (Units) *</label>
+              <label className="mb-1 block text-xs font-bold text-slate-300">Production Number *</label>
               <Input
                 type="number"
                 min="1"

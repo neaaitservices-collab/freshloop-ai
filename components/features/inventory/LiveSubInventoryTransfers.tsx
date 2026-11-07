@@ -126,21 +126,21 @@ export function LiveSubInventoryTransfers({
 
   return (
     <>
-      <Card className="min-w-0 max-w-full overflow-visible border-slate-800/90 bg-slate-950/40">
+      <Card className="min-w-0 max-w-full overflow-hidden border-slate-800/90 bg-slate-950/40">
         <CardHeader
           className={cn(
-            'flex min-w-0 flex-col border-b border-slate-800/80',
+            'relative z-0 flex min-w-0 flex-col border-b border-slate-800/80',
             compact ? 'gap-2 pb-3 pt-3' : 'gap-4 pb-5'
           )}
         >
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-            <div className="flex items-start gap-3">
+          <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div className="flex min-w-0 items-start gap-3">
               {!compact ? (
                 <span className="hidden rounded-xl border border-slate-700 bg-slate-900 p-2.5 text-emerald-400 sm:flex">
                   <LayoutGrid className="h-5 w-5" />
                 </span>
               ) : null}
-              <div>
+              <div className="min-w-0 flex-1">
                 <CardTitle className={compact ? 'text-sm' : 'text-lg'}>{title}</CardTitle>
                 {!compact ? (
                   <CardDescription className="mt-1 max-w-xl">{description}</CardDescription>
@@ -172,8 +172,16 @@ export function LiveSubInventoryTransfers({
             />
           ) : null}
 
-          <div className={cn('relative', compact ? 'mt-1' : 'mt-2 sm:max-w-md')}>
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
+          <div
+            className={cn(
+              'relative z-40 w-full min-w-0',
+              compact ? 'mt-1' : 'mt-2 sm:max-w-md'
+            )}
+          >
+            <Search
+              className="pointer-events-none absolute left-3 top-1/2 z-10 h-3.5 w-3.5 -translate-y-1/2 text-slate-500"
+              aria-hidden
+            />
             <input
               type="search"
               value={skuQuery}
@@ -189,7 +197,7 @@ export function LiveSubInventoryTransfers({
         </CardHeader>
         <CardBody
           className={cn(
-            'min-w-0',
+            'relative z-0 min-w-0 overflow-x-auto',
             compact
               ? cn(
                   'overflow-y-auto pt-2',
@@ -197,7 +205,7 @@ export function LiveSubInventoryTransfers({
                     ? 'max-h-[calc(100dvh-13.5rem)]'
                     : 'max-h-[min(70vh,720px)]'
                 )
-              : 'pt-5'
+              : 'overflow-y-auto pt-5'
           )}
         >
           <SubInventoryWorkspace

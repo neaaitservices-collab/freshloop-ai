@@ -2,10 +2,11 @@
 
 import React from 'react';
 import Link from 'next/link';
-import { Activity, ChefHat, Package, Settings } from 'lucide-react';
+import { Activity, ChefHat, Package, Settings, Warehouse } from 'lucide-react';
 
 const SHORTCUTS = [
   { href: '/receive', label: 'Receive', icon: Package },
+  { href: '/admin#inventory-catalog', label: 'Catalog', icon: Warehouse },
   { href: '/production', label: 'Production', icon: ChefHat },
   { href: '/operations', label: 'Full ledger', icon: Activity },
   { href: '/admin/settings', label: 'Store settings', icon: Settings },
@@ -17,7 +18,7 @@ export function AdminWorkflowShortcuts() {
       <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">
         Workflow shortcuts
       </p>
-      <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+      <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
         {SHORTCUTS.map((item) => {
           const Icon = item.icon;
           return (

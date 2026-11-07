@@ -10,7 +10,7 @@ import {
 import { cn } from '@/lib/utils/cn';
 
 const SELECT =
-  'mt-1 min-h-11 w-full rounded-xl border border-slate-700/90 bg-slate-950 px-2.5 py-2 text-xs font-medium text-slate-100 outline-none focus:border-emerald-500/60';
+  'min-h-11 w-full rounded-xl border border-slate-700/90 bg-slate-950 px-2.5 py-2 text-xs font-medium text-slate-100 outline-none focus:border-emerald-500/60';
 
 export function InventoryFilterBar({
   filters,
@@ -48,6 +48,12 @@ export function InventoryFilterBar({
     if (groupBy !== 'department') n += 1;
     return n;
   }, [filters, groupBy]);
+
+  const resetFilters = () => {
+    onChange(EMPTY_INVENTORY_FILTERS);
+    onReset();
+    setMobileFiltersOpen(false);
+  };
 
   const filterFields = (
     <>
@@ -98,8 +104,8 @@ export function InventoryFilterBar({
 
   return (
     <div className="rounded-2xl border border-slate-800/90 bg-slate-900/60 p-3 shadow-lg shadow-black/10 backdrop-blur-md sm:p-4">
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-        <label className="relative block min-w-0 flex-1 lg:max-w-md">
+      <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
+        <label className="relative block min-w-0 xl:max-w-xs xl:flex-1">
           <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Search</span>
           <Search className="pointer-events-none absolute bottom-3 left-3 h-4 w-4 text-slate-500" />
           <input
@@ -109,7 +115,7 @@ export function InventoryFilterBar({
             className="mt-1 min-h-11 w-full rounded-xl border border-slate-700 bg-slate-950 py-2.5 pl-9 pr-3 text-sm text-white outline-none focus:border-emerald-400/70"
           />
         </label>
-        <p className="text-xs text-slate-400 lg:pb-2">
+        <p className="text-xs text-slate-400 xl:pb-2">
           <span className="font-mono font-bold text-slate-200">{resultCount}</span> items
         </p>
       </div>
@@ -117,7 +123,7 @@ export function InventoryFilterBar({
       <button
         type="button"
         onClick={() => setMobileFiltersOpen((open) => !open)}
-        className="mt-3 flex min-h-11 w-full items-center justify-between rounded-xl border border-slate-700/90 bg-slate-950/80 px-3 text-xs font-bold text-slate-200 lg:hidden"
+        className="mt-3 flex min-h-11 w-full items-center justify-between rounded-xl border border-slate-700/90 bg-slate-950/80 px-3 text-xs font-bold text-slate-200 xl:hidden"
         aria-expanded={mobileFiltersOpen}
       >
         <span className="inline-flex items-center gap-2">
@@ -137,23 +143,18 @@ export function InventoryFilterBar({
 
       <div
         className={cn(
-          'mt-4 grid gap-3 sm:grid-cols-2',
-          mobileFiltersOpen ? 'grid' : 'hidden',
-          'lg:grid lg:grid-cols-6'
+          'mt-3 gap-3',
+          mobileFiltersOpen ? 'grid sm:grid-cols-2' : 'hidden',
+          'xl:mt-4 xl:flex xl:flex-wrap xl:items-end'
         )}
       >
-        {filterFields}
-      </div>
-
-      <div className="mt-3 flex justify-end">
+        <div className="grid gap-3 sm:grid-cols-2 xl:flex xl:flex-1 xl:flex-wrap xl:gap-3 xl:[&>label]:min-w-[8.5rem] xl:[&>label]:max-w-[10rem] xl:[&>label]:flex-1">
+          {filterFields}
+        </div>
         <button
           type="button"
-          onClick={() => {
-            onChange(EMPTY_INVENTORY_FILTERS);
-            onReset();
-            setMobileFiltersOpen(false);
-          }}
-          className="inline-flex min-h-11 items-center gap-1.5 rounded-lg px-3 text-xs font-bold text-slate-400 transition hover:bg-slate-800 hover:text-slate-200"
+          onClick={resetFilters}
+          className="inline-flex min-h-11 shrink-0 items-center justify-center gap-1.5 self-end rounded-lg px-3 text-xs font-bold text-slate-400 transition hover:bg-slate-800 hover:text-slate-200 xl:ml-auto"
         >
           <RotateCcw className="h-3.5 w-3.5" />
           Reset filters
@@ -176,7 +177,9 @@ function FilterSelect({
 }) {
   return (
     <label className="block min-w-0">
-      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">{label}</span>
+      <span className="mb-0.5 block text-[10px] font-bold uppercase tracking-wider text-slate-500">
+        {label}
+      </span>
       <select value={value} onChange={(e) => onChange(e.target.value)} className={SELECT}>
         {options.map((opt) => (
           <option key={opt} value={opt}>

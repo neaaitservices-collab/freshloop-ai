@@ -3,7 +3,7 @@
 import React from 'react';
 import { AdminMetricGrid } from '@/components/features/admin/AdminStats';
 import { RescueOutcomeChart } from '@/components/features/admin/RescueOutcomeChart';
-import { WasteVsGoalChart } from '@/components/features/admin/WasteVsGoalChart';
+import { WasteSemaphoreCard } from '@/components/features/admin/WasteSemaphoreCard';
 import { AdminActionCenter } from '@/components/features/admin/AdminActionCenter';
 import { DashboardCard } from '@/components/features/admin/DashboardCard';
 import type { StoreStats } from '@/lib/domains/stats/storeStatsTypes';
@@ -23,7 +23,6 @@ export function AdminDashboard({
   showActionLoadingPlaceholders?: boolean;
   className?: string;
 }) {
-  const goalPct = wasteKpi?.targetWastePct ?? stats?.targetWastePct ?? 2.5;
   const outcomeDays = stats?.outcomeDays ?? [];
 
   return (
@@ -56,11 +55,12 @@ export function AdminDashboard({
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-12 lg:gap-6">
         <div className="lg:col-span-5">
-          {stats ? (
-            <WasteVsGoalChart days={outcomeDays} goalPct={goalPct} className="min-h-[360px]" />
-          ) : (
-            <DashboardCard className="min-h-[360px] animate-pulse bg-slate-900/40" aria-busy />
-          )}
+          <WasteSemaphoreCard
+            wasteKpi={wasteKpi}
+            goalPct={stats?.targetWastePct ?? wasteKpi?.targetWastePct}
+            refreshing={refreshing}
+            className="min-h-[360px]"
+          />
         </div>
         <div className="lg:col-span-7">
           {stats ? (
