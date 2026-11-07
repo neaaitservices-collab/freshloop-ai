@@ -70,8 +70,9 @@ export function AdminInventoryWorkspace({
             setLevels(json.levels);
           }
         })
-        .catch(() => {
+        .catch((err: unknown) => {
           setLevelsRefreshError('Network error — catalog may be out of date.');
+          console.error('[freshloop] AdminInventoryWorkspace refresh levels', err);
         });
     };
 
@@ -139,8 +140,9 @@ export function AdminInventoryWorkspace({
                   setLevels(json.levels);
                 }
               })
-              .catch(() => {
+              .catch((err: unknown) => {
                 setLevelsRefreshError('Network error — catalog may be out of date.');
+                console.error('[freshloop] AdminInventoryWorkspace merge refresh', err);
               });
           }}
         />

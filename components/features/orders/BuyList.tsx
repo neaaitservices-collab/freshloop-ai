@@ -95,13 +95,12 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
 
   useEffect(() => {
     const syncFromServer = () => {
-      void fetch('/api/orders/buy-list', { cache: 'no-store' })
+      void fetch('/api/inventory/levels', { cache: 'no-store' })
         .then(async (response) => {
           const json = (await response.json()) as {
             success?: boolean;
             levels?: StockLevel[];
             error?: string;
-            forecastDrivenCount?: number;
           };
           if (!response.ok || !json.success) {
             setLevelSyncWarning(json.error ?? 'Could not sync order list.');

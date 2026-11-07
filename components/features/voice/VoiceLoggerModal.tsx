@@ -117,7 +117,6 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
   const [draftItems, setDraftItems] = useState<EditableVoiceDraftItem[]>([]);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [catalogLoadWarning, setCatalogLoadWarning] = useState<string | null>(null);
-  const [savedOffline, setSavedOffline] = useState(false);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);

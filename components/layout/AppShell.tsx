@@ -21,7 +21,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex min-h-screen flex-col bg-slate-950 text-slate-100 md:flex-row">
       <Navigation />
-      <div className="flex min-w-0 flex-1 flex-col bg-gradient-to-br from-slate-950 via-slate-950 to-slate-900/40 pb-[var(--freshloop-mobile-nav-h)] md:pb-0">
+      <div className="flex min-w-0 flex-1 flex-col pb-[var(--freshloop-mobile-nav-h)] md:pb-0">
         {children}
       </div>
     </div>

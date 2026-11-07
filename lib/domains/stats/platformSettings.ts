@@ -1,6 +1,5 @@
 import { prisma } from '@/lib/domains/inventory/ledger';
 import { invalidateInventoryCaches } from '@/lib/domains/inventory/inventoryCache';
-import { invalidateStoreStats } from '@/lib/domains/stats/storeStats';
 import {
   findLatestStoreSetting,
   storeSettingSafeSelect,
