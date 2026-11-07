@@ -34,6 +34,19 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Verify database secrets
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DIRECT_URL: ${{ secrets.DIRECT_URL }}
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::error::Add GitHub secret DATABASE_URL (Supabase pooler, port 6543). See docs/DEPLOYMENT.md."
+            exit 1
+          fi
+          if [ -z "$DIRECT_URL" ]; then
+            echo "::warning::DIRECT_URL secret is empty; migrate script will derive a direct URL from DATABASE_URL."
+          fi
+
       - name: Apply migrations
         run: npm run db:push:prod
         env:
