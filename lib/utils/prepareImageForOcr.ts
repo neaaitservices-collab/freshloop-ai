@@ -1,12 +1,47 @@
+export const OCR_IMAGE_MAX_EDGE = 1200;
+export const OCR_IMAGE_JPEG_QUALITY = 0.78;
+
+function encodeCanvasForOcr(
+  canvas: HTMLCanvasElement,
+  quality: number
+): { dataUrl: string; mimeType: string } {
+  const webp = canvas.toDataURL('image/webp', quality);
+  if (webp.startsWith('data:image/webp')) {
+    return { dataUrl: webp, mimeType: 'image/webp' };
+  }
+  return { dataUrl: canvas.toDataURL('image/jpeg', quality), mimeType: 'image/jpeg' };
+}
+
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      if (typeof reader.result === 'string') resolve(reader.result);
+      else reject(new Error('Could not read the image file.'));
+    };
+    reader.onerror = () => reject(new Error('Could not read the image file.'));
+    reader.readAsDataURL(file);
+  });
+}
+
+/** Compress invoice / supplier-sheet photos before OCR API calls. */
+export async function prepareImageFileForOcr(
+  file: File,
+  options?: { maxEdge?: number; quality?: number; maxBase64Chars?: number }
+): Promise<{ dataUrl: string; mimeType: string; previewUrl: string }> {
+  const raw = await readFileAsDataUrl(file);
+  const prepared = await prepareImageDataUrlForOcr(raw, options);
+  return { ...prepared, previewUrl: prepared.dataUrl };
+}
+
 /** Downscale and re-encode invoice photos so OCR requests stay under serverless body limits. */
 export async function prepareImageDataUrlForOcr(
   dataUrl: string,
   options?: { maxEdge?: number; quality?: number; maxBase64Chars?: number }
 ): Promise<{ dataUrl: string; mimeType: string }> {
-  /** ~1400px long edge + 0.72 JPEG is enough for line-item OCR and reduces upload + token work. */
-  const maxEdge = options?.maxEdge ?? 1400;
-  const quality = options?.quality ?? 0.72;
-  const maxBase64Chars = options?.maxBase64Chars ?? 2_400_000;
+  const maxEdge = options?.maxEdge ?? OCR_IMAGE_MAX_EDGE;
+  const quality = options?.quality ?? OCR_IMAGE_JPEG_QUALITY;
+  const maxBase64Chars = options?.maxBase64Chars ?? 1_800_000;
 
   const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
   if (!match) {
@@ -16,7 +51,9 @@ export async function prepareImageDataUrlForOcr(
   const mimeType = match[1];
   const base64Payload = match[2];
   const needsTranscode = /heic|heif/i.test(mimeType);
-  if (!needsTranscode && base64Payload.length <= maxBase64Chars && mimeType === 'image/jpeg') {
+  const acceptableMime =
+    mimeType === 'image/jpeg' || mimeType === 'image/webp' || mimeType === 'image/jpg';
+  if (!needsTranscode && base64Payload.length <= maxBase64Chars && acceptableMime) {
     return { dataUrl, mimeType };
   }
 
@@ -42,8 +79,7 @@ export async function prepareImageDataUrlForOcr(
         return;
       }
       ctx.drawImage(img, 0, 0, width, height);
-      const jpegUrl = canvas.toDataURL('image/jpeg', quality);
-      resolve({ dataUrl: jpegUrl, mimeType: 'image/jpeg' });
+      resolve(encodeCanvasForOcr(canvas, quality));
     };
     img.onerror = () => reject(new Error('Could not prepare the photo for upload. Try another image.'));
     img.src = dataUrl;

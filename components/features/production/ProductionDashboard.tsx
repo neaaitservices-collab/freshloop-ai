@@ -19,9 +19,13 @@ import {
   type RecipeCatalogCategory,
 } from '@/components/features/production/productionDashboardTypes';
 import { PageMain } from '@/components/ui/layout';
-import { InvoiceUploadModal } from '@/components/features/invoices/InvoiceUploadModal';
 import { PRODUCTION_DELI_LABEL_PRINT_ENABLED } from '@/components/features/production/productionFeatureFlags';
-import { DeliLabelModal } from '@/components/features/recipes/DeliLabelModal';
+import {
+  LazyDeliLabelModal,
+  LazyInvoiceUploadModal,
+  LazyManualRecipeCreatorModal,
+  LazyRecipeProductionModal,
+} from '@/components/modals/lazyModals';
 import { useProductionWasteKpi } from '@/hooks/use-production-waste-kpi';
 import { RecipeFusionResult } from '@/lib/types';
 import { mapDbRecipeToFusionResult } from '@/lib/domains/manufacturing/mapDbRecipeToFusion';
@@ -32,11 +36,7 @@ import {
   FRESHLOOP_SETTINGS_UPDATED,
   readSettingsUpdatedEvent,
 } from '@/lib/domains/stats/settingsEvents';
-import {
-  RecipeProductionModal,
-  type ProductionBatchExecutedSummary,
-} from '@/components/features/recipes/RecipeProductionModal';
-import { ManualRecipeCreatorModal } from '@/components/features/recipes/ManualRecipeCreatorModal';
+import type { ProductionBatchExecutedSummary } from '@/components/features/recipes/RecipeProductionModal';
 import { Toast } from '@/components/ui/Toast';
 import {
   type ProductionMobileSection,
@@ -291,7 +291,7 @@ function ProductionDashboardContent() {
         </div>
       </PageMain>
 
-      <InvoiceUploadModal
+      <LazyInvoiceUploadModal
         isOpen={isInvoiceModalOpen}
         onClose={() => setIsInvoiceModalOpen(false)}
         onInvoiceImported={(result: InvoiceOcrResult) => {
@@ -302,7 +302,7 @@ function ProductionDashboardContent() {
       />
 
       {PRODUCTION_DELI_LABEL_PRINT_ENABLED ? (
-        <DeliLabelModal
+        <LazyDeliLabelModal
           isOpen={!!selectedDeliRecipe}
           onClose={() => {
             const next = deliPrintQueueRef.current.shift();
@@ -316,7 +316,7 @@ function ProductionDashboardContent() {
         />
       ) : null}
 
-      <ManualRecipeCreatorModal
+      <LazyManualRecipeCreatorModal
         isOpen={isCreateRecipeModalOpen}
         editRecipeId={editRecipeId}
         onClose={() => {
@@ -333,7 +333,7 @@ function ProductionDashboardContent() {
         }}
       />
 
-      <RecipeProductionModal
+      <LazyRecipeProductionModal
         isOpen={productionOpen}
         initialRecipeId={productionRecipeId}
         onClose={() => setProductionOpen(false)}

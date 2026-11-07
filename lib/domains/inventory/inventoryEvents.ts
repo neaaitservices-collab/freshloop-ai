@@ -47,6 +47,9 @@ export function subscribeInventoryUpdated(
 
   return () => {
     window.removeEventListener('freshloop-inventory-updated', onWindow);
-    channel?.close();
+    if (channel) {
+      channel.onmessage = null;
+      channel.close();
+    }
   };
 }

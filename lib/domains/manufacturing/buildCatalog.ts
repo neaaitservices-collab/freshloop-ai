@@ -1,6 +1,7 @@
+import type { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/domains/inventory/ledger';
 import { rememberLedgerRead } from '@/lib/domains/inventory/ledgerCache';
-import { getStockLevels } from '@/lib/domains/inventory/stock';
+import { getStockLevels, type StockLevel } from '@/lib/domains/inventory/stock';
 import {
   FALLBACK_RECIPES,
   type FallbackRecipeCatalogEntry,
@@ -10,8 +11,22 @@ import { findLatestStoreSetting } from '@/lib/domains/stats/storeSettingSelect';
 
 type IngredientSnapshot = { prepStock: number; unitCost: number };
 
-async function loadIngredientSnapshots(): Promise<Map<string, IngredientSnapshot>> {
-  const levels = await getStockLevels();
+export type RecipeWithBom = Prisma.RecipeGetPayload<{
+  include: {
+    outputProduct: true;
+    bomLines: { include: { ingredientProduct: true } };
+  };
+}>;
+
+export type BuildManufacturingCatalogOptions = {
+  ingredientSnapshots?: Map<string, IngredientSnapshot>;
+  /** Active BOM rows — skips a second Prisma recipe round-trip when provided. */
+  recipeSource?: RecipeWithBom[];
+};
+
+export function ingredientSnapshotsFromLevels(
+  levels: StockLevel[]
+): Map<string, IngredientSnapshot> {
   const map = new Map<string, IngredientSnapshot>();
   for (const row of levels) {
     map.set(row.productId, {
@@ -20,6 +35,11 @@ async function loadIngredientSnapshots(): Promise<Map<string, IngredientSnapshot
     });
   }
   return map;
+}
+
+async function loadIngredientSnapshots(): Promise<Map<string, IngredientSnapshot>> {
+  const levels = await getStockLevels();
+  return ingredientSnapshotsFromLevels(levels);
 }
 
 function lineFromSnapshot(
@@ -79,26 +99,13 @@ function mapFallbackToKitchenRecipe(
   };
 }
 
-async function buildManufacturingRecipeCatalogUncached(): Promise<KitchenRecipeDefinition[]> {
-  const [snapshots, storeSetting] = await Promise.all([
-    loadIngredientSnapshots(),
-    findLatestStoreSetting().catch(() => null),
-  ]);
-  const defaultLaborRate = storeSetting?.defaultLaborRatePerHour ?? 17.6;
-
-  const byPrimaryId = new Map<string, KitchenRecipeDefinition>();
-
-  try {
-    const dbRecipes = await prisma.recipe.findMany({
-      where: { status: { not: 'COMPLETED' } },
-      include: {
-        outputProduct: true,
-        bomLines: { include: { ingredientProduct: true } },
-      },
-      orderBy: { name: 'asc' },
-    });
-
-    for (const dbRecipe of dbRecipes) {
+function mapDbRecipesToKitchenDefinitions(
+  dbRecipes: RecipeWithBom[],
+  snapshots: Map<string, IngredientSnapshot>,
+  defaultLaborRate: number,
+  byPrimaryId: Map<string, KitchenRecipeDefinition>
+): void {
+  for (const dbRecipe of dbRecipes) {
       if (dbRecipe.bomLines.length === 0) continue;
 
       const bom = dbRecipe.bomLines.map((bi) =>
@@ -128,9 +135,43 @@ async function buildManufacturingRecipeCatalogUncached(): Promise<KitchenRecipeD
         packagingCostPerUnit: Number(dbRecipe.packagingCostPerUnit ?? 0),
         bom,
       });
+  }
+}
+
+async function buildManufacturingRecipeCatalogUncached(
+  options?: BuildManufacturingCatalogOptions
+): Promise<KitchenRecipeDefinition[]> {
+  const [snapshots, storeSetting] = await Promise.all([
+    options?.ingredientSnapshots
+      ? Promise.resolve(options.ingredientSnapshots)
+      : loadIngredientSnapshots(),
+    findLatestStoreSetting().catch(() => null),
+  ]);
+  const defaultLaborRate = storeSetting?.defaultLaborRatePerHour ?? 17.6;
+
+  const byPrimaryId = new Map<string, KitchenRecipeDefinition>();
+
+  if (options?.recipeSource) {
+    mapDbRecipesToKitchenDefinitions(
+      options.recipeSource,
+      snapshots,
+      defaultLaborRate,
+      byPrimaryId
+    );
+  } else {
+    try {
+      const dbRecipes = await prisma.recipe.findMany({
+        where: { status: { not: 'COMPLETED' } },
+        include: {
+          outputProduct: true,
+          bomLines: { include: { ingredientProduct: true } },
+        },
+        orderBy: { name: 'asc' },
+      });
+      mapDbRecipesToKitchenDefinitions(dbRecipes, snapshots, defaultLaborRate, byPrimaryId);
+    } catch {
+      /* DB offline */
     }
-  } catch {
-    /* DB offline */
   }
 
   if (byPrimaryId.size === 0) {
@@ -153,11 +194,16 @@ const catalogCache = new Map<
 
 const CATALOG_CACHE_MS = 60_000;
 
-export function buildManufacturingRecipeCatalog(): Promise<KitchenRecipeDefinition[]> {
+export function buildManufacturingRecipeCatalog(
+  options?: BuildManufacturingCatalogOptions
+): Promise<KitchenRecipeDefinition[]> {
+  if (options?.ingredientSnapshots || options?.recipeSource) {
+    return buildManufacturingRecipeCatalogUncached(options);
+  }
   return rememberLedgerRead(
     catalogCache,
     'manufacturing-recipes',
     CATALOG_CACHE_MS,
-    buildManufacturingRecipeCatalogUncached
+    () => buildManufacturingRecipeCatalogUncached()
   );
 }
