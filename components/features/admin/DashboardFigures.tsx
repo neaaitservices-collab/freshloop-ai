@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useState } from 'react';
 import { AdminDashboard } from '@/components/features/admin/AdminDashboard';
-import { DepartmentAlertsChart } from '@/components/features/admin/DepartmentAlertsChart';
+import { LazyDepartmentAlertsChart } from '@/components/charts/lazyCharts';
 import { DashboardCard } from '@/components/features/admin/DashboardCard';
 import type { StoreStats } from '@/lib/domains/stats/storeStatsTypes';
 import type { WasteKpiReport } from '@/lib/domains/inventory/ledger';
@@ -143,7 +143,7 @@ export function DashboardFigures({
           <h2 className="text-sm font-black text-slate-100">Alerts by department</h2>
           <p className="mt-1 text-xs text-slate-400">SKUs below par and short-dated by department.</p>
           <div className="mt-4">
-            <DepartmentAlertsChart data={stats.departmentAlerts} compact />
+            <LazyDepartmentAlertsChart data={stats.departmentAlerts} compact />
           </div>
         </DashboardCard>
       ) : null}

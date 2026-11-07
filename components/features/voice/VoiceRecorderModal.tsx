@@ -1,8 +1,10 @@
 'use client';
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { VoiceLoggerResult } from '@/lib/types';
 import { DepartmentBadge } from '@/components/ui/DepartmentBadge';
+import { PushToTalkRecorder } from '@/lib/features/voiceCapture';
+import { postVoiceLoggerParse } from '@/lib/features/voiceLoggerClient';
 import { Mic, Square, Sparkles, X, AlertOctagon, Volume2, ArrowRightLeft, Tag, Trash2, Loader2 } from 'lucide-react';
 import { ModalBody, ModalFooter, ModalHeader, ModalShell } from '@/components/ui/layout';
 
@@ -18,63 +20,92 @@ export const VoiceRecorderModal: React.FC<VoiceRecorderModalProps> = ({
   onVoiceLogged
 }) => {
   const [isRecording, setIsRecording] = useState(false);
+  const [toggleRecordMode, setToggleRecordMode] = useState(false);
   const [spokenText, setSpokenText] = useState('Logged 10 lbs bruised apples and 4L heavy cream');
   const [loading, setLoading] = useState(false);
+  const [processingAudio, setProcessingAudio] = useState(false);
   const [voiceResult, setVoiceResult] = useState<VoiceLoggerResult | null>(null);
   const [processError, setProcessError] = useState<string | null>(null);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioChunksRef = useRef<Blob[]>([]);
+  const [lastAudioBlob, setLastAudioBlob] = useState<Blob | null>(null);
 
-  const startRecording = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(stream);
-      mediaRecorderRef.current = mediaRecorder;
-      audioChunksRef.current = [];
+  const pttRecorderRef = useRef<PushToTalkRecorder | null>(null);
+  const holdActiveRef = useRef(false);
 
-      mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          audioChunksRef.current.push(event.data);
-        }
-      };
-
-      mediaRecorder.onstop = async () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-        const reader = new FileReader();
-        reader.onloadend = () => {
-          const base64 = reader.result as string;
-          handleProcessVoice(base64);
-        };
-        reader.readAsDataURL(audioBlob);
-      };
-
-      mediaRecorder.start();
-      setIsRecording(true);
-    } catch (err) {
-      console.warn('Microphone access unavailable, defaulting to text floor log:', err);
+  useEffect(() => {
+    if (!isOpen) {
+      pttRecorderRef.current?.cancel();
+      pttRecorderRef.current = null;
       setIsRecording(false);
     }
-  };
+  }, [isOpen]);
 
-  const stopRecording = () => {
-    if (mediaRecorderRef.current && isRecording) {
-      mediaRecorderRef.current.stop();
-      setIsRecording(false);
+  if (!isOpen) return null;
+
+  const ensureRecorder = () => {
+    if (!pttRecorderRef.current) {
+      pttRecorderRef.current = new PushToTalkRecorder();
     }
+    return pttRecorderRef.current;
   };
 
-  const handleProcessVoice = async (audioBase64?: string) => {
-    setLoading(true);
+  const beginRecording = async () => {
+    if (loading) return;
     setProcessError(null);
     try {
-      const res = await fetch('/api/voice-logger', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          audioBase64,
-          spokenText: spokenText,
-          autoSave: true
-        })
+      await ensureRecorder().start();
+      setIsRecording(true);
+    } catch (err) {
+      console.warn('Microphone access unavailable:', err);
+      setIsRecording(false);
+      setProcessError('Microphone unavailable. Type your log below or check browser permissions.');
+    }
+  };
+
+  const finishRecording = async (autoParse: boolean) => {
+    const recorder = pttRecorderRef.current;
+    if (!recorder?.active && !isRecording) return;
+    setIsRecording(false);
+    const blob = await recorder?.stop().catch(() => null);
+    if (blob && blob.size > 0) {
+      setLastAudioBlob(blob);
+      if (autoParse) void handleProcessVoice(blob);
+    } else if (autoParse) {
+      setProcessError('No audio captured. Hold the mic button while speaking.');
+    }
+  };
+
+  const handleMicPointerDown = (event: React.PointerEvent<HTMLButtonElement>) => {
+    if (toggleRecordMode || loading) return;
+    event.preventDefault();
+    holdActiveRef.current = true;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    void beginRecording();
+  };
+
+  const handleMicPointerUp = (event: React.PointerEvent<HTMLButtonElement>) => {
+    if (toggleRecordMode || !holdActiveRef.current) return;
+    holdActiveRef.current = false;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    void finishRecording(true);
+  };
+
+  const handleMicClick = () => {
+    if (!toggleRecordMode) return;
+    if (isRecording) void finishRecording(true);
+    else void beginRecording();
+  };
+
+  const handleProcessVoice = async (audioBlob?: Blob | null) => {
+    const blob = audioBlob ?? lastAudioBlob;
+    setLoading(true);
+    setProcessingAudio(Boolean(blob && blob.size > 0));
+    setProcessError(null);
+    try {
+      const res = await postVoiceLoggerParse({
+        audioBlob: blob,
+        spokenText,
       });
 
       const json = await res.json();
@@ -93,6 +124,7 @@ export const VoiceRecorderModal: React.FC<VoiceRecorderModalProps> = ({
       setProcessError('Could not reach the server. Check your connection and try again.');
     } finally {
       setLoading(false);
+      setProcessingAudio(false);
     }
   };
 
@@ -110,8 +142,8 @@ export const VoiceRecorderModal: React.FC<VoiceRecorderModalProps> = ({
               <Mic className="w-4 h-4 sm:w-5 sm:h-5" />
             </div>
             <div>
-              <h3 className="font-bold text-base sm:text-lg text-white">Ambient Voice Floor Logger</h3>
-              <p className="text-[10px] sm:text-xs text-zinc-400">Hands-Free Production Transfer & Spoilage Parser</p>
+              <h3 className="font-bold text-base sm:text-lg text-white">Voice Floor Note</h3>
+              <p className="text-[10px] sm:text-xs text-zinc-400">Push-to-talk • Whisper transcript • LLM parse</p>
             </div>
           </div>
 
@@ -134,15 +166,24 @@ export const VoiceRecorderModal: React.FC<VoiceRecorderModalProps> = ({
           ) : null}
           {!voiceResult ? (
             <div className="space-y-6">
-              {/* Mic Graphic & Pulse */}
               <div className="flex flex-col items-center justify-center py-8 px-4 bg-zinc-950/50 border border-zinc-800/80 rounded-2xl text-center">
                 <div className="relative mb-6">
                   {isRecording && (
                     <div className="absolute inset-0 rounded-full bg-teal-500/30 animate-ping" />
                   )}
                   <button
-                    onClick={isRecording ? stopRecording : startRecording}
-                    className={`relative z-10 w-20 h-20 rounded-full flex items-center justify-center shadow-xl transition-all ${
+                    type="button"
+                    aria-pressed={isRecording}
+                    aria-busy={loading}
+                    disabled={loading}
+                    onPointerDown={handleMicPointerDown}
+                    onPointerUp={handleMicPointerUp}
+                    onPointerCancel={handleMicPointerUp}
+                    onPointerLeave={(e) => {
+                      if (holdActiveRef.current) handleMicPointerUp(e);
+                    }}
+                    onClick={handleMicClick}
+                    className={`relative z-10 flex h-20 w-20 min-h-12 min-w-12 touch-none select-none items-center justify-center rounded-full shadow-xl transition-all ${
                       isRecording
                         ? 'bg-rose-500 hover:bg-rose-400 text-white shadow-rose-500/30 scale-105'
                         : 'bg-gradient-to-tr from-teal-500 to-emerald-400 text-zinc-950 shadow-teal-500/30 hover:scale-105'
@@ -153,18 +194,27 @@ export const VoiceRecorderModal: React.FC<VoiceRecorderModalProps> = ({
                 </div>
 
                 <p className="font-bold text-sm text-white">
-                  {isRecording ? 'Listening to floor voice transfer…' : 'Click mic to record spoken floor log'}
+                  {loading
+                    ? processingAudio
+                      ? 'Transcribing with Whisper and parsing…'
+                      : 'Parsing spoken text…'
+                    : isRecording
+                      ? 'Recording… release to send'
+                      : 'Hold Record Voice Note or switch to tap mode'}
                 </p>
-                <p className="text-zinc-500 text-xs mt-1">
-                  Example: "Logged 10 lbs bruised apples and 4L heavy cream from Walk-in Cooler B"
-                </p>
+                <button
+                  type="button"
+                  onClick={() => setToggleRecordMode((v) => !v)}
+                  className="mt-2 text-[10px] font-bold uppercase tracking-wider text-teal-400/90 hover:text-teal-300"
+                >
+                  Mode: {toggleRecordMode ? 'Tap to start/stop' : 'Hold to talk (recommended)'}
+                </button>
               </div>
 
-              {/* Or Direct Spoken Input Text */}
               <div className="space-y-2">
                 <label className="font-semibold text-zinc-400 text-xs flex items-center justify-between">
-                  <span>Spoken Transfer Text / Quick Speech Simulator</span>
-                  <span className="text-teal-400 font-mono text-[10px]">Gemini Audio Multimodal</span>
+                  <span>Fallback typed log (no mic)</span>
+                  <span className="text-teal-400 font-mono text-[10px]">Text-only parse</span>
                 </label>
                 <input
                   type="text"
@@ -176,15 +226,12 @@ export const VoiceRecorderModal: React.FC<VoiceRecorderModalProps> = ({
               </div>
             </div>
           ) : (
-            /* Parsed Voice Result */
             <div className="space-y-5">
-              {/* Transcript & Action */}
               <div className="p-4 rounded-2xl bg-zinc-950 border border-zinc-800 space-y-3">
                 <div className="flex items-center justify-between">
                   <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider flex items-center gap-1.5">
                     <Volume2 className="w-3.5 h-3.5 text-teal-400" /> Audio Transcript
                   </span>
-                  {/* Action Badge */}
                   {voiceResult.targetAction === 'KITCHEN_RESCUE' && (
                     <span className="px-3 py-1 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-500/40 text-xs font-extrabold flex items-center gap-1">
                       <ArrowRightLeft className="w-3.5 h-3.5" /> Target Action: KITCHEN RESCUE
@@ -203,17 +250,16 @@ export const VoiceRecorderModal: React.FC<VoiceRecorderModalProps> = ({
                 </div>
 
                 <p className="text-sm font-semibold text-white italic">
-                  "{voiceResult.transcript}"
+                  &ldquo;{voiceResult.transcript}&rdquo;
                 </p>
-                
-                {voiceResult.kitchenRescueNotes && (
+
+                {voiceResult.kitchenRescueNotes ? (
                   <p className="text-xs text-teal-300/90 bg-teal-950/40 p-2.5 rounded-xl border border-teal-500/30">
-                    💡 <strong>Production note:</strong> {voiceResult.kitchenRescueNotes}
+                    Production note: {voiceResult.kitchenRescueNotes}
                   </p>
-                )}
+                ) : null}
               </div>
 
-              {/* Parsed Items List */}
               <div>
                 <h5 className="font-bold text-zinc-400 uppercase text-[10px] tracking-wider mb-2">Parsed Spoken Items ({voiceResult.parsedItems.length})</h5>
                 <div className="space-y-2">
@@ -227,12 +273,12 @@ export const VoiceRecorderModal: React.FC<VoiceRecorderModalProps> = ({
                         </div>
                       </div>
 
-                      {item.allergenWarnings.length > 0 && (
+                      {item.allergenWarnings.length > 0 ? (
                         <div className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-rose-950/80 border border-rose-500/30 text-rose-300 text-[10px] font-bold">
                           <AlertOctagon className="w-3 h-3 text-rose-400" />
                           <span>Allergen: {item.allergenWarnings.join(', ')}</span>
                         </div>
-                      )}
+                      ) : null}
                     </div>
                   ))}
                 </div>
@@ -244,7 +290,10 @@ export const VoiceRecorderModal: React.FC<VoiceRecorderModalProps> = ({
         <ModalFooter className="flex items-center justify-between border-zinc-800 bg-zinc-950/80 p-4">
           <button
             type="button"
-            onClick={() => setVoiceResult(null)}
+            onClick={() => {
+              setVoiceResult(null);
+              setLastAudioBlob(null);
+            }}
             className="inline-flex min-h-11 items-center rounded-xl px-4 py-2 text-xs font-semibold text-zinc-400 hover:text-zinc-200"
           >
             {voiceResult ? 'Record Another Log' : 'Cancel'}
@@ -253,19 +302,19 @@ export const VoiceRecorderModal: React.FC<VoiceRecorderModalProps> = ({
           {!voiceResult ? (
             <button
               type="button"
-              onClick={() => handleProcessVoice()}
+              onClick={() => void handleProcessVoice()}
               disabled={loading}
               className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-gradient-to-r from-teal-500 to-emerald-400 px-5 py-2.5 text-xs font-bold text-zinc-950 shadow-lg shadow-teal-500/25 transition-all hover:from-teal-400 hover:to-emerald-300 sm:min-h-12"
             >
               {loading ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>Parsing Audio with Gemini...</span>
+                  <span>{processingAudio ? 'Whisper + parser…' : 'Parsing…'}</span>
                 </>
               ) : (
                 <>
                   <Sparkles className="w-4 h-4 fill-zinc-950" />
-                  <span>Parse Spoken Floor Log</span>
+                  <span>Parse typed log</span>
                 </>
               )}
             </button>

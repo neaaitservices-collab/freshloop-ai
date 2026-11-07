@@ -1,7 +1,11 @@
 import { calculateRealTimeWastePct, prisma, type WasteKpiReport } from '@/lib/domains/inventory/ledger';
 import { getStockLevelsWithPosSales, type StockLevel } from '@/lib/domains/inventory/stock';
 import { filterLevelsWithAnyStock } from '@/lib/domains/inventory/subInventoryView';
-import { buildManufacturingRecipeCatalog } from '@/lib/domains/manufacturing/buildCatalog';
+import {
+  buildManufacturingRecipeCatalog,
+  ingredientSnapshotsFromLevels,
+  type RecipeWithBom,
+} from '@/lib/domains/manufacturing/buildCatalog';
 import {
   mapDbRecipeToFusionResult,
   type DbRecipeForCard,
@@ -23,7 +27,7 @@ export async function loadProductionBootstrapData(): Promise<ProductionBootstrap
   const storeSettings = await getPlatformSettings();
   const salesDays = storeSettings.pullSensitivityDays;
 
-  const [dbRecipes, manufacturingRecipes, wasteKpi, rawLevels] = await Promise.all([
+  const [dbRecipes, wasteKpi, rawLevels] = await Promise.all([
     prisma.recipe.findMany({
       include: {
         outputProduct: true,
@@ -35,10 +39,16 @@ export async function loadProductionBootstrapData(): Promise<ProductionBootstrap
       },
       orderBy: { createdAt: 'desc' },
     }),
-    buildManufacturingRecipeCatalog(),
     calculateRealTimeWastePct(),
     getStockLevelsWithPosSales(salesDays),
   ]);
+
+  const snapshots = ingredientSnapshotsFromLevels(rawLevels);
+  const activeBomRecipes = dbRecipes.filter((r) => r.status !== 'COMPLETED') as RecipeWithBom[];
+  const manufacturingRecipes = await buildManufacturingRecipeCatalog({
+    ingredientSnapshots: snapshots,
+    recipeSource: activeBomRecipes,
+  });
 
   const recipes = dbRecipes.map((r) => mapDbRecipeToFusionResult(r as DbRecipeForCard));
   const levelsSummary = filterLevelsWithAnyStock(rawLevels);

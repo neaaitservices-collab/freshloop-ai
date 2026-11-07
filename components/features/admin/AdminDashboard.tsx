@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { AdminMetricGrid } from '@/components/features/admin/AdminStats';
-import { RescueOutcomeChart } from '@/components/features/admin/RescueOutcomeChart';
+import { LazyRescueOutcomeChart } from '@/components/charts/lazyCharts';
 import { WasteSemaphoreCard } from '@/components/features/admin/WasteSemaphoreCard';
 import { AdminActionCenter } from '@/components/features/admin/AdminActionCenter';
 import { DashboardCard } from '@/components/features/admin/DashboardCard';
@@ -64,7 +64,7 @@ export function AdminDashboard({
         </div>
         <div className="lg:col-span-7">
           {stats ? (
-            <RescueOutcomeChart data={outcomeDays} tall variant="dashboard" />
+            <LazyRescueOutcomeChart data={outcomeDays} tall variant="dashboard" />
           ) : (
             <DashboardCard className="min-h-[360px] animate-pulse bg-slate-900/40" aria-busy />
           )}

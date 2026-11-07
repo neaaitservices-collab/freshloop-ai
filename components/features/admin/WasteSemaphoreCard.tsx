@@ -62,7 +62,7 @@ export function WasteSemaphoreCard({
   const displayPct =
     wastePct != null
       ? formatRatioDisplay(wastePct)
-      : implied != null && (salesShort || sales >= MIN_GROSS_SALES_FOR_WASTE_RATIO)
+      : implied != null && !salesShort
         ? formatRatioDisplay(implied)
         : wastePct === 0
           ? '0.0%'

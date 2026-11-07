@@ -5,7 +5,7 @@ import { InvoiceOcrResult } from '@/lib/types';
 import { useRole } from '@/components/auth/RoleProvider';
 import { isManager } from '@/lib/utils/roles';
 import { DepartmentBadge } from '@/components/ui/DepartmentBadge';
-import { prepareImageDataUrlForOcr } from '@/lib/utils/prepareImageForOcr';
+import { prepareImageDataUrlForOcr, prepareImageFileForOcr } from '@/lib/utils/prepareImageForOcr';
 import { AlertTriangle, ArrowRight, Camera, CheckCircle2, FileText, ImagePlus, Loader2, Sparkles, Upload, X } from 'lucide-react';
 import { ModalBody, ModalFooter, ModalHeader, ModalShell, ScrollTable } from '@/components/ui/layout';
 import { SupplierSelect } from '@/components/features/suppliers/SupplierSelect';
@@ -118,20 +118,27 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
   }, [onSupplierChange, selectedFile]);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      const file = e.target.files[0];
-      setSelectedFile(file);
-      setScanError(null);
-      setOcrResult(null);
-      setManagerApprovedCosts(false);
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        const dataUrl = reader.result as string;
-        setPreviewUrl(dataUrl);
-        void runInvoiceScan(false, dataUrl);
-      };
-      reader.readAsDataURL(file);
-    }
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setSelectedFile(file);
+    setScanError(null);
+    setOcrResult(null);
+    setManagerApprovedCosts(false);
+    setLoading(true);
+    setLoadingPhase('prepare');
+    void prepareImageFileForOcr(file)
+      .then((prepared) => {
+        setPreviewUrl(prepared.previewUrl);
+        void runInvoiceScan(false, prepared.dataUrl);
+      })
+      .catch((err: unknown) => {
+        console.error('Invoice image prepare error:', err);
+        setScanError(
+          err instanceof Error ? err.message : 'Could not prepare the photo. Try another image.'
+        );
+        setLoading(false);
+        setLoadingPhase(null);
+      });
   };
 
   const handleResetScanner = () => {

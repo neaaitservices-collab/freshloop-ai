@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Department, TargetAction } from '@prisma/client';
 import { generateContentWithFallback, parseModelJson } from '@/lib/domains/ai/gemini';
+import {
+  transcribeWithWhisper,
+  WhisperNotConfiguredError,
+  WhisperTranscriptionError,
+} from '@/lib/domains/ai/whisper';
 import { GEMINI_FLASH_MODEL_FALLBACKS } from '@/lib/domains/ai/geminiModels';
 import { prisma } from '@/lib/domains/inventory/ledger';
 import { moveRetailStock } from '@/lib/domains/inventory/stock';
@@ -393,9 +398,97 @@ async function parseVoiceWithGemini15Flash(
 // POST /api/voice-logger
 // ============================================================================
 
+type VoiceLoggerBody = {
+  audioBase64?: string;
+  mimeType?: string;
+  spokenText?: string;
+  confirmCommit?: boolean;
+  confirmedItems?: Array<{
+    product_id: string;
+    quantity: number;
+    target_action: VoiceTargetAction;
+    condition?: string;
+  }>;
+  staffId?: string;
+  transcript?: string;
+  clientMutationId?: string;
+};
+
+async function readVoiceLoggerRequest(req: NextRequest): Promise<VoiceLoggerBody> {
+  const contentType = req.headers.get('content-type') ?? '';
+
+  if (contentType.includes('multipart/form-data')) {
+    const form = await req.formData();
+    const confirmCommit = String(form.get('confirmCommit') ?? '') === 'true';
+    const spokenText = form.get('spokenText')?.toString();
+    const transcript = form.get('transcript')?.toString();
+    const clientMutationId = form.get('clientMutationId')?.toString();
+    /** Ignored for ledger auth (session user is canonical); kept for response parity with JSON bodies. */
+    const staffId = form.get('staffId')?.toString();
+
+    const multipartBase = (): Pick<
+      VoiceLoggerBody,
+      'confirmCommit' | 'confirmedItems' | 'transcript' | 'clientMutationId' | 'staffId'
+    > => ({
+      confirmCommit,
+      confirmedItems,
+      transcript,
+      clientMutationId,
+      staffId,
+    });
+
+    let confirmedItems: VoiceLoggerBody['confirmedItems'];
+    const confirmedRaw = form.get('confirmedItems');
+    if (typeof confirmedRaw === 'string' && confirmedRaw.trim()) {
+      try {
+        confirmedItems = JSON.parse(confirmedRaw) as VoiceLoggerBody['confirmedItems'];
+      } catch {
+        confirmedItems = undefined;
+      }
+    }
+
+    const audio = form.get('audio');
+    if (audio instanceof File && audio.size > 0) {
+      const buffer = Buffer.from(await audio.arrayBuffer());
+      try {
+        const { transcript: whisperText } = await transcribeWithWhisper(
+          buffer,
+          audio.name || 'voice-note.webm',
+          audio.type || 'audio/webm'
+        );
+        return {
+          ...multipartBase(),
+          spokenText: whisperText || spokenText,
+          transcript: transcript?.trim() || whisperText || spokenText,
+        };
+      } catch (err) {
+        if (err instanceof WhisperNotConfiguredError && spokenText?.trim()) {
+          return {
+            ...multipartBase(),
+            spokenText,
+            transcript: transcript?.trim() || spokenText,
+          };
+        }
+        throw err;
+      }
+    }
+
+    return {
+      ...multipartBase(),
+      spokenText,
+    };
+  }
+
+  try {
+    return (await req.json()) as VoiceLoggerBody;
+  } catch {
+    throw new Error('Request body must be valid JSON or multipart form-data with an audio field.');
+  }
+}
+
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
+    const body = await readVoiceLoggerRequest(req);
     const {
       audioBase64,
       mimeType,
@@ -403,20 +496,7 @@ export async function POST(req: NextRequest) {
       confirmCommit,
       confirmedItems,
       transcript: commitTranscript,
-    } = body as {
-      audioBase64?: string;
-      mimeType?: string;
-      spokenText?: string;
-      confirmCommit?: boolean;
-      confirmedItems?: Array<{
-        product_id: string;
-        quantity: number;
-        target_action: VoiceTargetAction;
-        condition?: string;
-      }>;
-      staffId?: string;
-      transcript?: string;
-    };
+    } = body;
 
     // ------------------------------------------------------------------------
     // Optional Step 2 of Async Confirmation Loop:
@@ -424,9 +504,7 @@ export async function POST(req: NextRequest) {
     // in the [CONFIRMAR] / [EDITAR] UI modal (`confirmCommit: true`).
     // ------------------------------------------------------------------------
     const clientMutationId =
-      typeof (body as { clientMutationId?: string }).clientMutationId === 'string'
-        ? String((body as { clientMutationId?: string }).clientMutationId).trim()
-        : '';
+      typeof body.clientMutationId === 'string' ? body.clientMutationId.trim() : '';
 
     if (confirmCommit && Array.isArray(confirmedItems) && confirmedItems.length > 0) {
       const actor = await requireSessionUser();
@@ -583,6 +661,20 @@ export async function POST(req: NextRequest) {
   } catch (error: unknown) {
     const authRes = authErrorResponse(error);
     if (authRes) return authRes;
+
+    if (error instanceof WhisperNotConfiguredError) {
+      return NextResponse.json(
+        { success: false, error: error.message },
+        { status: 503 }
+      );
+    }
+    if (error instanceof WhisperTranscriptionError) {
+      return NextResponse.json(
+        { success: false, error: error.message },
+        { status: 422 }
+      );
+    }
+
     return handleApiRouteError(
       'POST /api/voice-logger',
       error,

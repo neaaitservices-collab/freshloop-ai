@@ -18,6 +18,7 @@ import type { StockLevel, StockOverrideAudit } from '@/lib/domains/inventory/sto
 import { applyOptimisticStockCases } from '@/lib/domains/inventory/optimisticStock';
 import {
   notifyInventoryUpdated,
+  subscribeInventoryUpdated,
   type InventoryUpdatedDetail,
 } from '@/lib/domains/inventory/inventoryMoveClient';
 import { canOverrideInventoryStock } from '@/lib/auth/staffCapabilities';
@@ -76,8 +77,7 @@ export function AdminInventoryWorkspace({
         });
     };
 
-    const refreshLevels = (event: Event) => {
-      const detail = (event as CustomEvent<InventoryUpdatedDetail>).detail;
+    const refreshLevels = (detail?: InventoryUpdatedDetail) => {
       if (detail?.source === 'level-patch' && detail.level) {
         setLevels((current) =>
           current.map((row) => (row.productId === detail.level!.productId ? detail.level! : row))
@@ -86,8 +86,7 @@ export function AdminInventoryWorkspace({
       }
       refreshLevelsFromApi();
     };
-    window.addEventListener('freshloop-inventory-updated', refreshLevels);
-    return () => window.removeEventListener('freshloop-inventory-updated', refreshLevels);
+    return subscribeInventoryUpdated(refreshLevels);
   }, []);
 
   const catalog = useMemo(

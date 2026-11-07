@@ -10,6 +10,8 @@ import { createClientMutationId } from '@/lib/offline/queue';
 import { OFFLINE_MUTATION_KIND } from '@/lib/offline/types';
 import { DepartmentType } from '@/lib/types';
 import { ModalBody, ModalFooter, ModalHeader, ModalShell } from '@/components/ui/layout';
+import { PushToTalkRecorder } from '@/lib/features/voiceCapture';
+import { postVoiceLoggerParse } from '@/lib/features/voiceLoggerClient';
 import {
   Mic,
   Square,
@@ -101,6 +103,9 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
   const { activeUser } = useRole();
   const [catalogOptions, setCatalogOptions] = useState(FALLBACK_CATALOG_OPTIONS);
   const [isRecording, setIsRecording] = useState(false);
+  const [toggleRecordMode, setToggleRecordMode] = useState(false);
+  const [processingAudio, setProcessingAudio] = useState(false);
+  const [lastAudioBlob, setLastAudioBlob] = useState<Blob | null>(null);
   const [spokenText, setSpokenText] = useState(
     'Retirar 12 unidades de aguacate hass muy maduro para rescate en cocina y descartar 3 lbs de tomates aplastados'
   );
@@ -119,8 +124,8 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
   const [savedOffline, setSavedOffline] = useState(false);
   const [catalogLoadWarning, setCatalogLoadWarning] = useState<string | null>(null);
 
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioChunksRef = useRef<Blob[]>([]);
+  const pttRecorderRef = useRef<PushToTalkRecorder | null>(null);
+  const holdActiveRef = useRef(false);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -171,63 +176,86 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
     };
   }, [catalogOptions]);
 
+  useEffect(() => {
+    if (!isOpen) {
+      pttRecorderRef.current?.cancel();
+      pttRecorderRef.current = null;
+      setIsRecording(false);
+    }
+  }, [isOpen]);
+
   if (!isOpen) return null;
 
-  const startRecording = async () => {
+  const ensureRecorder = () => {
+    if (!pttRecorderRef.current) {
+      pttRecorderRef.current = new PushToTalkRecorder();
+    }
+    return pttRecorderRef.current;
+  };
+
+  const beginRecording = async () => {
+    if (parsing || processingAudio) return;
     setErrorMsg(null);
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(stream);
-      mediaRecorderRef.current = mediaRecorder;
-      audioChunksRef.current = [];
-
-      mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          audioChunksRef.current.push(event.data);
-        }
-      };
-
-      mediaRecorder.onstop = async () => {
-        const audioBlob = new Blob(audioChunksRef.current, {
-          type: 'audio/webm',
-        });
-        const reader = new FileReader();
-        reader.onloadend = () => {
-          const base64 = reader.result as string;
-          handleParseVoiceWithAI(base64);
-        };
-        reader.readAsDataURL(audioBlob);
-      };
-
-      mediaRecorder.start();
+      await ensureRecorder().start();
       setIsRecording(true);
     } catch {
-      // Browser mic permission denied or unavailable; proceed with spokenText simulator
       setIsRecording(false);
-      handleParseVoiceWithAI();
+      setErrorMsg('No se pudo acceder al micrófono. Usa el simulador de texto o revisa permisos.');
     }
   };
 
-  const stopRecording = () => {
-    if (mediaRecorderRef.current && isRecording) {
-      mediaRecorderRef.current.stop();
-      setIsRecording(false);
+  const finishRecording = async (autoParse: boolean) => {
+    const recorder = pttRecorderRef.current;
+    if (!recorder?.active && !isRecording) return;
+    setIsRecording(false);
+    const blob = await recorder?.stop().catch(() => null);
+    if (blob && blob.size > 0) {
+      setLastAudioBlob(blob);
+      if (autoParse) {
+        void handleParseVoiceWithAI(blob);
+      }
+    } else if (autoParse) {
+      setErrorMsg('No se capturó audio. Mantén el botón mientras hablas o escribe en el simulador.');
     }
   };
 
-  // STEP 1 -> STEP 2: Parse voice via /api/voice-logger WITHOUT writing to database
-  const handleParseVoiceWithAI = async (audioBase64?: string) => {
+  const handleMicPointerDown = (event: React.PointerEvent<HTMLButtonElement>) => {
+    if (toggleRecordMode || parsing || processingAudio) return;
+    event.preventDefault();
+    holdActiveRef.current = true;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    void beginRecording();
+  };
+
+  const handleMicPointerUp = (event: React.PointerEvent<HTMLButtonElement>) => {
+    if (toggleRecordMode || !holdActiveRef.current) return;
+    holdActiveRef.current = false;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    void finishRecording(true);
+  };
+
+  const handleMicClick = () => {
+    if (!toggleRecordMode) return;
+    if (isRecording) {
+      void finishRecording(true);
+    } else {
+      void beginRecording();
+    }
+  };
+
+  // STEP 1 -> STEP 2: Whisper transcript + LLM parse via /api/voice-logger (no ledger write)
+  const handleParseVoiceWithAI = async (audioBlob?: Blob | null) => {
+    const blob = audioBlob ?? lastAudioBlob;
     setParsing(true);
+    setProcessingAudio(Boolean(blob && blob.size > 0));
     setErrorMsg(null);
     try {
-      const res = await fetch('/api/voice-logger', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          audioBase64,
-          spokenText,
-          confirmCommit: false, // Strictly enforce Global Rule #4 (No direct DB write)
-        }),
+      const res = await postVoiceLoggerParse({
+        audioBlob: blob,
+        spokenText,
       });
 
       const json = await res.json();
@@ -275,6 +303,7 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
       );
     } finally {
       setParsing(false);
+      setProcessingAudio(false);
     }
   };
 
@@ -377,7 +406,7 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
                 <OfflineSyncBadge />
               </div>
               <p className="text-xs text-zinc-400">
-                Gemini 1.5 Flash Audio + Búsqueda Difusa • Ningún dato se guarda sin tu confirmación
+                Push-to-talk (Whisper) + parser LLM • Ningún dato se guarda sin tu confirmación
               </p>
             </div>
           </div>
@@ -418,8 +447,17 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
                   )}
                   <button
                     type="button"
-                    onClick={isRecording ? stopRecording : startRecording}
-                    className={`relative z-10 flex h-20 w-20 min-h-12 min-w-12 items-center justify-center rounded-full shadow-2xl transition-all cursor-pointer ${
+                    aria-pressed={isRecording}
+                    aria-busy={parsing || processingAudio}
+                    disabled={parsing || processingAudio}
+                    onPointerDown={handleMicPointerDown}
+                    onPointerUp={handleMicPointerUp}
+                    onPointerCancel={handleMicPointerUp}
+                    onPointerLeave={(e) => {
+                      if (holdActiveRef.current) handleMicPointerUp(e);
+                    }}
+                    onClick={handleMicClick}
+                    className={`relative z-10 flex h-20 w-20 min-h-12 min-w-12 touch-none select-none items-center justify-center rounded-full shadow-2xl transition-all cursor-pointer ${
                       isRecording
                         ? 'bg-rose-500 hover:bg-rose-400 text-white shadow-rose-500/40 scale-105'
                         : 'bg-gradient-to-tr from-teal-500 to-emerald-400 text-zinc-950 shadow-teal-500/30 hover:scale-105'
@@ -434,10 +472,23 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
                 </div>
 
                 <p className="font-extrabold text-sm text-white">
-                  {isRecording
-                    ? 'Escuchando reporte de piso... Presiona para detener'
-                    : 'Presiona el micrófono para dictar transferencia o merma'}
+                  {processingAudio || parsing
+                    ? 'Transcribiendo con Whisper y analizando comando…'
+                    : isRecording
+                      ? toggleRecordMode
+                        ? 'Grabando… toca de nuevo para terminar'
+                        : 'Mantén presionado y habla… suelta para enviar'
+                      : toggleRecordMode
+                        ? 'Toca el micrófono para grabar una nota corta'
+                        : 'Mantén el micrófono — nota de voz push-to-talk'}
                 </p>
+                <button
+                  type="button"
+                  onClick={() => setToggleRecordMode((v) => !v)}
+                  className="mt-2 text-[10px] font-bold uppercase tracking-wider text-teal-400/90 hover:text-teal-300"
+                >
+                  Modo: {toggleRecordMode ? 'Tap para iniciar/parar' : 'Mantener presionado (recomendado)'}
+                </button>
                 <p className="text-zinc-400 text-xs mt-1 max-w-md">
                   La IA extraerá los productos, aplicará coincidencia difusa contra el catálogo y abrirá el bucle de confirmación antes de afectar el Ledger.
                 </p>
@@ -448,7 +499,7 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
                 <label className="font-bold text-zinc-300 text-xs flex items-center justify-between">
                   <span>Transcripción Hablada / Simulador Rápido de Voz</span>
                   <span className="text-teal-400 font-mono text-[10px]">
-                    Gemini 1.5 Flash Multimodal
+                    Whisper + texto (sin streaming)
                   </span>
                 </label>
                 <textarea
@@ -711,7 +762,11 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
                 {parsing ? (
                   <>
                     <Loader2 className="w-4 h-4 animate-spin" />
-                    <span>Analizando Audio con Gemini 1.5 Flash...</span>
+                    <span>
+                      {processingAudio
+                        ? 'Whisper + parser…'
+                        : 'Analizando texto…'}
+                    </span>
                   </>
                 ) : (
                   <>

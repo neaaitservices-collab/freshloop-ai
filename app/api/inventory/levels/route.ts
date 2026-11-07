@@ -9,6 +9,7 @@ import { assertMutationRateLimit } from '@/lib/security/rateLimit';
 import { productIdSchema } from '@/lib/security/schemas/common';
 import { isManager } from '@/lib/utils/roles';
 import { parsePosSalesDaysParam } from '@/lib/domains/inventory/posSalesUnits';
+import { paginateStockLevels, parseLevelsPagination } from '@/lib/domains/inventory/levelsList';
 import { filterLevelsWithAnyStock } from '@/lib/domains/inventory/subInventoryView';
 import {
   applyRetailMarkdown,
@@ -51,13 +52,25 @@ export async function GET(req: NextRequest) {
       levels = filterLevelsWithAnyStock(levels);
     }
     const low = levels.filter((row) => row.low);
+    const { limit, offset } = parseLevelsPagination(
+      req.nextUrl.searchParams.get('limit'),
+      req.nextUrl.searchParams.get('offset')
+    );
+    const { page, total, limit: appliedLimit, offset: appliedOffset } = paginateStockLevels(
+      levels,
+      limit,
+      offset
+    );
     return NextResponse.json({
       success: true,
       parCases: PAR_CASES,
-      count: levels.length,
+      count: total,
       lowCount: low.length,
       orderCost: Number(low.reduce((sum, row) => sum + row.orderCost, 0).toFixed(2)),
-      levels,
+      levels: page,
+      total,
+      limit: appliedLimit,
+      offset: appliedOffset,
     });
   } catch (error) {
     const authRes = authErrorResponse(error);

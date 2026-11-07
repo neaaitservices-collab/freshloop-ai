@@ -18,7 +18,7 @@ export function notifyInventoryUpdated(detail?: InventoryUpdatedDetail): void {
   window.dispatchEvent(new CustomEvent('freshloop-inventory-updated', { detail }));
   try {
     const channel = new BroadcastChannel(INVENTORY_UPDATED_CHANNEL);
-    channel.postMessage({ type: 'inventory-updated' });
+    channel.postMessage({ type: 'inventory-updated', detail });
     channel.close();
   } catch {
     /* BroadcastChannel unavailable */
@@ -40,13 +40,19 @@ export function subscribeInventoryUpdated(
   let channel: BroadcastChannel | null = null;
   try {
     channel = new BroadcastChannel(INVENTORY_UPDATED_CHANNEL);
-    channel.onmessage = () => handler();
+    channel.onmessage = (event: MessageEvent) => {
+      const payload = event.data as { detail?: InventoryUpdatedDetail } | null;
+      handler(payload?.detail);
+    };
   } catch {
     /* ignore */
   }
 
   return () => {
     window.removeEventListener('freshloop-inventory-updated', onWindow);
-    channel?.close();
+    if (channel) {
+      channel.onmessage = null;
+      channel.close();
+    }
   };
 }

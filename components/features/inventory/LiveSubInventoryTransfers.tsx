@@ -10,7 +10,10 @@ import { Button } from '@/components/ui/Button';
 import { Card, CardBody, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Toast } from '@/components/ui/Toast';
 import { useOptimisticInventoryLevels } from '@/hooks/use-optimistic-inventory-levels';
-import type { InventoryUpdatedDetail } from '@/lib/domains/inventory/inventoryMoveClient';
+import {
+  subscribeInventoryUpdated,
+  type InventoryUpdatedDetail,
+} from '@/lib/domains/inventory/inventoryMoveClient';
 import {
   applyStockLevelPatch,
   filterLevelsWithAnyStock,
@@ -103,8 +106,7 @@ export function LiveSubInventoryTransfers({
     if (initialLevels === null) {
       void loadFullCatalog();
     }
-    const onUpdate = (event: Event) => {
-      const detail = (event as CustomEvent<InventoryUpdatedDetail>).detail;
+    const onUpdate = (detail?: InventoryUpdatedDetail) => {
       if (detail?.source === 'level-patch') return;
       if (detail?.level) {
         applyLevel(detail.level);
@@ -112,8 +114,7 @@ export function LiveSubInventoryTransfers({
       }
       void loadFullCatalog({ silent: true });
     };
-    window.addEventListener('freshloop-inventory-updated', onUpdate);
-    return () => window.removeEventListener('freshloop-inventory-updated', onUpdate);
+    return subscribeInventoryUpdated(onUpdate);
   }, [initialLevels, loadFullCatalog, applyLevel]);
 
   useEffect(() => {

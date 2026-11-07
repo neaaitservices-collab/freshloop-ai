@@ -6,6 +6,7 @@ import type { RecipeFusionResult } from '@/lib/types';
 import type { KitchenRecipeDefinition } from '@/lib/domains/manufacturing/types';
 import { Button } from '@/components/ui/Button';
 import { ScrollTable } from '@/components/ui/layout';
+import { subscribeInventoryUpdated } from '@/lib/domains/inventory/inventoryMoveClient';
 import { cn } from '@/lib/utils/cn';
 
 export type BomRowStatus = 'ready' | 'below_par' | 'low_stock';
@@ -209,9 +210,19 @@ export function ProductionActiveBomPanel({
     if (initialManufacturingCatalog === null) {
       void loadManufacturingCatalog();
     }
-    const onInventory = () => void loadManufacturingCatalog();
-    window.addEventListener('freshloop-inventory-updated', onInventory);
-    return () => window.removeEventListener('freshloop-inventory-updated', onInventory);
+    let debounce: ReturnType<typeof setTimeout> | null = null;
+    const scheduleReload = () => {
+      if (debounce) clearTimeout(debounce);
+      debounce = setTimeout(() => void loadManufacturingCatalog(), 450);
+    };
+    const unsub = subscribeInventoryUpdated((detail) => {
+      if (detail?.source === 'level-patch') return;
+      scheduleReload();
+    });
+    return () => {
+      unsub();
+      if (debounce) clearTimeout(debounce);
+    };
   }, [initialManufacturingCatalog, loadManufacturingCatalog]);
 
   const toggleSort = useCallback(
