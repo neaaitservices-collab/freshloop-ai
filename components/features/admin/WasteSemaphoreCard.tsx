@@ -6,6 +6,7 @@ import { ScrapBucketSettingsModal } from '@/components/features/admin/ScrapBucke
 import { AlertOctagon, Info, Loader2, Settings2, ShieldCheck } from 'lucide-react';
 import type { WasteKpiReport } from '@/lib/domains/inventory/ledger';
 import { formatCurrency } from '@/lib/domains/receiving/yieldPricing';
+import { legacySaleDisclosure } from '@/lib/domains/inventory/saleRevenue';
 import { MIN_GROSS_SALES_FOR_WASTE_RATIO } from '@/lib/domains/stats/wasteKpi';
 import { cn } from '@/lib/utils/cn';
 import { WasteFormulaBreakdown } from '@/components/features/admin/WasteFormulaBreakdown';
@@ -40,6 +41,10 @@ export function WasteSemaphoreCard({
   const discard = wasteKpi?.totalDiscardValue ?? 0;
   const scrap = wasteKpi?.volumetricScrapValue ?? 0;
   const sales = wasteKpi?.grossSalesRevenue ?? 0;
+  const legacySalesNote =
+    wasteKpi && wasteKpi.legacyUnpricedSaleCount > 0
+      ? legacySaleDisclosure(wasteKpi.legacyUnpricedSaleCount, wasteKpi.legacyUnpricedSaleUnits)
+      : '';
   const totalWaste = wasteKpi?.totalWasteValue ?? discard + scrap;
   const implied = wastePct === null ? impliedWastePct(totalWaste, sales) : null;
   const salesShort = sales > 0 && sales < MIN_GROSS_SALES_FOR_WASTE_RATIO;
@@ -236,6 +241,10 @@ export function WasteSemaphoreCard({
           bucketCount={bucketCount}
           scrapInputs={wasteKpi?.scrapBucketInputs ?? null}
         />
+
+        {legacySalesNote ? (
+          <p className="text-[11px] leading-snug text-slate-400">{legacySalesNote}</p>
+        ) : null}
 
         {bucketCount > 0 ? (
           <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-800/80 pt-3 text-xs text-slate-500">

@@ -7,6 +7,7 @@ import {
   PrismaClient,
   TransactionType,
 } from "@prisma/client";
+import { multiplyMoney } from "../lib/utils/money";
 
 function loadEnvFiles() {
   for (const fileName of [".env.local", ".env"]) {
@@ -557,18 +558,22 @@ async function main() {
     if (!pid) continue;
     const product = await prisma.product.findUnique({ where: { id: pid } });
     const price = product?.retailPrice ?? product?.standardCost ?? 3;
+    const unitPrice = Number(price);
+    const quantitySold = 4;
     await prisma.inventoryTransaction.create({
       data: {
         productId: pid,
         staffId: floorStaff,
-        qtyChange: -4,
+        qtyChange: -quantitySold,
         transactionType: TransactionType.Sale,
         fromLocation:
           key === "panzanella"
             ? InventoryLocation.Deli_Grab_N_Go
             : InventoryLocation.Retail_Floor,
         toLocation: InventoryLocation.Customer_Out,
-        unitCostAtTime: Number(price),
+        unitCostAtTime: unitPrice,
+        realizedUnitPrice: unitPrice,
+        realizedLineRevenue: multiplyMoney(unitPrice, quantitySold),
         referenceId: `SEED-SALE-${key}`,
         notes: "Demo POS sales for Financial Yield KPI",
       },
