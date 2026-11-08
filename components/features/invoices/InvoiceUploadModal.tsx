@@ -183,7 +183,7 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
     flaggedInvoice && (!managerCanApprove || !managerApprovedCosts);
 
   const handleAddToReceiving = () => {
-    if (!ocrResult || needsManagerGate) return;
+    if (!ocrResult || needsManagerGate || ocrResult.source === 'sample') return;
     onInvoiceImported({
       ...ocrResult,
       supplierId: selectedSupplierId || ocrResult.supplierId,
@@ -211,7 +211,7 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
               </h3>
               <p className="text-xs text-zinc-400">
                 {ocrResult?.source === 'sample'
-                  ? 'These lines are the practice delivery. A photo replaces them.'
+                  ? 'Practice invoice only. These lines cannot be added to inventory.'
                   : ocrResult
                     ? `Invoice #${ocrResult.invoiceNumber}`
                     : 'Take a photo of the vendor invoice.'}
@@ -600,15 +600,21 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
             <button
               type="button"
               onClick={handleAddToReceiving}
-              disabled={needsManagerGate}
+              disabled={needsManagerGate || ocrResult.source === 'sample'}
               title={
-                needsManagerGate
-                  ? 'Manager must confirm flagged costs and low-confidence OCR lines'
-                  : undefined
+                ocrResult.source === 'sample'
+                  ? 'Sample invoice lines are not posted to inventory'
+                  : needsManagerGate
+                    ? 'Manager must confirm flagged costs and low-confidence OCR lines'
+                    : undefined
               }
               className="flex min-h-12 items-center gap-2 rounded-xl bg-emerald-400 px-5 py-3 text-xs font-black text-zinc-950 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400"
             >
-              <span>Add {ocrResult.lineItems.length} cases to receiving</span>
+              <span>
+                {ocrResult.source === 'sample'
+                  ? 'Sample invoice is not received'
+                  : `Add ${ocrResult.lineItems.length} cases to receiving`}
+              </span>
               <ArrowRight className="h-4 w-4" />
             </button>
           )}

@@ -16,6 +16,7 @@ import { handleApiRouteError, logServerError } from '@/lib/domains/ai/apiError';
 import { invoiceOcrErrorResponse } from '@/lib/domains/receiving/invoiceOcrErrors';
 import { authErrorResponse } from '@/lib/auth/http';
 import { requireReceivingStaff } from '@/lib/auth/guardRoute';
+import { sampleInvoiceCommitRejection } from '@/lib/domains/receiving/sampleReceivingGuard';
 import { findLatestStoreSetting } from '@/lib/domains/stats/storeSettingSelect';
 import { matchProductWithScore } from '@/lib/domains/inventory/productMatching';
 import { recordOcrScanAnalytics } from '@/lib/domains/suppliers/analyticsPersistence';
@@ -492,6 +493,18 @@ export async function POST(req: NextRequest) {
         );
       }
       const payload = draft.payload as unknown as OcrDraftPayload;
+      const sampleReason = sampleInvoiceCommitRejection({
+        vendorName: payload.vendorName,
+        invoiceNumber: payload.invoiceNumber,
+        lines: payload.lines.map((line) => ({
+          line_name: line.line_name,
+          quantity: line.quantity,
+          unit_cost: line.unit_cost,
+        })),
+      });
+      if (sampleReason) {
+        return NextResponse.json({ success: false, error: sampleReason }, { status: 409 });
+      }
       const managerRoles: RoleName[] = ['ADMIN', 'STORE_MANAGER'];
       const actorIsManager = managerRoles.includes(actor.role);
       assertDraftLinesCommittable(
@@ -676,7 +689,8 @@ export async function POST(req: NextRequest) {
       departmentBreakdown,
       lines: draftLines,
     };
-    const draft = await saveInvoiceOcrDraft(actor.id, draftPayload);
+    const draft =
+      ocrSource === 'sample' ? null : await saveInvoiceOcrDraft(actor.id, draftPayload);
 
     const responsePayload: InvoiceOcrApiResponse = {
       success: true,
@@ -691,7 +705,7 @@ export async function POST(req: NextRequest) {
       needs_manual_review: needsManualReview,
       low_confidence_items_count: lowConfidenceItemsCount,
       ocr_confidence_threshold: INVOICE_OCR_CONFIDENCE_THRESHOLD,
-      draftId: draft.id,
+      draftId: draft?.id ?? '',
       items: auditedItems,
       data: {
         vendorName: extracted.vendorName,

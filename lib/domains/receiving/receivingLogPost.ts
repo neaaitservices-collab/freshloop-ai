@@ -1,4 +1,5 @@
 import { postReceipt, type PostedReceipt, type SkippedReceipt } from '@/lib/domains/inventory/stock';
+import { sampleReceivingRejection } from '@/lib/domains/receiving/sampleReceivingGuard';
 import { getSupplierNameById } from '@/lib/domains/suppliers/suppliers';
 import {
   calculateYieldQuote,
@@ -99,6 +100,15 @@ export async function postReceivingLogToInventory(
   actorId: string,
   supplierName: string | null
 ): Promise<ReceivingLogPostResult> {
+  const sampleReason = sampleReceivingRejection(input);
+  if (sampleReason) {
+    return {
+      externalLogId: input.externalLogId,
+      itemName: input.itemName,
+      stock: { posted: false, reason: sampleReason },
+    };
+  }
+
   const targetMargin = resolveTargetMargin(input.marginMode, input.customMarginPercent ?? 0);
   const caseRetailPrice = parseCaseRetail(input.caseRetailPrice);
 

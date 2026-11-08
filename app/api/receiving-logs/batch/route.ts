@@ -9,6 +9,7 @@ import {
 import { handleApiRouteError } from '@/lib/domains/ai/apiError';
 import { authErrorResponse } from '@/lib/auth/http';
 import { requireReceivingStaff } from '@/lib/auth/guardRoute';
+import { sampleReceivingRejection } from '@/lib/domains/receiving/sampleReceivingGuard';
 
 export const dynamic = 'force-dynamic';
 
@@ -33,6 +34,12 @@ export async function POST(req: NextRequest) {
 
     const supplierId = body.supplierId?.trim();
     const parsed: ReceivingLogPostInput[] = [];
+    const results: Array<{
+      externalLogId?: string;
+      itemName: string;
+      stock: { posted: boolean; reason?: string };
+    }> = [];
+    const postIndexes: number[] = [];
     for (const row of rawItems) {
       const validated = validateReceivingLogPostInput({
         ...row,
@@ -44,14 +51,35 @@ export async function POST(req: NextRequest) {
           { status: 400 }
         );
       }
-      parsed.push({
+      const input = {
         ...validated.input,
         externalLogId: row.externalLogId,
         supplierId: validated.input.supplierId ?? supplierId,
+      };
+      const sampleReason = sampleReceivingRejection(input);
+      if (sampleReason) {
+        results.push({
+          externalLogId: input.externalLogId,
+          itemName: input.itemName,
+          stock: { posted: false, reason: sampleReason },
+        });
+        continue;
+      }
+      postIndexes.push(results.length);
+      results.push({
+        externalLogId: input.externalLogId,
+        itemName: input.itemName,
+        stock: { posted: false, reason: 'Stock was not updated.' },
       });
+      parsed.push(input);
     }
 
-    const results = await postReceivingLogBatch(parsed, actor.id);
+    const posted = await postReceivingLogBatch(parsed, actor.id);
+    posted.forEach((row, index) => {
+      const slot = postIndexes[index];
+      if (slot === undefined) return;
+      results[slot] = row;
+    });
     const savedCount = results.filter((r) => r.stock.posted).length;
 
     return NextResponse.json({
