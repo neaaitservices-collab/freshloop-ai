@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/domains/inventory/ledger';
+import { invalidateInventoryCaches } from '@/lib/domains/inventory/inventoryCache';
 import { requireKitchenStaff } from '@/lib/auth/guardRoute';
 import { authErrorResponse } from '@/lib/auth/http';
 import { apiErrorFromUnknown } from '@/lib/domains/ai/apiError';
@@ -113,6 +114,8 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
         },
       });
     });
+
+    invalidateInventoryCaches();
 
     return NextResponse.json({ success: true, recipe: updated });
   } catch (error: unknown) {

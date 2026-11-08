@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/domains/inventory/ledger';
+import { getRecipeListBundle } from '@/lib/domains/manufacturing/recipeListRead';
 import { requireKitchenStaff } from '@/lib/auth/guardRoute';
 import { authErrorResponse } from '@/lib/auth/http';
 import { apiErrorFromUnknown } from '@/lib/domains/ai/apiError';
 import { parseJsonBody } from '@/lib/security/parseJsonBody';
 import { recipeCreateBodySchema } from '@/lib/security/schemas/recipes';
 import { assertMutationRateLimit } from '@/lib/security/rateLimit';
+import { invalidateInventoryCaches } from '@/lib/domains/inventory/inventoryCache';
 import { Department, UnitType, RecipeStatus } from '@prisma/client';
 
 export const dynamic = 'force-dynamic';
@@ -14,31 +16,7 @@ export async function GET() {
   try {
     await requireKitchenStaff();
 
-    const [recipes, inventoryProducts] = await Promise.all([
-      prisma.recipe.findMany({
-        include: {
-          outputProduct: true,
-          bomLines: {
-            include: {
-              ingredientProduct: true,
-            },
-          },
-        },
-        orderBy: { createdAt: 'desc' },
-      }),
-      prisma.product.findMany({
-        where: { isManufactured: false },
-        select: {
-          id: true,
-          name: true,
-          department: true,
-          unitType: true,
-          standardCost: true,
-          retailPrice: true,
-        },
-        orderBy: { name: 'asc' },
-      }),
-    ]);
+    const { recipes, inventoryProducts } = await getRecipeListBundle();
 
     return NextResponse.json({
       success: true,
@@ -159,6 +137,8 @@ export async function POST(req: NextRequest) {
         },
       },
     });
+
+    invalidateInventoryCaches();
 
     return NextResponse.json({
       success: true,

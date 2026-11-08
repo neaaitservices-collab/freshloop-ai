@@ -1,5 +1,8 @@
-import type { Prisma } from '@prisma/client';
 import { getCachedRealTimeWastePct, prisma, type WasteKpiReport } from '@/lib/domains/inventory/ledger';
+import {
+  RECIPE_API_LIST_SELECT,
+  type RecipeApiListRow,
+} from '@/lib/domains/manufacturing/recipeListSelect';
 import { rememberLedgerRead } from '@/lib/domains/inventory/ledgerCache';
 import { getStockLevelsWithPosSales, type StockLevel } from '@/lib/domains/inventory/stock';
 import { filterLevelsWithAnyStock } from '@/lib/domains/inventory/subInventoryView';
@@ -25,37 +28,9 @@ export interface ProductionBootstrapData {
   levelsSummary: StockLevel[];
 }
 
-const RECIPE_BOOTSTRAP_SELECT = {
-  id: true,
-  name: true,
-  category: true,
-  status: true,
-  yieldPortions: true,
-  targetRetailPrice: true,
-  laborHours: true,
-  laborRate: true,
-  packagingCostPerUnit: true,
-  instructions: true,
-  createdAt: true,
-  outputProductId: true,
-  outputProduct: { select: { id: true, name: true, unitType: true } },
-  bomLines: {
-    select: {
-      quantityRequired: true,
-      unit: true,
-      ingredientProductId: true,
-      ingredientProduct: {
-        select: { id: true, name: true, unitType: true, standardCost: true },
-      },
-    },
-  },
-} satisfies Prisma.RecipeSelect;
-
-type BootstrapRecipeRow = Prisma.RecipeGetPayload<{ select: typeof RECIPE_BOOTSTRAP_SELECT }>;
-
-async function loadBootstrapRecipes(): Promise<BootstrapRecipeRow[]> {
+async function loadBootstrapRecipes(): Promise<RecipeApiListRow[]> {
   return prisma.recipe.findMany({
-    select: RECIPE_BOOTSTRAP_SELECT,
+    select: RECIPE_API_LIST_SELECT,
     orderBy: { createdAt: 'desc' },
   });
 }

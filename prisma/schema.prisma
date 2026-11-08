@@ -127,6 +127,7 @@ model Product {
 
   @@index([department])
   @@index([name])
+  @@index([supplier])
   @@index([catalogActive, isManufactured])
   @@map("products")
 }
@@ -217,6 +218,7 @@ model InventoryTransaction {
   @@index([transactionType, timestamp])
   @@index([transactionType, toLocation, timestamp])
   @@index([fromLocation, toLocation])
+  @@index([productId, fromLocation, toLocation])
   @@index([referenceId])
   @@index([expirationDate])
   @@map("Inventory_Transactions")
@@ -240,6 +242,7 @@ model StoreSetting {
   updatedAt                 DateTime @updatedAt
 
   @@index([updatedAt])
+  @@index([storeId])
   @@map("store_settings")
 }
 
@@ -261,6 +264,7 @@ model User {
   accounts Account[]
   sessions Session[]
 
+  @@index([role, name])
   @@index([role])
   @@map("staff_users")
 }

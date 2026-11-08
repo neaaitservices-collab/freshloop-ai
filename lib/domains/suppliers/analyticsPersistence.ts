@@ -1,3 +1,4 @@
+import type { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/domains/inventory/ledger';
 import {
   SUPPLIER_QUALITY_EVENT,
@@ -22,21 +23,20 @@ export async function persistPriceVarianceDrafts(rows: PriceVarianceDraft[]): Pr
     source: row.source,
   }));
   const created = await prisma.priceVarianceLog.createMany({ data });
-  for (const row of rows) {
-    await prisma.supplierQualityEvent.create({
-      data: {
-        supplierId: row.supplierId,
-        eventType: SUPPLIER_QUALITY_EVENT.PRICE_VARIANCE,
-        productId: row.productId,
-        vendorInvoiceId: row.vendorInvoiceId,
-        itemName: row.itemName,
-        metadata: {
-          variancePct: row.variancePct,
-          thresholdPct: row.thresholdPct,
-          source: row.source,
-        },
-      },
-    });
+  const qualityEvents: Prisma.SupplierQualityEventCreateManyInput[] = rows.map((row) => ({
+    supplierId: row.supplierId,
+    eventType: SUPPLIER_QUALITY_EVENT.PRICE_VARIANCE,
+    productId: row.productId,
+    vendorInvoiceId: row.vendorInvoiceId,
+    itemName: row.itemName,
+    metadata: {
+      variancePct: row.variancePct,
+      thresholdPct: row.thresholdPct,
+      source: row.source,
+    },
+  }));
+  if (qualityEvents.length > 0) {
+    await prisma.supplierQualityEvent.createMany({ data: qualityEvents });
   }
   return created.count;
 }
@@ -56,6 +56,8 @@ export async function recordOcrScanAnalytics(input: {
   analyticsThresholdPct: number;
 }): Promise<void> {
   const drafts: PriceVarianceDraft[] = [];
+  const qualityEvents: Prisma.SupplierQualityEventCreateManyInput[] = [];
+
   for (const line of input.lines) {
     if (line.historical_avg_cost != null && line.historical_avg_cost > 0) {
       const draft =
@@ -73,31 +75,31 @@ export async function recordOcrScanAnalytics(input: {
     }
 
     if (line.needs_manual_review) {
-      await prisma.supplierQualityEvent.create({
-        data: {
-          supplierId: input.supplierId,
-          eventType: SUPPLIER_QUALITY_EVENT.OCR_LOW_CONFIDENCE,
-          productId: line.product_id,
-          vendorInvoiceId: input.vendorInvoiceId ?? null,
-          itemName: line.item_name,
-          metadata: {
-            lineConfidence: line.line_confidence ?? null,
-          },
+      qualityEvents.push({
+        supplierId: input.supplierId,
+        eventType: SUPPLIER_QUALITY_EVENT.OCR_LOW_CONFIDENCE,
+        productId: line.product_id,
+        vendorInvoiceId: input.vendorInvoiceId ?? null,
+        itemName: line.item_name,
+        metadata: {
+          lineConfidence: line.line_confidence ?? null,
         },
       });
     }
 
     if (!line.product_id) {
-      await prisma.supplierQualityEvent.create({
-        data: {
-          supplierId: input.supplierId,
-          eventType: SUPPLIER_QUALITY_EVENT.OCR_UNMATCHED_LINE,
-          vendorInvoiceId: input.vendorInvoiceId ?? null,
-          itemName: line.item_name,
-          metadata: { unitCost: line.unit_cost },
-        },
+      qualityEvents.push({
+        supplierId: input.supplierId,
+        eventType: SUPPLIER_QUALITY_EVENT.OCR_UNMATCHED_LINE,
+        vendorInvoiceId: input.vendorInvoiceId ?? null,
+        itemName: line.item_name,
+        metadata: { unitCost: line.unit_cost },
       });
     }
+  }
+
+  if (qualityEvents.length > 0) {
+    await prisma.supplierQualityEvent.createMany({ data: qualityEvents });
   }
   await persistPriceVarianceDrafts(drafts);
 }
