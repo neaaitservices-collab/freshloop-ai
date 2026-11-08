@@ -19,6 +19,7 @@ function row(overrides: Partial<StaffAuthRow> = {}): StaffAuthRow {
     position: 'Owner',
     hourlyRate: 32,
     passwordHash: 'hashed-password',
+    credentialVersion: 0,
     ...overrides,
   };
 }
@@ -70,6 +71,29 @@ test('promotion grants the current database role', async () => {
   const user = await requireRoles(['ADMIN'], deps);
   assert.equal(user.role, 'ADMIN');
   assert.notEqual(user.email, 'stale@freshloop.test');
+});
+
+test('password change rejects a version 0 token', async () => {
+  const deps = {
+    readSession: async () => ({
+      user: { id: 'user-1', credentialVersion: 0 },
+    }),
+    loadStaff: async () => row({ credentialVersion: 1 }),
+  };
+  assert.equal(await getSessionUser(deps), null);
+  await assert.rejects(() => requireSessionUser(deps), (error: unknown) => {
+    assert.ok(error instanceof AuthError);
+    assert.equal(error.status, 401);
+    return true;
+  });
+});
+
+test('legacy tokens match credential version 0', async () => {
+  const user = await getSessionUser({
+    readSession: async () => ({ user: { id: 'user-1' } }),
+    loadStaff: async () => row({ credentialVersion: 0, role: 'FLOOR_STAFF' }),
+  });
+  assert.equal(user?.role, 'FLOOR_STAFF');
 });
 
 test('deleted staff are unauthorized', async () => {

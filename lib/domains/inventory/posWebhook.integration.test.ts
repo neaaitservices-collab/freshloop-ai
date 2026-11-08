@@ -12,10 +12,7 @@ import {
 } from '@/lib/testing/posWebhookHttp';
 
 const databaseUrl = process.env.DATABASE_URL?.trim() ?? '';
-const hasDb =
-  Boolean(databaseUrl) &&
-  process.env.FRESHLOOP_DB_TESTS !== '0' &&
-  !databaseUrl.includes('freshloop_ci');
+const hasDb = Boolean(databaseUrl) && process.env.FRESHLOOP_DB_TESTS !== '0';
 
 function withPosSecret<T>(fn: () => Promise<T>): Promise<T> {
   const prev = process.env.POS_WEBHOOK_SECRET;

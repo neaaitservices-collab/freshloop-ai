@@ -136,6 +136,7 @@ async function postLogToInventory(
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
+      externalLogId: log.id,
       itemName: log.itemName,
       productId: log.productId,
       casesReceived: log.casesReceived,

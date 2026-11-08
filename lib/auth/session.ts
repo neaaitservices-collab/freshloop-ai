@@ -1,6 +1,7 @@
 import { auth } from '@/auth';
 import { loadStaffAuthRow } from '@/lib/auth/loadStaffAuth';
 import {
+  credentialVersionMatches,
   resolveStaffLookup,
   type AuthSessionUser,
   type StaffAuthRow,
@@ -10,7 +11,7 @@ import type { RoleName } from '@/lib/utils/roles';
 export type { AuthSessionUser };
 
 type SessionLike = {
-  user?: { id?: string | null } | null;
+  user?: { id?: string | null; credentialVersion?: number | null } | null;
   staffLookupFailed?: boolean;
 } | null;
 
@@ -53,6 +54,10 @@ export async function getSessionUser(deps?: SessionDeps): Promise<AuthSessionUse
     row = await loadStaff(userId);
   } catch {
     throw new AuthError('Unauthorized — session could not be verified.', 401);
+  }
+
+  if (row && !credentialVersionMatches(session.user?.credentialVersion, row.credentialVersion)) {
+    return null;
   }
 
   const resolved = resolveStaffLookup({ ok: true, row });

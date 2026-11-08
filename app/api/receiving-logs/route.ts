@@ -9,7 +9,6 @@ import { getSupplierNameById } from '@/lib/domains/suppliers/suppliers';
 import { handleApiRouteError } from '@/lib/domains/ai/apiError';
 import { authErrorResponse } from '@/lib/auth/http';
 import { requireReceivingStaff } from '@/lib/auth/guardRoute';
-import { requireSessionUser } from '@/lib/auth/session';
 
 export const dynamic = 'force-dynamic';
 
@@ -34,7 +33,7 @@ const savedPacks: SavedPack[] = [];
 
 export async function GET() {
   try {
-    await requireSessionUser();
+    await requireReceivingStaff();
     const result = await loadReceivingLogs();
     return NextResponse.json(result);
   } catch (error) {

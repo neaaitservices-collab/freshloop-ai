@@ -3,7 +3,9 @@ import { Role } from '@prisma/client';
 import { prisma } from '@/lib/domains/inventory/ledger';
 import { handleApiRouteError } from '@/lib/domains/ai/apiError';
 import { authErrorResponse } from '@/lib/auth/http';
+import { verifyPassword } from '@/lib/auth/password';
 import { AuthError, requireRoles, requireSessionUser } from '@/lib/auth/session';
+import { z } from 'zod';
 import { MANAGER_ROLES } from '@/lib/auth/permissions';
 import { getStaffHourlyRate, setStaffHourlyRate } from '@/lib/auth/staffHourlyRate';
 import { invalidateReferenceDataCaches } from '@/lib/domains/inventory/inventoryCache';
@@ -53,12 +55,14 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
       email?: string;
       position?: string;
       hourlyRate?: number | null;
+      currentPassword?: string;
     };
     const name = body.name?.trim() ?? '';
-    const email = body.email?.trim().toLowerCase() ?? '';
-    if (!name || !email) {
+    const emailParsed = z.string().trim().email().max(254).safeParse(body.email ?? '');
+    const email = emailParsed.success ? emailParsed.data.toLowerCase() : '';
+    if (!name || !emailParsed.success) {
       return NextResponse.json(
-        { success: false, error: 'Name and email are required.' },
+        { success: false, error: 'Name and a valid email are required.' },
         { status: 400 }
       );
     }
@@ -126,6 +130,24 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
       }
     }
 
+    const emailChanged = email !== current.email;
+    if (emailChanged && isSelf) {
+      const supplied = typeof body.currentPassword === 'string' ? body.currentPassword : '';
+      const secret = await prisma.user.findUnique({
+        where: { id },
+        select: { passwordHash: true },
+      });
+      const matches =
+        Boolean(secret?.passwordHash) &&
+        (await verifyPassword(supplied, secret?.passwordHash ?? ''));
+      if (!matches) {
+        return NextResponse.json(
+          { success: false, error: 'Current password is required to change your email.' },
+          { status: 403 }
+        );
+      }
+    }
+
     const user = await prisma.user.update({
       where: { id },
       data: {
@@ -133,6 +155,7 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
         email,
         position,
         role,
+        ...(emailChanged ? { credentialVersion: { increment: 1 } } : {}),
       },
       select: staffCoreSelect,
     });

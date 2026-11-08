@@ -105,6 +105,7 @@ export interface PostedReceipt {
   unitsAdded: number;
   onHand: number;
   transactionId: string;
+  idempotent?: boolean;
 }
 
 export interface SkippedReceipt {
@@ -832,7 +833,7 @@ async function applyAdminShelfLocationDelta(
       productId: input.productId,
       staffId: input.staffId,
       qtyChange: delta,
-      transactionType: TransactionType.Waste,
+      transactionType: TransactionType.Adjustment,
       fromLocation: input.location,
       toLocation: InventoryLocation.Waste_Bin,
       unitCostAtTime: input.unitCost,
@@ -1085,6 +1086,8 @@ export async function postReceipt(input: {
   staffId?: string;
   targetMargin?: number;
   supplier?: string | null;
+  /** Stable client line id. A repeat posts nothing and returns the first receipt. */
+  externalLogId?: string;
 }): Promise<PostedReceipt | SkippedReceipt> {
   let packData: ReturnType<typeof productPackWriteData>;
   try {
@@ -1100,7 +1103,16 @@ export async function postReceipt(input: {
 
   const unitCost = unitsPerCase > 0 ? input.caseCost / unitsPerCase : input.caseCost;
   const supplierLabel = input.supplier?.trim() || 'Received at the dock';
-  const posted = await prisma.$transaction(async (tx) => {
+  const idempotencyKey = input.externalLogId?.trim()
+    ? `recv:${input.externalLogId.trim()}`
+    : '';
+  const referenceId = idempotencyKey || `RCV-${Date.now()}`;
+  let posted: { product: { id: string; name: string }; created: { id: string } };
+  try {
+    posted = await prisma.$transaction(async (tx) => {
+    if (idempotencyKey) {
+      await tx.ledgerIdempotencyKey.create({ data: { key: idempotencyKey } });
+    }
     const ensured = await findOrCreatePurchaseProduct(
       {
         itemName: input.itemName,
@@ -1137,7 +1149,6 @@ export async function postReceipt(input: {
     });
     const shelfDays = product.shelfLifeDays > 0 ? product.shelfLifeDays : 7;
     const expirationDate = new Date(Date.now() + shelfDays * 24 * 60 * 60 * 1000);
-    const referenceId = `RCV-${Date.now()}`;
     const created = await tx.inventoryTransaction.create({
       data: {
         productId: product.id,
@@ -1163,6 +1174,30 @@ export async function postReceipt(input: {
     });
     return { product, created };
   });
+  } catch (error) {
+    const uniqueViolation =
+      typeof error === 'object' &&
+      error !== null &&
+      'code' in error &&
+      (error as { code?: string }).code === 'P2002';
+    if (idempotencyKey && uniqueViolation) {
+      const existing = await prisma.inventoryTransaction.findFirst({
+        where: { referenceId },
+        select: { id: true, productId: true },
+      });
+      const productId = existing?.productId ?? '';
+      return {
+        posted: true,
+        idempotent: true,
+        productId,
+        productName: input.itemName,
+        unitsAdded: 0,
+        onHand: productId ? await getCurrentStock(productId) : 0,
+        transactionId: existing?.id ?? '',
+      };
+    }
+    throw error;
+  }
 
   invalidateInventoryCaches();
   const onHand = await getCurrentStock(posted.product.id);
@@ -1417,12 +1452,13 @@ export async function logVolumetricScrapBuckets(
       data: {
         productId: anchor.id,
         staffId: staffId.trim() || 'staff-kitchen',
-        qtyChange: qty,
+        qtyChange: 0,
         transactionType: TransactionType.Waste,
         fromLocation: InventoryLocation.Kitchen_Prep,
         toLocation: InventoryLocation.Waste_Bin,
         unitCostAtTime: 0,
         referenceId,
+        scrapBucketCount: qty,
         notes,
       },
     });

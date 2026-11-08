@@ -466,6 +466,8 @@ export async function executeBundleSale(
 
     const referenceCode =
       externalRef?.trim() || `POS-KIT-${bundle.bundleSku}-${Date.now()}`;
+    const allowNegative = options?.allowNegativeStock === true;
+    const bundleGrossRevenue = Number((bundle.bundlePrice * quantitySold).toFixed(2));
 
     // 2. Pre-calculate Moving Average Cost (MAC) & optionally verify stock for each component
     const componentPlans: Array<{
@@ -479,17 +481,6 @@ export async function executeBundleSale(
 
     for (const bundleItem of bundle.items) {
       const qtyToDeduct = Number((bundleItem.quantity * quantitySold).toFixed(4));
-
-      if (options?.allowNegativeStock === false) {
-        const availableStock = await getCurrentStock(bundleItem.productId, sourceLocation, client);
-        if (availableStock + 0.0001 < qtyToDeduct) {
-          throw new InventoryLedgerError(
-            `Insufficient stock for component "${bundleItem.product.name}" at ${sourceLocation}: required ${qtyToDeduct}, available ${availableStock}.`,
-            'INSUFFICIENT_COMPONENT_STOCK',
-            409
-          );
-        }
-      }
 
       const unitCostAtTime = await getMovingAverageCost(bundleItem.productId, client);
       const lineCogs = Number((qtyToDeduct * unitCostAtTime).toFixed(4));
@@ -507,22 +498,13 @@ export async function executeBundleSale(
     // 3. Execute atomic ledger + FIFO lot write for all exploded components
     const writeBundle = async (tx: Prisma.TransactionClient) => {
       const rows: InventoryTransaction[] = [];
-      for (const plan of componentPlans) {
-        if (options?.allowNegativeStock === false) {
-          const availableStock = await getCurrentStock(plan.productId, sourceLocation, tx);
-          if (availableStock + 0.0001 < plan.qtyToDeduct) {
-            throw new InventoryLedgerError(
-              `Insufficient stock for component "${plan.productName}" at ${sourceLocation}: required ${plan.qtyToDeduct}, available ${availableStock}.`,
-              'INSUFFICIENT_COMPONENT_STOCK',
-              409
-            );
-          }
-        }
+      const ordered = [...componentPlans].sort((a, b) => a.productId.localeCompare(b.productId));
+      for (const [index, plan] of ordered.entries()) {
         await consumeLotsFifo(tx, {
           productId: plan.productId,
           location: sourceLocation,
           qty: plan.qtyToDeduct,
-          allowShort: options?.allowNegativeStock !== false,
+          allowShort: allowNegative,
         });
         rows.push(
           await tx.inventoryTransaction.create({
@@ -535,6 +517,7 @@ export async function executeBundleSale(
               toLocation: InventoryLocation.Customer_Out,
               unitCostAtTime: plan.unitCostAtTime,
               referenceId: referenceCode,
+              extendedRevenue: index === 0 ? bundleGrossRevenue : null,
               notes: `Virtual Kitting Explode [${bundle.bundleSku}]: ${bundle.name} (x${quantitySold})`,
             },
           })
@@ -549,20 +532,20 @@ export async function executeBundleSale(
     if (!options?.db) invalidateInventoryCaches();
 
     // 4. Build execution summary
-    const deductions: ExplodedComponentDeduction[] = componentPlans.map((plan, index) => ({
+    const txByProduct = new Map(createdTransactions.map((row) => [row.productId, row]));
+    const deductions: ExplodedComponentDeduction[] = componentPlans.map((plan) => ({
       productId: plan.productId,
       productName: plan.productName,
       unitType: plan.unitType,
       qtyDeducted: plan.qtyToDeduct,
       unitCostAtTime: plan.unitCostAtTime,
       lineCogs: plan.lineCogs,
-      transactionId: createdTransactions[index].id,
+      transactionId: txByProduct.get(plan.productId)?.id ?? '',
     }));
 
     const totalExplodedCogs = Number(
       deductions.reduce((acc, item) => acc + item.lineCogs, 0).toFixed(2)
     );
-    const bundleGrossRevenue = Number((bundle.bundlePrice * quantitySold).toFixed(2));
     const realizedGrossMarginPct =
       bundleGrossRevenue > 0
         ? Number(
@@ -647,7 +630,7 @@ export async function calculateRealTimeWastePct(
                 OR COALESCE("notes", '') LIKE ${volumetricKind}
                 OR LOWER(COALESCE("notes", '')) LIKE '%volumetric scrap%'
                 OR LOWER(COALESCE("notes", '')) LIKE '%cubeta%'
-              THEN ABS("Qty_Change")
+              THEN COALESCE("scrap_bucket_count", ABS("Qty_Change"))
               ELSE 0
             END
           ), 0)::float8 AS "bucketUnits"
@@ -657,17 +640,17 @@ export async function calculateRealTimeWastePct(
       `),
       prisma.$queryRaw<Array<{ grossSalesRevenue: number }>>(Prisma.sql`
         SELECT COALESCE(SUM(
-          ABS(t."Qty_Change") * CASE
-            WHEN p."retailPrice" IS NOT NULL AND p."retailPrice" > 0 THEN p."retailPrice"
-            ELSE t."Unit_Cost_At_Time" / (
-              1 - LEAST(0.95::float8, GREATEST(0.05::float8, COALESCE(p."targetMargin", 0.4)))
-            )
+          CASE
+            WHEN t."Transaction_Type" = 'Sale'::"TransactionType" AND t."Qty_Change" < 0
+              THEN ABS(t."Qty_Change") * t."Unit_Cost_At_Time"
+            WHEN t."Transaction_Type" = 'POS_Sale'::"TransactionType"
+              AND t."extended_revenue" IS NOT NULL
+              THEN t."extended_revenue"
+            ELSE 0
           END
         ), 0)::float8 AS "grossSalesRevenue"
         FROM "Inventory_Transactions" t
-        INNER JOIN products p ON p.id = t."Product_ID"
         WHERE t."Transaction_Type" IN ('Sale'::"TransactionType", 'POS_Sale'::"TransactionType")
-          AND t."Qty_Change" < 0
         ${salesTimeSql}
       `),
     ]);

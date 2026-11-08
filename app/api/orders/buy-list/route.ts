@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { apiErrorFromUnknown } from '@/lib/domains/ai/apiError';
 import { authErrorResponse } from '@/lib/auth/http';
-import { requireOperationalStaff } from '@/lib/auth/guardRoute';
+import { requireManagerStaff } from '@/lib/auth/guardRoute';
 import {
   getBuyListLevelsWithForecast,
   resolveBuyForecastConfig,
@@ -12,7 +12,7 @@ export const dynamic = 'force-dynamic';
 
 export async function GET(req: NextRequest) {
   try {
-    await requireOperationalStaff();
+    await requireManagerStaff();
     const raw = Object.fromEntries(req.nextUrl.searchParams.entries());
     const query = buyForecastQuerySchema.parse(raw);
     const config = resolveBuyForecastConfig({

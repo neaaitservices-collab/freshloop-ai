@@ -74,20 +74,6 @@ export async function POST(req: NextRequest) {
         : UnitType.TUB
     ) as UnitType;
 
-    const outputProduct = await prisma.product.create({
-      data: {
-        name: trimmedName,
-        department: Department.DELI_KITCHEN,
-        unitType: unitTypeEnum,
-        targetMargin: 0.45,
-        shelfLifeDays: 3,
-        isManufactured: true,
-        retailPrice: retailPriceNum,
-        regularRetailPrice: retailPriceNum,
-      },
-    });
-
-    // Create Recipe and BOM lines in transaction
     const laborHoursNum =
       Number.isFinite(Number(laborHours)) && Number(laborHours) >= 0
         ? Number(Number(laborHours).toFixed(2))
@@ -101,7 +87,20 @@ export async function POST(req: NextRequest) {
         ? Number(Number(packagingCostPerUnit).toFixed(4))
         : 0;
 
-    const createdRecipe = await prisma.recipe.create({
+    const createdRecipe = await prisma.$transaction(async (tx) => {
+      const outputProduct = await tx.product.create({
+        data: {
+          name: trimmedName,
+          department: Department.DELI_KITCHEN,
+          unitType: unitTypeEnum,
+          targetMargin: 0.45,
+          shelfLifeDays: 3,
+          isManufactured: true,
+          retailPrice: retailPriceNum,
+          regularRetailPrice: retailPriceNum,
+        },
+      });
+      return tx.recipe.create({
       data: {
         name: trimmedName,
         category: category ? String(category).trim() : 'Prepared Foods',
@@ -136,6 +135,7 @@ export async function POST(req: NextRequest) {
           },
         },
       },
+    });
     });
 
     invalidateInventoryCaches();

@@ -2,15 +2,14 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getPlatformSettings, parsePlatformSettings, savePlatformSettings } from '@/lib/domains/stats/platformSettings';
 import { apiErrorFromUnknown } from '@/lib/domains/ai/apiError';
 import { authErrorResponse } from '@/lib/auth/http';
-import { requireManagerStaff } from '@/lib/auth/guardRoute';
-import { requireSessionUser } from '@/lib/auth/session';
+import { requireManagerStaff, requireOperationalStaff } from '@/lib/auth/guardRoute';
 import { assertMutationRateLimit } from '@/lib/security/rateLimit';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET() {
   try {
-    await requireSessionUser();
+    await requireOperationalStaff();
     const settings = await getPlatformSettings();
     return NextResponse.json(
       { success: true, settings },
