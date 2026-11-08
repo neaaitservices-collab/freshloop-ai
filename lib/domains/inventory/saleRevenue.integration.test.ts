@@ -124,7 +124,23 @@ test(
       where: { id: zeroPrice.id },
       data: { standardCost: 0, retailPrice: null },
     });
-    await rebuildLotsFromLedger({ productIds: [product.id, zeroPrice.id] });
+    await postProductReceipt({
+      productId: berryA.id,
+      quantityUnits: 4,
+      unitCostAtTime: 1,
+      staffId: 'test-staff',
+      referenceId: `RCV-A-${stamp}`,
+    });
+    await postProductReceipt({
+      productId: berryB.id,
+      quantityUnits: 4,
+      unitCostAtTime: 1.4,
+      staffId: 'test-staff',
+      referenceId: `RCV-B-${stamp}`,
+    });
+    await rebuildLotsFromLedger({
+      productIds: [product.id, zeroPrice.id, berryA.id, berryB.id],
+    });
 
     const shelfSale = await recordProductSale({
       productId: product.id,
@@ -219,11 +235,13 @@ test(
       where: { id: { in: saleIds } },
       select: {
         id: true,
+        productId: true,
         transactionType: true,
         qtyChange: true,
         unitCostAtTime: true,
         realizedUnitPrice: true,
         realizedLineRevenue: true,
+        extendedRevenue: true,
       },
     });
     const beforeById = new Map(beforeRows.map((row) => [row.id, row]));
@@ -243,6 +261,17 @@ test(
       bundleRows.reduce((total, row) => total + (row?.realizedLineRevenue ?? 0), 0).toFixed(2)
     );
     assert.equal(bundleRevenue, 14.99);
+    const lineA = beforeRows.find(
+      (row) => row.productId === berryA.id && row.transactionType === TransactionType.POS_Sale
+    );
+    const lineB = beforeRows.find(
+      (row) => row.productId === berryB.id && row.transactionType === TransactionType.POS_Sale
+    );
+    assert.ok(lineA && lineB);
+    assert.ok((lineB.realizedLineRevenue ?? 0) > (lineA.realizedLineRevenue ?? 0));
+    const extendedValues = [lineA.extendedRevenue, lineB.extendedRevenue];
+    assert.equal(extendedValues.filter((value) => value === 14.99).length, 1);
+    assert.equal(extendedValues.filter((value) => value == null).length, 1);
     for (const row of bundleRows) {
       assert.equal(row?.transactionType, TransactionType.POS_Sale);
       assert.notEqual(row?.realizedLineRevenue, null);

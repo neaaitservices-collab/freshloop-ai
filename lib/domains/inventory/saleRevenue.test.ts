@@ -237,6 +237,43 @@ test('legacy rows stay unknown and are not priced from the current shelf or from
   assert.equal(legacySaleDisclosure(0, 0), '');
 });
 
+test('old aggregate inputs are not added to recognized sales', () => {
+  const fromCostColumn = sumRecognizedGrossSales([
+    {
+      transactionType: 'Sale',
+      qtyChange: -5,
+      realizedLineRevenue: null,
+      unitCostAtTime: 80,
+      currentRetailPrice: 9.99,
+    },
+  ]);
+  assert.equal(fromCostColumn.grossSalesRevenue, 0);
+  assert.equal(fromCostColumn.legacyUnpricedSaleCount, 1);
+  assert.notEqual(fromCostColumn.grossSalesRevenue, 5 * 80);
+  assert.notEqual(fromCostColumn.grossSalesRevenue, 5 * 9.99);
+
+  const bundle = sumRecognizedGrossSales([
+    {
+      transactionType: 'POS_Sale',
+      qtyChange: -1,
+      realizedLineRevenue: 6.25,
+      extendedRevenue: 14.99,
+      unitCostAtTime: 1,
+      currentRetailPrice: 0.25,
+    },
+    {
+      transactionType: 'POS_Sale',
+      qtyChange: -1,
+      realizedLineRevenue: 8.74,
+      extendedRevenue: null,
+      unitCostAtTime: 1.4,
+      currentRetailPrice: 0.25,
+    },
+  ]);
+  assert.equal(bundle.grossSalesRevenue, 14.99);
+  assert.notEqual(bundle.grossSalesRevenue, 14.99 + 14.99);
+});
+
 test('physical waste and markdown loss stay outside recognized sales', () => {
   const sales = sumRecognizedGrossSales([
     {

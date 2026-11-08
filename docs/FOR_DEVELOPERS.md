@@ -105,7 +105,9 @@ docs/                   # PROJECT_STRUCTURE, manager/executive docs, this file
 
 **Admin stats:** use `getAdminStoreStatsBundle()` so waste % comes only from `calculateRealTimeWastePct()` (default **30-day** lookback via `DEFAULT_KPI_LOOKBACK_DAYS` in `wasteKpi.ts`). Prisma client: `@/lib/db/prisma`.
 
-**Historical sales:** new `Sale` and `POS_Sale` rows store `realizedUnitPrice` and `realizedLineRevenue`. The waste denominator sums that recorded revenue. Rows with a null revenue are legacy and are left out of the ratio (current shelf price is not a substitute). Physical waste stays at `unitCostAtTime`. Markdown loss stays on `markdown_events.revenue_impact`. Apply migration `20261108191500_sale_realized_revenue` before the app build that reads those columns. The migration only adds nullable columns; it does not backfill or rewrite production history.
+**Historical sales:** new `Sale` and `POS_Sale` rows store `realizedUnitPrice` and `realizedLineRevenue`. The waste denominator sums that recorded line revenue only. Rows with a null revenue are legacy and are left out of the ratio (current shelf price and `Unit_Cost_At_Time` are not substitutes). One bundle component may also store the full bundle total in `extendedRevenue`; that header amount is not added on top of the line shares. Physical waste stays at `unitCostAtTime`. Markdown loss stays on `markdown_events.revenue_impact`.
+
+**Release order:** Vercel builds `main` automatically. The production migration workflow is manual (`workflow_dispatch` only) and does not run on merge. Apply `prisma/migrations/20261108191500_sale_realized_revenue` (nullable columns, no backfill) and confirm `\d "Inventory_Transactions"` shows `realized_unit_price` and `realized_line_revenue` before merging a build that selects them. Do not treat a missing Actions run as proof the migration is absent or applied; check `_prisma_migrations` or the columns on the target database. This repository does not auto-run that check.
 
 See also [PROJECT_STRUCTURE.md](./PROJECT_STRUCTURE.md).
 

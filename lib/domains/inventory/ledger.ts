@@ -528,11 +528,24 @@ export async function executeBundleSale(
         500
       );
     }
+    const pricedPlans = componentPlans.map((plan, index) => {
+      const recorded = realizedRevenue[index];
+      if (!recorded) {
+        throw new InventoryLedgerError(
+          'Bundle revenue allocation did not match component lines.',
+          'BUNDLE_REVENUE_ALLOCATION',
+          500
+        );
+      }
+      return { ...plan, recorded };
+    });
 
-    // 3. Execute atomic ledger + FIFO lot write for all exploded components
+    // 3. Execute atomic ledger + FIFO lot write for all exploded components.
+    // Lock order is product id. The allocation stays on the plan object so the
+    // sort cannot attach one component's revenue to another.
     const writeBundle = async (tx: Prisma.TransactionClient) => {
       const rows: InventoryTransaction[] = [];
-      const ordered = [...componentPlans].sort((a, b) => a.productId.localeCompare(b.productId));
+      const ordered = [...pricedPlans].sort((a, b) => a.productId.localeCompare(b.productId));
       for (const [index, plan] of ordered.entries()) {
         await consumeLotsFifo(tx, {
           productId: plan.productId,
@@ -550,8 +563,8 @@ export async function executeBundleSale(
               fromLocation: sourceLocation,
               toLocation: InventoryLocation.Customer_Out,
               unitCostAtTime: plan.unitCostAtTime,
-              realizedUnitPrice: recorded?.realizedUnitPrice ?? 0,
-              realizedLineRevenue: recorded?.realizedLineRevenue ?? 0,
+              realizedUnitPrice: plan.recorded.realizedUnitPrice,
+              realizedLineRevenue: plan.recorded.realizedLineRevenue,
               referenceId: referenceCode,
               extendedRevenue: index === 0 ? bundleGrossRevenue : null,
               notes: `Virtual Kitting Explode [${bundle.bundleSku}]: ${bundle.name} (x${quantitySold})`,
@@ -675,21 +688,18 @@ export async function calculateRealTimeWastePct(
         WHERE "Transaction_Type" = 'Waste'
         ${wasteTimeSql}
       `),
-      prisma.$queryRaw<Array<{ grossSalesRevenue: number }>>(Prisma.sql`
-        SELECT COALESCE(SUM(
-          CASE
-            WHEN t."Transaction_Type" = 'Sale'::"TransactionType" AND t."Qty_Change" < 0
-              THEN ABS(t."Qty_Change") * t."Unit_Cost_At_Time"
-            WHEN t."Transaction_Type" = 'POS_Sale'::"TransactionType"
-              AND t."extended_revenue" IS NOT NULL
-              THEN t."extended_revenue"
-            ELSE 0
-          END
-        ), 0)::float8 AS "grossSalesRevenue"
-        FROM "Inventory_Transactions" t
-        WHERE t."Transaction_Type" IN ('Sale'::"TransactionType", 'POS_Sale'::"TransactionType")
-        ${salesTimeSql}
-      `),
+      prisma.inventoryTransaction.findMany({
+        where: {
+          transactionType: { in: [TransactionType.Sale, TransactionType.POS_Sale] },
+          qtyChange: { lt: 0 },
+          timestamp: { gte: startDate, lte: endDate },
+        },
+        select: {
+          transactionType: true,
+          qtyChange: true,
+          realizedLineRevenue: true,
+        },
+      }),
     ]);
 
     const targetWastePct = storeSetting?.targetWastePct ?? 2.5;
