@@ -1,0 +1,74 @@
+# FreshLoop Cursor ignore. This is not a security boundary.
+# Agent, Tab, and @ mentions skip these paths. Terminal and MCP tools can still read them.
+# https://cursor.com/docs/reference/ignore-file
+# .gitignore and Cursor's default ignore list already apply. Patterns below are explicit.
+
+# Local secrets. .env.example is the sanitized template and stays visible.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+**/credentials.json
+**/secrets.json
+
+# Dependencies and package-manager caches.
+node_modules/
+.pnp
+.pnp.*
+.yarn/cache/
+.yarn/install-state.gz
+
+# Prisma Client is generated under node_modules by `prisma generate`.
+# Keep prisma/schema.prisma, prisma/migrations/, and migration_lock.toml visible.
+
+# Next.js, Vercel, and build outputs.
+.next/
+out/
+build/
+dist/
+.vercel/
+next-env.d.ts
+*.tsbuildinfo
+
+# Tool caches.
+.turbo/
+.swc/
+.cache/
+.eslintcache
+.parcel-cache/
+
+# Test outputs only. Source tests (lib/**/*.test.ts) stay visible.
+coverage/
+.nyc_output/
+test-results/
+playwright-report/
+
+# Logs and temp files.
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+tmp/
+temp/
+*.tmp
+
+# Editor and OS junk.
+.DS_Store
+Thumbs.db
+*.swp
+*~
+.idea/
+
+# Lockfiles. Cursor's default list already ignores package-lock.json and *.lock,
+# so these lines restate that choice. Ignoring them keeps index noise down and
+# means Agent cannot see the resolved tree while editing dependencies.
+# Uncomment the ! lines for a dependency change, or read the lockfile via the terminal.
+package-lock.json
+bun.lock
+yarn.lock
+pnpm-lock.yaml
+bun.lockb
+# !package-lock.json
+# !bun.lock

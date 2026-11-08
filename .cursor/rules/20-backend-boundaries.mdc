@@ -1,0 +1,13 @@
+---
+description: Route handlers, middleware, and auth boundaries
+globs: app/api/**/route.ts,middleware.ts,auth.ts,auth.config.ts,lib/auth/**/*.ts,lib/security/**/*.ts,instrumentation.ts
+alwaysApply: false
+---
+
+- Middleware lets `/api/auth/*`, `/api/health`, and `/api/pos/webhook` through without a session. Every other `/api` route requires a logged-in user, then a role check inside the handler.
+- Use `requireReceivingStaff`, `requireManagerStaff`, `requireKitchenStaff`, or `requireRoles` from `lib/auth/guardRoute.ts`. `requireOperationalStaff` includes every staff role.
+- Validate JSON with Zod in `lib/security/schemas/` and `parseJsonBody`. Return `authErrorResponse` / `apiErrorFromUnknown`.
+- Public signup roles are only `FLOOR_STAFF`, `RECEIVING_CLERK`, and `DELI_CHEF` (`lib/security/schemas/auth.ts`).
+- POS webhook auth is `Authorization: Bearer` plus `POS_WEBHOOK_SECRET`. The body cannot set `staffId`. Batch idempotency key is `externalRef`.
+- No `"use server"` modules exist. Do not document a fictional actions directory. When one is introduced, add its real path to this rule's `globs` in the same change.
+- Route files do not pull in Prisma or ledger rules by import. Open the domain module you are changing so `30-prisma-ledger.mdc` or `40-invoice-ocr.mdc` attaches.

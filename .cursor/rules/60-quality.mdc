@@ -1,0 +1,11 @@
+---
+description: Tests, diffs, and honest verification
+globs: lib/**/*.test.ts,lib/testing/**/*.ts,eslint.config.mjs,package.json
+alwaysApply: false
+---
+
+- `npm test` runs `node --import tsx --test lib/**/*.test.ts`. Tests live beside the module. There is no top-level `tests/` directory.
+- `ledger.integration.test.ts` and the database half of `posWebhook.integration.test.ts` run only when `DATABASE_URL` is set and `FRESHLOOP_DB_TESTS` is not `0`. The CI URL contains `freshloop_ci`, which those files skip. Do not point them at a shared database.
+- Prefer one existing helper over a second copy. Delete dead code instead of adding a flag.
+- Smallest change that fixes the cause. Do not drive-by edit unrelated files when a check was already failing.
+- Say what you ran. A skipped database test is not an end-to-end audit. Do not claim a screen was verified if you only read the code.

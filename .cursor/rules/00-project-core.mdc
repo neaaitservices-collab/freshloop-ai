@@ -1,0 +1,12 @@
+---
+description: FreshLoop invariants for every chat
+alwaysApply: true
+---
+
+- Next.js App Router at the repo root (`app/`). Domain logic is `lib/domains/`. Shared Prisma client is `lib/db/prisma.ts`.
+- This repo has no `"use server"` files. Data mutations go through `app/api/**/route.ts` or server components calling domain functions.
+- On-hand stock is the sum of `InventoryTransaction` rows via `lib/domains/inventory/stock.ts` and `ledger.ts`, not a stored quantity column.
+- Authorize on the server with `lib/auth/guardRoute.ts`. Never trust `staffId` or `role` from a request body.
+- AI (invoice OCR, voice, recipe fusion) may draft only. A person must confirm before any ledger write.
+- Do not add callers of `lib/legacy/`.
+- Before pushing, run `npm run lint`, `npm run typecheck`, and `npm test`. Report skips and failures as-is.
