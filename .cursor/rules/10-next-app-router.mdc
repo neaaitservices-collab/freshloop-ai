@@ -6,11 +6,8 @@ alwaysApply: false
 
 - Page files stay thin. Example: `app/receive/page.tsx` loads data and renders `ReceiveScreen`; `app/production/page.tsx` renders `ProductionDashboard`.
 - Feature UI lives in `components/features/<area>/`. Shell is `components/layout/`. Primitives are `components/ui/`, including `PageMain`, `ModalShell`, and `ScrollTable`.
-<<<<<<< HEAD
-- Role homes are `lib/utils/roleRouting.ts`. Middleware `canVisit` blocks pages the role cannot open. Hiding a button is not the server check.
-=======
 - Role homes are `lib/utils/roleRouting.ts`. Edge middleware only checks that a page is signed in. The root layout calls `decidePageAccess` with the current `staff_users` role. Hiding a button is not the server check.
->>>>>>> main
+
 - After a ledger mutation, dispatch `freshloop-inventory-updated`. Rescue also dispatches `freshloop-kitchen-inbox`. Settings use `freshloop-settings-updated`.
 - Optimistic stock UI uses `useOptimisticInventoryLevels` and must revert when the API returns no level or an error.
 - Touch targets are at least `min-h-11`. Long names use `min-w-0 truncate`. Currency and quantities use `font-mono tabular-nums`.

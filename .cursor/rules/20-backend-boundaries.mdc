@@ -5,10 +5,8 @@ alwaysApply: false
 ---
 
 - Middleware lets `/api/auth/*`, `/api/health`, and `/api/pos/webhook` through without a session. Every other `/api` route requires a logged-in user, then a role check inside the handler.
-<<<<<<< HEAD
-=======
 - `getSessionUser` / `requireRoles` reload `staff_users` and ignore the JWT role snapshot. A missing row, cleared password, unknown role, or failed lookup does not authorize. Do not add Prisma to `middleware.ts` or `auth.config.ts`.
->>>>>>> main
+
 - Use `requireReceivingStaff`, `requireManagerStaff`, `requireKitchenStaff`, or `requireRoles` from `lib/auth/guardRoute.ts`. `requireOperationalStaff` includes every staff role.
 - Validate JSON with Zod in `lib/security/schemas/` and `parseJsonBody`. Return `authErrorResponse` / `apiErrorFromUnknown`.
 - Public signup roles are only `FLOOR_STAFF`, `RECEIVING_CLERK`, and `DELI_CHEF` (`lib/security/schemas/auth.ts`).
