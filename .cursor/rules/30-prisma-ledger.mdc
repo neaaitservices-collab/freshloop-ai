@@ -1,0 +1,16 @@
+---
+description: Prisma schema, client, and inventory ledger writes
+globs: prisma/schema.prisma,prisma/migrations/**/*.sql,prisma/migrations/migration_lock.toml,prisma/seed.ts,lib/db/**/*.ts,lib/domains/inventory/**/*.ts,lib/domains/receiving/receivingLogPost.ts,lib/domains/receiving/receivingDisposition.ts,lib/domains/receiving/yieldPricing.ts,lib/domains/manufacturing/**/*.ts,app/api/inventory/**/*.ts,app/api/receiving-logs/**/*.ts,app/api/receiving-dispositions/**/*.ts,app/api/sales/route.ts,app/api/pos/**/*.ts,app/api/manufacturing/route.ts
+alwaysApply: false
+---
+
+- Schema is `prisma/schema.prisma` (PostgreSQL). Runtime URL is `DATABASE_URL`. Migrations use `DIRECT_URL`.
+- Import Prisma from `@/lib/db/prisma`. `prisma generate` writes the client under `node_modules` (`node_modules/.prisma/client`). Do not commit generated client output.
+- New columns ship as a new `prisma/migrations/<timestamp>_*/migration.sql`. Do not edit an applied migration or `migration_lock.toml` by hand.
+- `User` has no `storeId`. Read store settings with `findLatestStoreSetting()`.
+- `postProductReceipt` receives onto `Retail_Floor` and sets `referenceId` to `RCV-${Date.now()}`. That path has no idempotency key. Offline moves use `OFFLINE-{clientMutationId}`.
+- Floor rescue writes two `Rescue` rows and `transferLotsFifo`. Floor waste writes one negative `Waste` row and `consumeLotsFifo` without `allowShort`.
+- `applyRetailMarkdown` defaults the discount argument to 30, clamps 5–90, updates shelf price, and inserts `MarkdownEvent`.
+- Manufacturing may call `consumeLotsFifo` with `allowShort: true` and still post the full negative quantity. Do not copy `allowShort` into floor moves.
+- `ReceivingDisposition` tracks vendor credit (`NOT_RECEIVED` / `PENDING_CREDIT`) or a drop (`REMOVED`). It does not change on-hand stock or payables.
+- `logVolumetricScrapBuckets` writes a `Waste` row with `unitCostAtTime` 0 and bucket economics in notes. It does not consume lots. Waste dollars for that row come from `scrapBucketEconomics`.

@@ -1,0 +1,13 @@
+---
+description: Tailwind v4 tokens and dashboard layout
+globs: app/globals.css,postcss.config.mjs,components/**/*.tsx,app/**/*.tsx
+alwaysApply: false
+---
+
+- Tailwind v4 loads from `@import "tailwindcss"` in `app/globals.css` and `@tailwindcss/postcss` in `postcss.config.mjs`. Do not add `tailwind.config.ts`.
+- Tokens that exist today are `--background`, `--foreground`, `--freshloop-mobile-nav-h`, and the `@theme inline` font variables in `app/globals.css`.
+- Shell: `bg-slate-950`, `border-slate-800`, emerald for primary actions, rose for waste, amber for alerts.
+- Layout uses Tailwind grid and flex (`gap-4` or `gap-6`). Avoid one-off absolute offsets. Tables go in `ScrollTable`. Modals use `ModalShell` and stay inside the viewport (`max-h-[92vh]`).
+- Voice on `/production` is `VoiceRecorderModal` (parse only, `confirmCommit: false`). Voice on `/operations` is `VoiceLoggerModal`, which can commit after confirmation. Do not treat the production Done button as a ledger write.
+- Scrap copy in `VolumetricScrapForm` is intentionally mixed English and Spanish. Match nearby strings if you edit that panel.
+- Deli print rules live at the bottom of `app/globals.css` (`.no-print`, `.deli-label-print-surface`).
