@@ -1,0 +1,13 @@
+---
+description: Invoice OCR preview, guardrails, and receiving commit
+globs: app/api/invoice-ocr/**/*.ts,lib/domains/ai/gemini.ts,lib/domains/ai/geminiModels.ts,lib/domains/receiving/invoiceOcr*.ts,lib/domains/receiving/receivingSheet.ts,lib/domains/receiving/receivingBridge.ts,lib/security/schemas/invoiceOcr.ts,lib/utils/prepareImageForOcr.ts,components/features/invoices/**/*.tsx,components/features/receive/**/*.tsx
+alwaysApply: false
+---
+
+- Preview is `POST /api/invoice-ocr` without `confirmCommit`. Stock commit on that route requires `confirmCommit: true`, `invoiceOcrCommitBodySchema`, and `requireReceivingStaff`.
+- `InvoiceUploadModal` does not call commit. It returns lines to React state. The Receive screen posts stock with `POST /api/receiving-logs` or `/api/receiving-logs/batch`.
+- `demo: true` is the sample invoice. Missing `GEMINI_API_KEY` must fail closed in production (`rejectProductionAiMock`), not invent a posted receipt.
+- Preview may upsert a supplier and write OCR analytics. It must not create `InventoryTransaction` rows.
+- Guardrails compare scanned cost with moving average cost and `StoreSetting.costGuardrailVariancePct`. A modal checkbox is not enforcement on `POST /api/receiving-logs`.
+- `loadReceivingLogs` returns `SAMPLE_RECEIVING_LOGS` when Google Sheets env is missing or the request fails. Those rows are not database records until someone saves them.
+- Tests sit next to the helpers: `invoiceOcrCommit.test.ts`, `invoiceOcrConfidence.test.ts`, `invoiceOcrErrors.test.ts`. There is no fixture image directory.

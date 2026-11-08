@@ -1,0 +1,12 @@
+---
+description: Waste KPI, admin stats, and buy-list forecast
+globs: lib/domains/stats/**/*.ts,lib/domains/executive/**/*.ts,lib/domains/inventory/forecasting.ts,lib/domains/inventory/parLevel.ts,app/api/admin/stats/route.ts,app/api/admin/settings/route.ts,app/api/orders/**/*.ts,app/api/inventory/waste-kpi/route.ts,components/features/admin/**/*.tsx,components/features/orders/**/*.tsx
+alwaysApply: false
+---
+
+- Waste % is `(discard $ + volumetric scrap $) / gross Sale and POS_Sale revenue` via `calculateRealTimeWastePct` and `computeWastePct`.
+- `computeWastePct` returns null when gross sales are under `MIN_GROSS_SALES_FOR_WASTE_RATIO` (100). The admin card shows `—` in that case. Do not duplicate this math inside `storeStats`.
+- Admin low-stock in `loadStoreStats` skips SKUs with `onHand <= 0`. Orders use `getBuyListLevelsWithForecast()`, which can mark a line low from velocity even when the par-only level does not.
+- `GET /api/inventory/levels` is par stock, not the forecast. Do not replace forecast rows on `/orders` with that payload.
+- Default KPI window is `DEFAULT_KPI_LOOKBACK_DAYS` in `lib/domains/stats/wasteKpi.ts`.
+- `BuyList` approval marks and the purchase-order "send" action are client state. They do not create a purchase order or send email.
