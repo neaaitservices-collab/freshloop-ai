@@ -1,9 +1,9 @@
 import { Suspense } from 'react';
 import { redirect } from 'next/navigation';
-import { auth } from '@/auth';
 import { InventoryRoute } from '@/components/features/inventory/InventoryRoute';
+import { AuthError, getSessionUser } from '@/lib/auth/session';
 import { getStockLevels } from '@/lib/domains/inventory/stock';
-import { isManager, isRoleName } from '@/lib/utils/roles';
+import { isManager } from '@/lib/utils/roles';
 
 export const dynamic = 'force-dynamic';
 
@@ -13,10 +13,14 @@ async function LiveInventory() {
 }
 
 export default async function InventoryPage() {
-  const session = await auth();
-  const role = session?.user?.role;
-  if (role && isRoleName(role) && isManager(role)) {
-    redirect('/admin#inventory-catalog');
+  try {
+    const user = await getSessionUser();
+    if (user && isManager(user.role)) {
+      redirect('/admin#inventory-catalog');
+    }
+  } catch (error) {
+    if (error instanceof AuthError) redirect('/login?callbackUrl=%2Finventory');
+    throw error;
   }
 
   return (
