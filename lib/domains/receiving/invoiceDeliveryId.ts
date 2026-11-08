@@ -19,14 +19,35 @@ export function normalizeDeliveryUuid(value: string): string | null {
   return isDeliveryUuid(id) ? id : null;
 }
 
-export function normalizeInvoiceIdentity(invoiceNumber: string | null | undefined): string | null {
-  const value = (invoiceNumber ?? '').trim().toLowerCase();
-  if (!value || value === 'unread' || value === 'unknown' || value === 'n/a' || value === 'na') {
+/**
+ * Invoice numbers keep punctuation characters. `1001/A` and `1001-A` are
+ * different documents. Spaces are removed and letters are casefolded so an OCR
+ * rescan does not fork the document. Invoice date and year are not part of this key.
+ */
+export function canonicalInvoiceNumber(invoiceNumber: string | null | undefined): string | null {
+  const compact = (invoiceNumber ?? '').trim().replace(/\s+/g, '').toLowerCase();
+  if (!compact || compact === 'unread' || compact === 'unknown' || compact === 'n/a' || compact === 'na') {
     return null;
   }
-  const slug = value.replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64);
-  return slug || null;
+  return compact;
 }
+
+/** @deprecated Use canonicalInvoiceNumber. Punctuation is preserved. */
+export function normalizeInvoiceIdentity(invoiceNumber: string | null | undefined): string | null {
+  return canonicalInvoiceNumber(invoiceNumber);
+}
+
+/** Printed invoice line text. Not a catalog match and not a commercial hash. */
+export function canonicalPrintedLine(name: string | null | undefined): string | null {
+  const value = (name ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
+  return value || null;
+}
+
+export const SUPPLIER_REQUIRED_ERROR =
+  'Select a saved supplier before this invoice can be received. The vendor name printed on the scan is not a supplier id.';
+
+export const INVOICE_NUMBER_REUSE_POLICY =
+  'Invoice date and year are not part of the receipt identity, because a rescan often reads the date differently. One saved supplier plus one invoice number is one document. A reused number in a later year is that same document: identical goods replay, and different goods return 409 instead of a second delivery.';
 
 function rotl(value: number, shift: number): number {
   return ((value << shift) | (value >>> (32 - shift))) >>> 0;

@@ -155,22 +155,30 @@ test('duplicate invoice commits post once', { skip: !hasDb }, async (t) => {
       },
     ],
   });
-  const key = `invoice:vendor ${stamp}:inv-${stamp}`;
+  const supplier = await prisma.supplier.create({ data: { name: `Supplier ${stamp}` } });
 
   t.after(async () => {
-    await prisma.ledgerIdempotencyKey.deleteMany({ where: { key } });
+    const deliveries = await prisma.receivingDelivery.findMany({
+      where: { itemName: `Invoice Apple ${stamp}` },
+      select: { id: true },
+    });
+    await prisma.ledgerIdempotencyKey.deleteMany({
+      where: { key: { in: deliveries.map((row) => `recv:${row.id}`) } },
+    });
+    await prisma.receivingDelivery.deleteMany({ where: { id: { in: deliveries.map((row) => row.id) } } });
+    await prisma.supplierInvoiceDocument.deleteMany({ where: { supplierId: supplier.id } });
     await prisma.invoiceOcrDraft.deleteMany({ where: { id: draft.id } });
-    await prisma.invoiceLineItem.deleteMany({ where: { inventoryItem: { productId: product.id } } });
+    await prisma.invoiceLineItem.deleteMany({ where: { invoice: { invoiceNumber: `INV-${stamp}` } } });
     await prisma.vendorInvoice.deleteMany({ where: { invoiceNumber: `INV-${stamp}` } });
     await prisma.inventoryLot.deleteMany({ where: { productId: product.id } });
     await prisma.inventoryTransaction.deleteMany({ where: { productId: product.id } });
     await prisma.product.delete({ where: { id: product.id } });
+    await prisma.supplier.delete({ where: { id: supplier.id } });
   });
 
   const input = {
     staffId: 'test-staff',
     referenceId: `INV-${stamp}`,
-    idempotencyKey: key,
     draftId: draft.id,
     actorIsManager: false,
     confirmedItems: [
@@ -185,6 +193,7 @@ test('duplicate invoice commits post once', { skip: !hasDb }, async (t) => {
     ],
     invoiceMeta: {
       vendorName: `Vendor ${stamp}`,
+      supplierId: supplier.id,
       invoiceNumber: `INV-${stamp}`,
       invoiceDate: '2026-11-08',
       totalAmount: 4,
@@ -193,17 +202,8 @@ test('duplicate invoice commits post once', { skip: !hasDb }, async (t) => {
   };
 
   const firstCommit = await commitInvoiceOcrReceipts(input);
-  let duplicate = false;
-  try {
-    await commitInvoiceOcrReceipts(input);
-  } catch (error) {
-    duplicate =
-      typeof error === 'object' &&
-      error !== null &&
-      'code' in error &&
-      (error as { code?: string }).code === 'P2002';
-  }
-  assert.equal(duplicate, true);
+  const secondCommit = await commitInvoiceOcrReceipts(input);
+  assert.equal(secondCommit.transactionsCreated, 0);
   assert.equal(firstCommit.transactionsCreated, 1);
   const onHand = await getCurrentStock(product.id, InventoryLocation.Retail_Floor);
   assert.equal(onHand, 2);

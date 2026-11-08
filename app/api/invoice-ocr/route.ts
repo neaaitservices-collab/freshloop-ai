@@ -1,11 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Department } from '@prisma/client';
-import { getMovingAverageCostMap, prisma } from '@/lib/domains/inventory/ledger';
+import { InventoryLedgerError, getMovingAverageCostMap, prisma } from '@/lib/domains/inventory/ledger';
 import { loadProductCatalog } from '@/lib/domains/catalog/productCatalog';
 import {
   assertDraftLinesCommittable,
   commitInvoiceOcrReceipts,
-  invoiceIdempotencyKey,
   saveInvoiceOcrDraft,
   type OcrDraftLine,
   type OcrDraftPayload,
@@ -532,6 +531,7 @@ export async function POST(req: NextRequest) {
         })),
         invoiceMeta: {
           vendorName: payload.vendorName,
+          supplierId: commitBody.supplierId,
           invoiceNumber: payload.invoiceNumber,
           invoiceDate: payload.invoiceDate,
           totalAmount: payload.totalAmount,
@@ -539,22 +539,14 @@ export async function POST(req: NextRequest) {
         },
         manualReviewOverride: commitBody.manualReviewOverride,
         actorIsManager,
-        idempotencyKey: invoiceIdempotencyKey(payload.vendorName, payload.invoiceNumber),
         draftId: draft.id,
       });
       } catch (error) {
-        const uniqueViolation =
-          typeof error === 'object' &&
-          error !== null &&
-          'code' in error &&
-          (error as { code?: string }).code === 'P2002';
-        if (uniqueViolation) {
-          return NextResponse.json({
-            success: true,
-            committed: true,
-            idempotent: true,
-            timestamp: new Date().toISOString(),
-          });
+        if (error instanceof InventoryLedgerError) {
+          return NextResponse.json(
+            { success: false, error: error.message, code: error.code },
+            { status: error.statusCode }
+          );
         }
         throw error;
       }

@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { uuidV5 } from '@/lib/domains/receiving/invoiceDeliveryId';
-import { invoiceLineDeliveryId, receivingLogsFromInvoice } from '@/lib/domains/receiving/receivingBridge';
+import { receivingLogsFromInvoice } from '@/lib/domains/receiving/receivingBridge';
+import {
+  canonicalInvoiceNumber,
+  INVOICE_NUMBER_REUSE_POLICY,
+  SUPPLIER_REQUIRED_ERROR,
+} from '@/lib/domains/receiving/invoiceDeliveryId';
 import {
   parseReceivingSheetValues,
 } from '@/lib/domains/receiving/receivingSheet';
@@ -17,8 +22,6 @@ import {
   receivingValidationHttpStatus,
   validateReceivingLogPostInput,
 } from '@/lib/domains/receiving/receivingLogPost';
-import { DEMO_INVOICE_NUMBER } from '@/lib/domains/receiving/sampleReceivingGuard';
-
 const HEADERS = ['Select Item', 'New Inventory Count', 'New Case Cost', 'Delivery ID'];
 const APPLE = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const PEAR = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
@@ -113,7 +116,15 @@ test('positional ids are rejected and do not validate as a new delivery', () => 
   assert.equal(receivingLineHttpStatus({ posted: true, productId: 'p', productName: 'A', unitsAdded: 1, onHand: 1, transactionId: 't', idempotent: true }), 200);
 });
 
-test('the same numbered invoice reuses line ids and a blank number does not invent one', () => {
+test('invoice numbers keep punctuation and invoice lines stay unposted until the server assigns ids', () => {
+  assert.equal(canonicalInvoiceNumber('1001/A'), '1001/a');
+  assert.equal(canonicalInvoiceNumber('1001-A'), '1001-a');
+  assert.notEqual(canonicalInvoiceNumber('1001/A'), canonicalInvoiceNumber('1001-A'));
+  assert.equal(canonicalInvoiceNumber('  INV  9 '), 'inv9');
+  assert.equal(canonicalInvoiceNumber('1001 / A'), canonicalInvoiceNumber('1001/A'));
+  assert.equal(canonicalInvoiceNumber('unread'), null);
+  assert.match(INVOICE_NUMBER_REUSE_POLICY, /date and year are not part/i);
+  assert.match(SUPPLIER_REQUIRED_ERROR, /Select a saved supplier/);
   const apples = {
     name: 'Apples',
     department: 'PRODUCE' as const,
@@ -125,35 +136,20 @@ test('the same numbered invoice reuses line ids and a blank number does not inve
     totalCost: 8,
     productId: 'sku-apple',
   };
-  const pears = { ...apples, name: 'Pears', productId: 'sku-pear', quantity: 1, totalCost: 4 };
-  const again = { ...apples, quantity: 9, unitCost: 99, totalCost: 99 };
-  const first = invoiceLineDeliveryId('INV-9', [apples, pears], 0);
-  const rescanned = invoiceLineDeliveryId('INV-9', [again, pears], 0);
-  const otherLine = invoiceLineDeliveryId('INV-9', [apples, pears], 1);
-  const otherInvoice = invoiceLineDeliveryId('INV-10', [apples], 0);
-  assert.equal(first, rescanned);
-  assert.equal(isDeliveryUuid(first ?? ''), true);
-  assert.notEqual(first, otherLine);
-  assert.notEqual(first, otherInvoice);
-  const twoApples = invoiceLineDeliveryId('INV-9', [apples, apples], 1);
-  assert.notEqual(first, twoApples);
-  assert.equal(invoiceLineDeliveryId('', [apples], 0), null);
-  assert.equal(invoiceLineDeliveryId('unread', [apples], 0), null);
-  const missing = receivingLogsFromInvoice({
+  const logs = receivingLogsFromInvoice({
     vendorName: 'Vendor',
-    invoiceNumber: '',
+    invoiceNumber: '1001/A',
     invoiceDate: '2026-11-08',
-    totalAmount: 4,
-    departmentBreakdown: { PRODUCE: 4, DAIRY: 0, BAKERY: 0, PANTRY: 0 },
-    lineItems: [apples],
+    totalAmount: 8,
+    departmentBreakdown: { PRODUCE: 8, DAIRY: 0, BAKERY: 0, PANTRY: 0 },
+    lineItems: [apples, { ...apples, name: 'Pears', productId: 'sku-pear' }],
     rawSummary: '',
   });
-  assert.equal(missing[0]?.canPost, false);
-  assert.match(missing[0]?.id ?? '', /^unassigned-invoice-line-/);
-  assert.match(
-    invoiceLineDeliveryId(DEMO_INVOICE_NUMBER, [apples], 0) ?? '',
-    /INV-2026-1020-TD/
-  );
+  assert.equal(logs[0]?.canPost, false);
+  assert.equal(logs[0]?.printedName, 'Apples');
+  assert.equal(logs[0]?.itemName, 'Apples');
+  assert.match(logs[0]?.id ?? '', /^unassigned-invoice-line-/);
+  assert.equal(logs[1]?.productId, 'sku-pear');
 });
 
 test('a 409 batch response still returns the posted row and the conflict', () => {

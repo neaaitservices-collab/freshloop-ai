@@ -430,6 +430,7 @@ model Supplier {
   priceVarianceLogs      PriceVarianceLog[]
   qualityEvents          SupplierQualityEvent[]
   receivingDispositions  ReceivingDisposition[]
+  invoiceDocuments       SupplierInvoiceDocument[]
 
   @@map("suppliers")
 }
@@ -648,6 +649,36 @@ model LedgerIdempotencyKey {
 }
 
 /// One persisted delivery UUID. The payload hash rejects a reused id with different goods.
+/// One document per saved supplier and invoice number. Date is stored, not keyed.
+model SupplierInvoiceDocument {
+  id            String   @id @default(cuid())
+  supplierId    String   @map("supplier_id")
+  supplier      Supplier @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  invoiceKey    String   @map("invoice_key")
+  invoiceNumber String   @map("invoice_number")
+  invoiceDate   String?  @map("invoice_date")
+  createdAt     DateTime @default(now()) @map("created_at")
+  lines         SupplierInvoiceLine[]
+
+  @@unique([supplierId, invoiceKey])
+  @@index([supplierId])
+  @@map("supplier_invoice_documents")
+}
+
+/// Line identity is assigned once. Printed text aligns rescans; catalog match does not.
+model SupplierInvoiceLine {
+  id         String                  @id @default(uuid())
+  documentId String                  @map("document_id")
+  document   SupplierInvoiceDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  printedKey String                  @map("printed_key")
+  occurrence Int
+  ordinal    Int
+
+  @@unique([documentId, printedKey, occurrence])
+  @@index([documentId])
+  @@map("supplier_invoice_lines")
+}
+
 model ReceivingDelivery {
   id               String   @id
   payloadHash      String   @map("payload_hash")

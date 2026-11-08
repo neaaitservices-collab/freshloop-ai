@@ -22,6 +22,10 @@ export interface ReceivingLog {
    * Omitted means the line already has its own id (invoice UUID).
    */
   canPost?: boolean;
+  /** Printed invoice description. Line identity uses this, not the catalog match. */
+  printedName?: string;
+  invoiceNumber?: string;
+  invoiceDate?: string;
 }
 
 export interface YieldQuote {

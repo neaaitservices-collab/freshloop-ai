@@ -1,20 +1,22 @@
 import { Department, InventoryLocation, Prisma } from '@prisma/client';
-import { prisma } from '@/lib/domains/inventory/ledger';
+import { InventoryLedgerError, prisma } from '@/lib/domains/inventory/ledger';
 import { invalidateInventoryCaches } from '@/lib/domains/inventory/inventoryCache';
 import {
   findOrCreatePurchaseProduct,
   normalizeProductPackFields,
-  postProductReceipt,
   productPackWriteData,
   type PurchaseProductNameCatalog,
 } from '@/lib/domains/inventory/stock';
-import { resolveSupplierIdForVendorName } from '@/lib/domains/suppliers/suppliers';
 import {
   INVOICE_OCR_CONFIDENCE_THRESHOLD,
   computeCommitLineConfidence,
   lineNeedsManualReview,
 } from '@/lib/domains/receiving/invoiceOcrConfidence';
 import { sampleInvoiceCommitRejection } from '@/lib/domains/receiving/sampleReceivingGuard';
+import {
+  postResolvedSupplierInvoice,
+  SUPPLIER_REQUIRED_ERROR,
+} from '@/lib/domains/receiving/supplierInvoiceIdentity';
 
 export type OcrQuantityKind = 'units' | 'cases';
 
@@ -145,10 +147,6 @@ export interface OcrDraftPayload {
   lines: OcrDraftLine[];
 }
 
-export function invoiceIdempotencyKey(vendorName: string, invoiceNumber: string): string {
-  return `invoice:${vendorName.trim().toLowerCase()}:${invoiceNumber.trim().toLowerCase()}`;
-}
-
 /** Commit uses the stored scan. Client confidence and cost flags are not an input. */
 export function assertDraftLinesCommittable(
   lines: OcrDraftLine[],
@@ -217,17 +215,39 @@ export async function commitInvoiceOcrReceipts(input: {
     actorIsManager: Boolean(input.actorIsManager),
   });
 
+  const supplierId = input.invoiceMeta?.supplierId?.trim() ?? '';
+  if (!supplierId) throw new InventoryLedgerError(SUPPLIER_REQUIRED_ERROR, 'SUPPLIER_REQUIRED', 409);
+  const shared = await postResolvedSupplierInvoice({
+    staffId: input.staffId,
+    supplierId,
+    invoiceNumber: input.invoiceMeta?.invoiceNumber ?? '',
+    invoiceDate: input.invoiceMeta?.invoiceDate,
+    lines: input.confirmedItems.map((item) => ({
+      printedName: item.line_name?.trim() || '',
+      productId: item.product_id,
+      quantity: item.quantity,
+      unitCost: item.unit_cost,
+      quantityKind: item.quantity_kind === 'cases' ? 'cases' : 'units',
+      casePackSize: item.case_pack_size,
+    })),
+  });
+  if (!shared.ok) throw new InventoryLedgerError(shared.error, shared.code, 409);
+  const conflict = shared.results.find((row) => row.stock.posted === false && row.stock.conflict === true);
+  if (conflict && conflict.stock.posted === false) {
+    throw new InventoryLedgerError(conflict.stock.reason, 'DELIVERY_CONFLICT', 409);
+  }
+  const failed = shared.results.find((row) => row.stock.posted === false);
+  if (failed && failed.stock.posted === false) {
+    throw new InventoryLedgerError(failed.stock.reason, 'RECEIPT_REJECTED', 409);
+  }
+  const newlyPosted = shared.results.filter((row) => row.stock.posted && row.stock.idempotent !== true).length;
+
   const result = await prisma.$transaction(
     async (tx) => {
-      if (input.idempotencyKey) {
-        await tx.ledgerIdempotencyKey.create({ data: { key: input.idempotencyKey } });
-      }
       let invoiceId: string | null = null;
-      if (input.invoiceMeta) {
+      if (input.invoiceMeta && newlyPosted > 0) {
         const meta = input.invoiceMeta;
-        const supplierId =
-          meta.supplierId?.trim() ||
-          (await resolveSupplierIdForVendorName(meta.vendorName, tx));
+        const supplierId = meta.supplierId?.trim() || '';
         const invoice = await tx.vendorInvoice.create({
           data: {
             vendorName: meta.vendorName,
@@ -267,7 +287,12 @@ export async function commitInvoiceOcrReceipts(input: {
         prefetched.map((row) => [row.id, row])
       );
 
-      const receipts = [];
+      const receipts: {
+        transactionId: string;
+        productId: string;
+        unitsAdded: number;
+        onHand: number;
+      }[] = [];
       for (const item of input.confirmedItems) {
         let productId = String(item.product_id ?? '').trim();
         if (!productId) {
@@ -326,19 +351,13 @@ export async function commitInvoiceOcrReceipts(input: {
           throw new Error(`Receive quantity must be greater than zero for ${product.name}.`);
         }
 
-        const receipt = await postProductReceipt(
-          {
-            productId,
-            quantityUnits: units,
-            unitCostAtTime: unitCost,
-            staffId: input.staffId,
-            referenceId: input.referenceId,
-            toLocation: item.to_location ?? InventoryLocation.Retail_Floor,
-            notes: 'Confirmed Invoice OCR Receipt',
-          },
-          tx
-        );
-        receipts.push(receipt);
+        const sharedRow = shared.results[receipts.length];
+        receipts.push({
+          transactionId: sharedRow?.stock.posted ? sharedRow.stock.transactionId : '',
+          productId,
+          unitsAdded: sharedRow?.stock.posted ? sharedRow.stock.unitsAdded : units,
+          onHand: sharedRow?.stock.posted ? sharedRow.stock.onHand : 0,
+        });
 
         if (invoiceId) {
           const lineConfidence = computeCommitLineConfidence(
@@ -364,7 +383,7 @@ export async function commitInvoiceOcrReceipts(input: {
       const committed = {
         invoiceId,
         receipts,
-        transactionsCreated: receipts.length,
+        transactionsCreated: newlyPosted,
       };
       if (input.draftId) {
         await tx.invoiceOcrDraft.update({

@@ -155,6 +155,7 @@ All handlers use `export const dynamic = 'force-dynamic'` unless noted. Errors o
 |--------|------|---------|
 | `GET` | `/api/receiving-logs` | `loadReceivingLogs()` — read-only Google Sheet. No sample rows. |
 | `POST` | `/api/receiving-logs` | Save one delivery UUID → `postReceipt()`. Same UUID and payload is a no-op. A different payload is 409. |
+| `POST` | `/api/receiving-invoices/identity` | Assign or reuse supplier-scoped invoice line UUIDs. |
 | `GET` | `/api/receiving-dispositions` | Pending vendor credits |
 | `POST` | `/api/receiving-dispositions` | Create disposition (not received / removed) |
 | `PATCH` | `/api/receiving-dispositions/[id]` | Resolve credit |
@@ -163,9 +164,9 @@ All handlers use `export const dynamic = 'force-dynamic'` unless noted. Errors o
 
 **Delivery identity.** The sheet is read-only (`GOOGLE_SHEETS_API_KEY` values GET). FreshLoop does not write a UUID back. Add a column named `Delivery ID`, `Line ID`, or `External ID`. Generate the UUID once per delivery and leave that cell with the row when it is sorted or reused. A new delivery needs a new UUID even when the item and cost match. Rows without a UUID, and every row that repeats a UUID, are shown with `canPost: false`. `sheet-row-N` is rejected with 409 and does not delete old `recv:sheet-row-N` ledger keys.
 
-Numbered invoice lines use a UUID v5 of the invoice number plus the line's product (or name) and how many times that slot already appeared. Scanning invoice `INV-9` again resolves the same ids, so a second save does not add stock. A blank or `unread` invoice number does not get an id. Old browser stashes whose ids start with `scan-` return 409 with `LEGACY_SCAN_STASH_ERROR`; open the invoice again. Shelf price is not part of the physical receipt fingerprint, so a price-only retry stays idempotent. A different case cost is 409.
+Numbered invoices are identified by a saved `suppliers.id` plus the invoice number. Punctuation stays, so `1001/A` and `1001-A` are different documents. Spaces in the number are removed so an OCR rescan does not fork it. The printed vendor name is not a supplier id. Invoice date and year are stored on first sight and are not part of the key: a reused number in a later year is the same document (replay when the physical facts match, 409 when they do not). The server assigns each printed line a UUID once (`supplier_invoice_lines`). A rescan reuses that UUID when the printed text aligns, including when the catalog match appears, disappears, or changes. A changed product, quantity, case cost, or pack on that same UUID is 409 and does not create another receipt. Printed text that does not align returns `LINE_MISMATCH` and does not insert a new line. The receiving board (`POST /api/receiving-invoices/identity`, then `POST /api/receiving-logs`) and direct OCR commit (`commitInvoiceOcrReceipts`) both use that registry. A blank invoice number or a missing saved supplier stays unposted. Old browser stashes whose ids start with `scan-` return 409 with `LEGACY_SCAN_STASH_ERROR`. Shelf price is not part of the physical receipt fingerprint.
 
-Apply `20261108220000_receiving_delivery_uuid` manually after review. Pushing this branch does not migrate production.
+Apply `20261108220000_receiving_delivery_uuid` and `20261108223000_supplier_invoice_identity` manually after review. Pushing this branch does not migrate production. PR 65 must use this same supplier id, punctuation-preserving invoice number, and stored line UUID. It must not key receipts on vendor name, a punctuation-stripped slug, a product match, or a row index.
 
 Bridge from invoice OCR: `lib/domains/receiving/receivingBridge.ts` (`receivingLogsFromInvoice`, `consumeStashedReceivingScan`).
 

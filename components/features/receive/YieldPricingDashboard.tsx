@@ -30,6 +30,7 @@ import { readReceivingPrefs, writeReceivingPrefs } from '@/lib/domains/receiving
 import type { ReceivingDispositionRow } from '@/lib/domains/receiving/receivingDisposition';
 import type { ReceivingLogSource } from '@/lib/domains/receiving/receivingSheet';
 import { interpretReceivingBatchResponse } from '@/lib/domains/receiving/receivingBatchResult';
+import { SUPPLIER_REQUIRED_ERROR } from '@/lib/domains/receiving/invoiceDeliveryId';
 
 interface LogsResponse {
   success: boolean;
@@ -762,9 +763,15 @@ export function YieldPricingDashboard({
 
   const handleSave = async () => {
     if (!selected || animatingOutIds.has(selected.id) || savingAll) return;
+    if (selected.invoiceNumber && !supplierId) {
+      setErrorMessage(SUPPLIER_REQUIRED_ERROR);
+      return;
+    }
     if (selected.canPost === false) {
       setErrorMessage(
-        'This sheet row has no Delivery ID, so it was not posted. Add a UUID in the Delivery ID column and keep it with that delivery.'
+        selected.invoiceNumber
+          ? 'This invoice line does not have a server delivery id yet. Choose a saved supplier and wait for the lines to be identified.'
+          : 'This sheet row has no Delivery ID, so it was not posted. Add a UUID in the Delivery ID column and keep it with that delivery.'
       );
       return;
     }

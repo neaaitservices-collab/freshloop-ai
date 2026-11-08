@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { FileText } from 'lucide-react';
 import { PageIntro } from '@/components/layout/PageIntro';
 import { YieldPricingDashboard } from '@/components/features/receive/YieldPricingDashboard';
@@ -12,6 +12,7 @@ import { Card, CardBody } from '@/components/ui/Card';
 import type { ReceivingLogsResult } from '@/lib/domains/receiving/receivingSheet';
 import type { InvoiceOcrResult } from '@/lib/types';
 import { receivingLogsFromInvoice } from '@/lib/domains/receiving/receivingBridge';
+import { SUPPLIER_REQUIRED_ERROR } from '@/lib/domains/receiving/invoiceDeliveryId';
 import type { ReceivingLog } from '@/lib/domains/receiving/yieldPricing';
 import type { SupplierRecord } from '@/lib/domains/suppliers/suppliers';
 
@@ -51,17 +52,84 @@ export function ReceiveScreen({ initial }: { initial: ReceivingLogsResult }) {
   const handleInvoiceImported = (result: InvoiceOcrResult) => {
     const next = receivingLogsFromInvoice(result);
     setScannedLogs(next);
-    if (result.supplierId) {
-      setSelectedSupplierId(result.supplierId);
-    }
+    if (result.supplierId) setSelectedSupplierId(result.supplierId);
     setScanNote(
       next.length
-        ? `${result.vendorName} · ${result.invoiceNumber} · ${next.length} cases ready to price`
+        ? result.supplierId
+          ? `${result.vendorName} · ${result.invoiceNumber} · identifying lines for the saved supplier`
+          : SUPPLIER_REQUIRED_ERROR
         : null
     );
     setInvoiceOpen(false);
     loadSuppliers();
   };
+
+  const invoiceIdentityKey = useMemo(
+    () =>
+      scannedLogs
+        .filter((log) => log.invoiceNumber && log.printedName)
+        .map((log) => `${log.invoiceNumber}\n${log.invoiceDate ?? ''}\n${log.printedName}`)
+        .join('\n---\n'),
+    [scannedLogs]
+  );
+
+  useEffect(() => {
+    if (!invoiceIdentityKey) return;
+    if (!selectedSupplierId) {
+      setScanNote(SUPPLIER_REQUIRED_ERROR);
+      return;
+    }
+    const lines = scannedLogs.filter((log) => log.invoiceNumber && log.printedName);
+    const invoiceNumber = lines[0]?.invoiceNumber;
+    if (!invoiceNumber) return;
+    let cancelled = false;
+    void fetch('/api/receiving-invoices/identity', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        supplierId: selectedSupplierId,
+        invoiceNumber,
+        invoiceDate: lines[0]?.invoiceDate,
+        lines: lines.map((log) => ({ printedName: log.printedName })),
+      }),
+    })
+      .then(async (response) => {
+        const json = (await response.json()) as {
+          success?: boolean;
+          error?: string;
+          lines?: { deliveryId?: string }[];
+        };
+        if (cancelled) return;
+        if (!response.ok || !json.success || !Array.isArray(json.lines)) {
+          setScanNote(json.error ?? SUPPLIER_REQUIRED_ERROR);
+          setScannedLogs((prev) =>
+            prev.map((log) => (log.invoiceNumber ? { ...log, canPost: false } : log))
+          );
+          return;
+        }
+        setScannedLogs((prev) => {
+          let cursor = 0;
+          return prev.map((log) => {
+            if (!log.invoiceNumber || !log.printedName) return log;
+            const assigned = json.lines?.[cursor];
+            cursor += 1;
+            if (!assigned?.deliveryId) return { ...log, canPost: false };
+            return { ...log, id: assigned.deliveryId, canPost: true };
+          });
+        });
+        setScanNote(
+          `Invoice ${invoiceNumber} is tied to the selected supplier. A rescan reuses these delivery ids and does not add a second receipt.`
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setScanNote(SUPPLIER_REQUIRED_ERROR);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // invoiceIdentityKey already captures the printed lines. Ids assigned below must not refetch.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [invoiceIdentityKey, selectedSupplierId]);
 
   return (
     <>
@@ -91,8 +159,8 @@ export function ReceiveScreen({ initial }: { initial: ReceivingLogsResult }) {
               label="Delivery supplier"
             />
             <p className="self-end text-xs text-slate-500 sm:col-span-2 lg:col-span-2">
-              Applies to manual receives and invoice lines posted to inventory. OCR scans auto-match the vendor
-              name to this directory.
+              Invoice lines stay blocked until you pick a saved supplier. The printed vendor name is not used as
+              the receipt identity. {SUPPLIER_REQUIRED_ERROR}
             </p>
           </CardBody>
         </Card>
