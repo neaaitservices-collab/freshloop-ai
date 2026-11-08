@@ -27,7 +27,19 @@ function loginLocation(pathname: string): string {
 /**
  * Page RBAC using the database role (or no user).
  * Edge middleware does not call this — it cannot read Prisma.
+ * A missing path fails closed. Callers that render protected UI must not treat that as allow.
  */
+export function decideFreshNavigation(
+  pathname: string | null | undefined,
+  user: AuthSessionUser | null
+): PageAccessDecision {
+  const path = (pathname ?? '').split('?')[0];
+  if (!path.startsWith('/')) {
+    return { action: 'redirect', location: '/login' };
+  }
+  return decidePageAccess(path, user);
+}
+
 export function decidePageAccess(
   pathname: string,
   user: AuthSessionUser | null

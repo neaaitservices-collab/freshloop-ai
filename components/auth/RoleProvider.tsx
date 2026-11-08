@@ -20,6 +20,8 @@ interface RoleContextValue {
   loading: boolean;
   /** @deprecated Demo impersonation removed — triggers sign-out. */
   setActiveUserId: (id: string) => void;
+  /** Latest staff row from the server segment that just rendered. */
+  applyServerUser: (user: StaffUser | null) => void;
   refresh: () => Promise<void>;
   signOutUser: () => Promise<void>;
 }
@@ -57,7 +59,7 @@ function RoleContextInner({ children }: { children: React.ReactNode }) {
   const userRoleRaw = session?.user?.role ?? '';
   const userHourlyRate = session?.user?.hourlyRate;
 
-  const activeUser = useMemo<StaffUser | null>(() => {
+  const sessionUser = useMemo<StaffUser | null>(() => {
     if (!userId || !userEmail) return null;
     const role = userRoleRaw && isRoleName(userRoleRaw) ? userRoleRaw : null;
     if (!role) return null;
@@ -75,6 +77,26 @@ function RoleContextInner({ children }: { children: React.ReactNode }) {
           : null,
     };
   }, [userId, userEmail, userName, userPosition, userRoleRaw, userHourlyRate]);
+
+  const [serverUser, setServerUser] = useState<StaffUser | null | undefined>(undefined);
+  const applyServerUser = useCallback((user: StaffUser | null) => {
+    setServerUser((current) => {
+      if (
+        current &&
+        user &&
+        current.id === user.id &&
+        current.role === user.role &&
+        current.email === user.email &&
+        current.name === user.name &&
+        current.position === user.position
+      ) {
+        return current;
+      }
+      if (current === null && user === null) return current;
+      return user;
+    });
+  }, []);
+  const activeUser = serverUser !== undefined ? serverUser : sessionUser;
 
   const [users, setUsers] = useState<StaffUser[]>([]);
   const loadedForUserIdRef = useRef<string | null>(null);
@@ -131,10 +153,11 @@ function RoleContextInner({ children }: { children: React.ReactNode }) {
       activeUser,
       loading,
       setActiveUserId,
+      applyServerUser,
       refresh,
       signOutUser,
     }),
-    [users, activeUser, loading, setActiveUserId, refresh, signOutUser]
+    [users, activeUser, loading, setActiveUserId, applyServerUser, refresh, signOutUser]
   );
 
   return <RoleContext.Provider value={value}>{children}</RoleContext.Provider>;
