@@ -191,12 +191,6 @@ export async function commitInvoiceOcrReceipts(input: {
   }
   const sampleReason = sampleInvoiceCommitRejection({
     invoiceNumber: input.invoiceMeta?.invoiceNumber,
-    vendorName: input.invoiceMeta?.vendorName,
-    lines: input.confirmedItems.map((line) => ({
-      line_name: line.line_name,
-      quantity: line.quantity,
-      unit_cost: line.unit_cost,
-    })),
   });
   if (sampleReason) {
     throw new Error(sampleReason);

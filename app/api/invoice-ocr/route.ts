@@ -16,7 +16,7 @@ import { handleApiRouteError, logServerError } from '@/lib/domains/ai/apiError';
 import { invoiceOcrErrorResponse } from '@/lib/domains/receiving/invoiceOcrErrors';
 import { authErrorResponse } from '@/lib/auth/http';
 import { requireReceivingStaff } from '@/lib/auth/guardRoute';
-import { sampleInvoiceCommitRejection } from '@/lib/domains/receiving/sampleReceivingGuard';
+import { gateStoredOcrDraft } from '@/lib/domains/receiving/sampleReceivingGuard';
 import { findLatestStoreSetting } from '@/lib/domains/stats/storeSettingSelect';
 import { matchProductWithScore } from '@/lib/domains/inventory/productMatching';
 import { recordOcrScanAnalytics } from '@/lib/domains/suppliers/analyticsPersistence';
@@ -480,31 +480,24 @@ export async function POST(req: NextRequest) {
       const commitBody = invoiceOcrCommitBodySchema.parse(rawBody);
       actorId = actor.id;
       const draft = await prisma.invoiceOcrDraft.findUnique({ where: { id: commitBody.draftId } });
-      if (!draft) {
+      const gate = gateStoredOcrDraft(
+        draft
+          ? {
+              expiresAt: draft.expiresAt,
+              payload: draft.payload as unknown as OcrDraftPayload,
+            }
+          : null
+      );
+      if (!gate.ok || !draft) {
         return NextResponse.json(
-          { success: false, error: 'Invoice scan was not found. Scan the invoice again.' },
-          { status: 404 }
-        );
-      }
-      if (draft.expiresAt.getTime() < Date.now()) {
-        return NextResponse.json(
-          { success: false, error: 'Invoice scan expired. Scan the invoice again.' },
-          { status: 409 }
+          {
+            success: false,
+            error: gate.ok ? 'Invoice scan was not found. Scan the invoice again.' : gate.error,
+          },
+          { status: gate.ok ? 404 : gate.status }
         );
       }
       const payload = draft.payload as unknown as OcrDraftPayload;
-      const sampleReason = sampleInvoiceCommitRejection({
-        vendorName: payload.vendorName,
-        invoiceNumber: payload.invoiceNumber,
-        lines: payload.lines.map((line) => ({
-          line_name: line.line_name,
-          quantity: line.quantity,
-          unit_cost: line.unit_cost,
-        })),
-      });
-      if (sampleReason) {
-        return NextResponse.json({ success: false, error: sampleReason }, { status: 409 });
-      }
       const managerRoles: RoleName[] = ['ADMIN', 'STORE_MANAGER'];
       const actorIsManager = managerRoles.includes(actor.role);
       assertDraftLinesCommittable(

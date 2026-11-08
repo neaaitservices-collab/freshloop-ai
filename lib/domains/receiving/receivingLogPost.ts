@@ -144,6 +144,45 @@ export async function postReceivingLogToInventory(
   }
 }
 
+export interface ReceivingBatchSlot {
+  externalLogId?: string;
+  itemName: string;
+  stock: { posted: boolean; reason?: string };
+}
+
+/**
+ * Keep sample rows in their request positions and queue only postable lines.
+ * Filling `results[postIndexes[i]]` with the i-th post preserves order.
+ */
+export function arrangeReceivingBatch(items: ReceivingLogPostInput[]): {
+  toPost: ReceivingLogPostInput[];
+  results: ReceivingBatchSlot[];
+  postIndexes: number[];
+} {
+  const toPost: ReceivingLogPostInput[] = [];
+  const results: ReceivingBatchSlot[] = [];
+  const postIndexes: number[] = [];
+  for (const input of items) {
+    const sampleReason = sampleReceivingRejection(input);
+    if (sampleReason) {
+      results.push({
+        externalLogId: input.externalLogId,
+        itemName: input.itemName,
+        stock: { posted: false, reason: sampleReason },
+      });
+      continue;
+    }
+    postIndexes.push(results.length);
+    results.push({
+      externalLogId: input.externalLogId,
+      itemName: input.itemName,
+      stock: { posted: false, reason: 'Stock was not updated.' },
+    });
+    toPost.push(input);
+  }
+  return { toPost, results, postIndexes };
+}
+
 /** Resolve supplier once, post many lines in parallel (bounded concurrency). */
 export async function postReceivingLogBatch(
   items: ReceivingLogPostInput[],
