@@ -10,12 +10,23 @@ function retailUnitFromSubUnit(subUnit: string | undefined): RetailUnit {
   return 'units';
 }
 
-function stableLogId(result: InvoiceOcrResult, item: InvoiceOcrResult['lineItems'][number], index: number): string {
-  const slug = (item.productId || item.name || `line-${index}`)
+/** One id per invoice line. The index keeps two lines of the same SKU distinct. */
+export function stableLogId(
+  result: InvoiceOcrResult,
+  item: InvoiceOcrResult['lineItems'][number],
+  index: number
+): string {
+  const slug = (item.productId || item.name || 'line')
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
-    .slice(0, 48);
-  return `scan-${result.invoiceNumber}-${slug}`;
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 40);
+  const invoice = (result.invoiceNumber || 'unread')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 32);
+  return `scan-${invoice || 'unread'}-${index}-${slug || 'line'}`;
 }
 
 /** Maps OCR output into receiving-board rows (pricing happens before `postReceipt`). */
@@ -30,9 +41,9 @@ export function receivingLogsFromInvoice(result: InvoiceOcrResult): ReceivingLog
         itemName: catalogName || item.name,
         invoiceLineName: catalogName && catalogName !== item.name ? item.name : undefined,
         productId: productId || undefined,
-        casesReceived: Number(item.quantity) > 0 ? Number(item.quantity) : 1,
+        casesReceived: Number(item.quantity) > 0 ? Number(item.quantity) : 0,
         caseCost: (() => {
-          const qty = Number(item.quantity) > 0 ? Number(item.quantity) : 1;
+          const qty = Number(item.quantity);
           const total = Number(item.totalCost) || 0;
           const unit = Number(item.unitCost) || 0;
           if (total > 0 && qty > 0) return Number((total / qty).toFixed(4));

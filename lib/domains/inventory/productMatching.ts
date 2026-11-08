@@ -117,6 +117,12 @@ export function scoreProductMatch(itemName: string, productName: string): number
   }
 
   let score = forward * 65 + reverse * 35;
+  // The invoice must cover every catalog identity token. Otherwise a short
+  // name such as "Red Pepper" binds to "Red Pepper Hummus" and can clear the
+  // OCR auto-accept bar. Extra words on the invoice (pack, origin) still match.
+  if (reverse < 1) {
+    return Number(Math.min(score, 50).toFixed(2));
+  }
   if (
     needleCompact.length > 5 &&
     hayCompact.length > 5 &&

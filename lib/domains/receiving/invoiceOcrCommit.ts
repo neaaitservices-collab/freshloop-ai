@@ -18,6 +18,17 @@ import { sampleInvoiceCommitRejection } from '@/lib/domains/receiving/sampleRece
 
 export type OcrQuantityKind = 'units' | 'cases';
 
+/** Preview lines say `unit: "cases"`. Commit must not treat that quantity as units. */
+export function quantityKindForInvoiceUnit(
+  unit: string | undefined,
+  explicit?: OcrQuantityKind
+): OcrQuantityKind {
+  if (explicit === 'cases' || explicit === 'units') return explicit;
+  const value = (unit ?? '').trim().toLowerCase();
+  if (value.includes('case') || value === 'cs' || value === 'ctn') return 'cases';
+  return 'units';
+}
+
 export interface OcrCommitLine {
   product_id: string;
   quantity: number;

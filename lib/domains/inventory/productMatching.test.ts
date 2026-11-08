@@ -50,6 +50,20 @@ test('unrelated items do not match', () => {
   assert.equal(scoreProductMatch('Whole Heavy Cream 40%', 'Avocados Hass'), 0);
 });
 
+test('a short invoice name does not bind to a longer catalog SKU', () => {
+  assert.ok(scoreProductMatch('Red Pepper', 'Red Pepper Hummus') <= 50);
+  assert.equal(matchProduct('Red Pepper', [{ id: 'hummus', name: 'Red Pepper Hummus' }]), null);
+  assert.equal(
+    matchProduct('Red Pepper', [
+      { id: 'pepper', name: 'Red Pepper' },
+      { id: 'hummus', name: 'Red Pepper Hummus' },
+    ])?.id,
+    'pepper'
+  );
+  assert.equal(matchProduct('Dill', [{ id: 'pickles', name: 'Dill Pickles' }]), null);
+  assert.equal(matchProduct('Organic Bananas', [{ id: 'chips', name: 'Banana Chips' }]), null);
+});
+
 test('catalog duplicate score rejects substring false friends', () => {
   assert.equal(catalogDuplicateScore('DILL', 'GRANADILLA-COL 2.5KG'), 0);
   assert.equal(catalogDuplicateScore('Granola - Lemon Poppyseed', 'LEMONS 75'), 0);

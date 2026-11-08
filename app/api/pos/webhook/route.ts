@@ -1,6 +1,6 @@
 import { timingSafeEqual } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
-import { executeBundleSale, prisma } from '@/lib/domains/inventory/ledger';
+import { InventoryLedgerError, executeBundleSale, prisma } from '@/lib/domains/inventory/ledger';
 import { invalidateInventoryCaches } from '@/lib/domains/inventory/inventoryCache';
 import { recordProductSale } from '@/lib/domains/inventory/recordSale';
 import { handleApiRouteError } from '@/lib/domains/ai/apiError';
@@ -51,20 +51,22 @@ export async function POST(req: NextRequest) {
           return { idempotent: true as const, results: [] as unknown[] };
         }
 
-        const results: unknown[] = [];
+        const resolved: Array<
+          | { kind: 'bundle'; bundleSku: string; quantity: number }
+          | {
+              kind: 'product';
+              productId: string;
+              quantity: number;
+              location: (typeof lines)[number]['location'];
+              unitPrice?: number;
+            }
+        > = [];
         for (const line of lines) {
           const lineQty = line.quantity ?? 1;
           if (line.bundleSku) {
-            results.push(
-              await executeBundleSale(line.bundleSku, externalRef, {
-                staffId: POS_WEBHOOK_ACTOR,
-                quantitySold: lineQty,
-                db,
-              })
-            );
+            resolved.push({ kind: 'bundle', bundleSku: line.bundleSku, quantity: lineQty });
             continue;
           }
-
           let productId = line.productId?.trim() ?? '';
           if (!productId && line.externalSku) {
             const mapping = await db.pOSMapping.findFirst({
@@ -73,16 +75,38 @@ export async function POST(req: NextRequest) {
             });
             productId = mapping?.productId ?? '';
           }
-
           if (!productId) {
-            results.push({ skipped: true, reason: 'Unmapped SKU', line });
+            throw new InventoryLedgerError(
+              `Unmapped POS SKU${line.externalSku ? ` ${line.externalSku}` : ''}. Nothing in this batch was posted. Map the SKU, then retry ${externalRef}.`,
+              'UNMAPPED_POS_SKU',
+              422
+            );
+          }
+          resolved.push({
+            kind: 'product',
+            productId,
+            quantity: lineQty,
+            location: line.location,
+            unitPrice: line.unitPrice,
+          });
+        }
+
+        const results: unknown[] = [];
+        for (const line of resolved) {
+          if (line.kind === 'bundle') {
+            results.push(
+              await executeBundleSale(line.bundleSku, externalRef, {
+                staffId: POS_WEBHOOK_ACTOR,
+                quantitySold: line.quantity,
+                db,
+              })
+            );
             continue;
           }
-
           results.push(
             await recordProductSale({
-              productId,
-              quantity: lineQty,
+              productId: line.productId,
+              quantity: line.quantity,
               staffId: POS_WEBHOOK_ACTOR,
               location: line.location,
               unitPriceOverride: line.unitPrice,

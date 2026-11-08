@@ -14,6 +14,7 @@ import {
   resolveParCases,
   stockFromPar,
 } from '@/lib/domains/inventory/parLevel';
+import { isLedgerIdempotencyConflict } from '@/lib/domains/inventory/idempotencyConflict';
 import {
   hasOfflineMutationReference,
   offlineReferenceId,
@@ -153,12 +154,23 @@ export async function findOrCreatePurchaseProduct(
     }
   }
 
-  const products =
-    nameCatalog ??
-    (await client.product.findMany({
-      where: { isManufactured: false },
-      select: { id: true, name: true },
-    }));
+  const catalogMatch = nameCatalog ? matchProduct(name, nameCatalog) : null;
+  if (catalogMatch) {
+    await client.product.update({
+      where: { id: catalogMatch.id },
+      data: { catalogActive: true },
+    });
+    return { id: catalogMatch.id, name: catalogMatch.name, created: false };
+  }
+
+  if (db) {
+    const lockName = `purchase-sku:${name.toLowerCase()}`;
+    await db.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${lockName}))`;
+  }
+  const products = await client.product.findMany({
+    where: { isManufactured: false },
+    select: { id: true, name: true },
+  });
   const match = matchProduct(name, products);
   if (match) {
     await client.product.update({
@@ -1175,12 +1187,7 @@ export async function postReceipt(input: {
     return { product, created };
   });
   } catch (error) {
-    const uniqueViolation =
-      typeof error === 'object' &&
-      error !== null &&
-      'code' in error &&
-      (error as { code?: string }).code === 'P2002';
-    if (idempotencyKey && uniqueViolation) {
+    if (idempotencyKey && isLedgerIdempotencyConflict(error)) {
       const existing = await prisma.inventoryTransaction.findFirst({
         where: { referenceId },
         select: { id: true, productId: true },
@@ -1230,7 +1237,8 @@ export async function postProductReceipt(
   const unitsAdded = Number(Math.abs(input.quantityUnits).toFixed(4));
   if (!(unitsAdded > 0)) throw new Error('Receive quantity must be greater than zero.');
 
-  const product = await prisma.product.findUnique({ where: { id: productId } });
+  const reader = db ?? prisma;
+  const product = await reader.product.findUnique({ where: { id: productId } });
   if (!product) throw new Error('Product was not found.');
 
   const unitCost = Number(Math.max(0, input.unitCostAtTime).toFixed(4));
@@ -1326,7 +1334,11 @@ export async function moveRetailStock(
     fromLocation: InventoryLocation.Retail_Floor,
   };
 
+  try {
   await prisma.$transaction(async (tx) => {
+    if (clientMutationId?.trim()) {
+      await tx.ledgerIdempotencyKey.create({ data: { key: referenceId } });
+    }
     if (action === 'waste') {
       await consumeLotsFifo(tx, {
         productId,
@@ -1373,6 +1385,12 @@ export async function moveRetailStock(
       },
     });
   }, LEDGER_WRITE_TX);
+  } catch (error) {
+    if (clientMutationId?.trim() && isLedgerIdempotencyConflict(error)) {
+      return { level: await readStockLevel(productId), units: 0 };
+    }
+    throw error;
+  }
 
   invalidateInventoryCaches();
   return { level: await readStockLevel(productId), units: qty };

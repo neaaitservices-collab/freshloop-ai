@@ -1,5 +1,5 @@
 import { InventoryLocation, TransactionType } from '@prisma/client';
-import { getMovingAverageCost, prisma } from '@/lib/domains/inventory/ledger';
+import { excludeVolumetricScrapFromStock, getMovingAverageCost, prisma } from '@/lib/domains/inventory/ledger';
 import { invalidateInventoryCaches } from '@/lib/domains/inventory/inventoryCache';
 import {
   consumeLotsFifo,
@@ -274,7 +274,9 @@ async function loadDuplicateCatalogGroups(): Promise<DuplicateCatalogGroup[]> {
       ? []
       : await prisma.inventoryTransaction.groupBy({
           by: ['productId'],
-          where: { productId: { in: productIds } },
+          where: {
+            AND: [{ productId: { in: productIds } }, excludeVolumetricScrapFromStock()],
+          },
           _sum: { qtyChange: true },
         });
   const onHandByProduct = new Map(

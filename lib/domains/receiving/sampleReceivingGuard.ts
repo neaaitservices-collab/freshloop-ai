@@ -49,7 +49,7 @@ export function sampleInvoiceCommitRejection(input: {
 
 export interface StoredOcrDraftGate {
   expiresAt: Date;
-  payload: { invoiceNumber?: string | null };
+  payload: { invoiceNumber?: string | null; vendorName?: string | null };
 }
 
 /**
@@ -79,5 +79,12 @@ export function gateStoredOcrDraft(
     invoiceNumber: draft.payload.invoiceNumber,
   });
   if (sampleReason) return { ok: false, status: 409, error: sampleReason };
+  if (!draft.payload.vendorName?.trim() || !draft.payload.invoiceNumber?.trim()) {
+    return {
+      ok: false,
+      status: 409,
+      error: 'Vendor name and invoice number are required before this scan can post.',
+    };
+  }
   return { ok: true };
 }

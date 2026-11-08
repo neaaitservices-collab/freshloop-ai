@@ -5,6 +5,7 @@ import {
   VoiceLoggerResult,
 } from '@/lib/types';
 import { GEMINI_FLASH_MODEL_FALLBACKS } from '@/lib/domains/ai/geminiModels';
+import { parseInvoiceIdentity, parseInvoiceLineFields } from '@/lib/domains/receiving/invoiceOcrParse';
 
 /**
  * Parses model output that should be JSON (handles markdown fences and common wrappers).
@@ -465,16 +466,38 @@ Make sure totalAmount equals sum of department totals and line item costs. Forma
 
     const dept = parsed.departmentBreakdown as InvoiceOcrResult['departmentBreakdown'] | undefined;
 
+    const identity = parseInvoiceIdentity(parsed);
     return {
-      vendorName: String(parsed.vendorName || 'Fresh Grocer Wholesale'),
-      invoiceNumber: String(
-        parsed.invoiceNumber || `INV-${Math.floor(Math.random() * 90000 + 10000)}`
-      ),
-      invoiceDate: String(parsed.invoiceDate || new Date().toISOString().split('T')[0]),
+      vendorName: identity.vendorName,
+      invoiceNumber: identity.invoiceNumber,
+      invoiceDate: identity.invoiceDate,
       totalAmount: Number(parsed.totalAmount) || 0,
       departmentBreakdown: dept || { PRODUCE: 0, DAIRY: 0, BAKERY: 0, PANTRY: 0 },
-      lineItems: (parsed.lineItems as InvoiceOcrResult['lineItems']) || [],
-      rawSummary: `Extracted ${Array.isArray(parsed.lineItems) ? parsed.lineItems.length : 0} line items with ${modelUsed}.`
+      lineItems: Array.isArray(parsed.lineItems)
+        ? parsed.lineItems.map((li, index) => {
+            const raw = (li ?? {}) as Record<string, unknown>;
+            const fields = parseInvoiceLineFields(raw, index + 1);
+            const unitCost = Number(raw.unitCost ?? raw.unit_cost) || 0;
+            const totalCost =
+              Number(raw.totalCost ?? raw.total_cost) ||
+              (fields.quantity > 0 ? Number((fields.quantity * unitCost).toFixed(2)) : 0);
+            return {
+              name: fields.name,
+              department: fields.department,
+              quantity: fields.quantity,
+              unit: fields.unit,
+              casePackSize: Number(raw.casePackSize) > 0 ? Number(raw.casePackSize) : 1,
+              subUnit: String(raw.subUnit || 'units'),
+              unitCost,
+              totalCost,
+              needsManualReview: fields.quantityUnreadable || fields.departmentAssumed || !String(raw.name ?? '').trim(),
+            };
+          })
+        : [],
+      rawSummary: [
+        `Extracted ${Array.isArray(parsed.lineItems) ? parsed.lineItems.length : 0} line items with ${modelUsed}.`,
+        ...identity.gaps,
+      ].join(' ')
     };
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);

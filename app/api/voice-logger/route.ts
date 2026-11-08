@@ -516,19 +516,6 @@ export async function POST(req: NextRequest) {
       typeof body.clientMutationId === 'string' ? body.clientMutationId.trim() : '';
 
     if (confirmCommit && Array.isArray(confirmedItems) && confirmedItems.length > 0) {
-      if (clientMutationId && confirmedItems[0]?.product_id) {
-        const { isOfflineMutationApplied } = await import('@/lib/domains/inventory/offlineMutation');
-        const batchProbe = `${clientMutationId}:0:${confirmedItems[0].product_id}`;
-        if (await isOfflineMutationApplied(batchProbe)) {
-          return NextResponse.json({
-            success: true,
-            committed: true,
-            deduped: true,
-            transactionsCreated: 0,
-            timestamp: new Date().toISOString(),
-          });
-        }
-      }
       const invalid = confirmedItems.find(
         (item) => !item.product_id?.trim() || !Number.isFinite(Number(item.quantity)) || Number(item.quantity) <= 0
       );
@@ -543,6 +530,8 @@ export async function POST(req: NextRequest) {
       }
 
       let ledgerMoves = 0;
+      let skippedApplied = 0;
+      const { isOfflineMutationApplied } = await import('@/lib/domains/inventory/offlineMutation');
 
       for (let index = 0; index < confirmedItems.length; index += 1) {
         const item = confirmedItems[index]!;
@@ -551,6 +540,10 @@ export async function POST(req: NextRequest) {
         const lineMutationId = clientMutationId
           ? `${clientMutationId}:${index}:${item.product_id}`
           : undefined;
+        if (lineMutationId && (await isOfflineMutationApplied(lineMutationId))) {
+          skippedApplied += 1;
+          continue;
+        }
         await moveRetailStock(
           item.product_id,
           ledgerAction,
@@ -573,6 +566,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({
         success: true,
         committed: true,
+        deduped: ledgerMoves === 0 && skippedApplied > 0,
         transactionsCreated: ledgerMoves,
         timestamp: new Date().toISOString(),
       });

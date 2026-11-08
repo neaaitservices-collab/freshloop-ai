@@ -1,4 +1,5 @@
 import { InventoryLocation, Prisma } from '@prisma/client';
+import { VOLUMETRIC_SCRAP_REF_PREFIX, excludeVolumetricScrapFromStock } from '@/lib/domains/inventory/ledger';
 
 export type LotTx = Prisma.TransactionClient;
 
@@ -37,10 +38,15 @@ export async function readLocationOnHand(
 ): Promise<number> {
   const aggregation = await tx.inventoryTransaction.aggregate({
     where: {
-      productId,
-      OR: [
-        { toLocation: location, qtyChange: { gt: 0 } },
-        { fromLocation: location, qtyChange: { lt: 0 } },
+      AND: [
+        excludeVolumetricScrapFromStock(),
+        {
+          productId,
+          OR: [
+            { toLocation: location, qtyChange: { gt: 0 } },
+            { fromLocation: location, qtyChange: { lt: 0 } },
+          ],
+        },
       ],
     },
     _sum: { qtyChange: true },
@@ -68,6 +74,10 @@ async function readLocationStockSnapshot(
         SELECT SUM(t."Qty_Change")::float8
         FROM "Inventory_Transactions" t
         WHERE t."Product_ID" = ${productId}
+          AND (
+            t."Reference_ID" IS NULL
+            OR t."Reference_ID" NOT LIKE ${`${VOLUMETRIC_SCRAP_REF_PREFIX}%`}
+          )
           AND (
             (t."To_Location" = ${location}::"InventoryLocation" AND t."Qty_Change" > 0)
             OR (t."From_Location" = ${location}::"InventoryLocation" AND t."Qty_Change" < 0)

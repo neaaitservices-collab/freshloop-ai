@@ -182,8 +182,18 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
   const needsManagerGate =
     flaggedInvoice && (!managerCanApprove || !managerApprovedCosts);
 
+  const identityIncomplete = Boolean(
+    ocrResult &&
+      ocrResult.source !== 'sample' &&
+      (!ocrResult.vendorName.trim() || !ocrResult.invoiceNumber.trim())
+  );
+  const unreadableQuantity = Boolean(
+    ocrResult?.lineItems.some((item) => !(Number(item.quantity) > 0) || item.name.startsWith('Unread line '))
+  );
+
   const handleAddToReceiving = () => {
     if (!ocrResult || needsManagerGate || ocrResult.source === 'sample') return;
+    if (identityIncomplete || unreadableQuantity) return;
     onInvoiceImported({
       ...ocrResult,
       supplierId: selectedSupplierId || ocrResult.supplierId,
@@ -344,6 +354,38 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
                 </div>
               ) : null}
 
+              {identityIncomplete || unreadableQuantity ? (
+                <div className="space-y-3 rounded-2xl border border-rose-500/40 bg-rose-950/40 p-3.5 text-xs text-rose-100">
+                  <p className="font-bold text-rose-200">
+                    This scan is missing a vendor, invoice number, or line quantity. Fill those in before receiving. Nothing is invented.
+                  </p>
+                  {identityIncomplete ? (
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <label className="block text-[11px] font-semibold text-rose-100">
+                        Vendor
+                        <input
+                          value={ocrResult.vendorName}
+                          onChange={(event) =>
+                            setOcrResult({ ...ocrResult, vendorName: event.target.value })
+                          }
+                          className="mt-1 w-full rounded-lg border border-rose-400/40 bg-zinc-950 px-2 py-2 text-sm text-white"
+                        />
+                      </label>
+                      <label className="block text-[11px] font-semibold text-rose-100">
+                        Invoice number
+                        <input
+                          value={ocrResult.invoiceNumber}
+                          onChange={(event) =>
+                            setOcrResult({ ...ocrResult, invoiceNumber: event.target.value })
+                          }
+                          className="mt-1 w-full rounded-lg border border-rose-400/40 bg-zinc-950 px-2 py-2 text-sm text-white"
+                        />
+                      </label>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+
               {needsManualReviewInvoice ? (
                 <div className="flex items-start gap-2.5 rounded-2xl border border-rose-500/40 bg-rose-950/50 p-3.5 text-xs text-rose-100">
                   <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-rose-300" />
@@ -448,7 +490,23 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
                           }
                         >
                           <td className="p-2 sm:p-2.5 font-semibold text-white">
-                            {item.name}
+                            {item.name.startsWith('Unread line ') ? (
+                              <input
+                                aria-label={`Name for line ${idx + 1}`}
+                                value={item.name}
+                                onChange={(event) =>
+                                  setOcrResult({
+                                    ...ocrResult,
+                                    lineItems: ocrResult.lineItems.map((line, lineIndex) =>
+                                      lineIndex === idx ? { ...line, name: event.target.value } : line
+                                    ),
+                                  })
+                                }
+                                className="w-full rounded-md border border-rose-400/40 bg-zinc-950 px-2 py-1 text-white"
+                              />
+                            ) : (
+                              item.name
+                            )}
                             {item.matchedProductName && item.productId ? (
                               <p className="mt-1 text-[10px] font-normal text-emerald-300/90">
                                 Catalog: {item.matchedProductName}
@@ -477,7 +535,38 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
                           </td>
                           <td className="p-2 sm:p-2.5"><DepartmentBadge department={item.department} size="sm" /></td>
                           <td className="p-2 sm:p-2.5 whitespace-nowrap font-mono tabular-nums">
-                            {item.quantity} {item.unit}
+                            {item.quantity > 0 ? (
+                              <>
+                                {item.quantity} {item.unit}
+                              </>
+                            ) : (
+                              <input
+                                type="number"
+                                min="0"
+                                step="any"
+                                aria-label={`Quantity for ${item.name}`}
+                                value={item.quantity || ''}
+                                onChange={(event) => {
+                                  const quantity = Number(event.target.value);
+                                  setOcrResult({
+                                    ...ocrResult,
+                                    lineItems: ocrResult.lineItems.map((line, lineIndex) =>
+                                      lineIndex === idx
+                                        ? {
+                                            ...line,
+                                            quantity: Number.isFinite(quantity) && quantity > 0 ? quantity : 0,
+                                            totalCost:
+                                              Number.isFinite(quantity) && quantity > 0
+                                                ? Number((quantity * line.unitCost).toFixed(2))
+                                                : 0,
+                                          }
+                                        : line
+                                    ),
+                                  });
+                                }}
+                                className="w-20 rounded-md border border-rose-400/40 bg-zinc-950 px-2 py-1 text-white"
+                              />
+                            )}
                           </td>
                           <td className="p-2 sm:p-2.5 font-mono tabular-nums">
                             ${item.unitCost.toFixed(2)}
@@ -600,13 +689,20 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
             <button
               type="button"
               onClick={handleAddToReceiving}
-              disabled={needsManagerGate || ocrResult.source === 'sample'}
+              disabled={
+                needsManagerGate ||
+                ocrResult.source === 'sample' ||
+                identityIncomplete ||
+                unreadableQuantity
+              }
               title={
                 ocrResult.source === 'sample'
                   ? 'Sample invoice lines are not posted to inventory'
-                  : needsManagerGate
-                    ? 'Manager must confirm flagged costs and low-confidence OCR lines'
-                    : undefined
+                  : identityIncomplete || unreadableQuantity
+                    ? 'Enter the vendor, invoice number, and every line quantity first'
+                    : needsManagerGate
+                      ? 'Manager must confirm flagged costs and low-confidence OCR lines'
+                      : undefined
               }
               className="flex min-h-12 items-center gap-2 rounded-xl bg-emerald-400 px-5 py-3 text-xs font-black text-zinc-950 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400"
             >

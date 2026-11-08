@@ -6,6 +6,7 @@ import {
   assertDraftLinesCommittable,
   commitInvoiceOcrReceipts,
   invoiceIdempotencyKey,
+  quantityKindForInvoiceUnit,
   saveInvoiceOcrDraft,
   type OcrDraftLine,
   type OcrDraftPayload,
@@ -31,6 +32,8 @@ import {
   matchConfidenceFromCatalogScore,
   normalizeExtractionConfidence,
 } from '@/lib/domains/receiving/invoiceOcrConfidence';
+import { parseInvoiceIdentity, parseInvoiceLineFields } from '@/lib/domains/receiving/invoiceOcrParse';
+import { isLedgerIdempotencyConflict } from '@/lib/domains/inventory/idempotencyConflict';
 import type { RoleName } from '@/lib/utils/roles';
 
 export const maxDuration = 60;
@@ -164,6 +167,8 @@ type RawOcrLineItem = {
   totalCost: number;
   caseRetailPrice?: number | null;
   extractionConfidence?: number;
+  departmentAssumed?: boolean;
+  quantityUnreadable?: boolean;
 };
 
 function evaluateCostGuardrailSync(
@@ -225,7 +230,10 @@ function evaluateCostGuardrailSync(
   const matchConfidence =
     matchScore !== null ? matchConfidenceFromCatalogScore(matchScore) : null;
   const lineConfidence = combineLineConfidence(extractionConfidence, matchConfidence);
-  const needsManualReview = lineNeedsManualReview(lineConfidence);
+  const needsManualReview =
+    lineNeedsManualReview(lineConfidence) ||
+    rawItem.quantityUnreadable === true ||
+    rawItem.departmentAssumed === true;
 
   return {
     item_name: rawItem.name,
@@ -367,6 +375,8 @@ async function extractInvoiceWithGemini15FlashVision(
     unitCost: number;
     totalCost: number;
     caseRetailPrice?: number | null;
+    departmentAssumed?: boolean;
+    quantityUnreadable?: boolean;
   }>;
   modelNote: string;
 }> {
@@ -420,29 +430,27 @@ Rules: unitCost/totalCost per case when unit is cases; caseRetailPrice = printed
     );
   }
 
+  const identity = parseInvoiceIdentity(parsed);
   return {
-    vendorName: String(parsed.vendorName || 'Fresh Grocer Wholesale'),
-    invoiceNumber: String(
-      parsed.invoiceNumber || `INV-${Math.floor(Math.random() * 90000 + 10000)}`
-    ),
-    invoiceDate: String(parsed.invoiceDate || new Date().toISOString().split('T')[0]),
-    lineItems: parsed.lineItems.map((li: Record<string, unknown>) => {
-      const qty = Number(li.quantity) > 0 ? Number(li.quantity) : 1;
+    vendorName: identity.vendorName,
+    invoiceNumber: identity.invoiceNumber,
+    invoiceDate: identity.invoiceDate,
+    lineItems: parsed.lineItems.map((li: Record<string, unknown>, index: number) => {
+      const fields = parseInvoiceLineFields(li, index + 1);
       const unitCost = Number(li.unitCost ?? li.unit_cost) || 0;
       const totalCost =
-        Number(li.totalCost ?? li.total_cost) || Number((qty * unitCost).toFixed(2));
+        Number(li.totalCost ?? li.total_cost) ||
+        (fields.quantity > 0 ? Number((fields.quantity * unitCost).toFixed(2)) : 0);
       const caseRetailRaw = li.caseRetailPrice ?? li.case_retail_price ?? li.retail_price;
       const caseRetailPrice =
         caseRetailRaw !== undefined && caseRetailRaw !== null && Number(caseRetailRaw) > 0
           ? Number(caseRetailRaw)
           : null;
       return {
-        name: String(li.name || li.item_name || 'Vendor Line Item'),
-        department: (['PRODUCE', 'DAIRY', 'BAKERY', 'PANTRY'].includes(String(li.department))
-          ? String(li.department)
-          : 'PRODUCE') as 'PRODUCE' | 'DAIRY' | 'BAKERY' | 'PANTRY',
-        quantity: qty,
-        unit: String(li.unit || 'cases'),
+        name: fields.name,
+        department: fields.department,
+        quantity: fields.quantity,
+        unit: fields.unit,
         casePackSize: Number(li.casePackSize) > 0 ? Number(li.casePackSize) : 1,
         subUnit: String(li.subUnit || 'units'),
         unitCost,
@@ -452,9 +460,11 @@ Rules: unitCost/totalCost per case when unit is cases; caseRetailPrice = printed
           li.extractionConfidence ?? li.extraction_confidence ?? li.confidence,
           'photo'
         ),
+        departmentAssumed: fields.departmentAssumed,
+        quantityUnreadable: fields.quantityUnreadable,
       };
     }),
-    modelNote: `Read from the photo with ${modelUsed}.`,
+    modelNote: [`Read from the photo with ${modelUsed}.`, ...identity.gaps].filter(Boolean).join(' '),
   };
 }
 
@@ -543,12 +553,7 @@ export async function POST(req: NextRequest) {
         draftId: draft.id,
       });
       } catch (error) {
-        const uniqueViolation =
-          typeof error === 'object' &&
-          error !== null &&
-          'code' in error &&
-          (error as { code?: string }).code === 'P2002';
-        if (uniqueViolation) {
+        if (isLedgerIdempotencyConflict(error)) {
           return NextResponse.json({
             success: true,
             committed: true,
@@ -563,14 +568,15 @@ export async function POST(req: NextRequest) {
         .then((supplier) =>
           recordOcrScanAnalytics({
             supplierId: supplier.id,
+            vendorInvoiceId: committed.invoiceId,
             lines: payload.lines.map((line) => ({
               item_name: line.line_name ?? line.product_id,
-              product_id: line.product_id,
+              product_id: line.product_id || null,
               unit_cost: line.unit_cost,
               historical_avg_cost: null,
               cost_variance_pct: null,
               line_confidence: line.line_confidence,
-              needs_manual_review: line.requires_approval,
+              needs_manual_review: lineNeedsManualReview(line.line_confidence),
             })),
             analyticsThresholdPct: VENDOR_PRICE_ALERT_DEFAULT_PCT,
           })
@@ -662,11 +668,16 @@ export async function POST(req: NextRequest) {
     const needsManualReview = lowConfidenceItemsCount > 0;
 
     const draftLines: OcrDraftLine[] = auditedItems
-      .filter((item) => item.product_id)
+      .filter(
+        (item) =>
+          item.quantity > 0 &&
+          item.item_name.trim() &&
+          !item.item_name.startsWith('Unread line ')
+      )
       .map((item) => ({
-        product_id: item.product_id as string,
+        product_id: item.product_id ?? '',
         quantity: item.quantity,
-        quantity_kind: item.unit.toLowerCase().includes('case') ? 'cases' : 'units',
+        quantity_kind: quantityKindForInvoiceUnit(item.unit),
         unit_cost: item.unit_cost,
         line_name: item.item_name,
         department: item.department,
