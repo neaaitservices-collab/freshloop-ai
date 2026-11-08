@@ -103,10 +103,15 @@ async function removeKitchenBatch(
   await prisma.product.deleteMany({ where: { id: { in: productIds } } });
 }
 
-function runBatch(recipeId: string, operationId: string, batchOutput: number) {
+function runBatch(
+  recipeId: string,
+  operationId: string,
+  batchOutput: number,
+  staffId = 'test-staff'
+) {
   return executeManufacturingBatch({
     operationId,
-    staffId: 'test-staff',
+    staffId,
     staffRole: 'DELI_CHEF',
     recipeId,
     batchOutput,
@@ -227,6 +232,36 @@ test('failed manufacturing batch rolls back so the same id can retry', { skip: !
     8
   );
   assert.equal(await prisma.manufacturingOperation.count({ where: { id: operationId } }), 1);
+});
+
+test('another staff id cannot replay a manufacturing operation', { skip: !hasDb }, async (t) => {
+  if (!(await connectOrSkip(t))) return;
+  const stamp = `mfg-owner-${Date.now()}`;
+  const seeded = await seedKitchenBatch(stamp, 10);
+  const operationId = randomUUID();
+  t.after(() => removeKitchenBatch(seeded, [operationId]));
+
+  const first = await runBatch(seeded.recipe.id, operationId, 4, 'staff-a');
+  const sameUser = await runBatch(seeded.recipe.id, operationId, 4, 'staff-a');
+  assert.equal(sameUser.idempotent, true);
+  assert.equal(sameUser.result.executed_by_staff_id, 'staff-a');
+  assert.deepEqual(sameUser.result, first.result);
+
+  await assert.rejects(
+    () => runBatch(seeded.recipe.id, operationId, 4, 'staff-b'),
+    (error: unknown) => error instanceof ManufacturingOperationConflictError
+  );
+  assert.equal(
+    await prisma.inventoryTransaction.count({
+      where: { referenceId: first.result.batch_reference_id },
+    }),
+    2
+  );
+  assert.equal(
+    await getCurrentStock(seeded.ingredient.id, InventoryLocation.Kitchen_Prep),
+    8
+  );
+  assert.equal(await getCurrentStock(seeded.output.id, InventoryLocation.Deli_Grab_N_Go), 4);
 });
 
 test('distinct manufacturing ids post separate identical batches', { skip: !hasDb }, async (t) => {

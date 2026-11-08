@@ -41,9 +41,7 @@ export class ManufacturingOperationConflictError extends Error {
   readonly statusCode = 409;
 
   constructor() {
-    super(
-      'This production id was already used for a different batch. Submit again to start a separate batch.'
-    );
+    super('This production id is already in use. Submit again to start a separate batch.');
     this.name = 'ManufacturingOperationConflictError';
   }
 }
@@ -130,9 +128,14 @@ function payloadFromInput(input: ExecuteManufacturingBatchInput): ManufacturingP
   };
 }
 
+function storedStaffId(result: ManufacturingExecutionResult): string {
+  return typeof result.executed_by_staff_id === 'string' ? result.executed_by_staff_id.trim() : '';
+}
+
 async function replayCompletedOperation(
   operationId: string,
-  payloadHash: string
+  payloadHash: string,
+  staffId: string
 ): Promise<ManufacturingBatchOutcome> {
   const existing = await prisma.manufacturingOperation.findUnique({
     where: { id: operationId },
@@ -153,6 +156,9 @@ async function replayCompletedOperation(
       'MFG_LEDGER_FAILED',
       500
     );
+  }
+  if (!storedStaffId(existing.response) || storedStaffId(existing.response) !== staffId.trim()) {
+    throw new ManufacturingOperationConflictError();
   }
   return { idempotent: true, result: existing.response };
 }
@@ -362,6 +368,10 @@ export async function executeManufacturingBatch(
   const recipeForBatch = resolvedRecipe;
   const staffId = input.staffId;
 
+  // Replay is reached only after the recipe and BOM checks above succeed, and only
+  // for the staff id stored on the original batch. A later recipe edit that fails
+  // those checks does not return the stored result. Override order is part of the
+  // payload hash, so a reordered override list is a different payload.
   try {
     const stored = await prisma.$transaction(async (tx) => {
       await tx.manufacturingOperation.create({
@@ -504,7 +514,7 @@ export async function executeManufacturingBatch(
     return { idempotent: false, result: stored };
   } catch (error) {
     if (isUniqueViolation(error)) {
-      return replayCompletedOperation(operationId, payloadHash);
+      return replayCompletedOperation(operationId, payloadHash, staffId);
     }
     if (error instanceof LotAllocationError || error instanceof InventoryLedgerError) {
       throw new InventoryLedgerError(error.message, 'INSUFFICIENT_KITCHEN_PREP_STOCK', 409);

@@ -14,6 +14,8 @@ import { manufacturingPayloadKey } from '@/lib/domains/manufacturing/manufacturi
 import {
   browserManufacturingOperationStore,
   claimManufacturingOperationId,
+  manufacturingOperationStorageKey,
+  purgeUnscopedManufacturingOperationKeys,
   settleManufacturingOperationId,
 } from '@/lib/domains/manufacturing/operationAttempt';
 import { resolveLaborRatePerHour } from '@/lib/domains/manufacturing/resolveLaborRate';
@@ -197,7 +199,7 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
   onBatchProduced,
   onBatchFailed,
 }) => {
-  const { activeUser } = useRole();
+  const { activeUser, loading: sessionLoading } = useRole();
   const staffRole = manufacturingRoleForApi(activeUser?.role);
   const [catalog, setCatalog] = useState<KitchenRecipeDefinition[]>(
     KITCHEN_RECIPES_CATALOG
@@ -359,6 +361,15 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
 
   const handleExecuteProduction = async () => {
     if (!selectedRecipe || submitting) return;
+    const staffId = activeUser?.id?.trim() ?? '';
+    if (sessionLoading || !staffId) {
+      const msg = sessionLoading
+        ? 'Wait for your sign-in to finish, then run the batch again.'
+        : 'Sign in again before running this batch.';
+      setErrorMsg(msg);
+      onBatchFailed?.(msg);
+      return;
+    }
     setSubmitting(true);
     setErrorMsg(null);
 
@@ -379,7 +390,18 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
     };
     const payloadKey = manufacturingPayloadKey(requestBody);
     const operationStore = browserManufacturingOperationStore();
-    const operationId = claimManufacturingOperationId(operationStore, payloadKey, () =>
+    purgeUnscopedManufacturingOperationKeys(operationStore.keys(), (key) =>
+      operationStore.delete(key)
+    );
+    const storageKey = manufacturingOperationStorageKey(staffId, payloadKey);
+    if (!storageKey) {
+      const msg = 'Sign in again before running this batch.';
+      setErrorMsg(msg);
+      onBatchFailed?.(msg);
+      setSubmitting(false);
+      return;
+    }
+    const operationId = claimManufacturingOperationId(operationStore, storageKey, () =>
       crypto.randomUUID()
     );
 
@@ -396,7 +418,7 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
       const json = await res.json();
 
       if (json.code === 'MANUFACTURING_OPERATION_CONFLICT') {
-        settleManufacturingOperationId(operationStore, payloadKey);
+        settleManufacturingOperationId(operationStore, storageKey);
       }
 
       if (res.status === 403) {
@@ -432,7 +454,7 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
         })),
       };
 
-      settleManufacturingOperationId(operationStore, payloadKey);
+      settleManufacturingOperationId(operationStore, storageKey);
       onBatchProduced?.(summary);
       notifyInventoryUpdated();
       window.dispatchEvent(new CustomEvent('freshloop-kitchen-inbox'));
