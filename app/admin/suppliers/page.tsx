@@ -4,12 +4,14 @@ import { SupplierTable } from '@/components/features/suppliers/SupplierTable';
 import { PageMain } from '@/components/ui/layout';
 import { listSuppliers } from '@/lib/domains/suppliers/suppliers';
 import { requireOperationalStaff } from '@/lib/auth/guardRoute';
+import { guardFreshPage } from '@/lib/auth/pageGuard';
 import { requireSessionUser } from '@/lib/auth/session';
 import { isManager } from '@/lib/utils/roles';
 
 export const dynamic = 'force-dynamic';
 
 export default async function AdminSuppliersPage() {
+  await guardFreshPage('/admin/suppliers');
   await requireOperationalStaff();
   const actor = await requireSessionUser();
   const suppliers = await listSuppliers();
