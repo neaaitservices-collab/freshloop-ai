@@ -170,7 +170,7 @@ export function Navigation({ onVoice }: { onVoice?: () => void } = {}) {
         }`}
       >
         <div className={`flex items-center gap-2 px-3 py-4 ${collapsed ? 'justify-center' : ''}`}>
-          <Link href={brandHref(role)} className="flex items-center gap-2">
+          <Link href={brandHref(role)} prefetch={false} className="flex items-center gap-2">
             <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-blue-900/50 text-blue-200 ring-1 ring-blue-800/60">
               <Leaf className="h-5 w-5" />
             </span>
@@ -223,7 +223,7 @@ export function Navigation({ onVoice }: { onVoice?: () => void } = {}) {
       </aside>
 
       <header className="sticky top-0 z-40 flex items-center justify-between gap-3 border-b border-slate-800 bg-slate-950/95 px-3 py-3 backdrop-blur-xl md:hidden">
-        <Link href={brandHref(role)} className="flex items-center gap-2">
+        <Link href={brandHref(role)} prefetch={false} className="flex items-center gap-2">
           <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-900/50 text-blue-200 ring-1 ring-blue-800/60">
             <Leaf className="h-4 w-4" />
           </span>
@@ -266,7 +266,7 @@ export function Navigation({ onVoice }: { onVoice?: () => void } = {}) {
             }
             return (
               <li key={shown.id} className="flex flex-1">
-                <Link href={shown.href ?? '/admin'} className={className}>
+                <Link href={shown.href ?? '/admin'} prefetch={false} className={className}>
                   <Icon className="h-5 w-5" />
                   {shown.label}
                 </Link>
@@ -308,7 +308,7 @@ function NavRow({
     );
   }
   return (
-    <Link href={item.href ?? '/admin'} className={className} title={item.label}>
+    <Link href={item.href ?? '/admin'} prefetch={false} className={className} title={item.label}>
       <Icon className="h-4 w-4 shrink-0" />
       {collapsed ? null : item.label}
     </Link>

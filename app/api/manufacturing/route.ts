@@ -8,11 +8,10 @@ import type {
 import {
   prisma,
   getMovingAverageCost,
-  getCurrentStock,
   InventoryLedgerError,
 } from '@/lib/domains/inventory/ledger';
 import { invalidateInventoryCaches } from '@/lib/domains/inventory/inventoryCache';
-import { consumeLotsFifo, createLotOnReceive } from '@/lib/domains/inventory/lots';
+import { consumeLotsFifo, createLotOnReceive, LotAllocationError } from '@/lib/domains/inventory/lots';
 import { apiErrorFromUnknown } from '@/lib/domains/ai/apiError';
 import { authErrorResponse } from '@/lib/auth/http';
 import { requireRoles } from '@/lib/auth/session';
@@ -184,13 +183,15 @@ export async function POST(req: NextRequest) {
             ingredientName: bi.ingredientProduct.name,
             requiredQty: Number(bi.quantityRequired ?? 0),
             unit: (bi.unit as UnitType) ?? ('UNIT' as UnitType),
-            allowVariance: true,
+            allowVariance: bi.allowVariance,
             defaultMacCost: bi.ingredientProduct.standardCost ?? 2.0,
           })),
         };
       }
-    } catch {
-      // Fall back to seeded catalog when DB connection is offline
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '';
+      const offline = /can't reach database server|ECONNREFUSED|P1001/i.test(message);
+      if (!offline) throw error;
     }
 
     if (!resolvedRecipe) {
@@ -286,28 +287,6 @@ export async function POST(req: NextRequest) {
         ? Number(overrideMap.get(bomItem.ingredientProductId)!.toFixed(4))
         : scaledStandardQty;
 
-      // Optional stock check in Kitchen_Prep
-      if (body.enforce_stock_check) {
-        try {
-          const currentKitchenStock = await getCurrentStock(
-            bomItem.ingredientProductId,
-            LOC_KITCHEN_PREP
-          );
-          if (currentKitchenStock < actualQtyToDeduct) {
-            return NextResponse.json(
-              {
-                success: false,
-                code: 'INSUFFICIENT_KITCHEN_PREP_STOCK',
-                error: `Insufficient stock in production prep for "${bomItem.ingredientName}": required ${actualQtyToDeduct}, available ${currentKitchenStock}.`,
-              },
-              { status: 409 }
-            );
-          }
-        } catch {
-          // Continue in demo mode when DB is offline
-        }
-      }
-
       let unitMovingAvgCost = bomItem.defaultMacCost;
       try {
         const dbMac = await getMovingAverageCost(bomItem.ingredientProductId);
@@ -331,6 +310,18 @@ export async function POST(req: NextRequest) {
         unitMovingAvgCost,
         lineCost,
       });
+    }
+
+    const ingredientQty = consumptionPlan.reduce((sum, item) => sum + item.actualQtyToDeduct, 0);
+    if (!(ingredientQty > 0)) {
+      return NextResponse.json(
+        {
+          success: false,
+          code: 'ZERO_INGREDIENT_USE',
+          error: 'A batch must consume at least one ingredient. Zero-use overrides are not posted.',
+        },
+        { status: 422 }
+      );
     }
 
     // 5. Compute Total Batch Cost (ingredients + labor + packaging) and unit cost
@@ -372,14 +363,17 @@ export async function POST(req: NextRequest) {
       const recipeForBatch = resolvedRecipe;
       const ledgerResults = await prisma.$transaction(async (tx) => {
         const ingredientRows: InventoryTransaction[] = [];
-        for (const item of consumptionPlan) {
+        const orderedPlan = [...consumptionPlan].sort((a, b) =>
+          a.ingredientProductId.localeCompare(b.ingredientProductId)
+        );
+        for (const item of orderedPlan) {
           const qty = Number(Math.abs(item.actualQtyToDeduct).toFixed(4));
           if (qty > 0) {
             await consumeLotsFifo(tx, {
               productId: item.ingredientProductId,
               location: LOC_KITCHEN_PREP,
               qty,
-              allowShort: true,
+              allowShort: false,
             });
           }
           ingredientRows.push(
@@ -398,6 +392,16 @@ export async function POST(req: NextRequest) {
             })
           );
         }
+        const rowByProduct = new Map(ingredientRows.map((row) => [row.productId, row]));
+        const orderedRows = consumptionPlan.map((item) => {
+          const row = rowByProduct.get(item.ingredientProductId);
+          if (!row) {
+            throw new LotAllocationError(`Missing ledger row for ${item.ingredientName}.`);
+          }
+          return row;
+        });
+        ingredientRows.length = 0;
+        ingredientRows.push(...orderedRows);
 
         const outputRow = await tx.inventoryTransaction.create({
           data: {
@@ -444,6 +448,13 @@ export async function POST(req: NextRequest) {
       outputTransaction = ledgerResults.outputRow;
       invalidateInventoryCaches();
     } catch (ledgerError) {
+      if (ledgerError instanceof LotAllocationError || ledgerError instanceof InventoryLedgerError) {
+        throw new InventoryLedgerError(
+          ledgerError.message,
+          'INSUFFICIENT_KITCHEN_PREP_STOCK',
+          409
+        );
+      }
       throw new InventoryLedgerError(
         ledgerError instanceof Error
           ? ledgerError.message

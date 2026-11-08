@@ -6,10 +6,7 @@ import { moveRetailStock, postProductReceipt } from '@/lib/domains/inventory/sto
 import { rebuildLotsFromLedger } from '@/lib/domains/inventory/rebuildLots';
 
 const databaseUrl = process.env.DATABASE_URL?.trim() ?? '';
-const hasDb =
-  Boolean(databaseUrl) &&
-  process.env.FRESHLOOP_DB_TESTS !== '0' &&
-  !databaseUrl.includes('freshloop_ci');
+const hasDb = Boolean(databaseUrl) && process.env.FRESHLOOP_DB_TESTS !== '0';
 
 test('ledger integration (requires DATABASE_URL)', { skip: !hasDb }, async (t) => {
   try {

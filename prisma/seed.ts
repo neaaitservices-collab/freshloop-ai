@@ -301,9 +301,14 @@ async function seedStaffUsers() {
 }
 
 async function main() {
+  if (process.env.NODE_ENV === "production" && process.env.FRESHLOOP_ALLOW_DEMO_SEED !== "1") {
+    throw new Error(
+      "Refusing to seed a production database. Set FRESHLOOP_ALLOW_DEMO_SEED=1 only for an empty demo database."
+    );
+  }
   if (process.env.NODE_ENV === "production") {
     console.warn(
-      "⚠️  Production seed: loads demo staff (@freshloop.test / freshloop) and sample catalog. Skip if this is a live store."
+      "⚠️  Production seed override: loads demo staff (@freshloop.test / freshloop) and sample catalog."
     );
   }
   console.log("🌱 Starting FreshLoop AI database seed...");

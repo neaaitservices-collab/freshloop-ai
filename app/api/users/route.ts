@@ -6,6 +6,10 @@ import { getStaffDirectory } from '@/lib/domains/auth/staffDirectory';
 import { authErrorResponse } from '@/lib/auth/http';
 import { requireRoles, requireSessionUser } from '@/lib/auth/session';
 import { MANAGER_ROLES } from '@/lib/auth/permissions';
+import { z } from 'zod';
+import { randomBytes } from 'node:crypto';
+import { hashPassword } from '@/lib/auth/password';
+import { createPasswordResetToken, passwordResetUrl } from '@/lib/auth/passwordReset';
 import { setStaffHourlyRate } from '@/lib/auth/staffHourlyRate';
 import { invalidateReferenceDataCaches } from '@/lib/domains/inventory/inventoryCache';
 import { findLatestStoreSetting } from '@/lib/domains/stats/storeSettingSelect';
@@ -22,12 +26,6 @@ const staffCoreSelect = {
   role: true,
   hourlyRate: true,
 } as const;
-
-function normalizeHourlyRate(hourlyRate: number | null | undefined): number | null {
-  return hourlyRate != null && Number.isFinite(hourlyRate) && hourlyRate > 0
-    ? Number(hourlyRate.toFixed(2))
-    : null;
-}
 
 function toStaffUser(
   user: {
@@ -79,9 +77,10 @@ export async function POST(req: NextRequest) {
       hourlyRate?: number;
     };
     const name = body.name?.trim() ?? '';
-    const email = body.email?.trim().toLowerCase() ?? '';
+    const emailParsed = z.string().trim().email().max(254).safeParse(body.email ?? '');
+    const email = emailParsed.success ? emailParsed.data.toLowerCase() : '';
     const assigned = positionByLabel(body.position ?? '');
-    if (!name || !email || !assigned) {
+    if (!name || !emailParsed.success || !assigned) {
       return NextResponse.json(
         {
           success: false,
@@ -104,20 +103,25 @@ export async function POST(req: NextRequest) {
       const storeSetting = await findLatestStoreSetting();
       hourlyRate = Number((storeSetting?.defaultLaborRatePerHour ?? 17.6).toFixed(2));
     }
+    const passwordHash = await hashPassword(randomBytes(24).toString('base64url'));
     const user = await prisma.user.create({
       data: {
         name,
         email,
         position: assigned.label,
         role: assigned.role,
+        passwordHash,
       },
       select: staffCoreSelect,
     });
     const savedRate = await setStaffHourlyRate(user.id, hourlyRate);
+    const resetToken = await createPasswordResetToken(email);
+    const setupUrl = resetToken ? passwordResetUrl(email, resetToken) : null;
     invalidateReferenceDataCaches();
     return NextResponse.json({
       success: true,
       user: toStaffUser(user, savedRate),
+      ...(setupUrl ? { setupUrl } : {}),
     });
   } catch (error) {
     const authRes = authErrorResponse(error);

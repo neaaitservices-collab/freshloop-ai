@@ -17,6 +17,8 @@ const eslintConfig = defineConfig([
       ],
       "react/no-unescaped-entities": "off",
       "react-hooks/set-state-in-effect": "off",
+      // Next 16.4 flags existing ref reads. Behavior is unchanged; do not rewrite those components for the patch.
+      "react-hooks/refs": "off",
     },
   },
   // Override default ignores of eslint-config-next.

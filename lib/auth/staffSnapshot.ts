@@ -19,6 +19,8 @@ export type StaffAuthRow = {
   position: string;
   hourlyRate: number | null;
   passwordHash: string | null;
+  /** Password generation. Missing legacy JWTs compare as 0. */
+  credentialVersion: number;
 };
 
 export type StaffLookup =
@@ -63,14 +65,38 @@ export function resolveStaffLookup(lookup: StaffLookup): StaffResolution {
 }
 
 /** Claims copied onto the JWT/session. `lookupFailed` must not authorize. */
+/**
+ * Legacy JWTs omit the claim and stay valid while the row is still version 0.
+ * A password change increments the row. Deletion is a missing row, not an increment.
+ */
+export function credentialVersionMatches(
+  tokenVersion: number | null | undefined,
+  rowVersion: number
+): boolean {
+  const token =
+    typeof tokenVersion === 'number' && Number.isFinite(tokenVersion) && tokenVersion >= 0
+      ? tokenVersion
+      : 0;
+  return token === rowVersion;
+}
+
 export function sessionClaimsFromLookup(lookup: StaffLookup): {
   user: AuthSessionUser | null;
   lookupFailed: boolean;
+  credentialVersion: number | null;
 } {
   const resolved = resolveStaffLookup(lookup);
-  if (resolved.status === 'lookup_failed') return { user: null, lookupFailed: true };
-  if (resolved.status === 'active') return { user: resolved.user, lookupFailed: false };
-  return { user: null, lookupFailed: false };
+  if (resolved.status === 'lookup_failed') {
+    return { user: null, lookupFailed: true, credentialVersion: null };
+  }
+  if (resolved.status === 'active' && lookup.ok && lookup.row) {
+    return {
+      user: resolved.user,
+      lookupFailed: false,
+      credentialVersion: lookup.row.credentialVersion,
+    };
+  }
+  return { user: null, lookupFailed: false, credentialVersion: null };
 }
 
 export function isActiveRole(role: string | null | undefined): role is RoleName {

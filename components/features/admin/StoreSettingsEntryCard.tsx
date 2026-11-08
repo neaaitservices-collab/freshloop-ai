@@ -20,6 +20,7 @@ export function StoreSettingsEntryCard() {
         </div>
         <Link
           href="/admin/settings"
+          prefetch={false}
           className="inline-flex items-center gap-2 rounded-xl bg-emerald-400 px-4 py-3 text-sm font-black text-zinc-950 transition hover:bg-emerald-300"
         >
           Open settings

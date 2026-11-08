@@ -2,7 +2,7 @@
 
 import React, { Suspense, useState } from 'react';
 import { signIn } from 'next-auth/react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 import { waitForClientSession } from '@/lib/auth/waitForClientSession';
 import Link from 'next/link';
 import { Loader2, Store } from 'lucide-react';
@@ -11,7 +11,6 @@ import { Button } from '@/components/ui/Button';
 import { AuthPageShell } from '@/components/ui/layout';
 
 function LoginForm() {
-  const router = useRouter();
   const searchParams = useSearchParams();
   const callbackUrl = searchParams.get('callbackUrl') ?? '/';
   const safeCallback =
@@ -37,13 +36,10 @@ function LoginForm() {
       return;
     }
     if (result?.ok) {
-      const ready = await waitForClientSession();
-      if (ready) {
-        router.refresh();
-        router.replace(safeCallback);
-      } else {
-        window.location.assign(safeCallback);
-      }
+      await waitForClientSession();
+      // Full document load so `/` runs the server role redirect. A client replace
+      // reuses the logged-out root layout and can stop on the empty page.
+      window.location.assign(safeCallback);
       return;
     }
     setSubmitting(false);

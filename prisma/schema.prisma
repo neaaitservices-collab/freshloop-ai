@@ -21,6 +21,8 @@ enum TransactionType {
   Rescue
   Waste
   POS_Sale
+  /// Count correction. Excluded from the waste KPI.
+  Adjustment
 }
 
 enum InventoryLocation {
@@ -216,6 +218,10 @@ model InventoryTransaction {
   referenceId     String?           @map("Reference_ID")
   expirationDate  DateTime?
   notes           String?
+  /// Charged bundle revenue on one POS_Sale row. Product sales keep the unit price in Unit_Cost_At_Time.
+  extendedRevenue Float?            @map("extended_revenue")
+  /// Volumetric scrap bucket count. Qty_Change stays 0 so the anchor SKU on-hand does not move.
+  scrapBucketCount Float?           @map("scrap_bucket_count")
 
   @@index([productId, timestamp])
   @@index([productId, transactionType, timestamp])
@@ -262,6 +268,8 @@ model User {
   role          Role      @default(FLOOR_STAFF)
   /// Employee hourly wage for BOM / batch labor costing (falls back to store default when null).
   hourlyRate    Float?    @map("hourly_rate_per_hour")
+  /// Bumped when the password changes. JWTs must carry the same value. Deletion does not bump a row.
+  credentialVersion Int   @default(0) @map("credential_version")
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
@@ -615,4 +623,26 @@ model ReceivingDisposition {
   @@index([reason, status, createdAt])
   @@index([supplierId, createdAt])
   @@map("receiving_dispositions")
+}
+
+/// Server-side invoice scan. Commit posts this payload, not numbers supplied by the browser.
+model InvoiceOcrDraft {
+  id         String    @id @default(uuid())
+  staffId    String    @map("staff_id")
+  payload    Json
+  result     Json?
+  expiresAt  DateTime  @map("expires_at")
+  consumedAt DateTime? @map("consumed_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  @@index([expiresAt])
+  @@map("invoice_ocr_drafts")
+}
+
+/// Unique key inserted in the same transaction as a receive or invoice post.
+model LedgerIdempotencyKey {
+  key       String   @id
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("ledger_idempotency_keys")
 }

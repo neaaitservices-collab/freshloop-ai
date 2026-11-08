@@ -15,6 +15,7 @@ export type StaffEmployeeFormValues = {
   position: string;
   /** Dollar amount per hour as typed in the modal (parsed on save). */
   hourlyRate: string;
+  currentPassword: string;
 };
 
 type StaffEmployeeModalProps = {
@@ -27,6 +28,7 @@ type StaffEmployeeModalProps = {
   onClose: () => void;
   onSubmit: () => void;
   showHourlyRate?: boolean;
+  askCurrentPassword?: boolean;
 };
 
 export function StaffEmployeeModal({
@@ -39,6 +41,7 @@ export function StaffEmployeeModal({
   onClose,
   onSubmit,
   showHourlyRate = true,
+  askCurrentPassword = false,
 }: StaffEmployeeModalProps) {
   const titleId = useId();
   const selected = positionByLabel(values.position) ?? STAFF_POSITIONS[3];
@@ -149,6 +152,22 @@ export function StaffEmployeeModal({
                 className="mt-1.5 block font-medium normal-case text-slate-500"
               >
                 Used when this employee runs production batches.
+              </span>
+            </label>
+          ) : null}
+
+          {askCurrentPassword ? (
+            <label className="block text-xs font-bold text-slate-400">
+              Current password
+              <Input
+                type="password"
+                value={values.currentPassword}
+                onChange={(e) => onChange({ currentPassword: e.target.value })}
+                className="mt-1.5"
+                autoComplete="current-password"
+              />
+              <span className="mt-1.5 block font-medium normal-case text-slate-500">
+                Required when you change your own email. Other sessions sign in again.
               </span>
             </label>
           ) : null}

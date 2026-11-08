@@ -1,27 +1,14 @@
 'use client';
 
-import React, { useCallback, useEffect, useState } from 'react';
-import { usePathname, useRouter } from 'next/navigation';
+import React, { useCallback, useState } from 'react';
 import { Navigation } from '@/components/layout/Navigation';
 import { useAppVoiceOverride } from '@/components/layout/AppVoiceOverrideContext';
 import { VoiceLoggerModal } from '@/components/features/voice/VoiceLoggerModal';
-import { useRole } from '@/components/auth/RoleProvider';
-import { canVisit, homeForRole } from '@/lib/utils/roles';
 import { VOICE_UI_ENABLED } from '@/lib/features/voiceUiEnabled';
 
 export function AppShell({ children }: { children: React.ReactNode }) {
-  const pathname = usePathname();
-  const router = useRouter();
-  const { activeUser, loading } = useRole();
   const voiceOverride = useAppVoiceOverride();
   const [voiceLoggerOpen, setVoiceLoggerOpen] = useState(false);
-
-  useEffect(() => {
-    if (loading || !activeUser) return;
-    if (!canVisit(activeUser.role, pathname)) {
-      router.replace(homeForRole(activeUser.role));
-    }
-  }, [activeUser, loading, pathname, router]);
 
   const handleVoiceNav = useCallback(() => {
     if (voiceOverride) {
