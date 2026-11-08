@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { RECEIVING_SHEET_NAME } from '@/lib/domains/receiving/receivingSheet';
 import {
+  arrangeReceivingBatch,
   MAX_RECEIVING_BATCH_SIZE,
   postReceivingLogBatch,
   validateReceivingLogPostInput,
@@ -51,7 +52,14 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    const results = await postReceivingLogBatch(parsed, actor.id);
+    const arranged = arrangeReceivingBatch(parsed);
+    const posted = await postReceivingLogBatch(arranged.toPost, actor.id);
+    const results = arranged.results;
+    posted.forEach((row, index) => {
+      const slot = arranged.postIndexes[index];
+      if (slot === undefined) return;
+      results[slot] = row;
+    });
     const savedCount = results.filter((r) => r.stock.posted).length;
 
     return NextResponse.json({

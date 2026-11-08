@@ -14,6 +14,7 @@ import {
   computeCommitLineConfidence,
   lineNeedsManualReview,
 } from '@/lib/domains/receiving/invoiceOcrConfidence';
+import { sampleInvoiceCommitRejection } from '@/lib/domains/receiving/sampleReceivingGuard';
 
 export type OcrQuantityKind = 'units' | 'cases';
 
@@ -187,6 +188,12 @@ export async function commitInvoiceOcrReceipts(input: {
 }) {
   if (input.confirmedItems.length === 0) {
     throw new Error('No confirmed invoice lines to receive.');
+  }
+  const sampleReason = sampleInvoiceCommitRejection({
+    invoiceNumber: input.invoiceMeta?.invoiceNumber,
+  });
+  if (sampleReason) {
+    throw new Error(sampleReason);
   }
 
   const explicitProductIds = [

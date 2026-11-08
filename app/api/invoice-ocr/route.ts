@@ -16,6 +16,7 @@ import { handleApiRouteError, logServerError } from '@/lib/domains/ai/apiError';
 import { invoiceOcrErrorResponse } from '@/lib/domains/receiving/invoiceOcrErrors';
 import { authErrorResponse } from '@/lib/auth/http';
 import { requireReceivingStaff } from '@/lib/auth/guardRoute';
+import { gateStoredOcrDraft } from '@/lib/domains/receiving/sampleReceivingGuard';
 import { findLatestStoreSetting } from '@/lib/domains/stats/storeSettingSelect';
 import { matchProductWithScore } from '@/lib/domains/inventory/productMatching';
 import { recordOcrScanAnalytics } from '@/lib/domains/suppliers/analyticsPersistence';
@@ -479,16 +480,21 @@ export async function POST(req: NextRequest) {
       const commitBody = invoiceOcrCommitBodySchema.parse(rawBody);
       actorId = actor.id;
       const draft = await prisma.invoiceOcrDraft.findUnique({ where: { id: commitBody.draftId } });
-      if (!draft) {
+      const gate = gateStoredOcrDraft(
+        draft
+          ? {
+              expiresAt: draft.expiresAt,
+              payload: draft.payload as unknown as OcrDraftPayload,
+            }
+          : null
+      );
+      if (!gate.ok || !draft) {
         return NextResponse.json(
-          { success: false, error: 'Invoice scan was not found. Scan the invoice again.' },
-          { status: 404 }
-        );
-      }
-      if (draft.expiresAt.getTime() < Date.now()) {
-        return NextResponse.json(
-          { success: false, error: 'Invoice scan expired. Scan the invoice again.' },
-          { status: 409 }
+          {
+            success: false,
+            error: gate.ok ? 'Invoice scan was not found. Scan the invoice again.' : gate.error,
+          },
+          { status: gate.ok ? 404 : gate.status }
         );
       }
       const payload = draft.payload as unknown as OcrDraftPayload;
@@ -676,7 +682,8 @@ export async function POST(req: NextRequest) {
       departmentBreakdown,
       lines: draftLines,
     };
-    const draft = await saveInvoiceOcrDraft(actor.id, draftPayload);
+    const draft =
+      ocrSource === 'sample' ? null : await saveInvoiceOcrDraft(actor.id, draftPayload);
 
     const responsePayload: InvoiceOcrApiResponse = {
       success: true,
@@ -691,7 +698,7 @@ export async function POST(req: NextRequest) {
       needs_manual_review: needsManualReview,
       low_confidence_items_count: lowConfidenceItemsCount,
       ocr_confidence_threshold: INVOICE_OCR_CONFIDENCE_THRESHOLD,
-      draftId: draft.id,
+      draftId: draft?.id ?? '',
       items: auditedItems,
       data: {
         vendorName: extracted.vendorName,

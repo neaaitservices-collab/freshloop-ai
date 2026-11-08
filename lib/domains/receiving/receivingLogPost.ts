@@ -1,4 +1,5 @@
 import { postReceipt, type PostedReceipt, type SkippedReceipt } from '@/lib/domains/inventory/stock';
+import { sampleReceivingRejection } from '@/lib/domains/receiving/sampleReceivingGuard';
 import { getSupplierNameById } from '@/lib/domains/suppliers/suppliers';
 import {
   calculateYieldQuote,
@@ -99,6 +100,15 @@ export async function postReceivingLogToInventory(
   actorId: string,
   supplierName: string | null
 ): Promise<ReceivingLogPostResult> {
+  const sampleReason = sampleReceivingRejection(input);
+  if (sampleReason) {
+    return {
+      externalLogId: input.externalLogId,
+      itemName: input.itemName,
+      stock: { posted: false, reason: sampleReason },
+    };
+  }
+
   const targetMargin = resolveTargetMargin(input.marginMode, input.customMarginPercent ?? 0);
   const caseRetailPrice = parseCaseRetail(input.caseRetailPrice);
 
@@ -132,6 +142,45 @@ export async function postReceivingLogToInventory(
       stock: { posted: false, reason: 'Stock was not updated.' },
     };
   }
+}
+
+export interface ReceivingBatchSlot {
+  externalLogId?: string;
+  itemName: string;
+  stock: { posted: boolean; reason?: string };
+}
+
+/**
+ * Keep sample rows in their request positions and queue only postable lines.
+ * Filling `results[postIndexes[i]]` with the i-th post preserves order.
+ */
+export function arrangeReceivingBatch(items: ReceivingLogPostInput[]): {
+  toPost: ReceivingLogPostInput[];
+  results: ReceivingBatchSlot[];
+  postIndexes: number[];
+} {
+  const toPost: ReceivingLogPostInput[] = [];
+  const results: ReceivingBatchSlot[] = [];
+  const postIndexes: number[] = [];
+  for (const input of items) {
+    const sampleReason = sampleReceivingRejection(input);
+    if (sampleReason) {
+      results.push({
+        externalLogId: input.externalLogId,
+        itemName: input.itemName,
+        stock: { posted: false, reason: sampleReason },
+      });
+      continue;
+    }
+    postIndexes.push(results.length);
+    results.push({
+      externalLogId: input.externalLogId,
+      itemName: input.itemName,
+      stock: { posted: false, reason: 'Stock was not updated.' },
+    });
+    toPost.push(input);
+  }
+  return { toPost, results, postIndexes };
 }
 
 /** Resolve supplier once, post many lines in parallel (bounded concurrency). */

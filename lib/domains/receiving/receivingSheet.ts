@@ -62,43 +62,60 @@ export function parseReceivingSheetValues(values: unknown[][]): ReceivingLog[] {
   return logs;
 }
 
+export type ReceivingLogSource = 'google_sheets' | 'unconfigured' | 'unavailable';
+
 export interface ReceivingLogsResult {
   success: boolean;
-  source: 'google_sheets' | 'sample';
+  source: ReceivingLogSource;
   sheetName: string;
   logs: ReceivingLog[];
   warning: string | null;
 }
 
-export async function loadReceivingLogs(): Promise<ReceivingLogsResult> {
+/** Sheet is not configured. Sample fixture rows are not returned. */
+export function unconfiguredReceivingLogs(): ReceivingLogsResult {
+  return {
+    success: true,
+    source: 'unconfigured',
+    sheetName: RECEIVING_SHEET_NAME,
+    logs: [],
+    warning:
+      'The receiving sheet is not connected. Sample rows are not shown and cannot be saved as inventory.',
+  };
+}
+
+/** Sheet was configured but could not be read. Sample rows are not substituted. */
+export function unavailableReceivingLogs(detail: string): ReceivingLogsResult {
+  return {
+    success: true,
+    source: 'unavailable',
+    sheetName: RECEIVING_SHEET_NAME,
+    logs: [],
+    warning: `The receiving sheet could not be read. Nothing was substituted. ${detail}`.slice(0, 280),
+  };
+}
+
+export async function loadReceivingLogs(deps?: {
+  fetch?: typeof fetch;
+}): Promise<ReceivingLogsResult> {
   const spreadsheetId = process.env.GOOGLE_SHEETS_SPREADSHEET_ID?.trim();
   const apiKey = process.env.GOOGLE_SHEETS_API_KEY?.trim();
+  const fetchImpl = deps?.fetch ?? fetch;
 
   if (!spreadsheetId || !apiKey) {
-    return {
-      success: true,
-      source: 'sample',
-      sheetName: RECEIVING_SHEET_NAME,
-      logs: SAMPLE_RECEIVING_LOGS,
-      warning:
-        'GOOGLE_SHEETS_SPREADSHEET_ID or GOOGLE_SHEETS_API_KEY is not set. Showing sample Receiving_logs.',
-    };
+    return unconfiguredReceivingLogs();
   }
 
   const range = encodeURIComponent(RECEIVING_SHEET_NAME);
   const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${range}?key=${apiKey}`;
 
   try {
-    const response = await fetch(url, { cache: 'no-store' });
+    const response = await fetchImpl(url, { cache: 'no-store' });
     if (!response.ok) {
       const detail = await response.text();
-      return {
-        success: true,
-        source: 'sample',
-        sheetName: RECEIVING_SHEET_NAME,
-        logs: SAMPLE_RECEIVING_LOGS,
-        warning: `Google Sheets returned ${response.status}. Showing sample Receiving_logs. ${detail.slice(0, 180)}`,
-      };
+      return unavailableReceivingLogs(
+        `Google Sheets returned ${response.status}. ${detail.slice(0, 160)}`
+      );
     }
 
     const payload = (await response.json()) as { values?: unknown[][] };
@@ -122,15 +139,10 @@ export async function loadReceivingLogs(): Promise<ReceivingLogsResult> {
       warning: null,
     };
   } catch (error) {
-    return {
-      success: true,
-      source: 'sample',
-      sheetName: RECEIVING_SHEET_NAME,
-      logs: SAMPLE_RECEIVING_LOGS,
-      warning:
-        error instanceof Error
-          ? `Could not reach Google Sheets (${error.message}). Showing sample Receiving_logs.`
-          : 'Could not reach Google Sheets. Showing sample Receiving_logs.',
-    };
+    return unavailableReceivingLogs(
+      error instanceof Error
+        ? `Could not reach Google Sheets (${error.message}).`
+        : 'Could not reach Google Sheets.'
+    );
   }
 }

@@ -9,6 +9,7 @@ import { getSupplierNameById } from '@/lib/domains/suppliers/suppliers';
 import { handleApiRouteError } from '@/lib/domains/ai/apiError';
 import { authErrorResponse } from '@/lib/auth/http';
 import { requireReceivingStaff } from '@/lib/auth/guardRoute';
+import { sampleReceivingRejection } from '@/lib/domains/receiving/sampleReceivingGuard';
 
 export const dynamic = 'force-dynamic';
 
@@ -53,6 +54,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: validated.error }, { status: 400 });
     }
     const input = validated.input;
+    const sampleReason = sampleReceivingRejection(input);
+    if (sampleReason) {
+      return NextResponse.json({ success: false, error: sampleReason }, { status: 409 });
+    }
 
     const record = buildSavedPackRecord(input);
     savedPacks.unshift(record);

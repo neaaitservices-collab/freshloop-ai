@@ -28,13 +28,28 @@ import {
 import { consumeStashedReceivingScan } from '@/lib/domains/receiving/receivingBridge';
 import { readReceivingPrefs, writeReceivingPrefs } from '@/lib/domains/receiving/receivingPreferences';
 import type { ReceivingDispositionRow } from '@/lib/domains/receiving/receivingDisposition';
+import type { ReceivingLogSource } from '@/lib/domains/receiving/receivingSheet';
 
 interface LogsResponse {
   success: boolean;
-  source: 'google_sheets' | 'sample';
+  source: ReceivingLogSource | 'sample';
   sheetName: string;
   logs: ReceivingLog[];
   warning: string | null;
+}
+
+function normalizeLogSource(source: string | undefined): ReceivingLogSource | 'sample' {
+  if (source === 'google_sheets' || source === 'unconfigured' || source === 'unavailable') {
+    return source;
+  }
+  return 'sample';
+}
+
+function sheetStatusLabel(source: ReceivingLogSource | 'sample'): string {
+  if (source === 'google_sheets') return 'Live sheet';
+  if (source === 'unconfigured') return 'Sheet not connected';
+  if (source === 'unavailable') return 'Sheet unavailable';
+  return 'Sample preview';
 }
 
 const POSTED_RECEIVING_KEY = 'freshloop-posted-receiving';
@@ -259,7 +274,7 @@ export function YieldPricingDashboard({
   embedded = false,
   extraLogs = [],
   initialLogs,
-  initialSource = 'sample',
+  initialSource = 'unconfigured',
   initialSheetName = 'Receiving_logs',
   initialWarning = null,
   onScanNext,
@@ -270,7 +285,7 @@ export function YieldPricingDashboard({
   embedded?: boolean;
   extraLogs?: ReceivingLog[];
   initialLogs?: ReceivingLog[];
-  initialSource?: 'google_sheets' | 'sample';
+  initialSource?: ReceivingLogSource | 'sample';
   initialSheetName?: string;
   initialWarning?: string | null;
   onScanNext?: () => void;
@@ -281,7 +296,7 @@ export function YieldPricingDashboard({
 }) {
   const seeded = initialLogs !== undefined;
   const [logs, setLogs] = useState<ReceivingLog[]>(initialLogs ?? []);
-  const [source, setSource] = useState<'google_sheets' | 'sample'>(initialSource);
+  const [source, setSource] = useState<ReceivingLogSource | 'sample'>(initialSource);
   const [sheetName, setSheetName] = useState(initialSheetName);
   const [warning, setWarning] = useState<string | null>(initialWarning);
   const [loading, setLoading] = useState(!seeded);
@@ -344,7 +359,7 @@ export function YieldPricingDashboard({
       const json = (await response.json()) as LogsResponse;
       const nextLogs = Array.isArray(json.logs) ? json.logs : [];
       setLogs(nextLogs);
-      setSource(json.source === 'google_sheets' ? 'google_sheets' : 'sample');
+      setSource(normalizeLogSource(json.source));
       setSheetName(json.sheetName || 'Receiving_logs');
       setWarning(json.warning);
       setSelectedId((current) => {
@@ -864,11 +879,11 @@ export function YieldPricingDashboard({
               <Sheet className="h-3 w-3 text-emerald-300" />
               {sheetName}
             </span>
-            <span>{source === 'google_sheets' ? 'Live sheet' : 'Sample rows'}</span>
+            <span>{sheetStatusLabel(source)}</span>
             {warning ? (
               <span className="inline-flex items-center gap-1 text-slate-500">
                 <AlertTriangle className="h-3 w-3" />
-                Connect a sheet to replace the sample.
+                {source === 'google_sheets' ? warning : 'Sample rows are not a delivery and are not saved.'}
               </span>
             ) : null}
           </p>
@@ -896,10 +911,15 @@ export function YieldPricingDashboard({
           <CardBody className="flex flex-col items-center px-6 py-16 text-center">
             <Receipt className="h-16 w-16 text-slate-600" strokeWidth={1.1} aria-hidden />
             <p className="mt-6 max-w-md text-lg font-black tracking-tight text-slate-100">
-              All items processed successfully
+              {source === 'google_sheets'
+                ? 'All items processed successfully'
+                : 'No delivery list to receive'}
             </p>
             <p className="mt-2 max-w-sm text-sm text-slate-400">
-              Nothing left on this delivery. Scan the next invoice or pick another shipment when it arrives.
+              {source === 'google_sheets'
+                ? 'Nothing left on this delivery. Scan the next invoice or pick another shipment when it arrives.'
+                : warning ||
+                  'Sample rows are not loaded. Scan a real invoice, or reconnect the receiving sheet.'}
             </p>
             <Button
               variant="success"
