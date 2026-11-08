@@ -488,6 +488,7 @@ async function readVoiceLoggerRequest(req: NextRequest): Promise<VoiceLoggerBody
 
 export async function POST(req: NextRequest) {
   try {
+    const actor = await requireSessionUser();
     const body = await readVoiceLoggerRequest(req);
     const {
       audioBase64,
@@ -507,7 +508,6 @@ export async function POST(req: NextRequest) {
       typeof body.clientMutationId === 'string' ? body.clientMutationId.trim() : '';
 
     if (confirmCommit && Array.isArray(confirmedItems) && confirmedItems.length > 0) {
-      const actor = await requireSessionUser();
       if (clientMutationId && confirmedItems[0]?.product_id) {
         const { isOfflineMutationApplied } = await import('@/lib/domains/inventory/offlineMutation');
         const batchProbe = `${clientMutationId}:0:${confirmedItems[0].product_id}`;

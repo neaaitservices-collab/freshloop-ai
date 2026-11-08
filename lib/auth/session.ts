@@ -1,37 +1,23 @@
 import { auth } from '@/auth';
+import { loadStaffAuthRow } from '@/lib/auth/loadStaffAuth';
+import {
+  resolveStaffLookup,
+  type AuthSessionUser,
+  type StaffAuthRow,
+} from '@/lib/auth/staffSnapshot';
 import type { RoleName } from '@/lib/utils/roles';
-import { isRoleName } from '@/lib/utils/roles';
 
-export type AuthSessionUser = {
-  id: string;
-  name: string;
-  email: string;
-  role: RoleName;
-  position: string;
-  hourlyRate: number | null;
+export type { AuthSessionUser };
+
+type SessionLike = {
+  user?: { id?: string | null } | null;
+  staffLookupFailed?: boolean;
+} | null;
+
+export type SessionDeps = {
+  readSession?: () => Promise<SessionLike>;
+  loadStaff?: (userId: string) => Promise<StaffAuthRow | null>;
 };
-
-export async function getSessionUser(): Promise<AuthSessionUser | null> {
-  const session = await auth();
-  const user = session?.user;
-  if (!user?.id || !user.email) return null;
-  const role = user.role && isRoleName(user.role) ? user.role : null;
-  if (!role) return null;
-  const sessionRate = user.hourlyRate;
-  const hourlyRate =
-    typeof sessionRate === 'number' && Number.isFinite(sessionRate) && sessionRate > 0
-      ? sessionRate
-      : null;
-
-  return {
-    id: user.id,
-    name: user.name ?? '',
-    email: user.email,
-    role,
-    position: user.position ?? '',
-    hourlyRate,
-  };
-}
 
 export class AuthError extends Error {
   constructor(
@@ -43,16 +29,50 @@ export class AuthError extends Error {
   }
 }
 
-export async function requireSessionUser(): Promise<AuthSessionUser> {
-  const user = await getSessionUser();
+async function readAuthSession(): Promise<SessionLike> {
+  return auth();
+}
+
+/**
+ * Authorization identity for server handlers and the page gate.
+ * The signed JWT supplies the user id only. Role and account status come from `staff_users`.
+ * A deleted user, a user with no password, an unknown role, or a failed lookup does not authorize.
+ */
+export async function getSessionUser(deps?: SessionDeps): Promise<AuthSessionUser | null> {
+  const readSession = deps?.readSession ?? readAuthSession;
+  const loadStaff = deps?.loadStaff ?? loadStaffAuthRow;
+  const session = await readSession();
+  if (session?.staffLookupFailed) {
+    throw new AuthError('Unauthorized — session could not be verified.', 401);
+  }
+  const userId = session?.user?.id;
+  if (!userId) return null;
+
+  let row: StaffAuthRow | null;
+  try {
+    row = await loadStaff(userId);
+  } catch {
+    throw new AuthError('Unauthorized — session could not be verified.', 401);
+  }
+
+  const resolved = resolveStaffLookup({ ok: true, row });
+  if (resolved.status !== 'active') return null;
+  return resolved.user;
+}
+
+export async function requireSessionUser(deps?: SessionDeps): Promise<AuthSessionUser> {
+  const user = await getSessionUser(deps);
   if (!user) {
     throw new AuthError('Unauthorized — sign in required.', 401);
   }
   return user;
 }
 
-export async function requireRoles(allowed: RoleName[]): Promise<AuthSessionUser> {
-  const user = await requireSessionUser();
+export async function requireRoles(
+  allowed: RoleName[],
+  deps?: SessionDeps
+): Promise<AuthSessionUser> {
+  const user = await requireSessionUser(deps);
   if (!allowed.includes(user.role)) {
     throw new AuthError('Forbidden — your role cannot perform this action.', 403);
   }

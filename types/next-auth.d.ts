@@ -9,6 +9,8 @@ declare module 'next-auth' {
       position: string;
       hourlyRate: number | null;
     } & DefaultSession['user'];
+    /** Database lookup failed while refreshing this session. Do not authorize. */
+    staffLookupFailed?: boolean;
   }
 
   interface User {
@@ -24,5 +26,9 @@ declare module 'next-auth/jwt' {
     role?: RoleName;
     position?: string;
     hourlyRate?: number | null;
+    /** Set when the staff row is missing, has no password, or the lookup failed. */
+    revoked?: boolean;
+    /** Staff lookup threw. The previous role must not be kept. */
+    lookupFailed?: boolean;
   }
 }
