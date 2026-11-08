@@ -92,11 +92,21 @@ test('mixed draft keeps the unreadable line and blocks the whole commit', () => 
   assert.ok(draft.lines[1]?.review_reasons?.includes('department_assumed'));
   const blocked = draftPostingBlockers(draft, { actorIsManager: true, manualReviewOverride: true });
   assert.ok(blocked.length > 0);
-  const resolved = applyOcrDraftResolutions(draft, {
-    lines: [{ index: 1, line_name: 'Lemons', quantity: 3, department: 'PRODUCE' }],
-  });
-  assert.equal(resolved.lines[1]?.line_name, 'Lemons');
-  assert.equal(resolved.lines[1]?.quantity, 3);
+  const staff = applyOcrDraftResolutions(
+    draft,
+    { lines: [{ index: 1, line_name: 'Lemons', quantity: 3, department: 'PRODUCE' }] },
+    { actorIsManager: false, manualReviewOverride: true }
+  );
+  assert.equal(staff.lines[1]?.line_name, 'Lemons');
+  assert.equal(staff.lines[1]?.quantity, 3);
+  assert.equal(staff.lines[1]?.delivery_id, draft.lines[1]?.delivery_id);
+  assert.equal(staff.lines[1]?.department_assumed, true);
+  assert.equal(staff.totalAmount, Number((2 * 5 + 3 * 4).toFixed(2)));
+  const resolved = applyOcrDraftResolutions(
+    staff,
+    { lines: [{ index: 1, department: 'PRODUCE' }] },
+    { actorIsManager: true, manualReviewOverride: true }
+  );
   assert.equal(resolved.lines[1]?.department_assumed, false);
   const still = draftPostingBlockers(resolved, { actorIsManager: false, manualReviewOverride: false });
   assert.equal(still.length, 0);

@@ -1,20 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/domains/inventory/ledger';
-import {
-  applyOcrDraftResolutions,
-  buildAuthoritativeOcrDraft,
-  draftPostingBlockers,
-} from '@/lib/domains/receiving/invoiceOcrDraft';
-import {
-  commitInvoiceOcrReceipts,
-  invoiceIdempotencyKey,
-  saveInvoiceOcrDraft,
-} from '@/lib/domains/receiving/invoiceOcrCommit';
+import { buildAuthoritativeOcrDraft } from '@/lib/domains/receiving/invoiceOcrDraft';
+import { saveInvoiceOcrDraft } from '@/lib/domains/receiving/invoiceOcrCommit';
 import { postReceipt } from '@/lib/domains/inventory/stock';
 import { commitConfirmedVoiceItems } from '@/lib/domains/inventory/voiceCommit';
-import { stableLogId } from '@/lib/domains/receiving/receivingBridge';
+import { settleStoredOcrDraft } from '@/lib/domains/receiving/invoiceOcrSettle';
 
 const databaseUrl = process.env.DATABASE_URL?.trim() ?? '';
 const hasDb = Boolean(databaseUrl) && process.env.FRESHLOOP_DB_TESTS !== '0';
@@ -86,65 +77,37 @@ test('mixed OCR draft commit writes nothing until gaps are resolved', { skip: !h
     await prisma.product.deleteMany({ where: { name: { contains: stamp } } });
   });
 
-  const blocked = draftPostingBlockers(draftPayload, {
+  const clerk = await settleStoredOcrDraft({
+    draftId: draft.id,
+    staffId: `staff-${stamp}`,
+    actorIsManager: false,
+    manualReviewOverride: true,
+    post: true,
+    resolutions: {
+      lines: [{ index: 1, line_name: `Lemons ${stamp}`, quantity: 1, department: 'PRODUCE' }],
+    },
+  });
+  assert.equal(clerk.kind, 'blocked');
+  assert.equal(await prisma.vendorInvoice.count({ where: { invoiceNumber: draftPayload.invoiceNumber } }), 0);
+  assert.equal(await prisma.ledgerIdempotencyKey.count({ where: { key: { contains: stamp } } }), 0);
+  const saved = await prisma.invoiceOcrDraft.findUnique({ where: { id: draft.id } });
+  const savedPayload = saved?.payload as unknown as typeof draftPayload;
+  assert.equal(savedPayload.lines[1]?.delivery_id, draftPayload.lines[1]?.delivery_id);
+  assert.equal(savedPayload.lines[1]?.department_assumed, true);
+  assert.equal(saved?.consumedAt, null);
+
+  const manager = await settleStoredOcrDraft({
+    draftId: draft.id,
+    staffId: `manager-${stamp}`,
     actorIsManager: true,
     manualReviewOverride: true,
+    post: true,
+    resolutions: { lines: [{ index: 1, department: 'PRODUCE' }] },
   });
-  assert.ok(blocked.length > 0);
-  const invoicesBefore = await prisma.vendorInvoice.count({
-    where: { invoiceNumber: draftPayload.invoiceNumber },
-  });
-  const keysBefore = await prisma.ledgerIdempotencyKey.count({
-    where: { key: invoiceIdempotencyKey(draftPayload.vendorName, draftPayload.invoiceNumber) },
-  });
-  assert.equal(invoicesBefore, 0);
-  assert.equal(keysBefore, 0);
-
-  const resolved = applyOcrDraftResolutions(draftPayload, {
-    lines: [{ index: 1, line_name: `Lemons ${stamp}`, quantity: 1, department: 'PRODUCE' }],
-  });
-  assert.equal(
-    draftPostingBlockers(resolved, { actorIsManager: false, manualReviewOverride: false }).length,
-    0
-  );
-  await prisma.invoiceOcrDraft.update({
-    where: { id: draft.id },
-    data: { payload: resolved as unknown as Prisma.InputJsonValue },
-  });
-  const committed = await commitInvoiceOcrReceipts({
-    staffId: `staff-${stamp}`,
-    referenceId: resolved.invoiceNumber,
-    confirmedItems: resolved.lines.map((line) => ({
-      product_id: line.product_id,
-      quantity: line.quantity,
-      quantity_kind: line.quantity_kind,
-      unit_cost: line.unit_cost,
-      line_name: line.line_name,
-      department: line.department,
-      case_pack_size: line.case_pack_size,
-      line_confidence: line.line_confidence,
-    })),
-    invoiceMeta: {
-      vendorName: resolved.vendorName,
-      invoiceNumber: resolved.invoiceNumber,
-      invoiceDate: resolved.invoiceDate,
-      totalAmount: resolved.totalAmount,
-      departmentBreakdown: resolved.departmentBreakdown,
-    },
-    idempotencyKey: invoiceIdempotencyKey(resolved.vendorName, resolved.invoiceNumber),
-    draftId: draft.id,
-    actorIsManager: false,
-  });
-  assert.ok(committed.invoiceId);
-  assert.equal(committed.transactionsCreated, 2);
-  const lots = await prisma.inventoryLot.count({
-    where: { receiveReferenceId: resolved.invoiceNumber },
-  });
-  assert.equal(lots, 2);
-  const key = await prisma.ledgerIdempotencyKey.findUnique({
-    where: { key: invoiceIdempotencyKey(resolved.vendorName, resolved.invoiceNumber) },
-  });
-  assert.ok(key);
+  assert.equal(manager.kind, 'posted');
+  if (manager.kind === 'posted') assert.equal(manager.result.transactionsCreated, 2);
+  const lineKey = `recv:${draftPayload.lines[0]?.delivery_id}`;
+  assert.equal(await prisma.inventoryTransaction.count({ where: { referenceId: lineKey } }), 1);
 });
 
 test('distinct vendor and punctuation do not replay as the same receipt', { skip: !hasDb }, async (t) => {
@@ -165,17 +128,9 @@ test('distinct vendor and punctuation do not replay as the same receipt', { skip
     unitCost: 3,
     totalCost: 3,
   };
-  const base = {
-    invoiceDate: '2026-11-08',
-    totalAmount: 3,
-    departmentBreakdown: { PRODUCE: 3, DAIRY: 0, BAKERY: 0, PANTRY: 0 },
-    lineItems: [item],
-  };
-  const a = stableLogId({ vendorName: `Vendor A ${stamp}`, invoiceNumber: 'INV-100', ...base }, item, 0);
-  const b = stableLogId({ vendorName: `Vendor B ${stamp}`, invoiceNumber: 'INV-100', ...base }, item, 0);
-  const c = stableLogId({ vendorName: `Vendor A ${stamp}`, invoiceNumber: 'INV/100', ...base }, item, 0);
+  const a = `11111111-1111-4111-8111-${String(Date.now()).slice(-12)}`;
+  const b = `22222222-2222-4222-8222-${String(Date.now()).slice(-12)}`;
   assert.notEqual(a, b);
-  assert.notEqual(a, c);
 
   t.after(async () => {
     await prisma.ledgerIdempotencyKey.deleteMany({ where: { key: { in: [`recv:${a}`, `recv:${b}`] } } });
@@ -282,4 +237,124 @@ test('concurrent voice commits write one movement and one voice log', { skip: !h
     },
   });
   assert.equal(rescueIn, 1);
+});
+
+test('same delivery id with a different cost conflicts and does not add stock', { skip: !hasDb }, async (t) => {
+  try {
+    await prisma.$connect();
+  } catch {
+    t.skip('Database unreachable.');
+    return;
+  }
+  const stamp = `fp-${Date.now()}`;
+  const id = `33333333-3333-4333-8333-${String(Date.now()).slice(-12)}`;
+  t.after(async () => {
+    await prisma.ledgerIdempotencyKey.deleteMany({ where: { key: `recv:${id}` } });
+    const products = await prisma.product.findMany({ where: { name: { contains: stamp } }, select: { id: true } });
+    const ids = products.map((row) => row.id);
+    if (ids.length) {
+      await prisma.inventoryLot.deleteMany({ where: { productId: { in: ids } } });
+      await prisma.inventoryTransaction.deleteMany({ where: { productId: { in: ids } } });
+      await prisma.product.deleteMany({ where: { id: { in: ids } } });
+    }
+  });
+  const first = await postReceipt({
+    itemName: `Pear ${stamp}`,
+    casesReceived: 2,
+    caseCost: 10,
+    packSize: 4,
+    splitFactor: 1,
+    retailPrice: 3,
+    supplier: 'North',
+    staffId: 'staff',
+    externalLogId: id,
+  });
+  const second = await postReceipt({
+    itemName: `Pear ${stamp}`,
+    casesReceived: 2,
+    caseCost: 11,
+    packSize: 4,
+    splitFactor: 1,
+    retailPrice: 3,
+    supplier: 'North',
+    staffId: 'staff',
+    externalLogId: id,
+  });
+  assert.equal(first.posted, true);
+  assert.equal(second.posted, false);
+  if (first.posted) {
+    const rows = await prisma.inventoryTransaction.count({ where: { productId: first.productId, transactionType: 'Receive' } });
+    assert.equal(rows, 1);
+  }
+});
+
+test('concurrent resolutions of one draft post one stock commit', { skip: !hasDb }, async (t) => {
+  try {
+    await prisma.$connect();
+  } catch {
+    t.skip('Database unreachable.');
+    return;
+  }
+  const stamp = `race-draft-${Date.now()}`;
+  const payload = buildAuthoritativeOcrDraft({
+    vendorName: `Race ${stamp}`,
+    invoiceNumber: `INV-A-${stamp}`,
+    invoiceDate: '2026-11-08',
+    totalAmount: 4,
+    departmentBreakdown: { PRODUCE: 4 },
+    lines: [
+      {
+        item_name: `Race Apple ${stamp}`,
+        product_id: '',
+        quantity: 1,
+        unit: 'cases',
+        unit_cost: 4,
+        department: 'PRODUCE',
+        case_pack_size: 2,
+        line_confidence: 0.99,
+        requires_approval: false,
+      },
+    ],
+  });
+  const draft = await saveInvoiceOcrDraft('staff-race', payload);
+  t.after(async () => {
+    await prisma.invoiceLineItem.deleteMany({ where: { name: { contains: stamp } } });
+    await prisma.vendorInvoice.deleteMany({ where: { vendorName: { contains: stamp } } });
+    await prisma.ledgerIdempotencyKey.deleteMany({ where: { key: { contains: draft.id } } });
+    const deliveryId = payload.lines[0]?.delivery_id;
+    if (deliveryId) {
+      await prisma.ledgerIdempotencyKey.deleteMany({ where: { key: `recv:${deliveryId}` } });
+      await prisma.inventoryLot.deleteMany({ where: { receiveReferenceId: `recv:${deliveryId}` } });
+      await prisma.inventoryTransaction.deleteMany({ where: { referenceId: `recv:${deliveryId}` } });
+    }
+    await prisma.product.deleteMany({ where: { name: { contains: stamp } } });
+    await prisma.invoiceOcrDraft.deleteMany({ where: { id: draft.id } });
+  });
+  const [left, right] = await Promise.all([
+    settleStoredOcrDraft({
+      draftId: draft.id,
+      staffId: 'staff-a',
+      actorIsManager: true,
+      manualReviewOverride: true,
+      post: true,
+      resolutions: { invoiceNumber: `INV-A-${stamp}` },
+    }),
+    settleStoredOcrDraft({
+      draftId: draft.id,
+      staffId: 'staff-b',
+      actorIsManager: true,
+      manualReviewOverride: true,
+      post: true,
+      resolutions: { invoiceNumber: `INV-B-${stamp}` },
+    }),
+  ]);
+  const kinds = [left.kind, right.kind].sort();
+  assert.deepEqual(kinds, ['conflict', 'posted']);
+  const invoices = await prisma.vendorInvoice.count({ where: { vendorName: { contains: stamp } } });
+  assert.equal(invoices, 1);
+  const deliveryId = payload.lines[0]?.delivery_id ?? '';
+  assert.equal(
+    await prisma.inventoryTransaction.count({ where: { referenceId: `recv:${deliveryId}` } }),
+    1
+  );
 });

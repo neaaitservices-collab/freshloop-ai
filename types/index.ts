@@ -55,6 +55,8 @@ export interface InvoiceLineItemExtract {
   /** Blended score used for review threshold (0–1). */
   lineConfidence?: number;
   needsManualReview?: boolean;
+  /** Server delivery UUID. The receiving board posts this id and does not mint another. */
+  deliveryId?: string;
 }
 
 export interface InvoiceOcrResult {
@@ -79,6 +81,8 @@ export interface InvoiceOcrResult {
   needsManualReview?: boolean;
   lowConfidenceItemsCount?: number;
   ocrConfidenceThreshold?: number;
+  /** Server scan id. Corrections and commit both use this draft. */
+  draftId?: string;
 }
 
 export interface VoiceParsedItem {

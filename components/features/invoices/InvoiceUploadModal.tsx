@@ -46,6 +46,7 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
   const [managerApprovedCosts, setManagerApprovedCosts] = useState(false);
   const [corrections, setCorrections] = useState<InvoiceCorrectionDraft | null>(null);
   const [correctionErrors, setCorrectionErrors] = useState<string[]>([]);
+  const [serverBlockers, setServerBlockers] = useState<string[]>([]);
   const { activeUser } = useRole();
   const managerCanApprove = Boolean(activeUser && isManager(activeUser.role));
 
@@ -121,6 +122,11 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
       setOcrResult(parsed);
       setCorrections(createCorrectionDraft(parsed));
       setCorrectionErrors([]);
+      setServerBlockers(
+        Array.isArray((json as { blockers?: string[] }).blockers)
+          ? (json as { blockers?: string[] }).blockers ?? []
+          : []
+      );
       if (parsed.supplierId && onSupplierChange) {
         onSupplierChange(parsed.supplierId);
       }
@@ -205,14 +211,90 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
       setCorrectionErrors(applied.errors);
       return;
     }
-    setOcrResult(applied.result);
-    setCorrections(applied.draft);
-    setCorrectionErrors([]);
+    const draftId = ocrResult.draftId;
+    if (!draftId) {
+      setCorrectionErrors(['This scan was not stored. Scan the invoice again.']);
+      return;
+    }
+    void (async () => {
+      const response = await fetch('/api/invoice-ocr', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          resolveDraft: true,
+          draftId,
+          manualReviewOverride: managerCanApprove && managerApprovedCosts,
+          resolutions: {
+            vendorName: applied.result.vendorName,
+            invoiceNumber: applied.result.invoiceNumber,
+            lines: applied.result.lineItems.map((line, index) => ({
+              index,
+              line_name: line.name,
+              quantity: line.quantity > 0 ? line.quantity : undefined,
+              department: line.department,
+            })),
+          },
+        }),
+      });
+      const json = (await response.json()) as {
+        payload?: {
+          vendorName: string;
+          invoiceNumber: string;
+          invoiceDate: string;
+          totalAmount: number;
+          departmentBreakdown: InvoiceOcrResult['departmentBreakdown'];
+          lines: Array<{
+            delivery_id?: string;
+            line_name?: string;
+            quantity: number;
+            unit_cost: number;
+            department?: InvoiceOcrResult['lineItems'][number]['department'];
+            product_id?: string;
+            case_pack_size?: number;
+          }>;
+        };
+        blockers?: string[];
+        error?: string;
+      };
+      if (!json.payload) {
+        setCorrectionErrors([json.error ?? 'The corrected scan was not saved.']);
+        return;
+      }
+      const next: InvoiceOcrResult = {
+        ...ocrResult,
+        draftId,
+        vendorName: json.payload.vendorName,
+        invoiceNumber: json.payload.invoiceNumber,
+        invoiceDate: json.payload.invoiceDate,
+        totalAmount: json.payload.totalAmount,
+        departmentBreakdown: json.payload.departmentBreakdown,
+        lineItems: ocrResult.lineItems.map((line, index) => {
+          const stored = json.payload?.lines[index];
+          if (!stored) return line;
+          return {
+            ...line,
+            name: stored.line_name || line.name,
+            quantity: stored.quantity,
+            unitCost: stored.unit_cost,
+            totalCost: Number((stored.quantity * stored.unit_cost).toFixed(2)),
+            department: stored.department ?? line.department,
+            deliveryId: stored.delivery_id,
+            productId: stored.product_id || line.productId,
+            casePackSize: stored.case_pack_size ?? line.casePackSize,
+          };
+        }),
+      };
+      setOcrResult(next);
+      const nextEdits = createCorrectionDraft(next);
+      setCorrections(nextEdits.applied ? nextEdits : { ...corrections, applied: false });
+      setServerBlockers(json.blockers ?? []);
+      setCorrectionErrors(json.blockers ?? []);
+    })();
   };
 
   const handleAddToReceiving = () => {
     if (!ocrResult || needsManagerGate || ocrResult.source === 'sample') return;
-    if (!correctionsReady) return;
+    if (!correctionsReady || serverBlockers.length > 0) return;
     onInvoiceImported({
       ...ocrResult,
       supplierId: selectedSupplierId || ocrResult.supplierId,
@@ -717,7 +799,10 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
               type="button"
               onClick={handleAddToReceiving}
               disabled={
-                needsManagerGate || ocrResult.source === 'sample' || !correctionsReady
+                needsManagerGate ||
+                ocrResult.source === 'sample' ||
+                !correctionsReady ||
+                serverBlockers.length > 0
               }
               title={
                 ocrResult.source === 'sample'

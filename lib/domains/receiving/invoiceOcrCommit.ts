@@ -10,6 +10,11 @@ import {
 } from '@/lib/domains/inventory/stock';
 import { resolveSupplierIdForVendorName } from '@/lib/domains/suppliers/suppliers';
 import {
+  fingerprintFromNotes,
+  receiptFingerprint,
+  receiptNotes,
+} from '@/lib/domains/receiving/deliveryIdentity';
+import {
   INVOICE_OCR_CONFIDENCE_THRESHOLD,
   computeCommitLineConfidence,
   lineNeedsManualReview,
@@ -42,6 +47,7 @@ export interface OcrCommitLine {
   match_confidence?: number;
   line_confidence?: number;
   needs_manual_review?: boolean;
+  delivery_id?: string;
 }
 
 export interface OcrInvoiceMeta {
@@ -156,6 +162,8 @@ export interface OcrDraftLine {
     | 'quantity_unreadable'
     | 'name_unreadable'
   >;
+  /** Assigned once when the scan is stored. Corrections must not replace it. */
+  delivery_id?: string;
 }
 
 export interface OcrDraftPayload {
@@ -217,6 +225,181 @@ export async function saveInvoiceOcrDraft(staffId: string, payload: OcrDraftPayl
   });
 }
 
+export class ReceiptIdentityConflict extends Error {
+  readonly status = 409;
+  constructor(message: string) {
+    super(message);
+    this.name = 'ReceiptIdentityConflict';
+  }
+}
+
+export async function writeInvoiceReceipts(
+  tx: Prisma.TransactionClient,
+  input: {
+    staffId: string;
+    referenceId: string;
+    confirmedItems: OcrCommitLine[];
+    invoiceMeta?: OcrInvoiceMeta | null;
+    supplierName?: string | null;
+  }
+) {
+  let invoiceId: string | null = null;
+  if (input.invoiceMeta) {
+    const meta = input.invoiceMeta;
+    const supplierId =
+      meta.supplierId?.trim() ||
+      (await resolveSupplierIdForVendorName(meta.vendorName, tx));
+    const invoice = await tx.vendorInvoice.create({
+      data: {
+        vendorName: meta.vendorName,
+        supplierId,
+        invoiceNumber: meta.invoiceNumber,
+        invoiceDate: new Date(meta.invoiceDate),
+        totalAmount: meta.totalAmount,
+        departmentBreakdown: meta.departmentBreakdown,
+        rawOcrJson: meta.rawOcrJson ?? undefined,
+        status: 'RECEIVED',
+      },
+    });
+    invoiceId = invoice.id;
+  }
+
+  const nameCatalog: PurchaseProductNameCatalog = await tx.product.findMany({
+    where: { isManufactured: false },
+    select: { id: true, name: true },
+  });
+
+  const explicitIds = [
+    ...new Set(
+      input.confirmedItems.map((item) => String(item.product_id ?? '').trim()).filter(Boolean)
+    ),
+  ];
+  const prefetched = explicitIds.length
+    ? await tx.product.findMany({
+        where: { id: { in: explicitIds } },
+        select: { id: true, ...receiptProductSelect },
+      })
+    : [];
+  const productsById = new Map<string, ReceiptProductRow>(prefetched.map((row) => [row.id, row]));
+  const receipts = [];
+
+  for (const item of input.confirmedItems) {
+    let productId = String(item.product_id ?? '').trim();
+    if (!productId) {
+      const lineName = item.line_name?.trim();
+      if (!lineName) {
+        throw new Error('Each invoice line needs a catalog match or a line name to create a product.');
+      }
+      const linePack = item.case_pack_size && item.case_pack_size > 0 ? item.case_pack_size : undefined;
+      const ensured = await findOrCreatePurchaseProduct(
+        {
+          itemName: lineName,
+          department: item.department,
+          receivePackSize: linePack,
+          casePackSize: linePack,
+          unitCost: Number(item.unit_cost) > 0 ? Number(item.unit_cost) : undefined,
+        },
+        tx,
+        nameCatalog
+      );
+      productId = ensured.id;
+    }
+
+    let product = productsById.get(productId);
+    if (!product) {
+      const loaded = await tx.product.findUnique({
+        where: { id: productId },
+        select: { id: true, ...receiptProductSelect },
+      });
+      if (!loaded) throw new Error(`Product was not found: ${productId}`);
+      product = loaded;
+      productsById.set(productId, product);
+    }
+
+    if (item.case_pack_size && item.case_pack_size > 0) {
+      const divisor = product.splitFactor && product.splitFactor > 0 ? product.splitFactor : 1;
+      const packData = productPackWriteData(item.case_pack_size, divisor);
+      product = await tx.product.update({
+        where: { id: productId },
+        data: packData,
+        select: { id: true, ...receiptProductSelect },
+      });
+      productsById.set(productId, product);
+    }
+
+    const packFields = normalizeProductPackFields({
+      receivePackSize: product.receivePackSize,
+      splitFactor: product.splitFactor,
+      casePackSize: product.casePackSize,
+    });
+    const { units, unitCost } = resolveInvoiceReceipt(item, packFields.casePackSize);
+    if (!(units > 0)) {
+      throw new Error(`Receive quantity must be greater than zero for ${product.name}.`);
+    }
+
+    const deliveryId = item.delivery_id?.trim() || '';
+    const lineKey = deliveryId ? `recv:${deliveryId}` : '';
+    const fingerprint = receiptFingerprint({
+      itemName: item.line_name?.trim() || product.name,
+      productId: item.product_id?.trim() || null,
+      casesReceived: item.quantity,
+      caseCost: item.unit_cost,
+      packSize: item.case_pack_size && item.case_pack_size > 0 ? item.case_pack_size : 1,
+      splitFactor: 1,
+      supplier: input.supplierName?.trim() || input.invoiceMeta?.vendorName || null,
+    });
+    if (lineKey) {
+      const existingKey = await tx.ledgerIdempotencyKey.findUnique({ where: { key: lineKey } });
+      if (existingKey) {
+        const existingRow = await tx.inventoryTransaction.findFirst({
+          where: { referenceId: lineKey },
+          select: { notes: true },
+        });
+        if (fingerprintFromNotes(existingRow?.notes) !== fingerprint) {
+          throw new ReceiptIdentityConflict(
+            'A delivery on this invoice was already received with different facts.'
+          );
+        }
+        continue;
+      }
+      await tx.ledgerIdempotencyKey.create({ data: { key: lineKey } });
+    }
+
+    const receipt = await postProductReceipt(
+      {
+        productId,
+        quantityUnits: units,
+        unitCostAtTime: unitCost,
+        staffId: input.staffId,
+        referenceId: lineKey || input.referenceId,
+        toLocation: item.to_location ?? InventoryLocation.Retail_Floor,
+        notes: receiptNotes('Confirmed Invoice OCR Receipt', fingerprint),
+      },
+      tx
+    );
+    receipts.push(receipt);
+
+    if (invoiceId) {
+      const lineConfidence = computeCommitLineConfidence(item, product.name);
+      await tx.invoiceLineItem.create({
+        data: {
+          invoiceId,
+          name: item.line_name ?? product.name,
+          department: item.department ?? product.department,
+          quantity: units,
+          unit: 'units',
+          unitCost,
+          totalCost: Number((unitCost * units).toFixed(2)),
+          casePackSize: packFields.receivePackSize,
+          ocrLineConfidence: lineConfidence,
+        },
+      });
+    }
+  }
+
+  return { invoiceId, receipts, transactionsCreated: receipts.length };
+}
+
 export async function commitInvoiceOcrReceipts(input: {
   staffId: string;
   referenceId: string;
@@ -263,150 +446,13 @@ export async function commitInvoiceOcrReceipts(input: {
       if (input.idempotencyKey) {
         await tx.ledgerIdempotencyKey.create({ data: { key: input.idempotencyKey } });
       }
-      let invoiceId: string | null = null;
-      if (input.invoiceMeta) {
-        const meta = input.invoiceMeta;
-        const supplierId =
-          meta.supplierId?.trim() ||
-          (await resolveSupplierIdForVendorName(meta.vendorName, tx));
-        const invoice = await tx.vendorInvoice.create({
-          data: {
-            vendorName: meta.vendorName,
-            supplierId,
-            invoiceNumber: meta.invoiceNumber,
-            invoiceDate: new Date(meta.invoiceDate),
-            totalAmount: meta.totalAmount,
-            departmentBreakdown: meta.departmentBreakdown,
-            rawOcrJson: meta.rawOcrJson ?? undefined,
-            status: 'RECEIVED',
-          },
-        });
-        invoiceId = invoice.id;
-      }
-
-      const nameCatalog: PurchaseProductNameCatalog = await tx.product.findMany({
-        where: { isManufactured: false },
-        select: { id: true, name: true },
+      const committed = await writeInvoiceReceipts(tx, {
+        staffId: input.staffId,
+        referenceId: input.referenceId,
+        confirmedItems: input.confirmedItems,
+        invoiceMeta: input.invoiceMeta,
+        supplierName: input.invoiceMeta?.vendorName,
       });
-
-      const explicitProductIds = [
-        ...new Set(
-          input.confirmedItems
-            .map((item) => String(item.product_id ?? '').trim())
-            .filter(Boolean)
-        ),
-      ];
-
-      const prefetched = explicitProductIds.length
-        ? await tx.product.findMany({
-            where: { id: { in: explicitProductIds } },
-            select: { id: true, ...receiptProductSelect },
-          })
-        : [];
-
-      const productsById = new Map<string, ReceiptProductRow>(
-        prefetched.map((row) => [row.id, row])
-      );
-
-      const receipts = [];
-      for (const item of input.confirmedItems) {
-        let productId = String(item.product_id ?? '').trim();
-        if (!productId) {
-          const lineName = item.line_name?.trim();
-          if (!lineName) {
-            throw new Error('Each invoice line needs a catalog match or a line name to create a product.');
-          }
-          const linePack =
-            item.case_pack_size && item.case_pack_size > 0 ? item.case_pack_size : undefined;
-          const ensured = await findOrCreatePurchaseProduct(
-            {
-              itemName: lineName,
-              department: item.department,
-              receivePackSize: linePack,
-              casePackSize: linePack,
-              unitCost: Number(item.unit_cost) > 0 ? Number(item.unit_cost) : undefined,
-            },
-            tx,
-            nameCatalog
-          );
-          productId = ensured.id;
-        }
-
-        let product = productsById.get(productId);
-        if (!product) {
-          const loaded = await tx.product.findUnique({
-            where: { id: productId },
-            select: { id: true, ...receiptProductSelect },
-          });
-          if (!loaded) {
-            throw new Error(`Product was not found: ${productId}`);
-          }
-          product = loaded;
-          productsById.set(productId, product);
-        }
-
-        if (item.case_pack_size && item.case_pack_size > 0) {
-          const divisor =
-            product.splitFactor && product.splitFactor > 0 ? product.splitFactor : 1;
-          const packData = productPackWriteData(item.case_pack_size, divisor);
-          product = await tx.product.update({
-            where: { id: productId },
-            data: packData,
-            select: { id: true, ...receiptProductSelect },
-          });
-          productsById.set(productId, product);
-        }
-
-        const packFields = normalizeProductPackFields({
-          receivePackSize: product.receivePackSize,
-          splitFactor: product.splitFactor,
-          casePackSize: product.casePackSize,
-        });
-        const { units, unitCost } = resolveInvoiceReceipt(item, packFields.casePackSize);
-        if (!(units > 0)) {
-          throw new Error(`Receive quantity must be greater than zero for ${product.name}.`);
-        }
-
-        const receipt = await postProductReceipt(
-          {
-            productId,
-            quantityUnits: units,
-            unitCostAtTime: unitCost,
-            staffId: input.staffId,
-            referenceId: input.referenceId,
-            toLocation: item.to_location ?? InventoryLocation.Retail_Floor,
-            notes: 'Confirmed Invoice OCR Receipt',
-          },
-          tx
-        );
-        receipts.push(receipt);
-
-        if (invoiceId) {
-          const lineConfidence = computeCommitLineConfidence(
-            item,
-            productNames.get(productId) ?? product.name
-          );
-          await tx.invoiceLineItem.create({
-            data: {
-              invoiceId,
-              name: item.line_name ?? product.name,
-              department: item.department ?? product.department,
-              quantity: units,
-              unit: 'units',
-              unitCost,
-              totalCost: Number((unitCost * units).toFixed(2)),
-              casePackSize: packFields.receivePackSize,
-              ocrLineConfidence: lineConfidence,
-            },
-          });
-        }
-      }
-
-      const committed = {
-        invoiceId,
-        receipts,
-        transactionsCreated: receipts.length,
-      };
       if (input.draftId) {
         await tx.invoiceOcrDraft.update({
           where: { id: input.draftId },

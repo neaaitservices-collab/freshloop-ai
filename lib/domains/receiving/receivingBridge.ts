@@ -1,5 +1,5 @@
-import { createHash } from 'node:crypto';
 import type { InvoiceOcrResult } from '@/lib/types';
+import { isDeliveryUuid } from '@/lib/domains/receiving/deliveryIdentity';
 import { DEMO_INVOICE_NUMBER } from '@/lib/domains/receiving/sampleReceivingGuard';
 import type { ReceivingLog, RetailUnit } from '@/lib/domains/receiving/yieldPricing';
 
@@ -13,53 +13,42 @@ function retailUnitFromSubUnit(subUnit: string | undefined): RetailUnit {
 }
 
 /**
- * Stable id for one OCR line.
- * The hash uses the raw vendor and invoice number, so INV-100 and INV/100
- * and two vendors do not collapse. Punctuation is not normalized away.
- * The practice invoice keeps a reserved id that receiving refuses to post.
- * Persisted delivery UUIDs belong to the receiving-delivery work and are not
- * minted here.
+ * Receiving id for an OCR line.
+ * Real lines use the UUID stored on the server draft. Quantity, cost, name,
+ * and order are not part of the id. The practice invoice keeps a reserved id.
  */
-export function stableLogId(
-  result: Pick<InvoiceOcrResult, 'vendorName' | 'invoiceNumber'>,
+export function receivingLineId(
+  result: Pick<InvoiceOcrResult, 'invoiceNumber'>,
   item: InvoiceOcrResult['lineItems'][number],
   index: number
-): string {
+): string | null {
   if (result.invoiceNumber.trim().toLowerCase() === DEMO_INVOICE_NUMBER.toLowerCase()) {
     return `scan-${DEMO_INVOICE_NUMBER.toLowerCase()}-${index}`;
   }
-  const raw = [
-    result.vendorName ?? '',
-    result.invoiceNumber ?? '',
-    String(index),
-    item.productId ?? '',
-    item.name ?? '',
-    String(item.quantity ?? ''),
-    String(item.unitCost ?? ''),
-  ].join('\0');
-  return `scan-${createHash('sha256').update(raw).digest('hex').slice(0, 32)}`;
+  return isDeliveryUuid(item.deliveryId) ? item.deliveryId!.trim().toLowerCase() : null;
 }
 
-/** Maps OCR output into receiving-board rows (pricing happens before `postReceipt`). */
+/** Maps OCR output into receiving-board rows. Lines without a server UUID are omitted. */
 export function receivingLogsFromInvoice(result: InvoiceOcrResult): ReceivingLog[] {
   return result.lineItems
     .filter((item) => item.name && Number(item.unitCost) >= 0)
-    .map((item, index) => {
+    .map((item, index) => ({ item, index, id: receivingLineId(result, item, index) }))
+    .filter((row): row is { item: (typeof result.lineItems)[number]; index: number; id: string } =>
+      Boolean(row.id)
+    )
+    .map(({ item, id }) => {
       const catalogName = item.matchedProductName?.trim();
       const productId = item.productId?.trim();
+      const qty = Number(item.quantity);
+      const total = Number(item.totalCost) || 0;
+      const unit = Number(item.unitCost) || 0;
       return {
-        id: stableLogId(result, item, index),
+        id,
         itemName: catalogName || item.name,
         invoiceLineName: catalogName && catalogName !== item.name ? item.name : undefined,
         productId: productId || undefined,
-        casesReceived: Number(item.quantity) > 0 ? Number(item.quantity) : 0,
-        caseCost: (() => {
-          const qty = Number(item.quantity);
-          const total = Number(item.totalCost) || 0;
-          const unit = Number(item.unitCost) || 0;
-          if (total > 0 && qty > 0) return Number((total / qty).toFixed(4));
-          return unit;
-        })(),
+        casesReceived: qty > 0 ? qty : 0,
+        caseCost: total > 0 && qty > 0 ? Number((total / qty).toFixed(4)) : unit,
         packSize: Number(item.casePackSize) > 0 ? Number(item.casePackSize) : undefined,
         retailUnit: retailUnitFromSubUnit(item.subUnit),
         suggestedCaseFloorPrice:

@@ -1,5 +1,6 @@
 import type { Department } from '@prisma/client';
 import { lineNeedsManualReview } from '@/lib/domains/receiving/invoiceOcrConfidence';
+import { newDeliveryUuid, normalizeDeliveryUuid } from '@/lib/domains/receiving/deliveryIdentity';
 import {
   quantityKindForInvoiceUnit,
   type OcrDraftLine,
@@ -40,6 +41,7 @@ export interface AuditedDraftSourceLine {
   requires_approval: boolean;
   department_assumed?: boolean;
   quantity_unreadable?: boolean;
+  delivery_id?: string;
 }
 
 export interface OcrDraftResolution {
@@ -105,6 +107,7 @@ export function buildAuthoritativeOcrDraft(input: {
       review_reasons: undefined,
     });
     return {
+      delivery_id: normalizeDeliveryUuid(line.delivery_id) ?? newDeliveryUuid(),
       product_id: line.product_id?.trim() ?? '',
       quantity: quantityUnreadable ? 0 : line.quantity,
       quantity_kind: quantityKindForInvoiceUnit(line.unit) as OcrQuantityKind,
@@ -163,10 +166,64 @@ function withoutReason(reasons: OcrReviewReason[] | undefined, reason: OcrReview
   return (reasons ?? []).filter((entry) => entry !== reason);
 }
 
-/** Corrections clear only the gap they actually fill. They do not clear a manager review. */
+export interface DraftResolutionActor {
+  actorIsManager: boolean;
+  manualReviewOverride: boolean;
+}
+
+const DENY_MANAGER_RESOLUTION: DraftResolutionActor = {
+  actorIsManager: false,
+  manualReviewOverride: false,
+};
+
+function recomputeDraftEconomics(payload: OcrDraftPayload): OcrDraftPayload {
+  const departmentBreakdown: Record<string, number> = {
+    PRODUCE: 0,
+    DAIRY: 0,
+    BAKERY: 0,
+    PANTRY: 0,
+  };
+  let totalAmount = 0;
+  for (const line of payload.lines) {
+    const extended = Number(((line.quantity > 0 ? line.quantity : 0) * line.unit_cost).toFixed(2));
+    totalAmount = Number((totalAmount + extended).toFixed(2));
+    const department = line.department ?? 'PRODUCE';
+    departmentBreakdown[department] = Number(
+      ((departmentBreakdown[department] ?? 0) + extended).toFixed(2)
+    );
+  }
+  return { ...payload, totalAmount, departmentBreakdown };
+}
+
+/**
+ * Facts used to detect a conflicting resolution of the same draft.
+ * Line order is not part of the fingerprint. Delivery ids are.
+ */
+export function draftResolutionFingerprint(payload: OcrDraftPayload): string {
+  const lines = [...payload.lines].sort((a, b) =>
+    (a.delivery_id ?? '').localeCompare(b.delivery_id ?? '')
+  );
+  return JSON.stringify({
+    vendorName: payload.vendorName.trim(),
+    invoiceNumber: payload.invoiceNumber.trim(),
+    invoiceDate: payload.invoiceDate,
+    lines: lines.map((line) => ({
+      deliveryId: line.delivery_id ?? '',
+      name: line.line_name ?? '',
+      quantity: line.quantity,
+      unitCost: line.unit_cost,
+      department: line.department ?? '',
+      productId: line.product_id,
+      departmentAssumed: line.department_assumed === true,
+    })),
+  });
+}
+
+/** Corrections clear only the gap they actually fill. A clerk cannot clear an assumed department. */
 export function applyOcrDraftResolutions(
   payload: OcrDraftPayload,
-  resolution: OcrDraftResolution
+  resolution: OcrDraftResolution,
+  actor: DraftResolutionActor = DENY_MANAGER_RESOLUTION
 ): OcrDraftPayload {
   const next: OcrDraftPayload = {
     ...payload,
@@ -196,11 +253,16 @@ export function applyOcrDraftResolutions(
       line.quantity_unreadable = false;
       line.review_reasons = withoutReason(line.review_reasons, 'quantity_unreadable');
     }
-    if (edit.department) {
+    const managerMayClearAssumed = actor.actorIsManager && actor.manualReviewOverride;
+    if (edit.department && line.department_assumed) {
+      if (managerMayClearAssumed) {
+        line.department = edit.department;
+        line.department_assumed = false;
+        line.review_reasons = withoutReason(line.review_reasons, 'department_assumed');
+      }
+    } else if (edit.department && !line.department_assumed) {
       line.department = edit.department;
-      line.department_assumed = false;
-      line.review_reasons = withoutReason(line.review_reasons, 'department_assumed');
     }
   }
-  return next;
+  return recomputeDraftEconomics(next);
 }

@@ -1,27 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { Department, Prisma } from '@prisma/client';
-import { getMovingAverageCostMap, prisma } from '@/lib/domains/inventory/ledger';
+import { Department } from '@prisma/client';
+import { getMovingAverageCostMap } from '@/lib/domains/inventory/ledger';
 import { loadProductCatalog } from '@/lib/domains/catalog/productCatalog';
-import {
-  commitInvoiceOcrReceipts,
-  invoiceIdempotencyKey,
-  saveInvoiceOcrDraft,
-  type OcrDraftPayload,
-} from '@/lib/domains/receiving/invoiceOcrCommit';
+import { saveInvoiceOcrDraft } from '@/lib/domains/receiving/invoiceOcrCommit';
+import { settleStoredOcrDraft } from '@/lib/domains/receiving/invoiceOcrSettle';
+import { invalidateInventoryCaches } from '@/lib/domains/inventory/inventoryCache';
 import { generateContentWithFallback, tryParseModelJson } from '@/lib/domains/ai/gemini';
 import { invoiceOcrModelCandidates } from '@/lib/domains/ai/geminiModels';
 import { handleApiRouteError, logServerError } from '@/lib/domains/ai/apiError';
 import { invoiceOcrErrorResponse } from '@/lib/domains/receiving/invoiceOcrErrors';
 import { authErrorResponse } from '@/lib/auth/http';
 import { requireReceivingStaff } from '@/lib/auth/guardRoute';
-import { gateStoredOcrDraft } from '@/lib/domains/receiving/sampleReceivingGuard';
 import { findLatestStoreSetting } from '@/lib/domains/stats/storeSettingSelect';
 import { matchProductWithScore } from '@/lib/domains/inventory/productMatching';
-import { recordOcrCommitAnalytics } from '@/lib/domains/suppliers/analyticsPersistence';
-import { VENDOR_PRICE_ALERT_DEFAULT_PCT } from '@/lib/domains/suppliers/vendorAnalyticsTypes';
-import { upsertSupplierByName } from '@/lib/domains/suppliers/suppliers';
+import { VENDOR_PRICE_ALERT_DEFAULT_PCT as _VENDOR_PRICE_ALERT_UNUSED } from '@/lib/domains/suppliers/vendorAnalyticsTypes';
 import { assertHotPathRateLimit } from '@/lib/security/rateLimit';
-import { invoiceOcrCommitBodySchema } from '@/lib/security/schemas/invoiceOcr';
+import { invoiceOcrCommitBodySchema, invoiceOcrResolveBodySchema } from '@/lib/security/schemas/invoiceOcr';
 import {
   INVOICE_OCR_CONFIDENCE_THRESHOLD,
   combineLineConfidence,
@@ -31,11 +25,9 @@ import {
 } from '@/lib/domains/receiving/invoiceOcrConfidence';
 import { parseInvoiceIdentity, parseInvoiceLineFields } from '@/lib/domains/receiving/invoiceOcrParse';
 import {
-  applyOcrDraftResolutions,
   buildAuthoritativeOcrDraft,
   draftPostingBlockers,
 } from '@/lib/domains/receiving/invoiceOcrDraft';
-import { isLedgerIdempotencyConflict } from '@/lib/domains/inventory/idempotencyConflict';
 import type { RoleName } from '@/lib/utils/roles';
 
 export const maxDuration = 60;
@@ -84,6 +76,7 @@ export interface InvoiceOcrApiResponse {
   low_confidence_items_count: number;
   ocr_confidence_threshold: number;
   draftId: string;
+  blockers?: string[];
   items: InvoiceOcrLineItemWithGuardrail[];
   // Backward-compatible shape for existing UI components
   data: {
@@ -98,8 +91,10 @@ export interface InvoiceOcrApiResponse {
       BAKERY: number;
       PANTRY: number;
     };
+    draftId?: string;
     lineItems: Array<{
       name: string;
+      deliveryId?: string;
       department: 'PRODUCE' | 'DAIRY' | 'BAKERY' | 'PANTRY';
       quantity: number;
       unit: string;
@@ -476,44 +471,60 @@ Rules: unitCost/totalCost per case when unit is cases; caseRetailPrice = printed
   };
 }
 
-function readCommittedInvoiceId(result: unknown): string | null {
-  if (!result || typeof result !== 'object') return null;
-  const invoiceId = (result as { invoiceId?: unknown }).invoiceId;
-  return typeof invoiceId === 'string' && invoiceId.trim() ? invoiceId : null;
-}
-
-/** Retry analytics after a committed invoice. A failed attempt does not consume the key. */
-async function settleCommitAnalytics(
-  payload: OcrDraftPayload,
-  draftId: string,
-  invoiceId: string | null
-): Promise<{ analyticsPending: boolean }> {
-  if (!invoiceId || !payload.vendorName.trim()) return { analyticsPending: false };
-  try {
-    const supplier = await upsertSupplierByName({ name: payload.vendorName });
-    await recordOcrCommitAnalytics({
-      supplierId: supplier.id,
-      vendorInvoiceId: invoiceId,
-      idempotencyKey: `ocr-analytics:${draftId}`,
-      lines: payload.lines.map((line) => ({
-        item_name: line.line_name ?? line.product_id,
-        product_id: line.product_id || null,
-        unit_cost: line.unit_cost,
-        historical_avg_cost: null,
-        cost_variance_pct: null,
-        line_confidence: line.line_confidence,
-        needs_manual_review: line.review_reasons?.includes('low_confidence') ?? false,
-      })),
-      analyticsThresholdPct: VENDOR_PRICE_ALERT_DEFAULT_PCT,
-    });
-    return { analyticsPending: false };
-  } catch (err: unknown) {
-    logServerError('POST /api/invoice-ocr analytics', err, {
-      path: '/api/invoice-ocr',
-      operation: 'vendor-analytics-persist',
-    });
-    return { analyticsPending: true };
+function responseForSettledDraft(
+  outcome: Awaited<ReturnType<typeof settleStoredOcrDraft>>
+): NextResponse {
+  if (outcome.kind === 'missing') {
+    return NextResponse.json(
+      { success: false, error: 'Invoice scan was not found. Scan the invoice again.' },
+      { status: 404 }
+    );
   }
+  if (outcome.kind === 'expired') {
+    return NextResponse.json(
+      { success: false, error: 'Invoice scan expired. Scan the invoice again.' },
+      { status: 409 }
+    );
+  }
+  if (outcome.kind === 'sample') {
+    return NextResponse.json({ success: false, error: outcome.error }, { status: 409 });
+  }
+  if (outcome.kind === 'blocked') {
+    return NextResponse.json(
+      {
+        success: true,
+        committed: false,
+        saved: true,
+        blockers: outcome.blockers,
+        payload: outcome.payload,
+      },
+      { status: outcome.blockers.length > 0 ? 409 : 200 }
+    );
+  }
+  if (outcome.kind === 'replay') {
+    return NextResponse.json({
+      success: true,
+      committed: true,
+      idempotent: true,
+      result: outcome.result,
+      payload: outcome.payload,
+    });
+  }
+  if (outcome.kind === 'conflict') {
+    return NextResponse.json(
+      { success: false, committed: false, conflict: true, error: outcome.error, result: outcome.result },
+      { status: 409 }
+    );
+  }
+  invalidateInventoryCaches();
+  return NextResponse.json({
+    success: true,
+    committed: true,
+    invoiceId: outcome.result.invoiceId,
+    transactionsCreated: outcome.result.transactionsCreated,
+    receipts: outcome.result.receipts,
+    payload: outcome.payload,
+  });
 }
 
 // ============================================================================
@@ -532,130 +543,42 @@ export async function POST(req: NextRequest) {
     if (
       rawBody &&
       typeof rawBody === 'object' &&
+      (rawBody as { resolveDraft?: boolean }).resolveDraft === true
+    ) {
+      operation = 'commit';
+      const resolveBody = invoiceOcrResolveBodySchema.parse(rawBody);
+      actorId = actor.id;
+      const managerRoles: RoleName[] = ['ADMIN', 'STORE_MANAGER'];
+      const outcome = await settleStoredOcrDraft({
+        draftId: resolveBody.draftId,
+        staffId: actor.id,
+        actorIsManager: managerRoles.includes(actor.role),
+        manualReviewOverride: Boolean(resolveBody.manualReviewOverride),
+        resolutions: resolveBody.resolutions,
+        post: false,
+      });
+      return responseForSettledDraft(outcome);
+    }
+    if (
+      rawBody &&
+      typeof rawBody === 'object' &&
       (rawBody as { confirmCommit?: boolean }).confirmCommit === true
     ) {
       operation = 'commit';
       const commitBody = invoiceOcrCommitBodySchema.parse(rawBody);
       actorId = actor.id;
-      const draft = await prisma.invoiceOcrDraft.findUnique({ where: { id: commitBody.draftId } });
-      const gate = gateStoredOcrDraft(
-        draft
-          ? {
-              expiresAt: draft.expiresAt,
-              payload: draft.payload as unknown as OcrDraftPayload,
-            }
-          : null
-      );
-      if (!gate.ok || !draft) {
-        return NextResponse.json(
-          {
-            success: false,
-            error: gate.ok ? 'Invoice scan was not found. Scan the invoice again.' : gate.error,
-          },
-          { status: gate.ok ? 404 : gate.status }
-        );
-      }
-      const storedPayload = draft.payload as unknown as OcrDraftPayload;
-      const payload = commitBody.resolutions
-        ? applyOcrDraftResolutions(storedPayload, commitBody.resolutions)
-        : storedPayload;
       const managerRoles: RoleName[] = ['ADMIN', 'STORE_MANAGER'];
       const actorIsManager = managerRoles.includes(actor.role);
-      const blockers = draftPostingBlockers(payload, {
+      referenceId = commitBody.draftId;
+      const outcome = await settleStoredOcrDraft({
+        draftId: commitBody.draftId,
+        staffId: actor.id,
         actorIsManager,
         manualReviewOverride: Boolean(commitBody.manualReviewOverride),
+        resolutions: commitBody.resolutions,
+        post: true,
       });
-      if (blockers.length > 0) {
-        if (commitBody.resolutions) {
-          await prisma.invoiceOcrDraft.update({
-            where: { id: draft.id },
-            data: { payload: payload as unknown as Prisma.InputJsonValue },
-          });
-        }
-        return NextResponse.json(
-          {
-            success: false,
-            committed: false,
-            error: blockers[0],
-            blockers,
-          },
-          { status: 409 }
-        );
-      }
-      referenceId = payload.invoiceNumber;
-      if (draft.consumedAt) {
-        const replay = await settleCommitAnalytics(payload, draft.id, readCommittedInvoiceId(draft.result));
-        return NextResponse.json({
-          success: true,
-          committed: true,
-          idempotent: true,
-          result: draft.result,
-          analyticsPending: replay.analyticsPending,
-          timestamp: new Date().toISOString(),
-        });
-      }
-      if (commitBody.resolutions) {
-        await prisma.invoiceOcrDraft.update({
-          where: { id: draft.id },
-          data: { payload: payload as unknown as Prisma.InputJsonValue },
-        });
-      }
-      let committed: Awaited<ReturnType<typeof commitInvoiceOcrReceipts>>;
-      try {
-        committed = await commitInvoiceOcrReceipts({
-        staffId: actor.id,
-        referenceId,
-        confirmedItems: payload.lines.map((line) => ({
-          product_id: line.product_id,
-          quantity: line.quantity,
-          quantity_kind: line.quantity_kind,
-          unit_cost: line.unit_cost,
-          line_name: line.line_name,
-          department: line.department,
-          case_pack_size: line.case_pack_size,
-          line_confidence: line.line_confidence,
-        })),
-        invoiceMeta: {
-          vendorName: payload.vendorName,
-          invoiceNumber: payload.invoiceNumber,
-          invoiceDate: payload.invoiceDate,
-          totalAmount: payload.totalAmount,
-          departmentBreakdown: payload.departmentBreakdown,
-        },
-        manualReviewOverride: commitBody.manualReviewOverride,
-        actorIsManager,
-        idempotencyKey: invoiceIdempotencyKey(payload.vendorName, payload.invoiceNumber),
-        draftId: draft.id,
-      });
-      } catch (error) {
-        if (isLedgerIdempotencyConflict(error)) {
-          const replay = await settleCommitAnalytics(
-            payload,
-            draft.id,
-            readCommittedInvoiceId(draft.result)
-          );
-          return NextResponse.json({
-            success: true,
-            committed: true,
-            idempotent: true,
-            analyticsPending: replay.analyticsPending,
-            timestamp: new Date().toISOString(),
-          });
-        }
-        throw error;
-      }
-
-      const analytics = await settleCommitAnalytics(payload, draft.id, committed.invoiceId);
-
-      return NextResponse.json({
-        success: true,
-        committed: true,
-        invoiceId: committed.invoiceId,
-        transactionsCreated: committed.transactionsCreated,
-        receipts: committed.receipts,
-        analyticsPending: analytics.analyticsPending,
-        timestamp: new Date().toISOString(),
-      });
+      return responseForSettledDraft(outcome);
     }
 
     const { imageBase64, mimeType, demo } = rawBody as {
@@ -764,6 +687,10 @@ export async function POST(req: NextRequest) {
       low_confidence_items_count: lowConfidenceItemsCount,
       ocr_confidence_threshold: INVOICE_OCR_CONFIDENCE_THRESHOLD,
       draftId: draft?.id ?? '',
+      blockers: draftPostingBlockers(draftPayload, {
+        actorIsManager: false,
+        manualReviewOverride: false,
+      }),
       items: auditedItems,
       data: {
         vendorName: extracted.vendorName,
@@ -771,8 +698,10 @@ export async function POST(req: NextRequest) {
         invoiceDate: extracted.invoiceDate,
         totalAmount,
         departmentBreakdown,
-        lineItems: auditedItems.map((item) => ({
+        draftId: draft?.id ?? '',
+        lineItems: auditedItems.map((item, index) => ({
           name: item.item_name,
+          deliveryId: draftPayload.lines[index]?.delivery_id,
           matchedProductName: item.matched_product_name,
           department: item.department,
           quantity: item.quantity,

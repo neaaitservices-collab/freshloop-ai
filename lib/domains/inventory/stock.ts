@@ -16,6 +16,12 @@ import {
 } from '@/lib/domains/inventory/parLevel';
 import { isLedgerIdempotencyConflict } from '@/lib/domains/inventory/idempotencyConflict';
 import {
+  RECEIPT_CONFLICT_REASON,
+  fingerprintFromNotes,
+  receiptFingerprint,
+  receiptNotes,
+} from '@/lib/domains/receiving/deliveryIdentity';
+import {
   hasOfflineMutationReference,
   offlineReferenceId,
 } from '@/lib/domains/inventory/offlineMutation';
@@ -1115,6 +1121,15 @@ export async function postReceipt(input: {
 
   const unitCost = unitsPerCase > 0 ? input.caseCost / unitsPerCase : input.caseCost;
   const supplierLabel = input.supplier?.trim() || 'Received at the dock';
+  const fingerprint = receiptFingerprint({
+    itemName: input.itemName,
+    productId: input.productId,
+    casesReceived: input.casesReceived,
+    caseCost: input.caseCost,
+    packSize: input.packSize,
+    splitFactor: input.splitFactor,
+    supplier: supplierLabel,
+  });
   const idempotencyKey = input.externalLogId?.trim()
     ? `recv:${input.externalLogId.trim()}`
     : '';
@@ -1172,7 +1187,10 @@ export async function postReceipt(input: {
         unitCostAtTime: Number(unitCost.toFixed(4)),
         referenceId,
         expirationDate,
-        notes: `Received ${input.casesReceived} cases of ${input.itemName}`,
+        notes: receiptNotes(
+          `Received ${input.casesReceived} cases of ${input.itemName}`,
+          fingerprint
+        ),
       },
     });
     await createLotOnReceive(tx, {
@@ -1190,15 +1208,13 @@ export async function postReceipt(input: {
     if (idempotencyKey && isLedgerIdempotencyConflict(error)) {
       const existing = await prisma.inventoryTransaction.findFirst({
         where: { referenceId },
-        select: { id: true, productId: true, qtyChange: true, notes: true },
+        select: { id: true, productId: true, notes: true },
       });
-      const sameQty = existing != null && Math.abs(existing.qtyChange - unitsAdded) < 0.0001;
-      const sameItem = existing?.notes?.includes(input.itemName) ?? false;
-      if (!existing || !sameQty || !sameItem) {
+      const storedFingerprint = fingerprintFromNotes(existing?.notes);
+      if (!existing || storedFingerprint !== fingerprint) {
         return {
           posted: false,
-          reason:
-            'This receiving id was already used for a different delivery and was not posted again.',
+          reason: RECEIPT_CONFLICT_REASON,
         };
       }
       const productId = existing.productId;
