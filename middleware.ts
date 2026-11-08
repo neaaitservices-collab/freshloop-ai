@@ -1,34 +1,13 @@
 import NextAuth from 'next-auth';
-import { NextResponse } from 'next/server';
+import { NextResponse, type NextRequest } from 'next/server';
 import { authConfig } from '@/auth.config';
-import { canVisit, homeForRole, isRoleName, type RoleName } from '@/lib/utils/roles';
-import { homePathForRole } from '@/lib/utils/roleRouting';
+import { decideEdgeAccess } from '@/lib/auth/edgeAccess';
+import { FRESH_PATH_HEADER } from '@/lib/auth/pageAccess';
 
 const { auth } = NextAuth(authConfig);
 
-const PUBLIC_PAGE_PREFIXES = ['/login', '/signup', '/forgot-password', '/reset-password'];
-
-function isPublicPage(pathname: string): boolean {
-  return PUBLIC_PAGE_PREFIXES.some(
-    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`)
-  );
-}
-
-function isAuthApi(pathname: string): boolean {
-  return pathname.startsWith('/api/auth');
-}
-
-function isPosWebhook(pathname: string): boolean {
-  return pathname === '/api/pos/webhook' || pathname.startsWith('/api/pos/webhook/');
-}
-
-function isPublicApi(pathname: string): boolean {
-  // POS ingest authenticates with a required Bearer secret, not a browser session.
-  return isAuthApi(pathname) || pathname === '/api/health' || isPosWebhook(pathname);
-}
-
 type MiddlewareSession = {
-  user?: { id?: string; email?: string | null; role?: string };
+  user?: { id?: string; email?: string | null };
 } | null;
 
 function isLoggedIn(session: MiddlewareSession): boolean {
@@ -38,64 +17,30 @@ function isLoggedIn(session: MiddlewareSession): boolean {
   return typeof user.email === 'string' && user.email.length > 0;
 }
 
-function roleFromAuth(session: { user?: { role?: string } } | null): RoleName | null {
-  const roleRaw = session?.user?.role;
-  return typeof roleRaw === 'string' && isRoleName(roleRaw) ? roleRaw : null;
+function continueWithPath(req: NextRequest) {
+  const requestHeaders = new Headers(req.headers);
+  requestHeaders.set(FRESH_PATH_HEADER, req.nextUrl.pathname);
+  return NextResponse.next({ request: { headers: requestHeaders } });
 }
 
 export default auth((req) => {
   const { pathname } = req.nextUrl;
-  const session = req.auth;
-  const loggedIn = isLoggedIn(session);
-  const role = roleFromAuth(session) ?? (loggedIn ? ('FLOOR_STAFF' as RoleName) : null);
+  const decision = decideEdgeAccess(pathname, isLoggedIn(req.auth));
 
-  if (pathname.startsWith('/api/')) {
-    if (isPublicApi(pathname)) {
-      return NextResponse.next();
-    }
-    if (!loggedIn) {
-      return NextResponse.json(
-        { success: false, error: 'Unauthorized — sign in required.' },
-        { status: 401 }
-      );
-    }
-    return NextResponse.next();
+  if (decision.type === 'unauthorized-api') {
+    return NextResponse.json(
+      { success: false, error: 'Unauthorized — sign in required.' },
+      { status: 401 }
+    );
   }
 
-  if (isPublicPage(pathname)) {
-    if (
-      loggedIn &&
-      role &&
-      (pathname === '/login' ||
-        pathname === '/signup' ||
-        pathname === '/forgot-password' ||
-        pathname === '/reset-password')
-    ) {
-      return NextResponse.redirect(new URL(homePathForRole(role), req.url));
-    }
-    return NextResponse.next();
-  }
-
-  if (pathname === '/') {
-    if (!loggedIn || !role) {
-      const login = new URL('/login', req.url);
-      login.searchParams.set('callbackUrl', homePathForRole(role ?? undefined));
-      return NextResponse.redirect(login);
-    }
-    return NextResponse.redirect(new URL(homeForRole(role), req.url));
-  }
-
-  if (!loggedIn || !role) {
+  if (decision.type === 'login') {
     const login = new URL('/login', req.url);
-    login.searchParams.set('callbackUrl', pathname);
+    login.searchParams.set('callbackUrl', decision.callbackUrl);
     return NextResponse.redirect(login);
   }
 
-  if (!canVisit(role, pathname)) {
-    return NextResponse.redirect(new URL(homeForRole(role), req.url));
-  }
-
-  return NextResponse.next();
+  return continueWithPath(req);
 });
 
 export const config = {
