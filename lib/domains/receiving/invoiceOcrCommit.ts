@@ -1,4 +1,4 @@
-import { Department, InventoryLocation } from '@prisma/client';
+import { Department, InventoryLocation, Prisma } from '@prisma/client';
 import { prisma } from '@/lib/domains/inventory/ledger';
 import { invalidateInventoryCaches } from '@/lib/domains/inventory/inventoryCache';
 import {
@@ -121,6 +121,60 @@ export function assertInvoiceOcrCommitAllowed(input: {
   }
 }
 
+export const OCR_DRAFT_TTL_MS = 2 * 60 * 60 * 1000;
+
+export interface OcrDraftLine {
+  product_id: string;
+  quantity: number;
+  quantity_kind?: OcrQuantityKind;
+  unit_cost: number;
+  line_name?: string;
+  department?: Department;
+  case_pack_size?: number;
+  line_confidence: number;
+  requires_approval: boolean;
+}
+
+export interface OcrDraftPayload {
+  vendorName: string;
+  invoiceNumber: string;
+  invoiceDate: string;
+  totalAmount: number;
+  departmentBreakdown: Record<string, number>;
+  lines: OcrDraftLine[];
+}
+
+export function invoiceIdempotencyKey(vendorName: string, invoiceNumber: string): string {
+  return `invoice:${vendorName.trim().toLowerCase()}:${invoiceNumber.trim().toLowerCase()}`;
+}
+
+/** Commit uses the stored scan. Client confidence and cost flags are not an input. */
+export function assertDraftLinesCommittable(
+  lines: OcrDraftLine[],
+  actorIsManager: boolean,
+  manualReviewOverride: boolean
+): void {
+  const blocked = lines.filter(
+    (line) => line.requires_approval || lineNeedsManualReview(line.line_confidence)
+  );
+  if (blocked.length === 0) return;
+  if (manualReviewOverride && actorIsManager) return;
+  throw new Error(
+    `${blocked.length} invoice line(s) need a store manager before they can post. Low-confidence or cost-guardrail lines were not accepted from the browser.`
+  );
+}
+
+export async function saveInvoiceOcrDraft(staffId: string, payload: OcrDraftPayload) {
+  return prisma.invoiceOcrDraft.create({
+    data: {
+      staffId,
+      payload: payload as unknown as Prisma.InputJsonValue,
+      expiresAt: new Date(Date.now() + OCR_DRAFT_TTL_MS),
+    },
+    select: { id: true },
+  });
+}
+
 export async function commitInvoiceOcrReceipts(input: {
   staffId: string;
   referenceId: string;
@@ -128,6 +182,8 @@ export async function commitInvoiceOcrReceipts(input: {
   invoiceMeta?: OcrInvoiceMeta | null;
   manualReviewOverride?: boolean;
   actorIsManager?: boolean;
+  idempotencyKey?: string;
+  draftId?: string;
 }) {
   if (input.confirmedItems.length === 0) {
     throw new Error('No confirmed invoice lines to receive.');
@@ -156,6 +212,9 @@ export async function commitInvoiceOcrReceipts(input: {
 
   const result = await prisma.$transaction(
     async (tx) => {
+      if (input.idempotencyKey) {
+        await tx.ledgerIdempotencyKey.create({ data: { key: input.idempotencyKey } });
+      }
       let invoiceId: string | null = null;
       if (input.invoiceMeta) {
         const meta = input.invoiceMeta;
@@ -295,11 +354,21 @@ export async function commitInvoiceOcrReceipts(input: {
         }
       }
 
-      return {
+      const committed = {
         invoiceId,
         receipts,
         transactionsCreated: receipts.length,
       };
+      if (input.draftId) {
+        await tx.invoiceOcrDraft.update({
+          where: { id: input.draftId },
+          data: {
+            consumedAt: new Date(),
+            result: committed as unknown as Prisma.InputJsonValue,
+          },
+        });
+      }
+      return committed;
     },
     { timeout: 20_000 }
   );

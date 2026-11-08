@@ -59,11 +59,16 @@ export async function resetPasswordWithToken(input: {
   }
 
   const passwordHash = await hashPassword(input.newPassword);
-  await prisma.user.update({
-    where: { email: normalized },
-    data: { passwordHash },
+  await prisma.$transaction(async (tx) => {
+    await tx.user.update({
+      where: { email: normalized },
+      data: {
+        passwordHash,
+        credentialVersion: { increment: 1 },
+      },
+    });
+    await tx.verificationToken.deleteMany({ where: { identifier } });
   });
-  await prisma.verificationToken.deleteMany({ where: { identifier } });
   return true;
 }
 

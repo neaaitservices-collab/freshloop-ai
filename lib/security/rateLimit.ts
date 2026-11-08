@@ -23,6 +23,16 @@ export const HOT_PATH_RATE_LIMITS = {
 export type HotPathRateLimitId = keyof typeof HOT_PATH_RATE_LIMITS;
 
 /** Best-effort in-memory limiter (per server instance). Suitable for abuse prevention on hot mutations. */
+/** True when the window is already exhausted. Does not count this request. */
+export function isOverRateLimit(
+  key: string,
+  opts: { limit: number; windowMs: number }
+): boolean {
+  const bucket = store.get(key);
+  if (!bucket || Date.now() >= bucket.resetAt) return false;
+  return bucket.count >= opts.limit;
+}
+
 export function checkRateLimit(
   key: string,
   opts: { limit: number; windowMs: number }
@@ -75,11 +85,17 @@ export function assertHotPathRateLimit(
   return assertMutationRateLimit(actorKey, routeId, HOT_PATH_RATE_LIMITS[routeId], windowMs);
 }
 
+/**
+ * Last forwarded hop. A proxy that appends the connecting address puts the
+ * client-supplied prefix first, so the first hop is not a stable key.
+ * This Map is still per server process. A shared limiter is not configured.
+ */
 export function clientIpKey(req: Request): string {
   const forwarded = req.headers.get('x-forwarded-for');
   if (forwarded) {
-    const first = forwarded.split(',')[0]?.trim();
-    if (first) return first;
+    const hops = forwarded.split(',').map((part) => part.trim()).filter(Boolean);
+    const last = hops[hops.length - 1];
+    if (last) return last;
   }
   return req.headers.get('x-real-ip')?.trim() ?? 'unknown';
 }

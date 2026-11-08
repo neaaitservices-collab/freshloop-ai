@@ -27,6 +27,9 @@ export const authConfig = {
         const rate = (user as { hourlyRate?: number | null }).hourlyRate;
         token.hourlyRate =
           typeof rate === 'number' && Number.isFinite(rate) && rate > 0 ? rate : null;
+        const version = (user as { credentialVersion?: number | null }).credentialVersion;
+        token.credentialVersion =
+          typeof version === 'number' && Number.isFinite(version) && version >= 0 ? version : 0;
       }
       if (!token.id && token.sub) {
         token.id = token.sub;
@@ -47,6 +50,9 @@ export const authConfig = {
         const rate = token.hourlyRate;
         session.user.hourlyRate =
           typeof rate === 'number' && Number.isFinite(rate) && rate > 0 ? rate : null;
+        const version = token.credentialVersion;
+        session.user.credentialVersion =
+          typeof version === 'number' && Number.isFinite(version) && version >= 0 ? version : 0;
       }
       return session;
     },

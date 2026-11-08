@@ -12,7 +12,7 @@ import { moveRetailStock } from '@/lib/domains/inventory/stock';
 import { loadProductCatalog as loadCatalogProducts } from '@/lib/domains/catalog/productCatalog';
 import { handleApiRouteError } from '@/lib/domains/ai/apiError';
 import { authErrorResponse } from '@/lib/auth/http';
-import { requireSessionUser } from '@/lib/auth/session';
+import { requireOperationalStaff } from '@/lib/auth/guardRoute';
 
 // ============================================================================
 // Types & Interfaces for Phase 3 Voice Logger + Fuzzy Product Matcher
@@ -312,14 +312,15 @@ async function parseVoiceWithGemini15Flash(
     }
   } catch (err) {
     console.warn(
-      '[voice-logger] Gemini parse fell back to deterministic parser:',
+      '[voice-logger] Gemini parse failed:',
       err instanceof Error ? err.message : String(err)
     );
   }
 
-  // Deterministic intelligent fallback parser when offline or model unavailable
-  const rawTranscript =
-    spokenText?.trim() || 'Logged 10 lbs bruised apples and 4L heavy cream';
+  const rawTranscript = spokenText?.trim() ?? '';
+  if (!rawTranscript) {
+    throw new Error('VOICE_PARSE_FAILED');
+  }
   const lower = rawTranscript.toLowerCase();
   const isDiscard =
     lower.includes('discard') ||
@@ -376,7 +377,7 @@ async function parseVoiceWithGemini15Flash(
       segLower.includes('discard');
 
     return {
-      item_name: cleanedName || 'Honey Crisp Apples',
+      item_name: cleanedName,
       quantity,
       unit,
       condition,
@@ -388,9 +389,8 @@ async function parseVoiceWithGemini15Flash(
 
   return {
     transcript: rawTranscript,
-    notes:
-      'Parsed by FreshLoop Voice Engine. Ready for human confirmation [CONFIRMAR / EDITAR].',
-    items: parsedFallbackItems,
+    notes: 'Parsed from the typed transcript because the voice model did not return items. parser=rules',
+    items: parsedFallbackItems.filter((item) => item.item_name.length > 0),
   };
 }
 
@@ -486,10 +486,18 @@ async function readVoiceLoggerRequest(req: NextRequest): Promise<VoiceLoggerBody
   }
 }
 
+const MAX_VOICE_AUDIO_CHARS = 8 * 1024 * 1024;
+
 export async function POST(req: NextRequest) {
   try {
-    const actor = await requireSessionUser();
+    const actor = await requireOperationalStaff();
     const body = await readVoiceLoggerRequest(req);
+    if (typeof body.audioBase64 === 'string' && body.audioBase64.length > MAX_VOICE_AUDIO_CHARS) {
+      return NextResponse.json(
+        { success: false, error: 'Voice audio is too large. Record a shorter clip.' },
+        { status: 413 }
+      );
+    }
     const {
       audioBase64,
       mimeType,
@@ -598,6 +606,18 @@ export async function POST(req: NextRequest) {
       };
     });
 
+    if (structuredItems.length === 0) {
+      return NextResponse.json(
+        {
+          success: false,
+          parser: 'failed',
+          items: [],
+          error: 'No grocery items were found in that recording.',
+        },
+        { status: 422 }
+      );
+    }
+
     const primaryItem = structuredItems[0] ?? {
       item_name: 'Unknown Item',
       quantity: 1,
@@ -672,6 +692,17 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         { success: false, error: error.message },
         { status: 422 }
+      );
+    }
+    if (error instanceof Error && error.message === 'VOICE_PARSE_FAILED') {
+      return NextResponse.json(
+        {
+          success: false,
+          parser: 'failed',
+          items: [],
+          error: 'The voice model did not return a transcript. Type what was said, or try the recording again.',
+        },
+        { status: 503 }
       );
     }
 

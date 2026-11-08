@@ -8,6 +8,7 @@ import { loadStaffAuthRow } from '@/lib/auth/loadStaffAuth';
 import { getStaffHourlyRate } from '@/lib/auth/staffHourlyRate';
 import { sessionClaimsFromLookup } from '@/lib/auth/staffSnapshot';
 import { isRoleName } from '@/lib/utils/roles';
+import { checkRateLimit, isOverRateLimit } from '@/lib/security/rateLimit';
 
 function revokedToken(token: JWT): JWT {
   return {
@@ -44,7 +45,15 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           ok: true,
           row: await loadStaffAuthRow(userId),
         });
-        if (!claims.user) return { ...revokedToken(next), lookupFailed: claims.lookupFailed };
+        if (!claims.user || claims.credentialVersion === null) {
+          return { ...revokedToken(next), lookupFailed: claims.lookupFailed };
+        }
+        const tokenVersion =
+          typeof next.credentialVersion === 'number' && Number.isFinite(next.credentialVersion)
+            ? next.credentialVersion
+            : 0;
+        if (tokenVersion !== claims.credentialVersion) return revokedToken(next);
+        next.credentialVersion = claims.credentialVersion;
         next.id = claims.user.id;
         next.sub = claims.user.id;
         next.role = claims.user.role;
@@ -77,6 +86,9 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         const rate = token.hourlyRate;
         session.user.hourlyRate =
           typeof rate === 'number' && Number.isFinite(rate) && rate > 0 ? rate : null;
+        const version = token.credentialVersion;
+        session.user.credentialVersion =
+          typeof version === 'number' && Number.isFinite(version) && version >= 0 ? version : 0;
       }
       return session;
     },
@@ -102,12 +114,20 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
             role: true,
             position: true,
             passwordHash: true,
+            credentialVersion: true,
           },
         });
         if (!user?.passwordHash) return null;
 
+        const loginLimit = { limit: 10, windowMs: 15 * 60_000 };
+        const loginKey = `login-fail:${email}`;
+        if (isOverRateLimit(loginKey, loginLimit)) return null;
+
         const valid = await verifyPassword(password, user.passwordHash);
-        if (!valid) return null;
+        if (!valid) {
+          checkRateLimit(loginKey, loginLimit);
+          return null;
+        }
 
         if (!isRoleName(user.role)) return null;
 
@@ -120,6 +140,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           role: user.role,
           position: user.position,
           hourlyRate,
+          credentialVersion: user.credentialVersion,
         };
       },
     }),

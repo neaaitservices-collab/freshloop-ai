@@ -8,6 +8,7 @@ declare module 'next-auth' {
       role: RoleName;
       position: string;
       hourlyRate: number | null;
+      credentialVersion?: number;
     } & DefaultSession['user'];
     /** Database lookup failed while refreshing this session. Do not authorize. */
     staffLookupFailed?: boolean;
@@ -17,6 +18,7 @@ declare module 'next-auth' {
     role: RoleName;
     position: string;
     hourlyRate?: number | null;
+    credentialVersion?: number;
   }
 }
 
@@ -30,5 +32,7 @@ declare module 'next-auth/jwt' {
     revoked?: boolean;
     /** Staff lookup threw. The previous role must not be kept. */
     lookupFailed?: boolean;
+    /** Password generation captured at sign-in. Absent claims are version 0. */
+    credentialVersion?: number;
   }
 }

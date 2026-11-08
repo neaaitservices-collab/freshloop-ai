@@ -61,8 +61,17 @@ export function validateReceivingLogPostInput(body: Partial<ReceivingLogPostInpu
   if (![casesReceived, caseCost, packSize, splitFactor, currentRetailPrice].every(Number.isFinite)) {
     return { ok: false, error: 'Receiving and pricing numbers must be finite.' };
   }
-  if (packSize <= 0 || splitFactor <= 0) {
-    return { ok: false, error: 'Pack size and split factor must be greater than 0.' };
+  if (packSize <= 0 || splitFactor <= 0 || packSize > 1_000_000 || splitFactor > 1_000_000) {
+    return { ok: false, error: 'Pack size and split factor must be greater than 0 and at most 1,000,000.' };
+  }
+  if (!(casesReceived > 0) || casesReceived > 1_000_000) {
+    return {
+      ok: false,
+      error: 'Cases received must be greater than 0 and at most 1,000,000, the same cap as an invoice line.',
+    };
+  }
+  if (caseCost < 0 || caseCost > 1_000_000) {
+    return { ok: false, error: 'Case cost must be zero or greater and at most 1,000,000.' };
   }
 
   return {
@@ -107,6 +116,7 @@ export async function postReceivingLogToInventory(
       staffId: actorId,
       targetMargin,
       supplier: supplierName,
+      externalLogId: input.externalLogId,
     });
 
     return {

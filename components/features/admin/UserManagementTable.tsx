@@ -29,6 +29,7 @@ const EMPTY_FORM: StaffEmployeeFormValues = {
   email: '',
   position: STAFF_POSITIONS[3].label,
   hourlyRate: hourlyRateInputString(DEFAULT_HOURLY),
+  currentPassword: '',
 };
 
 export function UserManagementTable({ embedded = false }: { embedded?: boolean }) {
@@ -65,6 +66,7 @@ export function UserManagementTable({ embedded = false }: { embedded?: boolean }
       email: user.email,
       position: positionForStaff(user.position, user.role).label,
       hourlyRate: hourlyRateInputString(user.hourlyRate),
+      currentPassword: '',
     });
     setError(null);
     setModalMode('edit');
@@ -91,6 +93,9 @@ export function UserManagementTable({ embedded = false }: { embedded?: boolean }
       if (canManageWage && hourlyRate != null) {
         payload.hourlyRate = hourlyRate;
       }
+      if (form.currentPassword.trim()) {
+        payload.currentPassword = form.currentPassword;
+      }
       const response = await fetch(editingId ? `/api/users/${editingId}` : '/api/users', {
         method: editingId ? 'PATCH' : 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -102,7 +107,14 @@ export function UserManagementTable({ embedded = false }: { embedded?: boolean }
         return;
       }
       closeModal();
-      setSaveSuccess(editingId ? 'Employee updated.' : 'Employee added.');
+      const setupUrl = typeof json.setupUrl === 'string' ? json.setupUrl : '';
+      setSaveSuccess(
+        setupUrl
+          ? `Employee added. Send this one-time setup link: ${setupUrl}`
+          : editingId
+            ? 'Employee updated.'
+            : 'Employee added.'
+      );
       await refresh();
     } catch {
       setError('Could not save that employee. Check your connection and try again.');
@@ -270,6 +282,7 @@ export function UserManagementTable({ embedded = false }: { embedded?: boolean }
         onClose={closeModal}
         onSubmit={() => void save()}
         showHourlyRate={canManageWage}
+        askCurrentPassword={modalMode === 'edit' && editingId === activeUser?.id}
       />
     </section>
   );

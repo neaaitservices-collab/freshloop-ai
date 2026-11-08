@@ -3,13 +3,8 @@
 
 name: Database migrate (production)
 
+# Manual only. Merging schema to main must not migrate production by itself.
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'prisma/migrations/**'
-      - 'prisma/schema.prisma'
-      - '.github/workflows/database-migrate.yml'
   workflow_dispatch:
 
 concurrency:
