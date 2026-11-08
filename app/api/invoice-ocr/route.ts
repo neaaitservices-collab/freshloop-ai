@@ -3,6 +3,9 @@ import { Department } from '@prisma/client';
 import { getMovingAverageCostMap } from '@/lib/domains/inventory/ledger';
 import { loadProductCatalog } from '@/lib/domains/catalog/productCatalog';
 import { saveInvoiceOcrDraft } from '@/lib/domains/receiving/invoiceOcrCommit';
+import { recordOcrCommitAnalytics } from '@/lib/domains/suppliers/analyticsPersistence';
+import { upsertSupplierByName } from '@/lib/domains/suppliers/suppliers';
+import { VENDOR_PRICE_ALERT_DEFAULT_PCT } from '@/lib/domains/suppliers/vendorAnalyticsTypes';
 import { settleStoredOcrDraft } from '@/lib/domains/receiving/invoiceOcrSettle';
 import { invalidateInventoryCaches } from '@/lib/domains/inventory/inventoryCache';
 import { generateContentWithFallback, tryParseModelJson } from '@/lib/domains/ai/gemini';
@@ -578,7 +581,41 @@ export async function POST(req: NextRequest) {
         resolutions: commitBody.resolutions,
         post: true,
       });
-      return responseForSettledDraft(outcome);
+      const response = responseForSettledDraft(outcome);
+      if ((outcome.kind === 'posted' || outcome.kind === 'replay') && outcome.payload.vendorName.trim()) {
+        const invoiceId =
+          outcome.kind === 'posted'
+            ? outcome.result.invoiceId
+            : outcome.result && typeof outcome.result === 'object' && 'invoiceId' in outcome.result
+              ? String((outcome.result as { invoiceId?: string }).invoiceId ?? '')
+              : '';
+        if (invoiceId) {
+          try {
+            const supplier = await upsertSupplierByName({ name: outcome.payload.vendorName });
+            await recordOcrCommitAnalytics({
+              supplierId: supplier.id,
+              vendorInvoiceId: invoiceId,
+              idempotencyKey: `ocr-analytics:${commitBody.draftId}`,
+              lines: outcome.payload.lines.map((line) => ({
+                item_name: line.line_name ?? line.product_id,
+                product_id: line.product_id || null,
+                unit_cost: line.unit_cost,
+                historical_avg_cost: null,
+                cost_variance_pct: null,
+                line_confidence: line.line_confidence,
+                needs_manual_review: line.review_reasons?.includes('low_confidence') ?? false,
+              })),
+              analyticsThresholdPct: VENDOR_PRICE_ALERT_DEFAULT_PCT,
+            });
+          } catch (err: unknown) {
+            logServerError('POST /api/invoice-ocr analytics', err, {
+              path: '/api/invoice-ocr',
+              operation: 'vendor-analytics-persist',
+            });
+          }
+        }
+      }
+      return response;
     }
 
     const { imageBase64, mimeType, demo } = rawBody as {
