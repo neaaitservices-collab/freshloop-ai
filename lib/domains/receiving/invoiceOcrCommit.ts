@@ -145,6 +145,17 @@ export interface OcrDraftLine {
   case_pack_size?: number;
   line_confidence: number;
   requires_approval: boolean;
+  department_assumed?: boolean;
+  quantity_unreadable?: boolean;
+  name_unreadable?: boolean;
+  /** Stored with the draft. Empty means the line has no open review reason. */
+  review_reasons?: Array<
+    | 'low_confidence'
+    | 'cost_guardrail'
+    | 'department_assumed'
+    | 'quantity_unreadable'
+    | 'name_unreadable'
+  >;
 }
 
 export interface OcrDraftPayload {
@@ -166,13 +177,32 @@ export function assertDraftLinesCommittable(
   actorIsManager: boolean,
   manualReviewOverride: boolean
 ): void {
-  const blocked = lines.filter(
-    (line) => line.requires_approval || lineNeedsManualReview(line.line_confidence)
-  );
+  const managerMayResolve = manualReviewOverride && actorIsManager;
+  const blocked = lines.filter((line) => {
+    const reasons = line.review_reasons ?? [
+      ...(line.requires_approval ? (['cost_guardrail'] as const) : []),
+      ...(line.department_assumed ? (['department_assumed'] as const) : []),
+      ...(line.quantity_unreadable || !(line.quantity > 0) ? (['quantity_unreadable'] as const) : []),
+      ...(line.name_unreadable || line.line_name?.startsWith('Unread line ')
+        ? (['name_unreadable'] as const)
+        : []),
+      ...(lineNeedsManualReview(line.line_confidence) ? (['low_confidence'] as const) : []),
+    ];
+    return reasons.some((reason) => {
+      if (reason === 'quantity_unreadable' || reason === 'name_unreadable') return true;
+      if (
+        reason === 'low_confidence' ||
+        reason === 'cost_guardrail' ||
+        reason === 'department_assumed'
+      ) {
+        return !managerMayResolve;
+      }
+      return true;
+    });
+  });
   if (blocked.length === 0) return;
-  if (manualReviewOverride && actorIsManager) return;
   throw new Error(
-    `${blocked.length} invoice line(s) need a store manager before they can post. Low-confidence or cost-guardrail lines were not accepted from the browser.`
+    `${blocked.length} invoice line(s) still need a quantity, a name, or a store manager before they can post.`
   );
 }
 

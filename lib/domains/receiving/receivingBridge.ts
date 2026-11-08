@@ -1,4 +1,6 @@
+import { createHash } from 'node:crypto';
 import type { InvoiceOcrResult } from '@/lib/types';
+import { DEMO_INVOICE_NUMBER } from '@/lib/domains/receiving/sampleReceivingGuard';
 import type { ReceivingLog, RetailUnit } from '@/lib/domains/receiving/yieldPricing';
 
 export const RECEIVING_SCAN_STORAGE_KEY = 'freshloop-receiving-scan-v1';
@@ -10,23 +12,32 @@ function retailUnitFromSubUnit(subUnit: string | undefined): RetailUnit {
   return 'units';
 }
 
-/** One id per invoice line. The index keeps two lines of the same SKU distinct. */
+/**
+ * Stable id for one OCR line.
+ * The hash uses the raw vendor and invoice number, so INV-100 and INV/100
+ * and two vendors do not collapse. Punctuation is not normalized away.
+ * The practice invoice keeps a reserved id that receiving refuses to post.
+ * Persisted delivery UUIDs belong to the receiving-delivery work and are not
+ * minted here.
+ */
 export function stableLogId(
-  result: InvoiceOcrResult,
+  result: Pick<InvoiceOcrResult, 'vendorName' | 'invoiceNumber'>,
   item: InvoiceOcrResult['lineItems'][number],
   index: number
 ): string {
-  const slug = (item.productId || item.name || 'line')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 40);
-  const invoice = (result.invoiceNumber || 'unread')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 32);
-  return `scan-${invoice || 'unread'}-${index}-${slug || 'line'}`;
+  if (result.invoiceNumber.trim().toLowerCase() === DEMO_INVOICE_NUMBER.toLowerCase()) {
+    return `scan-${DEMO_INVOICE_NUMBER.toLowerCase()}-${index}`;
+  }
+  const raw = [
+    result.vendorName ?? '',
+    result.invoiceNumber ?? '',
+    String(index),
+    item.productId ?? '',
+    item.name ?? '',
+    String(item.quantity ?? ''),
+    String(item.unitCost ?? ''),
+  ].join('\0');
+  return `scan-${createHash('sha256').update(raw).digest('hex').slice(0, 32)}`;
 }
 
 /** Maps OCR output into receiving-board rows (pricing happens before `postReceipt`). */

@@ -53,6 +53,11 @@ test('two lines for the same SKU stay separate and a missing quantity stays zero
   assert.equal(logs[1]?.casesReceived, 2);
   assert.equal(logs[1]?.caseCost, 90);
   assert.equal(logs[2]?.casesReceived, 0);
-  assert.match(logs[0]?.id ?? '', /^scan-inv-100-0-/);
-  assert.match(logs[1]?.id ?? '', /^scan-inv-100-1-/);
+  assert.notEqual(logs[0]?.id, logs[1]?.id);
+  const otherVendor = receivingLogsFromInvoice({ ...invoice, vendorName: 'Other Wholesale' });
+  assert.notEqual(otherVendor[0]?.id, logs[0]?.id);
+  const slashed = receivingLogsFromInvoice({ ...invoice, invoiceNumber: 'INV/100' });
+  assert.notEqual(slashed[0]?.id, logs[0]?.id);
+  const again = receivingLogsFromInvoice(invoice);
+  assert.equal(again[0]?.id, logs[0]?.id);
 });

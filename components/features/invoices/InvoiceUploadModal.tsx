@@ -10,6 +10,12 @@ import { AlertTriangle, ArrowRight, Camera, CheckCircle2, FileText, ImagePlus, L
 import { ModalBody, ModalFooter, ModalHeader, ModalShell, ScrollTable } from '@/components/ui/layout';
 import { SupplierSelect } from '@/components/features/suppliers/SupplierSelect';
 import type { SupplierRecord } from '@/lib/domains/suppliers/suppliers';
+import {
+  applyCorrectionDraft,
+  createCorrectionDraft,
+  patchCorrectionDraft,
+  type InvoiceCorrectionDraft,
+} from '@/lib/domains/receiving/invoiceCorrections';
 
 interface InvoiceUploadModalProps {
   isOpen: boolean;
@@ -38,6 +44,8 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
   const [ocrResult, setOcrResult] = useState<InvoiceOcrResult | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
   const [managerApprovedCosts, setManagerApprovedCosts] = useState(false);
+  const [corrections, setCorrections] = useState<InvoiceCorrectionDraft | null>(null);
+  const [correctionErrors, setCorrectionErrors] = useState<string[]>([]);
   const { activeUser } = useRole();
   const managerCanApprove = Boolean(activeUser && isManager(activeUser.role));
 
@@ -111,6 +119,8 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
         ),
       };
       setOcrResult(parsed);
+      setCorrections(createCorrectionDraft(parsed));
+      setCorrectionErrors([]);
       if (parsed.supplierId && onSupplierChange) {
         onSupplierChange(parsed.supplierId);
       }
@@ -133,6 +143,8 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
     setSelectedFile(file);
     setScanError(null);
     setOcrResult(null);
+    setCorrections(null);
+    setCorrectionErrors([]);
     setManagerApprovedCosts(false);
     setPreviewUrl(null);
     setCompressingImage(true);
@@ -160,6 +172,8 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
 
   const handleResetScanner = () => {
     setOcrResult(null);
+    setCorrections(null);
+    setCorrectionErrors([]);
     setPreviewUrl(null);
     if (rawPreviewUrl?.startsWith('blob:')) URL.revokeObjectURL(rawPreviewUrl);
     setRawPreviewUrl(null);
@@ -182,18 +196,23 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
   const needsManagerGate =
     flaggedInvoice && (!managerCanApprove || !managerApprovedCosts);
 
-  const identityIncomplete = Boolean(
-    ocrResult &&
-      ocrResult.source !== 'sample' &&
-      (!ocrResult.vendorName.trim() || !ocrResult.invoiceNumber.trim())
-  );
-  const unreadableQuantity = Boolean(
-    ocrResult?.lineItems.some((item) => !(Number(item.quantity) > 0) || item.name.startsWith('Unread line '))
-  );
+  const correctionsReady = !corrections || corrections.applied;
+
+  const handleApplyCorrections = () => {
+    if (!ocrResult || !corrections) return;
+    const applied = applyCorrectionDraft(ocrResult, corrections);
+    if (!applied.ok) {
+      setCorrectionErrors(applied.errors);
+      return;
+    }
+    setOcrResult(applied.result);
+    setCorrections(applied.draft);
+    setCorrectionErrors([]);
+  };
 
   const handleAddToReceiving = () => {
     if (!ocrResult || needsManagerGate || ocrResult.source === 'sample') return;
-    if (identityIncomplete || unreadableQuantity) return;
+    if (!correctionsReady) return;
     onInvoiceImported({
       ...ocrResult,
       supplierId: selectedSupplierId || ocrResult.supplierId,
@@ -354,34 +373,54 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
                 </div>
               ) : null}
 
-              {identityIncomplete || unreadableQuantity ? (
+              {corrections && (corrections.editVendor || corrections.editInvoice || !corrections.applied) ? (
                 <div className="space-y-3 rounded-2xl border border-rose-500/40 bg-rose-950/40 p-3.5 text-xs text-rose-100">
                   <p className="font-bold text-rose-200">
-                    This scan is missing a vendor, invoice number, or line quantity. Fill those in before receiving. Nothing is invented.
+                    Fill the missing vendor, invoice number, names, or quantities, then apply them. The fields stay in place while you type.
                   </p>
-                  {identityIncomplete ? (
+                  {corrections.editVendor || corrections.editInvoice ? (
                     <div className="grid gap-2 sm:grid-cols-2">
-                      <label className="block text-[11px] font-semibold text-rose-100">
-                        Vendor
-                        <input
-                          value={ocrResult.vendorName}
-                          onChange={(event) =>
-                            setOcrResult({ ...ocrResult, vendorName: event.target.value })
-                          }
-                          className="mt-1 w-full rounded-lg border border-rose-400/40 bg-zinc-950 px-2 py-2 text-sm text-white"
-                        />
-                      </label>
-                      <label className="block text-[11px] font-semibold text-rose-100">
-                        Invoice number
-                        <input
-                          value={ocrResult.invoiceNumber}
-                          onChange={(event) =>
-                            setOcrResult({ ...ocrResult, invoiceNumber: event.target.value })
-                          }
-                          className="mt-1 w-full rounded-lg border border-rose-400/40 bg-zinc-950 px-2 py-2 text-sm text-white"
-                        />
-                      </label>
+                      {corrections.editVendor ? (
+                        <label className="block text-[11px] font-semibold text-rose-100">
+                          Vendor
+                          <input
+                            value={corrections.vendorText}
+                            onChange={(event) =>
+                              setCorrections(patchCorrectionDraft(corrections, { vendorText: event.target.value }))
+                            }
+                            className="mt-1 w-full rounded-lg border border-rose-400/40 bg-zinc-950 px-2 py-2 text-sm text-white"
+                          />
+                        </label>
+                      ) : null}
+                      {corrections.editInvoice ? (
+                        <label className="block text-[11px] font-semibold text-rose-100">
+                          Invoice number
+                          <input
+                            value={corrections.invoiceText}
+                            onChange={(event) =>
+                              setCorrections(patchCorrectionDraft(corrections, { invoiceText: event.target.value }))
+                            }
+                            className="mt-1 w-full rounded-lg border border-rose-400/40 bg-zinc-950 px-2 py-2 text-sm text-white"
+                          />
+                        </label>
+                      ) : null}
                     </div>
+                  ) : null}
+                  {correctionErrors.length > 0 ? (
+                    <ul className="list-disc pl-4 text-rose-200">
+                      {correctionErrors.map((error) => (
+                        <li key={error}>{error}</li>
+                      ))}
+                    </ul>
+                  ) : null}
+                  {!corrections.applied ? (
+                    <button
+                      type="button"
+                      onClick={handleApplyCorrections}
+                      className="rounded-lg bg-rose-200 px-3 py-2 text-xs font-bold text-rose-950"
+                    >
+                      Apply corrections
+                    </button>
                   ) : null}
                 </div>
               ) : null}
@@ -490,17 +529,17 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
                           }
                         >
                           <td className="p-2 sm:p-2.5 font-semibold text-white">
-                            {item.name.startsWith('Unread line ') ? (
+                            {corrections?.lines[idx]?.editName ? (
                               <input
                                 aria-label={`Name for line ${idx + 1}`}
-                                value={item.name}
+                                value={corrections.lines[idx]?.nameText ?? ''}
                                 onChange={(event) =>
-                                  setOcrResult({
-                                    ...ocrResult,
-                                    lineItems: ocrResult.lineItems.map((line, lineIndex) =>
-                                      lineIndex === idx ? { ...line, name: event.target.value } : line
-                                    ),
-                                  })
+                                  setCorrections(
+                                    patchCorrectionDraft(corrections, {
+                                      lineIndex: idx,
+                                      nameText: event.target.value,
+                                    })
+                                  )
                                 }
                                 className="w-full rounded-md border border-rose-400/40 bg-zinc-950 px-2 py-1 text-white"
                               />
@@ -535,37 +574,25 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
                           </td>
                           <td className="p-2 sm:p-2.5"><DepartmentBadge department={item.department} size="sm" /></td>
                           <td className="p-2 sm:p-2.5 whitespace-nowrap font-mono tabular-nums">
-                            {item.quantity > 0 ? (
+                            {corrections?.lines[idx]?.editQuantity ? (
+                              <input
+                                inputMode="decimal"
+                                aria-label={`Quantity for ${item.name}`}
+                                value={corrections.lines[idx]?.quantityText ?? ''}
+                                onChange={(event) =>
+                                  setCorrections(
+                                    patchCorrectionDraft(corrections, {
+                                      lineIndex: idx,
+                                      quantityText: event.target.value,
+                                    })
+                                  )
+                                }
+                                className="w-20 rounded-md border border-rose-400/40 bg-zinc-950 px-2 py-1 text-white"
+                              />
+                            ) : (
                               <>
                                 {item.quantity} {item.unit}
                               </>
-                            ) : (
-                              <input
-                                type="number"
-                                min="0"
-                                step="any"
-                                aria-label={`Quantity for ${item.name}`}
-                                value={item.quantity || ''}
-                                onChange={(event) => {
-                                  const quantity = Number(event.target.value);
-                                  setOcrResult({
-                                    ...ocrResult,
-                                    lineItems: ocrResult.lineItems.map((line, lineIndex) =>
-                                      lineIndex === idx
-                                        ? {
-                                            ...line,
-                                            quantity: Number.isFinite(quantity) && quantity > 0 ? quantity : 0,
-                                            totalCost:
-                                              Number.isFinite(quantity) && quantity > 0
-                                                ? Number((quantity * line.unitCost).toFixed(2))
-                                                : 0,
-                                          }
-                                        : line
-                                    ),
-                                  });
-                                }}
-                                className="w-20 rounded-md border border-rose-400/40 bg-zinc-950 px-2 py-1 text-white"
-                              />
                             )}
                           </td>
                           <td className="p-2 sm:p-2.5 font-mono tabular-nums">
@@ -690,16 +717,13 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
               type="button"
               onClick={handleAddToReceiving}
               disabled={
-                needsManagerGate ||
-                ocrResult.source === 'sample' ||
-                identityIncomplete ||
-                unreadableQuantity
+                needsManagerGate || ocrResult.source === 'sample' || !correctionsReady
               }
               title={
                 ocrResult.source === 'sample'
                   ? 'Sample invoice lines are not posted to inventory'
-                  : identityIncomplete || unreadableQuantity
-                    ? 'Enter the vendor, invoice number, and every line quantity first'
+                  : !correctionsReady
+                    ? 'Apply the vendor, invoice number, names, and quantities first'
                     : needsManagerGate
                       ? 'Manager must confirm flagged costs and low-confidence OCR lines'
                       : undefined

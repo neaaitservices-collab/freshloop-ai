@@ -1190,17 +1190,26 @@ export async function postReceipt(input: {
     if (idempotencyKey && isLedgerIdempotencyConflict(error)) {
       const existing = await prisma.inventoryTransaction.findFirst({
         where: { referenceId },
-        select: { id: true, productId: true },
+        select: { id: true, productId: true, qtyChange: true, notes: true },
       });
-      const productId = existing?.productId ?? '';
+      const sameQty = existing != null && Math.abs(existing.qtyChange - unitsAdded) < 0.0001;
+      const sameItem = existing?.notes?.includes(input.itemName) ?? false;
+      if (!existing || !sameQty || !sameItem) {
+        return {
+          posted: false,
+          reason:
+            'This receiving id was already used for a different delivery and was not posted again.',
+        };
+      }
+      const productId = existing.productId;
       return {
         posted: true,
         idempotent: true,
         productId,
         productName: input.itemName,
         unitsAdded: 0,
-        onHand: productId ? await getCurrentStock(productId) : 0,
-        transactionId: existing?.id ?? '',
+        onHand: await getCurrentStock(productId),
+        transactionId: existing.id,
       };
     }
     throw error;
