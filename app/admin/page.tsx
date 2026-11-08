@@ -4,7 +4,7 @@ import { AccountPage } from '@/components/features/admin/AccountPage';
 import { StoreSettingsEntryCard } from '@/components/features/admin/StoreSettingsEntryCard';
 import { CaseBoard } from '@/components/features/inventory/CaseBoard';
 import { DashboardFigures, DashboardFiguresSkeleton } from '@/components/features/admin/DashboardFigures';
-import { getStockLevels } from '@/lib/domains/inventory/stock';
+import { getStockLevelsRsc } from '@/lib/domains/serverDataCache';
 import { getAdminStoreStatsBundle } from '@/lib/domains/stats/storeStats';
 
 export const dynamic = 'force-dynamic';
@@ -15,7 +15,7 @@ async function LiveFigures() {
 }
 
 async function LiveCases() {
-  const levels = await getStockLevels();
+  const levels = await getStockLevelsRsc();
   return <CaseBoard levels={levels} showReceipt />;
 }
 

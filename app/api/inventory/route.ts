@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import {
   prisma,
   calculateRealTimeWastePct,
+  getCachedRealTimeWastePct,
 } from '@/lib/domains/inventory/ledger';
 import { getLedgerInventoryItems } from '@/lib/domains/inventory/fusionInventoryView';
 import {
@@ -38,6 +39,11 @@ async function loadInventoryPayload(
   });
 
   const ledgerPromise = (async () => {
+    const wasteKpiPromise =
+      additionalScrapBuckets > 0
+        ? calculateRealTimeWastePct({ additionalScrapBuckets })
+        : getCachedRealTimeWastePct();
+
     const [products, wasteKpi, stockLevels] = await Promise.all([
       prisma.product.findMany({
         where: { catalogActive: true, isManufactured: false },
@@ -58,9 +64,7 @@ async function loadInventoryPayload(
           isManufactured: true,
         },
       }),
-      calculateRealTimeWastePct({
-        additionalScrapBuckets,
-      }),
+      wasteKpiPromise,
       getStockLevels(),
     ]);
     if (products.length === 0) return null;

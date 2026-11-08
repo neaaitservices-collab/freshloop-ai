@@ -2,6 +2,14 @@
 
 FreshLoop uses **Prisma + PostgreSQL** (not Supabase client). Apply migrations with `npx prisma migrate deploy` in production.
 
+## Migration `20261107200000_perf_indexes_expand`
+
+| Index | Rationale |
+|-------|-----------|
+| `products(supplier)` | Buy list / orders grouping and supplier filters. |
+| `store_settings(store_id)` | Multi-store setting lookups when `store_id` is scoped. |
+| `staff_users(role, name)` | `GET /api/users` roster sort `role ASC, name ASC`. |
+
 ## Migration `20261107143000_api_latency_indexes`
 
 | Index | Rationale |
@@ -32,3 +40,6 @@ CREATE INDEX IF NOT EXISTS "recipes_status_idx" ON "recipes"("status");
 - **Staff directory** (`GET /api/users`): 30s single-query roster with `hourlyRate` on `User`.
 - **Platform settings**: 30s via `getPlatformSettings()`.
 - **On-hand lookup** (`GET /api/inventory/on-hand`): cached catalog names + targeted `ILIKE` prefix search before fuzzy match.
+- **Recipe list** (`GET /api/recipes`): slim `select` + 45s `getRecipeListBundle()` cache (shared fields with production bootstrap).
+- **RSC dedupe** (`lib/domains/serverDataCache.ts`): React `cache()` on stock levels, buy list, bootstrap within one render pass.
+- **`GET /api/inventory`**: `getCachedRealTimeWastePct()` when no live scrap bucket preview param.
