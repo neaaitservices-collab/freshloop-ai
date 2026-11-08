@@ -57,6 +57,13 @@ export interface RecognizedSaleLine {
   realizedLineRevenue: number | null;
   /** Present only so tests can prove the current shelf price is not read. */
   currentRetailPrice?: number | null;
+  /** Ignored. Product sales stored a price here; POS_Sale stores component cost. */
+  unitCostAtTime?: number | null;
+  /**
+   * Ignored. One bundle row may also store the full bundle total here.
+   * The denominator uses realized line revenue only, so this is not added again.
+   */
+  extendedRevenue?: number | null;
 }
 
 export interface RecognizedGrossSales {
