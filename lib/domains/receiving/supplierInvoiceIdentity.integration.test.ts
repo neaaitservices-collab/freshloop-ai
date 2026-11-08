@@ -73,6 +73,7 @@ test('supplier invoice identity is shared by the board and OCR commit', { skip: 
   const unknown = await resolveSupplierInvoice({
     supplierId: 'missing-supplier',
     invoiceNumber: '1001',
+    invoiceDate: '2024-01-02',
     lines: [{ printedName: `Bananas ${stamp}` }],
   });
   assert.equal(unknown.ok, false);
@@ -101,13 +102,23 @@ test('supplier invoice identity is shared by the board and OCR commit', { skip: 
     invoiceDate: '2026-11-08',
     lines: [{ printedName: `Bananas ${stamp}` }],
   });
-  assert.equal(laterYear.ok, true);
-  if (!laterYear.ok) return;
-  assert.equal(laterYear.lines[0]?.deliveryId, slash.lines[0]?.deliveryId);
-  const dated = await prisma.supplierInvoiceDocument.findFirst({
-    where: { supplierId: supplierA.id, invoiceKey: '1001/a' },
+  assert.equal(laterYear.ok, false);
+  if (!laterYear.ok) assert.equal(laterYear.code, 'DATE_CONFLICT');
+  const missingDate = await resolveSupplierInvoice({
+    supplierId: supplierA.id,
+    invoiceNumber: '1001/A',
+    lines: [{ printedName: `Bananas ${stamp}` }],
   });
-  assert.equal(dated?.invoiceDate, '2024-01-02');
+  assert.equal(missingDate.ok, false);
+  if (!missingDate.ok) assert.equal(missingDate.code, 'DATE_REQUIRED');
+  const spaced = await resolveSupplierInvoice({
+    supplierId: supplierA.id,
+    invoiceNumber: '1001 / A',
+    invoiceDate: '2024-01-02',
+    lines: [{ printedName: `Bananas ${stamp}` }],
+  });
+  assert.equal(spaced.ok, false);
+  if (!spaced.ok) assert.equal(spaced.code, 'WHITESPACE_CONFLICT');
 
   const otherSupplier = await resolveSupplierInvoice({
     supplierId: supplierB.id,
@@ -160,6 +171,7 @@ test('supplier invoice identity is shared by the board and OCR commit', { skip: 
   const rematch = await resolveSupplierInvoice({
     supplierId: supplierA.id,
     invoiceNumber: '1001/A',
+    invoiceDate: '2024-01-02',
     lines: [{ printedName: `Bananas ${stamp}` }],
   });
   assert.equal(rematch.ok, true);
@@ -226,10 +238,11 @@ test('supplier invoice identity is shared by the board and OCR commit', { skip: 
   const drifted = await resolveSupplierInvoice({
     supplierId: supplierA.id,
     invoiceNumber: '1001/A',
+    invoiceDate: '2024-01-02',
     lines: [{ printedName: `Not the printed bananas ${stamp}` }],
   });
   assert.equal(drifted.ok, false);
-  if (!drifted.ok) assert.equal(drifted.code, 'LINE_MISMATCH');
+  if (!drifted.ok) assert.equal(drifted.code, 'RENAME_AMBIGUOUS');
   const storedLines = await prisma.supplierInvoiceLine.count({
     where: { document: { supplierId: supplierA.id, invoiceKey: '1001/a' } },
   });
@@ -274,7 +287,7 @@ test('supplier invoice identity is shared by the board and OCR commit', { skip: 
       vendorName: `Printed vendor ${stamp}`,
       supplierId: supplierA.id,
       invoiceNumber: '1001/A',
-      invoiceDate: '2026-11-08',
+      invoiceDate: '2024-01-02',
       totalAmount: 6,
       departmentBreakdown: { PRODUCE: 6 },
     },
@@ -286,7 +299,7 @@ test('supplier invoice identity is shared by the board and OCR commit', { skip: 
   assert.equal(rescannedCommit.transactionsCreated, 0);
   assert.equal(
     await prisma.vendorInvoice.count({ where: { supplierId: supplierA.id, invoiceNumber: '1001/A' } }),
-    0
+    1
   );
 
   const freshNumber = `INV-${stamp}`;
@@ -333,10 +346,19 @@ test('supplier invoice identity is shared by the board and OCR commit', { skip: 
     },
   });
   assert.equal(firstCommit.transactionsCreated, 1);
-  const committedLine = await resolveSupplierInvoice({
+  const yearApart = await resolveSupplierInvoice({
     supplierId: supplierB.id,
     invoiceNumber: freshNumber,
     invoiceDate: '2027-01-01',
+    lines: [{ printedName: `Pears ${stamp}` }],
+  });
+  assert.equal(yearApart.ok, false);
+  if (!yearApart.ok) assert.equal(yearApart.code, 'DATE_CONFLICT');
+  assert.equal(await getCurrentStock(pears.id, InventoryLocation.Retail_Floor), 2);
+  const committedLine = await resolveSupplierInvoice({
+    supplierId: supplierB.id,
+    invoiceNumber: freshNumber,
+    invoiceDate: '2026-02-02',
     lines: [{ printedName: `Pears ${stamp}` }],
   });
   assert.equal(committedLine.ok, true);
@@ -379,7 +401,7 @@ test('supplier invoice identity is shared by the board and OCR commit', { skip: 
       vendorName: `Different printed vendor ${stamp}`,
       supplierId: supplierB.id,
       invoiceNumber: freshNumber,
-      invoiceDate: '2027-01-01',
+      invoiceDate: '2026-02-02',
       totalAmount: 4,
       departmentBreakdown: { PRODUCE: 4 },
     },

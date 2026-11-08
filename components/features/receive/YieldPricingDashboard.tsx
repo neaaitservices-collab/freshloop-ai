@@ -30,6 +30,7 @@ import { readReceivingPrefs, writeReceivingPrefs } from '@/lib/domains/receiving
 import type { ReceivingDispositionRow } from '@/lib/domains/receiving/receivingDisposition';
 import type { ReceivingLogSource } from '@/lib/domains/receiving/receivingSheet';
 import { interpretReceivingBatchResponse } from '@/lib/domains/receiving/receivingBatchResult';
+import { describeBatchSaveOutcome } from '@/lib/domains/receiving/invoiceIdentityHold';
 import { SUPPLIER_REQUIRED_ERROR } from '@/lib/domains/receiving/invoiceDeliveryId';
 
 interface LogsResponse {
@@ -877,32 +878,21 @@ export function YieldPricingDashboard({
       window.dispatchEvent(new CustomEvent('freshloop-inventory-updated'));
     }
 
-    if (savedCount > 0 && replayCount === savedCount && failed.length === 0) {
-      setMovedNotice('Those deliveries were already received. Stock was not added again.');
-      return;
-    }
-
-    if (savedCount === 1 && failed.length === 0) {
+    const outcome = describeBatchSaveOutcome({
+      savedCount,
+      replayCount,
+      failed,
+      targetCount: targets.length,
+    });
+    if (outcome.notice) setMovedNotice(outcome.notice);
+    if (outcome.error) setErrorMessage(outcome.error);
+    if (outcome.savedMessage) {
       const stockHref = lastProductId
         ? `/inventory?highlight=${encodeURIComponent(lastProductId)}`
         : '/inventory';
       setMovedNotice(`__STOCK__${stockHref}__${lastName}__${formatUnits(lastOnHand)}__${lastUnit}`);
-      setSavedMessage('Saved to inventory.');
-      return;
+      setSavedMessage(outcome.savedMessage);
     }
-
-    if (savedCount > 0 && failed.length === 0) {
-      setMovedNotice(`Saved ${savedCount} items to inventory.`);
-      return;
-    }
-
-    if (savedCount > 0) {
-      setMovedNotice(`Saved ${savedCount} of ${targets.length} items to inventory.`);
-      setErrorMessage(`Still on the list: ${failed.join('; ')}`);
-      return;
-    }
-
-    setErrorMessage(failed.length ? `Nothing saved. ${failed.join('; ')}` : 'Nothing saved.');
   };
 
   return (

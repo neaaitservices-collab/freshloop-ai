@@ -20,16 +20,32 @@ export function normalizeDeliveryUuid(value: string): string | null {
 }
 
 /**
- * Invoice numbers keep punctuation characters. `1001/A` and `1001-A` are
- * different documents. Spaces are removed and letters are casefolded so an OCR
- * rescan does not fork the document. Invoice date and year are not part of this key.
+ * Invoice numbers keep punctuation and meaningful spaces. `1001/A` and `1001-A`
+ * are different documents. `A 12` and `A12` are different documents. Only the
+ * ends are trimmed, repeated spaces collapse to one space, and letters are
+ * casefolded. The date is a separate exact key and is not folded into this string.
  */
 export function canonicalInvoiceNumber(invoiceNumber: string | null | undefined): string | null {
-  const compact = (invoiceNumber ?? '').trim().replace(/\s+/g, '').toLowerCase();
-  if (!compact || compact === 'unread' || compact === 'unknown' || compact === 'n/a' || compact === 'na') {
+  const collapsed = (invoiceNumber ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
+  if (!collapsed || collapsed === 'unread' || collapsed === 'unknown' || collapsed === 'n/a' || collapsed === 'na') {
     return null;
   }
-  return compact;
+  return collapsed;
+}
+
+/** Comparison fingerprint only. Never use this as the stored invoice identity. */
+export function compactInvoiceNumber(invoiceNumber: string): string {
+  return invoiceNumber.replace(/\s+/g, '');
+}
+
+/**
+ * Exact date text. No day window and no format guessing. A missing or unread
+ * date is not a match for a stored date.
+ */
+export function canonicalInvoiceDate(invoiceDate: string | null | undefined): string | null {
+  const text = (invoiceDate ?? '').trim().toLowerCase();
+  if (!text || text === 'unread' || text === 'unknown' || text === 'n/a' || text === 'na') return null;
+  return text;
 }
 
 /** @deprecated Use canonicalInvoiceNumber. Punctuation is preserved. */
@@ -47,7 +63,7 @@ export const SUPPLIER_REQUIRED_ERROR =
   'Select a saved supplier before this invoice can be received. The vendor name printed on the scan is not a supplier id.';
 
 export const INVOICE_NUMBER_REUSE_POLICY =
-  'Invoice date and year are not part of the receipt identity, because a rescan often reads the date differently. One saved supplier plus one invoice number is one document. A reused number in a later year is that same document: identical goods replay, and different goods return 409 instead of a second delivery.';
+  'The same saved supplier, invoice number, and exact invoice date replay. A different date, a missing date, or a number that differs by spaces is a conflict until someone confirms it. Confirming a different dated delivery creates a separate document. Nothing is replayed or posted before that confirmation.';
 
 function rotl(value: number, shift: number): number {
   return ((value << shift) | (value >>> (32 - shift))) >>> 0;

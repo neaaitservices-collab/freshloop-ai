@@ -4,6 +4,8 @@ import {
   type PostedReceipt,
   type SkippedReceipt,
 } from '@/lib/domains/inventory/stock';
+import { getCurrentStock, prisma } from '@/lib/domains/inventory/ledger';
+import type { LotTx } from '@/lib/domains/inventory/lots';
 import {
   DELIVERY_UUID_REQUIRED_ERROR,
   isLegacyScanDeliveryId,
@@ -157,7 +159,8 @@ export function validateReceivingLogPostInput(body: Partial<ReceivingLogPostInpu
 export async function postReceivingLogToInventory(
   input: ReceivingLogPostInput,
   actorId: string,
-  supplierName: string | null
+  supplierName: string | null,
+  db?: LotTx
 ): Promise<ReceivingLogPostResult> {
   const sampleReason = sampleReceivingRejection(input);
   if (sampleReason) {
@@ -170,6 +173,31 @@ export async function postReceivingLogToInventory(
 
   const targetMargin = resolveTargetMargin(input.marginMode, input.customMarginPercent ?? 0);
   const caseRetailPrice = parseCaseRetail(input.caseRetailPrice);
+
+  const deliveryId = normalizeDeliveryUuid(input.externalLogId ?? '');
+  if (deliveryId) {
+    const held = await (db ?? prisma).supplierInvoiceLine.findUnique({
+      where: { id: deliveryId },
+      select: { document: { select: { legacyKey: true } } },
+    });
+    if (held?.document.legacyKey) {
+      const productId = input.productId?.trim() || '';
+      return {
+        externalLogId: input.externalLogId,
+        itemName: input.itemName,
+        stock: {
+          posted: true,
+          idempotent: true,
+          unitsAdded: 0,
+          onHand: productId ? await getCurrentStock(productId) : 0,
+          productId,
+          productName: input.itemName,
+          transactionId: '',
+          reason: 'This invoice was already received before the upgrade. Stock was not added again.',
+        },
+      };
+    }
+  }
 
   try {
     const stock = await postReceipt({
@@ -199,7 +227,7 @@ export async function postReceivingLogToInventory(
             productId: input.productId,
           }
         : undefined,
-    });
+    }, db);
 
     return {
       externalLogId: input.externalLogId,

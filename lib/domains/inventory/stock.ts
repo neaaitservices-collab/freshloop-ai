@@ -107,6 +107,7 @@ export interface PostedReceipt {
   onHand: number;
   transactionId: string;
   idempotent?: boolean;
+  reason?: string;
 }
 
 export interface SkippedReceipt {
@@ -1100,7 +1101,7 @@ export async function postReceipt(input: {
     payloadHash: string;
     productId?: string | null;
   };
-}): Promise<PostedReceipt | SkippedReceipt | ConflictReceipt> {
+}, db?: LotTx): Promise<PostedReceipt | SkippedReceipt | ConflictReceipt> {
   let packData: ReturnType<typeof productPackWriteData>;
   try {
     packData = productPackWriteData(input.packSize, input.splitFactor);
@@ -1119,9 +1120,24 @@ export async function postReceipt(input: {
   const idempotencyKey = deliveryId ? `recv:${deliveryId}` : '';
   const referenceId = idempotencyKey || `RCV-${Date.now()}`;
   const payloadHash = input.delivery?.payloadHash ?? '';
-  let posted: { product: { id: string; name: string }; created: { id: string } };
-  try {
-    posted = await prisma.$transaction(async (tx) => {
+  let posted:
+    | { product: { id: string; name: string }; created: { id: string } }
+    | { replay: { catalogProductId: string | null; productName: string; unitsAdded: number; transactionId: string | null } };
+  const run = async (tx: LotTx) => {
+    if (deliveryId && payloadHash) {
+      const existing = await tx.receivingDelivery.findUnique({ where: { id: deliveryId } });
+      if (existing) {
+        if (existing.payloadHash !== payloadHash) throw new ReceivingDeliveryConflict();
+        return {
+          replay: {
+            catalogProductId: existing.catalogProductId,
+            productName: existing.productName,
+            unitsAdded: existing.unitsAdded,
+            transactionId: existing.transactionId,
+          },
+        };
+      }
+    }
     const ensured = await findOrCreatePurchaseProduct(
       {
         itemName: input.itemName,
@@ -1203,8 +1219,11 @@ export async function postReceipt(input: {
       await tx.ledgerIdempotencyKey.create({ data: { key: idempotencyKey } });
     }
     return { product, created };
-  });
+  };
+  try {
+    posted = db ? await run(db) : await prisma.$transaction(run);
   } catch (error) {
+    if (db) throw error;
     const uniqueViolation =
       typeof error === 'object' &&
       error !== null &&
@@ -1236,7 +1255,20 @@ export async function postReceipt(input: {
     throw error;
   }
 
-  invalidateInventoryCaches();
+  if ('replay' in posted) {
+    const productId = posted.replay.catalogProductId ?? '';
+    return {
+      posted: true,
+      idempotent: true,
+      productId,
+      productName: posted.replay.productName,
+      unitsAdded: posted.replay.unitsAdded,
+      onHand: productId ? await getCurrentStock(productId) : 0,
+      transactionId: posted.replay.transactionId ?? '',
+    };
+  }
+
+  if (!db) invalidateInventoryCaches();
   const onHand = await getCurrentStock(posted.product.id);
   return {
     posted: true,

@@ -41,7 +41,7 @@ export async function POST(req: NextRequest) {
     });
     if (!resolved.ok) {
       return NextResponse.json(
-        { success: false, error: resolved.error, code: resolved.code },
+        { success: false, error: resolved.error, code: resolved.code, ...(resolved.details ?? {}) },
         { status: 409 }
       );
     }

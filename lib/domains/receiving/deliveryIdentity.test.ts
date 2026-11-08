@@ -3,6 +3,7 @@ import test from 'node:test';
 import { uuidV5 } from '@/lib/domains/receiving/invoiceDeliveryId';
 import { receivingLogsFromInvoice } from '@/lib/domains/receiving/receivingBridge';
 import {
+  canonicalInvoiceDate,
   canonicalInvoiceNumber,
   INVOICE_NUMBER_REUSE_POLICY,
   SUPPLIER_REQUIRED_ERROR,
@@ -120,10 +121,14 @@ test('invoice numbers keep punctuation and invoice lines stay unposted until the
   assert.equal(canonicalInvoiceNumber('1001/A'), '1001/a');
   assert.equal(canonicalInvoiceNumber('1001-A'), '1001-a');
   assert.notEqual(canonicalInvoiceNumber('1001/A'), canonicalInvoiceNumber('1001-A'));
-  assert.equal(canonicalInvoiceNumber('  INV  9 '), 'inv9');
-  assert.equal(canonicalInvoiceNumber('1001 / A'), canonicalInvoiceNumber('1001/A'));
+  assert.equal(canonicalInvoiceNumber('  INV  9 '), 'inv 9');
+  assert.notEqual(canonicalInvoiceNumber('1001 / A'), canonicalInvoiceNumber('1001/A'));
+  assert.notEqual(canonicalInvoiceNumber('A 12'), canonicalInvoiceNumber('A12'));
   assert.equal(canonicalInvoiceNumber('unread'), null);
-  assert.match(INVOICE_NUMBER_REUSE_POLICY, /date and year are not part/i);
+  assert.equal(canonicalInvoiceDate(' 2026-11-08 '), '2026-11-08');
+  assert.equal(canonicalInvoiceDate(''), null);
+  assert.notEqual(canonicalInvoiceDate('2024-01-02'), canonicalInvoiceDate('2026-11-08'));
+  assert.match(INVOICE_NUMBER_REUSE_POLICY, /different date/i);
   assert.match(SUPPLIER_REQUIRED_ERROR, /Select a saved supplier/);
   const apples = {
     name: 'Apples',

@@ -13,6 +13,7 @@ import type { ReceivingLogsResult } from '@/lib/domains/receiving/receivingSheet
 import type { InvoiceOcrResult } from '@/lib/types';
 import { receivingLogsFromInvoice } from '@/lib/domains/receiving/receivingBridge';
 import { SUPPLIER_REQUIRED_ERROR } from '@/lib/domains/receiving/invoiceDeliveryId';
+import { invoiceHoldActions, type InvoiceHoldAction } from '@/lib/domains/receiving/invoiceIdentityHold';
 import type { ReceivingLog } from '@/lib/domains/receiving/yieldPricing';
 import type { SupplierRecord } from '@/lib/domains/suppliers/suppliers';
 
@@ -23,6 +24,15 @@ export function ReceiveScreen({ initial }: { initial: ReceivingLogsResult }) {
   const [suppliers, setSuppliers] = useState<SupplierRecord[]>([]);
   const [selectedSupplierId, setSelectedSupplierId] = useState('');
   const [supplierLoadError, setSupplierLoadError] = useState<string | null>(null);
+  const [identityNonce, setIdentityNonce] = useState(0);
+  const [identityHold, setIdentityHold] = useState<{
+    code: string;
+    error: string;
+    newPrintedNames?: string[];
+    legacyReceipts?: { key: string; vendor: string; invoice: string }[];
+    unmatchedStoredLines?: { id: string; printedKey: string }[];
+  } | null>(null);
+  const [dateDraft, setDateDraft] = useState('');
 
   const loadSuppliers = useCallback(() => {
     setSupplierLoadError(null);
@@ -89,7 +99,7 @@ export function ReceiveScreen({ initial }: { initial: ReceivingLogsResult }) {
       body: JSON.stringify({
         supplierId: selectedSupplierId,
         invoiceNumber,
-        invoiceDate: lines[0]?.invoiceDate,
+        invoiceDate: dateDraft || lines[0]?.invoiceDate,
         lines: lines.map((log) => ({ printedName: log.printedName })),
       }),
     })
@@ -97,16 +107,28 @@ export function ReceiveScreen({ initial }: { initial: ReceivingLogsResult }) {
         const json = (await response.json()) as {
           success?: boolean;
           error?: string;
+          code?: string;
           lines?: { deliveryId?: string }[];
+          newPrintedNames?: string[];
+          legacyReceipts?: { key: string; vendor: string; invoice: string }[];
+          unmatchedStoredLines?: { id: string; printedKey: string }[];
         };
         if (cancelled) return;
         if (!response.ok || !json.success || !Array.isArray(json.lines)) {
+          setIdentityHold({
+            code: json.code ?? 'LINE_MISMATCH',
+            error: json.error ?? SUPPLIER_REQUIRED_ERROR,
+            newPrintedNames: json.newPrintedNames,
+            legacyReceipts: json.legacyReceipts,
+            unmatchedStoredLines: json.unmatchedStoredLines,
+          });
           setScanNote(json.error ?? SUPPLIER_REQUIRED_ERROR);
           setScannedLogs((prev) =>
             prev.map((log) => (log.invoiceNumber ? { ...log, canPost: false } : log))
           );
           return;
         }
+        setIdentityHold(null);
         setScannedLogs((prev) => {
           let cursor = 0;
           return prev.map((log) => {
@@ -129,7 +151,39 @@ export function ReceiveScreen({ initial }: { initial: ReceivingLogsResult }) {
     };
     // invoiceIdentityKey already captures the printed lines. Ids assigned below must not refetch.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [invoiceIdentityKey, selectedSupplierId]);
+  }, [dateDraft, identityNonce, invoiceIdentityKey, selectedSupplierId]);
+
+  const confirmHold = (action: InvoiceHoldAction['action'], legacyKey?: string) => {
+    const lines = scannedLogs.filter((log) => log.invoiceNumber && log.printedName);
+    const invoiceNumber = lines[0]?.invoiceNumber;
+    if (!selectedSupplierId || !invoiceNumber) return;
+    const mapped = identityHold?.unmatchedStoredLines?.[0];
+    const newName = identityHold?.newPrintedNames?.[0];
+    void fetch('/api/receiving-invoices/reconcile', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action,
+        supplierId: selectedSupplierId,
+        invoiceNumber,
+        invoiceDate: dateDraft || lines[0]?.invoiceDate,
+        lines: lines.map((log) => ({ printedName: log.printedName })),
+        confirmNewPrintedNames: identityHold?.newPrintedNames,
+        legacyKey,
+        fromLineId: action === 'map-line' ? mapped?.id : undefined,
+        mappedPrintedName: action === 'map-line' ? newName : undefined,
+      }),
+    })
+      .then(async (response) => {
+        const json = (await response.json()) as { success?: boolean; error?: string };
+        if (!response.ok || !json.success) {
+          setScanNote(json.error ?? 'That confirmation was not saved.');
+          return;
+        }
+        setIdentityNonce((value) => value + 1);
+      })
+      .catch(() => setScanNote('That confirmation did not reach the server.'));
+  };
 
   return (
     <>
@@ -165,8 +219,47 @@ export function ReceiveScreen({ initial }: { initial: ReceivingLogsResult }) {
           </CardBody>
         </Card>
         {scanNote ? (
-          <Card className="mt-3 border-emerald-800/40 bg-emerald-950/20">
-            <CardBody className="py-3 text-sm font-semibold text-emerald-400/90">{scanNote}</CardBody>
+          <Card className={`mt-3 ${identityHold ? 'border-amber-800/50 bg-amber-950/20' : 'border-emerald-800/40 bg-emerald-950/20'}`}>
+            <CardBody className="space-y-3 py-3 text-sm">
+              <p className={identityHold ? 'font-semibold text-amber-100' : 'font-semibold text-emerald-400/90'}>
+                {scanNote}
+              </p>
+              {identityHold?.code === 'DATE_REQUIRED' ? (
+                <label className="block text-xs text-slate-300">
+                  Invoice date from the paper
+                  <input
+                    value={dateDraft}
+                    onChange={(event) => setDateDraft(event.target.value)}
+                    placeholder="YYYY-MM-DD"
+                    className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
+                  />
+                </label>
+              ) : null}
+              {identityHold ? (
+                <div className="flex flex-wrap gap-2">
+                  {invoiceHoldActions(identityHold.code)
+                    .filter((choice) => choice.action !== 'map-line' || (identityHold.unmatchedStoredLines?.length === 1 && identityHold.newPrintedNames?.length === 1))
+                    .filter((choice) => choice.action !== 'adopt-legacy')
+                    .map((choice) => (
+                      <Button key={choice.action} type="button" variant="secondary" onClick={() => confirmHold(choice.action)}>
+                        {choice.label}
+                      </Button>
+                    ))}
+                  {identityHold.code === 'LEGACY_RECEIPT_PRESENT'
+                    ? (identityHold.legacyReceipts ?? []).map((receipt) => (
+                        <Button
+                          key={receipt.key}
+                          type="button"
+                          variant="secondary"
+                          onClick={() => confirmHold('adopt-legacy', receipt.key)}
+                        >
+                          Attach {receipt.vendor} / {receipt.invoice} without adding stock
+                        </Button>
+                      ))
+                    : null}
+                </div>
+              ) : null}
+            </CardBody>
           </Card>
         ) : null}
         <div className="mt-4">
