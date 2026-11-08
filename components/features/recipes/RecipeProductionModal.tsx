@@ -10,6 +10,12 @@ import type {
 } from '@/lib/domains/manufacturing/types';
 import type { RoleName } from '@/lib/utils/roles';
 import { computeScaledBatchCost } from '@/lib/domains/manufacturing/batchCost';
+import { manufacturingPayloadKey } from '@/lib/domains/manufacturing/manufacturingPayload';
+import {
+  browserManufacturingOperationStore,
+  claimManufacturingOperationId,
+  settleManufacturingOperationId,
+} from '@/lib/domains/manufacturing/operationAttempt';
 import { resolveLaborRatePerHour } from '@/lib/domains/manufacturing/resolveLaborRate';
 import { ModalBody, ModalFooter, ModalHeader, ModalShell, ScrollTable } from '@/components/ui/layout';
 import {
@@ -365,19 +371,33 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
           }))
       : undefined;
 
+    const requestBody = {
+      recipe_id: selectedRecipe.recipeId,
+      batch_output: batchOutputQty,
+      enforce_stock_check: true as const,
+      ingredient_overrides: ingredientOverrides,
+    };
+    const payloadKey = manufacturingPayloadKey(requestBody);
+    const operationStore = browserManufacturingOperationStore();
+    const operationId = claimManufacturingOperationId(operationStore, payloadKey, () =>
+      crypto.randomUUID()
+    );
+
     try {
       const res = await fetch('/api/manufacturing', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          recipe_id: selectedRecipe.recipeId,
-          batch_output: batchOutputQty,
-          enforce_stock_check: true,
-          ingredient_overrides: ingredientOverrides,
+          operation_id: operationId,
+          ...requestBody,
         }),
       });
 
       const json = await res.json();
+
+      if (json.code === 'MANUFACTURING_OPERATION_CONFLICT') {
+        settleManufacturingOperationId(operationStore, payloadKey);
+      }
 
       if (res.status === 403) {
         const msg =
@@ -412,6 +432,7 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
         })),
       };
 
+      settleManufacturingOperationId(operationStore, payloadKey);
       onBatchProduced?.(summary);
       notifyInventoryUpdated();
       window.dispatchEvent(new CustomEvent('freshloop-kitchen-inbox'));
