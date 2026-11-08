@@ -3,6 +3,7 @@ export const VOICE_MAX_RECORDING_SECONDS = 60;
 export type VoicePipelinePhase =
   | 'idle'
   | 'recording'
+  | 'compressing'
   | 'uploading'
   | 'transcribing'
   | 'parsing';
@@ -17,6 +18,8 @@ export function voicePipelineStatusLabel(phase: VoicePipelinePhase): string {
   switch (phase) {
     case 'recording':
       return 'Recording';
+    case 'compressing':
+      return 'Preparing audio…';
     case 'uploading':
       return 'Uploading audio…';
     case 'transcribing':

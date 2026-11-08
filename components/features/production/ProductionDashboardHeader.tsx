@@ -1,7 +1,8 @@
 'use client';
 
 import React from 'react';
-import { BookOpen, ChefHat, Plus } from 'lucide-react';
+import { BookOpen, ChefHat, Mic, Plus } from 'lucide-react';
+import { VOICE_UI_ENABLED } from '@/lib/features/voiceUiEnabled';
 import {
   ProductionBomKpiBadges,
   type ProductionBomSummary,
@@ -22,6 +23,7 @@ export type ProductionDashboardHeaderProps = {
   onScrollToCatalog: () => void;
   syncing?: boolean;
   wasteKpiRefreshError?: string | null;
+  onVoiceNote?: () => void;
 };
 
 export function ProductionDashboardHeader({
@@ -35,6 +37,7 @@ export function ProductionDashboardHeader({
   onScrollToCatalog,
   syncing = false,
   wasteKpiRefreshError = null,
+  onVoiceNote,
 }: ProductionDashboardHeaderProps) {
   return (
     <div
@@ -76,6 +79,17 @@ export function ProductionDashboardHeader({
               >
                 <ChefHat className="h-4 w-4" />
                 Execute batch
+              </Button>
+            ) : null}
+            {VOICE_UI_ENABLED && onVoiceNote ? (
+              <Button
+                type="button"
+                variant="secondary"
+                className="min-h-11 border-teal-500/40 bg-slate-950 text-xs font-bold text-teal-200 sm:min-h-10"
+                onClick={onVoiceNote}
+              >
+                <Mic className="h-4 w-4 text-teal-400" />
+                Voice note
               </Button>
             ) : null}
             <Button

@@ -7,6 +7,7 @@ import { PushToTalkRecorder, VOICE_MAX_RECORDING_SECONDS } from '@/lib/features/
 import { postVoiceLoggerParse } from '@/lib/features/voiceLoggerClient';
 import type { VoicePipelinePhase } from '@/lib/features/voicePipelineUi';
 import { VoicePipelineStatusBar } from '@/components/ui/VoicePipelineStatusBar';
+import { VoicePipelineErrorBanner } from '@/components/ui/VoicePipelineErrorBanner';
 import { Mic, Square, Sparkles, X, AlertOctagon, Volume2, ArrowRightLeft, Tag, Trash2, Loader2 } from 'lucide-react';
 import { ModalBody, ModalFooter, ModalHeader, ModalShell } from '@/components/ui/layout';
 
@@ -57,12 +58,13 @@ export const VoiceRecorderModal: React.FC<VoiceRecorderModalProps> = ({
       },
       onMaxDurationReached: (blob) => {
         setIsRecording(false);
-        setPipelinePhase('idle');
         setRecordingSeconds(0);
         if (blob?.size) {
           setLastAudioBlob(blob);
+          setPipelinePhase('compressing');
           processVoiceRef.current(blob);
         } else {
+          setPipelinePhase('idle');
           setProcessError('Recording hit the time limit with no usable audio.');
         }
       },
@@ -90,14 +92,21 @@ export const VoiceRecorderModal: React.FC<VoiceRecorderModalProps> = ({
     const recorder = pttRecorderRef.current;
     if (!recorder?.active && !isRecording) return;
     setIsRecording(false);
-    setPipelinePhase('idle');
     setRecordingSeconds(0);
     const blob = await recorder?.stop().catch(() => null);
     if (blob && blob.size > 0) {
       setLastAudioBlob(blob);
-      if (autoParse) void handleProcessVoice(blob);
+      if (autoParse) {
+        setPipelinePhase('compressing');
+        void handleProcessVoice(blob);
+      } else {
+        setPipelinePhase('idle');
+      }
     } else if (autoParse) {
+      setPipelinePhase('idle');
       setProcessError('No audio captured. Hold the mic button while speaking.');
+    } else {
+      setPipelinePhase('idle');
     }
   };
 
@@ -130,7 +139,13 @@ export const VoiceRecorderModal: React.FC<VoiceRecorderModalProps> = ({
     const hasAudio = Boolean(blob && blob.size > 0);
     setProcessingAudio(hasAudio);
     setProcessError(null);
-    setPipelinePhase(hasAudio ? 'transcribing' : 'parsing');
+    if (hasAudio) {
+      if (pipelinePhase !== 'compressing') setPipelinePhase('compressing');
+      setPipelinePhase('uploading');
+      setPipelinePhase('transcribing');
+    } else {
+      setPipelinePhase('parsing');
+    }
     try {
       const res = await postVoiceLoggerParse({
         audioBlob: blob,
@@ -138,17 +153,28 @@ export const VoiceRecorderModal: React.FC<VoiceRecorderModalProps> = ({
       });
 
       setPipelinePhase('parsing');
-      const json = await res.json();
-      if (json.success && json.data) {
+      const json = (await res.json()) as {
+        success?: boolean;
+        data?: VoiceLoggerResult;
+        error?: string;
+        message?: string;
+      };
+      if (!res.ok || !json.success) {
+        setProcessError(
+          json.error ||
+            json.message ||
+            (res.status === 503
+              ? 'Voice service unavailable — check OPENAI_API_KEY on the server.'
+              : 'Voice log could not be processed. Try again.')
+        );
+        return;
+      }
+      if (json.data) {
         setVoiceResult(json.data);
         onVoiceLogged();
         return;
       }
-      setProcessError(
-        (typeof json.error === 'string' && json.error) ||
-          (typeof json.message === 'string' && json.message) ||
-          'Voice log could not be processed. Try again.'
-      );
+      setProcessError('Voice log could not be processed. Try again.');
     } catch (err) {
       console.error('Voice logger processing error:', err);
       setProcessError('Could not reach the server. Check your connection and try again.');
@@ -194,9 +220,12 @@ export const VoiceRecorderModal: React.FC<VoiceRecorderModalProps> = ({
 
         <ModalBody className="space-y-4 p-4 text-xs text-zinc-200 sm:space-y-6 sm:p-6">
           {processError ? (
-            <p className="rounded-xl border border-rose-500/40 bg-rose-950/40 px-3 py-2 text-xs font-semibold text-rose-200">
-              {processError}
-            </p>
+            <VoicePipelineErrorBanner
+              message={processError}
+              onRetry={() => void handleProcessVoice(lastAudioBlob)}
+              retryLabel={lastAudioBlob?.size ? 'Retry recording' : 'Retry parse'}
+              onDismiss={() => setProcessError(null)}
+            />
           ) : null}
           {!voiceResult ? (
             <div className="space-y-6">

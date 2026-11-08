@@ -1,6 +1,9 @@
 'use client';
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { VoiceRecorderModal } from '@/components/features/voice/VoiceRecorderModal';
+import { useRegisterAppVoice } from '@/components/layout/AppVoiceOverrideContext';
+import { VOICE_UI_ENABLED } from '@/lib/features/voiceUiEnabled';
 import { useRouter } from 'next/navigation';
 import { CheckCircle2 } from 'lucide-react';
 import { stashInvoiceForReceiving } from '@/lib/domains/receiving/receivingBridge';
@@ -93,6 +96,10 @@ function ProductionDashboardContent() {
     avgMargin: 0,
   });
   const [mobileSection, setMobileSection] = useState<ProductionMobileSection>('bom');
+  const [voiceRecorderOpen, setVoiceRecorderOpen] = useState(false);
+
+  const openVoiceRecorder = useCallback(() => setVoiceRecorderOpen(true), []);
+  useRegisterAppVoice(VOICE_UI_ENABLED ? openVoiceRecorder : null);
 
   const sectionVisibility = productionMobileVisibility(mobileSection);
 
@@ -205,6 +212,7 @@ function ProductionDashboardContent() {
           onScrollToCatalog={scrollToCatalog}
           syncing={syncing}
           wasteKpiRefreshError={wasteKpiRefreshError}
+          onVoiceNote={VOICE_UI_ENABLED ? openVoiceRecorder : undefined}
         />
 
         <div className="relative z-0 mt-4 grid grid-cols-1 gap-4 lg:mt-6 lg:grid-cols-3 lg:gap-6 lg:items-start">
@@ -290,6 +298,16 @@ function ProductionDashboardContent() {
           />
         </div>
       </PageMain>
+
+      {VOICE_UI_ENABLED ? (
+        <VoiceRecorderModal
+          isOpen={voiceRecorderOpen}
+          onClose={() => setVoiceRecorderOpen(false)}
+          onVoiceLogged={() => {
+            void fetchRecipes();
+          }}
+        />
+      ) : null}
 
       <LazyInvoiceUploadModal
         isOpen={isInvoiceModalOpen}

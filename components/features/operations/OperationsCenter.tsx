@@ -1,6 +1,9 @@
 'use client';
 
 import React, { useCallback, useEffect, useState } from 'react';
+import { VoiceLoggerModal } from '@/components/features/voice/VoiceLoggerModal';
+import { useRegisterAppVoice } from '@/components/layout/AppVoiceOverrideContext';
+import { VOICE_UI_ENABLED } from '@/lib/features/voiceUiEnabled';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { stashInvoiceForReceiving } from '@/lib/domains/receiving/receivingBridge';
@@ -17,6 +20,7 @@ import {
   Activity,
   DollarSign,
   FileText,
+  Mic,
   RefreshCw,
 } from 'lucide-react';
 
@@ -25,6 +29,10 @@ export default function OperationsCenter() {
   const [pullSensitivityDays, setPullSensitivityDays] = useState<2 | 3 | 4>(3);
   const [settingsLoading, setSettingsLoading] = useState(false);
   const [isInvoiceModalOpen, setIsInvoiceModalOpen] = useState(false);
+  const [voiceLoggerOpen, setVoiceLoggerOpen] = useState(false);
+
+  const openVoiceLogger = useCallback(() => setVoiceLoggerOpen(true), []);
+  useRegisterAppVoice(VOICE_UI_ENABLED ? openVoiceLogger : null);
 
   const syncStoreSettings = useCallback(async (showSpinner = false) => {
     if (showSpinner) setSettingsLoading(true);
@@ -101,6 +109,17 @@ export default function OperationsCenter() {
                 <span>Invoice OCR</span>
               </button>
 
+              {VOICE_UI_ENABLED ? (
+                <button
+                  type="button"
+                  onClick={() => setVoiceLoggerOpen(true)}
+                  className="flex min-h-11 items-center justify-center gap-2 rounded-2xl border border-teal-600/50 bg-teal-950/40 px-3 py-2.5 text-xs font-bold text-teal-100 shadow-inner transition-all hover:bg-teal-900/50 active:scale-95 sm:px-4"
+                >
+                  <Mic className="h-4 w-4 text-teal-300" />
+                  <span>Voice floor log</span>
+                </button>
+              ) : null}
+
               <button
                 type="button"
                 onClick={() => void syncStoreSettings(true)}
@@ -120,6 +139,13 @@ export default function OperationsCenter() {
           <OperationsLiveTransfers pullDays={pullSensitivityDays} />
         </div>
       </PageMain>
+
+      {VOICE_UI_ENABLED ? (
+        <VoiceLoggerModal
+          isOpen={voiceLoggerOpen}
+          onClose={() => setVoiceLoggerOpen(false)}
+        />
+      ) : null}
 
       <InvoiceUploadModal
         isOpen={isInvoiceModalOpen}

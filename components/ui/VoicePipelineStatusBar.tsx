@@ -22,7 +22,11 @@ export function VoicePipelineStatusBar({
 }) {
   if (phase === 'idle') return null;
 
-  const processing = phase === 'uploading' || phase === 'transcribing' || phase === 'parsing';
+  const processing =
+    phase === 'compressing' ||
+    phase === 'uploading' ||
+    phase === 'transcribing' ||
+    phase === 'parsing';
   const nearCap = phase === 'recording' && recordingSeconds >= maxRecordingSeconds - 10;
 
   return (
