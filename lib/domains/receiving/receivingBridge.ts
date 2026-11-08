@@ -1,4 +1,8 @@
 import type { InvoiceOcrResult } from '@/lib/types';
+import {
+  normalizeInvoiceIdentity,
+  uuidV5,
+} from '@/lib/domains/receiving/invoiceDeliveryId';
 import { DEMO_INVOICE_NUMBER } from '@/lib/domains/receiving/sampleReceivingGuard';
 import type { ReceivingLog, RetailUnit } from '@/lib/domains/receiving/yieldPricing';
 
@@ -11,7 +15,9 @@ function retailUnitFromSubUnit(subUnit: string | undefined): RetailUnit {
   return 'units';
 }
 
-function stableLogId(result: { invoiceNumber: string }, item: InvoiceOcrResult['lineItems'][number], index: number): string {
+type InvoiceLine = InvoiceOcrResult['lineItems'][number];
+
+function stableLogId(result: { invoiceNumber: string }, item: InvoiceLine, index: number): string {
   const slug = (item.productId || item.name || `line-${index}`)
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
@@ -19,27 +25,52 @@ function stableLogId(result: { invoiceNumber: string }, item: InvoiceOcrResult['
   return `scan-${result.invoiceNumber}-${slug}`;
 }
 
-/** One UUID per new invoice line. The practice invoice keeps its reserved id. */
-export function newReceivingDeliveryId(
-  result: Pick<InvoiceOcrResult, 'invoiceNumber'>,
-  item: InvoiceOcrResult['lineItems'][number],
+function invoiceLineSlot(item: InvoiceLine): string {
+  const product = item.productId?.trim();
+  if (product) return `product:${product.toLowerCase()}`;
+  const name = (item.name || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  return name ? `name:${name}` : 'line:blank';
+}
+
+/**
+ * Stable UUID for one line on a numbered invoice.
+ * The same invoice number, line slot, and occurrence always yield the same id.
+ * Quantity and price are not part of the name. A blank invoice number returns null.
+ */
+export function invoiceLineDeliveryId(
+  invoiceNumber: string | null | undefined,
+  lines: InvoiceLine[],
   index: number
-): string {
-  if (result.invoiceNumber.trim().toLowerCase() === DEMO_INVOICE_NUMBER.toLowerCase()) {
-    return stableLogId(result, item, index);
+): string | null {
+  if ((invoiceNumber ?? '').trim().toLowerCase() === DEMO_INVOICE_NUMBER.toLowerCase()) {
+    const item = lines[index];
+    if (!item) return null;
+    return stableLogId({ invoiceNumber: DEMO_INVOICE_NUMBER }, item, index);
   }
-  return crypto.randomUUID();
+  const invoice = normalizeInvoiceIdentity(invoiceNumber);
+  const item = lines[index];
+  if (!invoice || !item) return null;
+  const slot = invoiceLineSlot(item);
+  let occurrence = 0;
+  for (let cursor = 0; cursor < index; cursor += 1) {
+    if (invoiceLineSlot(lines[cursor]!) === slot) occurrence += 1;
+  }
+  return uuidV5(`invoice\n${invoice}\n${slot}\n${occurrence}`);
 }
 
 /** Maps OCR output into receiving-board rows (pricing happens before `postReceipt`). */
 export function receivingLogsFromInvoice(result: InvoiceOcrResult): ReceivingLog[] {
-  return result.lineItems
-    .filter((item) => item.name && Number(item.unitCost) >= 0)
+  const lines = result.lineItems.filter((item) => item.name && Number(item.unitCost) >= 0);
+  const invoiceKnown = normalizeInvoiceIdentity(result.invoiceNumber) !== null
+    || result.invoiceNumber.trim().toLowerCase() === DEMO_INVOICE_NUMBER.toLowerCase();
+  return lines
     .map((item, index) => {
       const catalogName = item.matchedProductName?.trim();
       const productId = item.productId?.trim();
+      const deliveryId = invoiceLineDeliveryId(result.invoiceNumber, lines, index);
       return {
-        id: newReceivingDeliveryId(result, item, index),
+        id: deliveryId ?? `unassigned-invoice-line-${index + 1}`,
+        canPost: Boolean(deliveryId) && invoiceKnown && !deliveryId?.startsWith('scan-'),
         itemName: catalogName || item.name,
         invoiceLineName: catalogName && catalogName !== item.name ? item.name : undefined,
         productId: productId || undefined,

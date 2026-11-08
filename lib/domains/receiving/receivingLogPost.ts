@@ -6,7 +6,9 @@ import {
 } from '@/lib/domains/inventory/stock';
 import {
   DELIVERY_UUID_REQUIRED_ERROR,
+  isLegacyScanDeliveryId,
   isRetiredPositionalDeliveryId,
+  LEGACY_SCAN_STASH_ERROR,
   normalizeDeliveryUuid,
   ReceivingDeliveryConflict,
   receivingDeliveryPayloadHash,
@@ -48,7 +50,10 @@ export interface ReceivingLogPostResult {
 }
 
 export function receivingValidationHttpStatus(error: string): 400 | 409 {
-  return error === RETIRED_POSITIONAL_DELIVERY_ERROR ? 409 : 400;
+  if (error === RETIRED_POSITIONAL_DELIVERY_ERROR || error === LEGACY_SCAN_STASH_ERROR) {
+    return 409;
+  }
+  return 400;
 }
 
 export function receivingLineHttpStatus(
@@ -99,8 +104,32 @@ export function validateReceivingLogPostInput(body: Partial<ReceivingLogPostInpu
   }
   const rawDeliveryId = body.externalLogId?.trim() ?? '';
   if (!rawDeliveryId) return { ok: false, error: DELIVERY_UUID_REQUIRED_ERROR };
+  const sampleReason = sampleReceivingRejection({ externalLogId: rawDeliveryId });
+  if (sampleReason) {
+    return {
+      ok: true,
+      input: {
+        itemName,
+        productId: body.productId?.trim() || undefined,
+        casesReceived,
+        caseCost,
+        packSize,
+        splitFactor,
+        retailUnit,
+        marginMode,
+        customMarginPercent: Number(body.customMarginPercent) || 0,
+        currentRetailPrice,
+        caseRetailPrice: body.caseRetailPrice,
+        supplierId: body.supplierId?.trim() || undefined,
+        externalLogId: rawDeliveryId,
+      },
+    };
+  }
   if (isRetiredPositionalDeliveryId(rawDeliveryId)) {
     return { ok: false, error: RETIRED_POSITIONAL_DELIVERY_ERROR };
+  }
+  if (isLegacyScanDeliveryId(rawDeliveryId)) {
+    return { ok: false, error: LEGACY_SCAN_STASH_ERROR };
   }
   const deliveryId = normalizeDeliveryUuid(rawDeliveryId);
   if (!deliveryId) return { ok: false, error: DELIVERY_UUID_REQUIRED_ERROR };
@@ -166,8 +195,6 @@ export async function postReceivingLogToInventory(
               caseCost: input.caseCost,
               packSize: input.packSize,
               splitFactor: input.splitFactor,
-              retailPrice: input.currentRetailPrice,
-              caseRetailPrice,
             }),
             productId: input.productId,
           }

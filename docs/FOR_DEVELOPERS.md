@@ -161,7 +161,11 @@ All handlers use `export const dynamic = 'force-dynamic'` unless noted. Errors o
 
 **Receive UI session keys:** `freshloop-posted-receiving`, `freshloop-receiving-hidden` (optimistic hide before refetch).
 
-**Delivery identity.** The sheet is read-only (`GOOGLE_SHEETS_API_KEY` values GET). FreshLoop does not write a UUID back. Add a column named `Delivery ID`, `Line ID`, or `External ID`. Generate the UUID once per delivery and leave that cell with the row when it is sorted or reused. A new delivery needs a new UUID even when the item and cost match. Rows without a UUID are shown with `canPost: false`. `sheet-row-N` is rejected with 409 and does not delete old `recv:sheet-row-N` ledger keys. Invoice lines call `crypto.randomUUID()` once when the scan is stashed.
+**Delivery identity.** The sheet is read-only (`GOOGLE_SHEETS_API_KEY` values GET). FreshLoop does not write a UUID back. Add a column named `Delivery ID`, `Line ID`, or `External ID`. Generate the UUID once per delivery and leave that cell with the row when it is sorted or reused. A new delivery needs a new UUID even when the item and cost match. Rows without a UUID, and every row that repeats a UUID, are shown with `canPost: false`. `sheet-row-N` is rejected with 409 and does not delete old `recv:sheet-row-N` ledger keys.
+
+Numbered invoice lines use a UUID v5 of the invoice number plus the line's product (or name) and how many times that slot already appeared. Scanning invoice `INV-9` again resolves the same ids, so a second save does not add stock. A blank or `unread` invoice number does not get an id. Old browser stashes whose ids start with `scan-` return 409 with `LEGACY_SCAN_STASH_ERROR`; open the invoice again. Shelf price is not part of the physical receipt fingerprint, so a price-only retry stays idempotent. A different case cost is 409.
+
+Apply `20261108220000_receiving_delivery_uuid` manually after review. Pushing this branch does not migrate production.
 
 Bridge from invoice OCR: `lib/domains/receiving/receivingBridge.ts` (`receivingLogsFromInvoice`, `consumeStashedReceivingScan`).
 

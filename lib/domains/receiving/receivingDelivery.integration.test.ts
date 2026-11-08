@@ -63,6 +63,14 @@ test('delivery UUIDs post, retry, conflict, and stay distinct', { skip: !hasDb }
   assert.equal(samePositionSecond.stock.posted, true);
   if (!samePositionFirst.stock.posted || !samePositionSecond.stock.posted) return;
 
+  const priced = await postReceivingLogToInventory(
+    line(ID_A, { itemName: name, currentRetailPrice: 9 }),
+    'test-staff',
+    null
+  );
+  assert.equal(priced.stock.posted, true);
+  if (priced.stock.posted) assert.equal(priced.stock.idempotent, true);
+
   const retry = await postReceivingLogToInventory(line(ID_A, { itemName: name }), 'test-staff', null);
   assert.equal(retry.stock.posted, true);
   if (retry.stock.posted) {

@@ -29,6 +29,7 @@ import { consumeStashedReceivingScan } from '@/lib/domains/receiving/receivingBr
 import { readReceivingPrefs, writeReceivingPrefs } from '@/lib/domains/receiving/receivingPreferences';
 import type { ReceivingDispositionRow } from '@/lib/domains/receiving/receivingDisposition';
 import type { ReceivingLogSource } from '@/lib/domains/receiving/receivingSheet';
+import { interpretReceivingBatchResponse } from '@/lib/domains/receiving/receivingBatchResult';
 
 interface LogsResponse {
   success: boolean;
@@ -211,7 +212,15 @@ async function postLogsBatchToInventory(
   results: Array<{
     externalLogId?: string;
     itemName: string;
-    stock: { posted: boolean; reason?: string; onHand?: number; productId?: string };
+    stock: {
+      posted: boolean;
+      reason?: string;
+      onHand?: number;
+      productId?: string;
+      idempotent?: boolean;
+      conflict?: boolean;
+      unitsAdded?: number;
+    };
   }>;
   error?: string;
 }> {
@@ -229,7 +238,15 @@ async function postLogsBatchToInventory(
     results?: Array<{
       externalLogId?: string;
       itemName: string;
-      stock: { posted: boolean; reason?: string; onHand?: number; productId?: string };
+      stock: {
+        posted: boolean;
+        reason?: string;
+        onHand?: number;
+        productId?: string;
+        idempotent?: boolean;
+        conflict?: boolean;
+        unitsAdded?: number;
+      };
     }>;
   } = {};
   try {
@@ -237,10 +254,11 @@ async function postLogsBatchToInventory(
   } catch {
     json = {};
   }
-  if (!response.ok || !json.success || !Array.isArray(json.results)) {
-    return { ok: false, results: [], error: json.error || 'Batch save failed.' };
+  const interpreted = interpretReceivingBatchResponse(response.status, json);
+  if (!interpreted.apply) {
+    return { ok: false, results: [], error: interpreted.error || 'Batch save failed.' };
   }
-  return { ok: true, results: json.results };
+  return { ok: true, results: interpreted.results, error: interpreted.error };
 }
 
 function MovedNoticeBanner({ notice }: { notice: string }) {
@@ -796,6 +814,7 @@ export function YieldPricingDashboard({
 
     const failed: string[] = [];
     let savedCount = 0;
+    let replayCount = 0;
     let lastName = '';
     let lastOnHand = 0;
     let lastProductId: string | undefined;
@@ -831,6 +850,7 @@ export function YieldPricingDashboard({
           markLogPosted(log.id);
           purgeLogFromLocalSources(log.id);
         }
+        if (row.stock.idempotent) replayCount += 1;
         savedCount += 1;
         lastName = label;
         lastOnHand = Number(row.stock.onHand) || 0;
@@ -848,6 +868,11 @@ export function YieldPricingDashboard({
     if (savedCount > 0) {
       stockRequest.current += 1;
       window.dispatchEvent(new CustomEvent('freshloop-inventory-updated'));
+    }
+
+    if (savedCount > 0 && replayCount === savedCount && failed.length === 0) {
+      setMovedNotice('Those deliveries were already received. Stock was not added again.');
+      return;
     }
 
     if (savedCount === 1 && failed.length === 0) {

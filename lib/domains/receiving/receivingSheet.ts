@@ -25,7 +25,7 @@ const COUNT_HEADERS = new Set([
 const COST_HEADERS = new Set(['new case cost', 'case cost', 'casecost', 'cost']);
 
 export const MISSING_DELIVERY_ID_WARNING =
-  'Some receiving rows have no Delivery ID. They are shown but cannot be posted. Put a UUID in a Delivery ID, Line ID, or External ID column and keep that cell with the delivery when the row moves. FreshLoop only reads the sheet.';
+  'Some receiving rows cannot be posted. Each delivery needs its own UUID in Delivery ID, Line ID, or External ID. A repeated UUID blocks every row that uses it. FreshLoop only reads the sheet.';
 
 function normalizeHeader(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
@@ -52,8 +52,13 @@ export function parseReceivingSheetValues(values: unknown[][]): ReceivingLog[] {
 
   if (itemIndex < 0 || countIndex < 0 || costIndex < 0) return [];
 
-  const logs: ReceivingLog[] = [];
-  const seenIds = new Set<string>();
+  const draft: Array<{
+    index: number;
+    itemName: string;
+    casesReceived: number;
+    caseCost: number;
+    deliveryId: string | null;
+  }> = [];
   values.slice(1).forEach((row, index) => {
     const itemName = String(row?.[itemIndex] ?? '').trim();
     const casesReceived = parseNumber(row?.[countIndex]);
@@ -61,18 +66,32 @@ export function parseReceivingSheetValues(values: unknown[][]): ReceivingLog[] {
     if (!itemName || casesReceived === null || caseCost === null) return;
     if (casesReceived < 0 || caseCost < 0) return;
     const rawId = idIndex >= 0 ? String(row?.[idIndex] ?? '').trim() : '';
-    const deliveryId = normalizeDeliveryUuid(rawId);
-    const duplicate = Boolean(deliveryId && seenIds.has(deliveryId));
-    if (deliveryId) seenIds.add(deliveryId);
-    const canPost = Boolean(deliveryId) && !duplicate;
-    logs.push({
-      id: canPost && deliveryId ? deliveryId : `unassigned-sheet-row-${index + 2}`,
+    draft.push({
+      index,
       itemName,
       casesReceived,
       caseCost,
-      canPost,
+      deliveryId: normalizeDeliveryUuid(rawId),
     });
   });
+  const idCount = new Map<string, number>();
+  for (const row of draft) {
+    if (!row.deliveryId) continue;
+    idCount.set(row.deliveryId, (idCount.get(row.deliveryId) ?? 0) + 1);
+  }
+
+  const logs: ReceivingLog[] = [];
+  for (const row of draft) {
+    const duplicated = Boolean(row.deliveryId && (idCount.get(row.deliveryId) ?? 0) > 1);
+    const canPost = Boolean(row.deliveryId) && !duplicated;
+    logs.push({
+      id: canPost && row.deliveryId ? row.deliveryId : `unassigned-sheet-row-${row.index + 2}`,
+      itemName: row.itemName,
+      casesReceived: row.casesReceived,
+      caseCost: row.caseCost,
+      canPost,
+    });
+  }
 
   return logs;
 }
