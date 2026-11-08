@@ -646,3 +646,22 @@ model LedgerIdempotencyKey {
 
   @@map("ledger_idempotency_keys")
 }
+
+/// One persisted delivery UUID. The payload hash rejects a reused id with different goods.
+model ReceivingDelivery {
+  id               String   @id
+  payloadHash      String   @map("payload_hash")
+  itemName         String   @map("item_name")
+  productId        String?  @map("product_id")
+  casesReceived    Float    @map("cases_received")
+  caseCost         Float    @map("case_cost")
+  packSize         Float    @map("pack_size")
+  splitFactor      Float    @map("split_factor")
+  unitsAdded       Float    @map("units_added")
+  transactionId    String?  @map("transaction_id")
+  catalogProductId String?  @map("catalog_product_id")
+  productName      String   @map("product_name")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  @@map("receiving_deliveries")
+}

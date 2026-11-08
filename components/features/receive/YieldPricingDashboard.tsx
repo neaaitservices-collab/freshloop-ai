@@ -744,6 +744,12 @@ export function YieldPricingDashboard({
 
   const handleSave = async () => {
     if (!selected || animatingOutIds.has(selected.id) || savingAll) return;
+    if (selected.canPost === false) {
+      setErrorMessage(
+        'This sheet row has no Delivery ID, so it was not posted. Add a UUID in the Delivery ID column and keep it with that delivery.'
+      );
+      return;
+    }
     const savedId = selected.id;
     const savedName = selected.itemName;
     const pricing = resolveLogPricing(selected, livePricing());
@@ -772,8 +778,14 @@ export function YieldPricingDashboard({
   };
 
   const handleSaveAll = async () => {
-    const targets = bulkLogs.filter((log) => !animatingOutIds.has(log.id));
-    if (targets.length === 0 || saving || savingAll) return;
+    const targets = bulkLogs.filter((log) => !animatingOutIds.has(log.id) && log.canPost !== false);
+    if (saving || savingAll) return;
+    if (targets.length === 0) {
+      setErrorMessage(
+        'None of these rows have a Delivery ID, so nothing was posted. Add a UUID on each delivery before saving.'
+      );
+      return;
+    }
 
     const live = livePricing();
     setSavingAll(true);

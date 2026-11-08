@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { InventoryLedgerError, executeBundleSale, prisma } from '@/lib/domains/inventory/ledger';
-import { postProductReceipt, postReceipt } from '@/lib/domains/inventory/stock';
+import { postProductReceipt } from '@/lib/domains/inventory/stock';
+import { postReceivingLogToInventory } from '@/lib/domains/receiving/receivingLogPost';
 import {
   commitInvoiceOcrReceipts,
   saveInvoiceOcrDraft,
@@ -80,8 +81,9 @@ test('duplicate receiving external ids post once', { skip: !hasDb }, async (t) =
   }
 
   const stamp = `recv-dup-${Date.now()}`;
-  const externalLogId = `line-${stamp}`;
+  const externalLogId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
   t.after(async () => {
+    await prisma.receivingDelivery.deleteMany({ where: { id: externalLogId } });
     await prisma.ledgerIdempotencyKey.deleteMany({ where: { key: `recv:${externalLogId}` } });
     await prisma.inventoryLot.deleteMany({
       where: { product: { name: `Dup Apple ${stamp}` } },
@@ -92,35 +94,26 @@ test('duplicate receiving external ids post once', { skip: !hasDb }, async (t) =
     await prisma.product.deleteMany({ where: { name: `Dup Apple ${stamp}` } });
   });
 
-  const first = await postReceipt({
+  const line = {
     itemName: `Dup Apple ${stamp}`,
     casesReceived: 1,
     caseCost: 12,
     packSize: 4,
     splitFactor: 1,
-    retailPrice: 5,
-    retailUnit: 'units',
-    staffId: 'test-staff',
+    retailUnit: 'units' as const,
+    marginMode: '40' as const,
+    currentRetailPrice: 5,
     externalLogId,
-  });
-  const second = await postReceipt({
-    itemName: `Dup Apple ${stamp}`,
-    casesReceived: 1,
-    caseCost: 12,
-    packSize: 4,
-    splitFactor: 1,
-    retailPrice: 5,
-    retailUnit: 'units',
-    staffId: 'test-staff',
-    externalLogId,
-  });
+  };
+  const first = await postReceivingLogToInventory(line, 'test-staff', null);
+  const second = await postReceivingLogToInventory(line, 'test-staff', null);
 
-  assert.equal(first.posted, true);
-  assert.equal(second.posted, true);
-  if (first.posted && second.posted) {
-    assert.equal(second.idempotent, true);
-    assert.equal(second.unitsAdded, 0);
-    const onHand = await getCurrentStock(first.productId, InventoryLocation.Retail_Floor);
+  assert.equal(first.stock.posted, true);
+  assert.equal(second.stock.posted, true);
+  if (first.stock.posted && second.stock.posted) {
+    assert.equal(second.stock.idempotent, true);
+    assert.equal(second.stock.unitsAdded, first.stock.unitsAdded);
+    const onHand = await getCurrentStock(first.stock.productId, InventoryLocation.Retail_Floor);
     assert.equal(onHand, 4);
   }
 });

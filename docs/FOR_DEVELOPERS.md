@@ -153,13 +153,15 @@ All handlers use `export const dynamic = 'force-dynamic'` unless noted. Errors o
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| `GET` | `/api/receiving-logs` | `loadReceivingLogs()` — Google Sheet or sample rows |
-| `POST` | `/api/receiving-logs` | Save pack → `postReceipt()` / yield math (`yieldPricing.ts`) |
+| `GET` | `/api/receiving-logs` | `loadReceivingLogs()` — read-only Google Sheet. No sample rows. |
+| `POST` | `/api/receiving-logs` | Save one delivery UUID → `postReceipt()`. Same UUID and payload is a no-op. A different payload is 409. |
 | `GET` | `/api/receiving-dispositions` | Pending vendor credits |
 | `POST` | `/api/receiving-dispositions` | Create disposition (not received / removed) |
 | `PATCH` | `/api/receiving-dispositions/[id]` | Resolve credit |
 
 **Receive UI session keys:** `freshloop-posted-receiving`, `freshloop-receiving-hidden` (optimistic hide before refetch).
+
+**Delivery identity.** The sheet is read-only (`GOOGLE_SHEETS_API_KEY` values GET). FreshLoop does not write a UUID back. Add a column named `Delivery ID`, `Line ID`, or `External ID`. Generate the UUID once per delivery and leave that cell with the row when it is sorted or reused. A new delivery needs a new UUID even when the item and cost match. Rows without a UUID are shown with `canPost: false`. `sheet-row-N` is rejected with 409 and does not delete old `recv:sheet-row-N` ledger keys. Invoice lines call `crypto.randomUUID()` once when the scan is stashed.
 
 Bridge from invoice OCR: `lib/domains/receiving/receivingBridge.ts` (`receivingLogsFromInvoice`, `consumeStashedReceivingScan`).
 

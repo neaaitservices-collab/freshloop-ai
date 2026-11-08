@@ -1,4 +1,5 @@
 import { Department, InventoryLocation, Prisma, TransactionType, UnitType } from '@prisma/client';
+import { ReceivingDeliveryConflict } from '@/lib/domains/receiving/deliveryIdentity';
 import { parsePosSalesDaysParam, posSalesWindowStart } from '@/lib/domains/inventory/posSalesUnits';
 import {
   getCurrentStock,
@@ -110,6 +111,13 @@ export interface PostedReceipt {
 
 export interface SkippedReceipt {
   posted: false;
+  reason: string;
+  conflict?: false;
+}
+
+export interface ConflictReceipt {
+  posted: false;
+  conflict: true;
   reason: string;
 }
 
@@ -1086,9 +1094,13 @@ export async function postReceipt(input: {
   staffId?: string;
   targetMargin?: number;
   supplier?: string | null;
-  /** Stable client line id. A repeat posts nothing and returns the first receipt. */
+  /** Persisted delivery UUID. A repeat of the same payload returns the original receipt. */
   externalLogId?: string;
-}): Promise<PostedReceipt | SkippedReceipt> {
+  delivery?: {
+    payloadHash: string;
+    productId?: string | null;
+  };
+}): Promise<PostedReceipt | SkippedReceipt | ConflictReceipt> {
   let packData: ReturnType<typeof productPackWriteData>;
   try {
     packData = productPackWriteData(input.packSize, input.splitFactor);
@@ -1103,16 +1115,13 @@ export async function postReceipt(input: {
 
   const unitCost = unitsPerCase > 0 ? input.caseCost / unitsPerCase : input.caseCost;
   const supplierLabel = input.supplier?.trim() || 'Received at the dock';
-  const idempotencyKey = input.externalLogId?.trim()
-    ? `recv:${input.externalLogId.trim()}`
-    : '';
+  const deliveryId = input.externalLogId?.trim().toLowerCase() ?? '';
+  const idempotencyKey = deliveryId ? `recv:${deliveryId}` : '';
   const referenceId = idempotencyKey || `RCV-${Date.now()}`;
+  const payloadHash = input.delivery?.payloadHash ?? '';
   let posted: { product: { id: string; name: string }; created: { id: string } };
   try {
     posted = await prisma.$transaction(async (tx) => {
-    if (idempotencyKey) {
-      await tx.ledgerIdempotencyKey.create({ data: { key: idempotencyKey } });
-    }
     const ensured = await findOrCreatePurchaseProduct(
       {
         itemName: input.itemName,
@@ -1172,6 +1181,27 @@ export async function postReceipt(input: {
       receiveReferenceId: referenceId,
       receiveTransactionId: created.id,
     });
+    if (deliveryId && payloadHash) {
+      await tx.receivingDelivery.create({
+        data: {
+          id: deliveryId,
+          payloadHash,
+          itemName: input.itemName,
+          productId: input.delivery?.productId?.trim() || null,
+          casesReceived: input.casesReceived,
+          caseCost: input.caseCost,
+          packSize: input.packSize,
+          splitFactor: input.splitFactor,
+          unitsAdded,
+          transactionId: created.id,
+          catalogProductId: product.id,
+          productName: product.name,
+        },
+      });
+    }
+    if (idempotencyKey) {
+      await tx.ledgerIdempotencyKey.create({ data: { key: idempotencyKey } });
+    }
     return { product, created };
   });
   } catch (error) {
@@ -1181,19 +1211,26 @@ export async function postReceipt(input: {
       'code' in error &&
       (error as { code?: string }).code === 'P2002';
     if (idempotencyKey && uniqueViolation) {
-      const existing = await prisma.inventoryTransaction.findFirst({
-        where: { referenceId },
-        select: { id: true, productId: true },
-      });
-      const productId = existing?.productId ?? '';
+      const existing = deliveryId
+        ? await prisma.receivingDelivery.findUnique({ where: { id: deliveryId } })
+        : null;
+      if (!existing) {
+        throw new ReceivingDeliveryConflict(
+          'This delivery id is already recorded. Existing ledger history was not changed, and this post was not applied.'
+        );
+      }
+      if (!payloadHash || existing.payloadHash !== payloadHash) {
+        throw new ReceivingDeliveryConflict();
+      }
+      const productId = existing.catalogProductId ?? '';
       return {
         posted: true,
         idempotent: true,
         productId,
-        productName: input.itemName,
-        unitsAdded: 0,
+        productName: existing.productName,
+        unitsAdded: existing.unitsAdded,
         onHand: productId ? await getCurrentStock(productId) : 0,
-        transactionId: existing?.id ?? '',
+        transactionId: existing.transactionId ?? '',
       };
     }
     throw error;

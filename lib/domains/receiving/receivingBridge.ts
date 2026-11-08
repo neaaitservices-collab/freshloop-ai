@@ -1,4 +1,5 @@
 import type { InvoiceOcrResult } from '@/lib/types';
+import { DEMO_INVOICE_NUMBER } from '@/lib/domains/receiving/sampleReceivingGuard';
 import type { ReceivingLog, RetailUnit } from '@/lib/domains/receiving/yieldPricing';
 
 export const RECEIVING_SCAN_STORAGE_KEY = 'freshloop-receiving-scan-v1';
@@ -10,12 +11,24 @@ function retailUnitFromSubUnit(subUnit: string | undefined): RetailUnit {
   return 'units';
 }
 
-function stableLogId(result: InvoiceOcrResult, item: InvoiceOcrResult['lineItems'][number], index: number): string {
+function stableLogId(result: { invoiceNumber: string }, item: InvoiceOcrResult['lineItems'][number], index: number): string {
   const slug = (item.productId || item.name || `line-${index}`)
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .slice(0, 48);
   return `scan-${result.invoiceNumber}-${slug}`;
+}
+
+/** One UUID per new invoice line. The practice invoice keeps its reserved id. */
+export function newReceivingDeliveryId(
+  result: Pick<InvoiceOcrResult, 'invoiceNumber'>,
+  item: InvoiceOcrResult['lineItems'][number],
+  index: number
+): string {
+  if (result.invoiceNumber.trim().toLowerCase() === DEMO_INVOICE_NUMBER.toLowerCase()) {
+    return stableLogId(result, item, index);
+  }
+  return crypto.randomUUID();
 }
 
 /** Maps OCR output into receiving-board rows (pricing happens before `postReceipt`). */
@@ -26,7 +39,7 @@ export function receivingLogsFromInvoice(result: InvoiceOcrResult): ReceivingLog
       const catalogName = item.matchedProductName?.trim();
       const productId = item.productId?.trim();
       return {
-        id: stableLogId(result, item, index),
+        id: newReceivingDeliveryId(result, item, index),
         itemName: catalogName || item.name,
         invoiceLineName: catalogName && catalogName !== item.name ? item.name : undefined,
         productId: productId || undefined,

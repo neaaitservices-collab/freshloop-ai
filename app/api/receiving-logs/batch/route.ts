@@ -4,6 +4,7 @@ import {
   arrangeReceivingBatch,
   MAX_RECEIVING_BATCH_SIZE,
   postReceivingLogBatch,
+  receivingValidationHttpStatus,
   validateReceivingLogPostInput,
   type ReceivingLogPostInput,
 } from '@/lib/domains/receiving/receivingLogPost';
@@ -40,9 +41,14 @@ export async function POST(req: NextRequest) {
         supplierId: row.supplierId ?? supplierId,
       });
       if (!validated.ok) {
+        const status = receivingValidationHttpStatus(validated.error);
         return NextResponse.json(
-          { success: false, error: `${row.itemName ?? 'Line'}: ${validated.error}` },
-          { status: 400 }
+          {
+            success: false,
+            error: `${row.itemName ?? 'Line'}: ${validated.error}`,
+            ...(status === 409 ? { code: 'RETIRED_DELIVERY_ID' } : {}),
+          },
+          { status }
         );
       }
       parsed.push({
@@ -61,14 +67,19 @@ export async function POST(req: NextRequest) {
       results[slot] = row;
     });
     const savedCount = results.filter((r) => r.stock.posted).length;
+    const conflict = results.some((row) => row.stock.posted === false && row.stock.conflict === true);
 
-    return NextResponse.json({
-      success: true,
-      sheetName: RECEIVING_SHEET_NAME,
-      savedCount,
-      failedCount: results.length - savedCount,
-      results,
-    });
+    return NextResponse.json(
+      {
+        success: !conflict,
+        sheetName: RECEIVING_SHEET_NAME,
+        savedCount,
+        failedCount: results.length - savedCount,
+        results,
+        ...(conflict ? { error: 'A Delivery ID was reused with a different payload.', code: 'DELIVERY_CONFLICT' } : {}),
+      },
+      { status: conflict ? 409 : 200 }
+    );
   } catch (error) {
     const authRes = authErrorResponse(error);
     if (authRes) return authRes;

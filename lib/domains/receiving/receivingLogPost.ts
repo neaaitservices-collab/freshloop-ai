@@ -1,4 +1,17 @@
-import { postReceipt, type PostedReceipt, type SkippedReceipt } from '@/lib/domains/inventory/stock';
+import {
+  postReceipt,
+  type ConflictReceipt,
+  type PostedReceipt,
+  type SkippedReceipt,
+} from '@/lib/domains/inventory/stock';
+import {
+  DELIVERY_UUID_REQUIRED_ERROR,
+  isRetiredPositionalDeliveryId,
+  normalizeDeliveryUuid,
+  ReceivingDeliveryConflict,
+  receivingDeliveryPayloadHash,
+  RETIRED_POSITIONAL_DELIVERY_ERROR,
+} from '@/lib/domains/receiving/deliveryIdentity';
 import { sampleReceivingRejection } from '@/lib/domains/receiving/sampleReceivingGuard';
 import { getSupplierNameById } from '@/lib/domains/suppliers/suppliers';
 import {
@@ -31,7 +44,17 @@ export interface ReceivingLogPostInput {
 export interface ReceivingLogPostResult {
   externalLogId?: string;
   itemName: string;
-  stock: PostedReceipt | SkippedReceipt;
+  stock: PostedReceipt | SkippedReceipt | ConflictReceipt;
+}
+
+export function receivingValidationHttpStatus(error: string): 400 | 409 {
+  return error === RETIRED_POSITIONAL_DELIVERY_ERROR ? 409 : 400;
+}
+
+export function receivingLineHttpStatus(
+  stock: PostedReceipt | SkippedReceipt | ConflictReceipt
+): 200 | 409 {
+  return stock.posted === false && stock.conflict === true ? 409 : 200;
 }
 
 function parseCaseRetail(raw: number | null | undefined): number | undefined {
@@ -74,6 +97,13 @@ export function validateReceivingLogPostInput(body: Partial<ReceivingLogPostInpu
   if (caseCost < 0 || caseCost > 1_000_000) {
     return { ok: false, error: 'Case cost must be zero or greater and at most 1,000,000.' };
   }
+  const rawDeliveryId = body.externalLogId?.trim() ?? '';
+  if (!rawDeliveryId) return { ok: false, error: DELIVERY_UUID_REQUIRED_ERROR };
+  if (isRetiredPositionalDeliveryId(rawDeliveryId)) {
+    return { ok: false, error: RETIRED_POSITIONAL_DELIVERY_ERROR };
+  }
+  const deliveryId = normalizeDeliveryUuid(rawDeliveryId);
+  if (!deliveryId) return { ok: false, error: DELIVERY_UUID_REQUIRED_ERROR };
 
   return {
     ok: true,
@@ -90,7 +120,7 @@ export function validateReceivingLogPostInput(body: Partial<ReceivingLogPostInpu
       currentRetailPrice,
       caseRetailPrice: body.caseRetailPrice,
       supplierId: body.supplierId?.trim() || undefined,
-      externalLogId: body.externalLogId,
+      externalLogId: deliveryId,
     },
   };
 }
@@ -127,6 +157,21 @@ export async function postReceivingLogToInventory(
       targetMargin,
       supplier: supplierName,
       externalLogId: input.externalLogId,
+      delivery: input.externalLogId
+        ? {
+            payloadHash: receivingDeliveryPayloadHash({
+              itemName: input.itemName,
+              productId: input.productId,
+              casesReceived: input.casesReceived,
+              caseCost: input.caseCost,
+              packSize: input.packSize,
+              splitFactor: input.splitFactor,
+              retailPrice: input.currentRetailPrice,
+              caseRetailPrice,
+            }),
+            productId: input.productId,
+          }
+        : undefined,
     });
 
     return {
@@ -135,6 +180,13 @@ export async function postReceivingLogToInventory(
       stock,
     };
   } catch (error) {
+    if (error instanceof ReceivingDeliveryConflict) {
+      return {
+        externalLogId: input.externalLogId,
+        itemName: input.itemName,
+        stock: { posted: false, conflict: true, reason: error.message },
+      };
+    }
     console.error('[postReceivingLogToInventory]', input.itemName, error);
     return {
       externalLogId: input.externalLogId,
@@ -147,7 +199,7 @@ export async function postReceivingLogToInventory(
 export interface ReceivingBatchSlot {
   externalLogId?: string;
   itemName: string;
-  stock: { posted: boolean; reason?: string };
+  stock: { posted: boolean; reason?: string; conflict?: boolean };
 }
 
 /**

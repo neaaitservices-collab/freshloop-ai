@@ -1,3 +1,7 @@
+import {
+  DELIVERY_ID_HEADERS,
+  normalizeDeliveryUuid,
+} from '@/lib/domains/receiving/deliveryIdentity';
 import type { ReceivingLog } from '@/lib/domains/receiving/yieldPricing';
 
 export const RECEIVING_SHEET_NAME = 'Receiving_logs';
@@ -20,6 +24,9 @@ const COUNT_HEADERS = new Set([
 ]);
 const COST_HEADERS = new Set(['new case cost', 'case cost', 'casecost', 'cost']);
 
+export const MISSING_DELIVERY_ID_WARNING =
+  'Some receiving rows have no Delivery ID. They are shown but cannot be posted. Put a UUID in a Delivery ID, Line ID, or External ID column and keep that cell with the delivery when the row moves. FreshLoop only reads the sheet.';
+
 function normalizeHeader(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 }
@@ -41,21 +48,29 @@ export function parseReceivingSheetValues(values: unknown[][]): ReceivingLog[] {
   const itemIndex = headers.findIndex((header) => ITEM_HEADERS.has(header));
   const countIndex = headers.findIndex((header) => COUNT_HEADERS.has(header));
   const costIndex = headers.findIndex((header) => COST_HEADERS.has(header));
+  const idIndex = headers.findIndex((header) => DELIVERY_ID_HEADERS.has(header));
 
   if (itemIndex < 0 || countIndex < 0 || costIndex < 0) return [];
 
   const logs: ReceivingLog[] = [];
+  const seenIds = new Set<string>();
   values.slice(1).forEach((row, index) => {
     const itemName = String(row?.[itemIndex] ?? '').trim();
     const casesReceived = parseNumber(row?.[countIndex]);
     const caseCost = parseNumber(row?.[costIndex]);
     if (!itemName || casesReceived === null || caseCost === null) return;
     if (casesReceived < 0 || caseCost < 0) return;
+    const rawId = idIndex >= 0 ? String(row?.[idIndex] ?? '').trim() : '';
+    const deliveryId = normalizeDeliveryUuid(rawId);
+    const duplicate = Boolean(deliveryId && seenIds.has(deliveryId));
+    if (deliveryId) seenIds.add(deliveryId);
+    const canPost = Boolean(deliveryId) && !duplicate;
     logs.push({
-      id: `sheet-row-${index + 2}`,
+      id: canPost && deliveryId ? deliveryId : `unassigned-sheet-row-${index + 2}`,
       itemName,
       casesReceived,
       caseCost,
+      canPost,
     });
   });
 
@@ -131,12 +146,13 @@ export async function loadReceivingLogs(deps?: {
       };
     }
 
+    const missingIdentity = logs.some((log) => log.canPost === false);
     return {
       success: true,
       source: 'google_sheets',
       sheetName: RECEIVING_SHEET_NAME,
       logs,
-      warning: null,
+      warning: missingIdentity ? MISSING_DELIVERY_ID_WARNING : null,
     };
   } catch (error) {
     return unavailableReceivingLogs(
