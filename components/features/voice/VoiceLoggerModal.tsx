@@ -14,6 +14,7 @@ import { PushToTalkRecorder, VOICE_MAX_RECORDING_SECONDS } from '@/lib/features/
 import { postVoiceLoggerParse } from '@/lib/features/voiceLoggerClient';
 import type { VoicePipelinePhase } from '@/lib/features/voicePipelineUi';
 import { VoicePipelineStatusBar } from '@/components/ui/VoicePipelineStatusBar';
+import { VoicePipelineErrorBanner } from '@/components/ui/VoicePipelineErrorBanner';
 import {
   Mic,
   Square,
@@ -199,12 +200,13 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
       },
       onMaxDurationReached: (blob) => {
         setIsRecording(false);
-        setPipelinePhase('idle');
         setRecordingSeconds(0);
         if (blob && blob.size > 0) {
           setLastAudioBlob(blob);
+          setPipelinePhase('compressing');
           parseVoiceRef.current(blob);
         } else {
+          setPipelinePhase('idle');
           setErrorMsg('Se alcanzó el límite de tiempo sin audio capturado.');
         }
       },
@@ -238,16 +240,21 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
     const recorder = pttRecorderRef.current;
     if (!recorder?.active && !isRecording) return;
     setIsRecording(false);
-    setPipelinePhase('idle');
     setRecordingSeconds(0);
     const blob = await recorder?.stop().catch(() => null);
     if (blob && blob.size > 0) {
       setLastAudioBlob(blob);
       if (autoParse) {
+        setPipelinePhase('compressing');
         void handleParseVoiceWithAI(blob);
+      } else {
+        setPipelinePhase('idle');
       }
     } else if (autoParse) {
+      setPipelinePhase('idle');
       setErrorMsg('No se capturó audio. Mantén el botón mientras hablas o escribe en el simulador.');
+    } else {
+      setPipelinePhase('idle');
     }
   };
 
@@ -284,24 +291,41 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
     const hasAudio = Boolean(blob && blob.size > 0);
     setProcessingAudio(hasAudio);
     setErrorMsg(null);
-    setPipelinePhase(hasAudio ? 'uploading' : 'parsing');
+    if (hasAudio) {
+      if (pipelinePhase !== 'compressing') setPipelinePhase('compressing');
+      setPipelinePhase('uploading');
+      setPipelinePhase('transcribing');
+    } else {
+      setPipelinePhase('parsing');
+    }
     try {
-      if (hasAudio) setPipelinePhase('transcribing');
       const res = await postVoiceLoggerParse({
         audioBlob: blob,
         spokenText,
       });
 
       setPipelinePhase('parsing');
-      const json = await res.json();
-      if (!json.success) {
-        throw new Error(json.error || 'Error al analizar comando de voz');
+      const json = (await res.json()) as {
+        success?: boolean;
+        error?: string;
+        message?: string;
+        transcript?: string;
+        items?: unknown[];
+      };
+      if (!res.ok || !json.success) {
+        throw new Error(
+          json.error ||
+            json.message ||
+            (res.status === 503
+              ? 'Servicio de voz no disponible — revise OPENAI_API_KEY en el servidor.'
+              : 'Error al analizar comando de voz')
+        );
       }
 
       setTranscript(json.transcript || spokenText);
 
       const rawItems: EditableVoiceDraftItem[] = Array.isArray(json.items)
-        ? json.items.map((it: Record<string, unknown>) => ({
+        ? (json.items as Record<string, unknown>[]).map((it) => ({
             item_name: String(it.item_name || 'Producto'),
             product_id: it.product_id ? String(it.product_id) : '',
             matched_product_name: it.matched_product_name
@@ -467,12 +491,14 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
               {catalogLoadWarning}
             </div>
           ) : null}
-          {errorMsg && (
-            <div className="p-3.5 rounded-2xl bg-rose-950/70 border border-rose-500/50 text-rose-200 flex items-center gap-2.5">
-              <AlertOctagon className="w-4 h-4 text-rose-400 shrink-0" />
-              <span>{errorMsg}</span>
-            </div>
-          )}
+          {errorMsg ? (
+            <VoicePipelineErrorBanner
+              message={errorMsg}
+              onRetry={() => void handleParseVoiceWithAI(lastAudioBlob)}
+              retryLabel={lastAudioBlob?.size ? 'Reintentar audio' : 'Reintentar análisis'}
+              onDismiss={() => setErrorMsg(null)}
+            />
+          ) : null}
 
           {/* ============================================================== */}
           {/* STEP 1: VOICE CAPTURE                                          */}
