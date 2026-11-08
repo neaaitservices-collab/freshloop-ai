@@ -2,7 +2,7 @@ import { InventoryLocation, Prisma, TransactionType } from '@prisma/client';
 import { getCurrentStock, prisma } from '@/lib/domains/inventory/ledger';
 import { invalidateInventoryCaches } from '@/lib/domains/inventory/inventoryCache';
 import { consumeLotsFifo, lockProductInventory } from '@/lib/domains/inventory/lots';
-import { multiplyMoney } from '@/lib/utils/money';
+import { priceProductSale } from '@/lib/domains/inventory/saleRevenue';
 
 export type SaleLocation = 'floor' | 'deli';
 
@@ -46,14 +46,13 @@ export async function recordProductSale(input: {
 
   const location = LOC[input.location ?? (product.isManufactured ? 'deli' : 'floor')];
 
-  const unitPrice =
-    input.unitPriceOverride && input.unitPriceOverride > 0
-      ? input.unitPriceOverride
-      : product.retailPrice && product.retailPrice > 0
-        ? product.retailPrice
-        : product.standardCost && product.standardCost > 0
-          ? product.standardCost / (1 - Math.min(0.95, product.targetMargin))
-          : 0;
+  const priced = priceProductSale({
+    quantity: qty,
+    unitPriceOverride: input.unitPriceOverride,
+    retailPrice: product.retailPrice,
+    standardCost: product.standardCost,
+    targetMargin: product.targetMargin,
+  });
 
   const writeSale = async (db: Prisma.TransactionClient) => {
     await lockProductInventory(db, product.id);
@@ -76,9 +75,11 @@ export async function recordProductSale(input: {
         transactionType: TransactionType.Sale,
         fromLocation: location,
         toLocation: InventoryLocation.Customer_Out,
-        unitCostAtTime: Number(unitPrice.toFixed(4)),
+        unitCostAtTime: priced.unitPrice,
+        realizedUnitPrice: priced.realizedUnitPrice,
+        realizedLineRevenue: priced.realizedLineRevenue,
         referenceId: input.referenceId ?? `SALE-${Date.now()}`,
-        notes: `Retail sale (${qty} × $${unitPrice.toFixed(2)})`,
+        notes: `Retail sale (${qty} × $${priced.unitPrice.toFixed(2)})`,
       },
     });
   };
@@ -92,8 +93,8 @@ export async function recordProductSale(input: {
     productId: product.id,
     productName: product.name,
     quantitySold: qty,
-    unitPrice: Number(unitPrice.toFixed(4)),
-    grossRevenue: multiplyMoney(unitPrice, qty),
+    unitPrice: priced.unitPrice,
+    grossRevenue: priced.grossRevenue,
     location,
   };
 }

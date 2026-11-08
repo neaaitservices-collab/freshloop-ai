@@ -105,6 +105,8 @@ docs/                   # PROJECT_STRUCTURE, manager/executive docs, this file
 
 **Admin stats:** use `getAdminStoreStatsBundle()` so waste % comes only from `calculateRealTimeWastePct()` (default **30-day** lookback via `DEFAULT_KPI_LOOKBACK_DAYS` in `wasteKpi.ts`). Prisma client: `@/lib/db/prisma`.
 
+**Historical sales:** new `Sale` and `POS_Sale` rows store `realizedUnitPrice` and `realizedLineRevenue`. The waste denominator sums that recorded revenue. Rows with a null revenue are legacy and are left out of the ratio (current shelf price is not a substitute). Physical waste stays at `unitCostAtTime`. Markdown loss stays on `markdown_events.revenue_impact`. Apply migration `20261108191500_sale_realized_revenue` before the app build that reads those columns. The migration only adds nullable columns; it does not backfill or rewrite production history.
+
 See also [PROJECT_STRUCTURE.md](./PROJECT_STRUCTURE.md).
 
 ---

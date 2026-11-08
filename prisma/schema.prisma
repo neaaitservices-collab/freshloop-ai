@@ -209,6 +209,10 @@ model InventoryTransaction {
   fromLocation    InventoryLocation @map("From_Location")
   toLocation      InventoryLocation @map("To_Location")
   unitCostAtTime  Float             @map("Unit_Cost_At_Time")
+  /// Unit price charged for this sale line when it was written. Null on legacy rows.
+  realizedUnitPrice   Float?        @map("realized_unit_price")
+  /// Line revenue in dollars captured at sale time. Null means the original price is unknown.
+  realizedLineRevenue Float?        @map("realized_line_revenue")
   referenceId     String?           @map("Reference_ID")
   expirationDate  DateTime?
   notes           String?

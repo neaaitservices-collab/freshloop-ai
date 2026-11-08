@@ -11,6 +11,7 @@ alwaysApply: false
 - `postProductReceipt` receives onto `Retail_Floor` and sets `referenceId` to `RCV-${Date.now()}`. That path has no idempotency key. Offline moves use `OFFLINE-{clientMutationId}`.
 - Floor rescue writes two `Rescue` rows and `transferLotsFifo`. Floor waste writes one negative `Waste` row and `consumeLotsFifo` without `allowShort`.
 - `applyRetailMarkdown` defaults the discount argument to 30, clamps 5–90, updates shelf price, and inserts `MarkdownEvent`.
+- Waste % denominator is `realized_line_revenue` on negative `Sale` / `POS_Sale` rows, written when the sale is recorded. Null legacy rows are excluded. Do not revalue them from current `products.retailPrice`. Physical waste stays `|qty| * unitCostAtTime`. `MarkdownEvent.revenueImpact` is not waste and is not subtracted from sales.
 - Manufacturing may call `consumeLotsFifo` with `allowShort: true` and still post the full negative quantity. Do not copy `allowShort` into floor moves.
 - `ReceivingDisposition` tracks vendor credit (`NOT_RECEIVED` / `PENDING_CREDIT`) or a drop (`REMOVED`). It does not change on-hand stock or payables.
 - `logVolumetricScrapBuckets` writes a `Waste` row with `unitCostAtTime` 0 and bucket economics in notes. It does not consume lots. Waste dollars for that row come from `scrapBucketEconomics`.

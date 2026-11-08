@@ -25,6 +25,11 @@ import {
 
 import { prisma } from '@/lib/db/prisma';
 import { rememberLedgerRead } from '@/lib/domains/inventory/ledgerCache';
+import {
+  allocateBundleRealizedRevenue,
+  legacySaleDisclosure,
+  sumRecognizedGrossSales,
+} from '@/lib/domains/inventory/saleRevenue';
 
 export { prisma } from '@/lib/db/prisma';
 
@@ -106,8 +111,16 @@ export interface WasteKpiReport {
   volumetricScrapBucketsCount: number;
   /** Combined waste numerator: totalDiscardValue + volumetricScrapValue ($) */
   totalWasteValue: number;
-  /** Gross Sales denominator ($) from Sale and POS_Sale ledger transactions */
+  /**
+   * Gross sales denominator ($) from Sale and POS_Sale lines that stored
+   * realized revenue when they were written. Legacy lines with no recorded
+   * price are omitted. Markdown revenue loss is not included.
+   */
   grossSalesRevenue: number;
+  /** Negative Sale/POS_Sale lines in the window whose original price is unknown. */
+  legacyUnpricedSaleCount: number;
+  /** Absolute quantity on those legacy lines. */
+  legacyUnpricedSaleUnits: number;
   /** Human-readable mathematical audit string */
   formulaBreakdown: string;
   /** Store defaults used to price each volumetric bucket log */
@@ -475,6 +488,8 @@ export async function executeBundleSale(
       qtyToDeduct: number;
       unitCostAtTime: number;
       lineCogs: number;
+      retailPrice: number | null;
+      standardCost: number | null;
     }> = [];
 
     for (const bundleItem of bundle.items) {
@@ -501,13 +516,33 @@ export async function executeBundleSale(
         qtyToDeduct,
         unitCostAtTime,
         lineCogs,
+        retailPrice: bundleItem.product.retailPrice,
+        standardCost: bundleItem.product.standardCost,
       });
+    }
+
+    const realizedRevenue = allocateBundleRealizedRevenue({
+      bundlePrice: bundle.bundlePrice,
+      quantitySold,
+      components: componentPlans.map((plan) => ({
+        qty: plan.qtyToDeduct,
+        retailPrice: plan.retailPrice,
+        standardCost: plan.standardCost,
+      })),
+    });
+    if (realizedRevenue.length !== componentPlans.length) {
+      throw new InventoryLedgerError(
+        'Bundle revenue allocation did not match component lines.',
+        'BUNDLE_REVENUE_ALLOCATION',
+        500
+      );
     }
 
     // 3. Execute atomic ledger + FIFO lot write for all exploded components
     const writeBundle = async (tx: Prisma.TransactionClient) => {
       const rows: InventoryTransaction[] = [];
-      for (const plan of componentPlans) {
+      for (const [index, plan] of componentPlans.entries()) {
+        const recorded = realizedRevenue[index];
         if (options?.allowNegativeStock === false) {
           const availableStock = await getCurrentStock(plan.productId, sourceLocation, tx);
           if (availableStock + 0.0001 < plan.qtyToDeduct) {
@@ -534,6 +569,8 @@ export async function executeBundleSale(
               fromLocation: sourceLocation,
               toLocation: InventoryLocation.Customer_Out,
               unitCostAtTime: plan.unitCostAtTime,
+              realizedUnitPrice: recorded?.realizedUnitPrice ?? 0,
+              realizedLineRevenue: recorded?.realizedLineRevenue ?? 0,
               referenceId: referenceCode,
               notes: `Virtual Kitting Explode [${bundle.bundleSku}]: ${bundle.name} (x${quantitySold})`,
             },
@@ -610,9 +647,12 @@ export async function executeBundleSale(
  *
  * Where:
  * - `Valor Total Descarte`: Sum of `|Qty_Change| * Unit_Cost_At_Time` for discrete `Waste` transactions.
+ *   This is physical shrink at cost. It is not markdown revenue loss.
  * - `Valor Scraps Volumétricos`: Volumetric kitchen scrap buckets converted via `StoreSetting`
  *   (`Buckets * Scrap_Bucket_Volume_L * Estimated_Weight_Per_Liter_kg * defaultScrapCostPerKg`).
- * - `Ventas Brutas Totales`: Sum of gross retail revenue across all `Sale` and `POS_Sale` transactions.
+ * - `Ventas Brutas Totales`: Sum of `realized_line_revenue` on negative `Sale` and `POS_Sale`
+ *   rows. Legacy rows with a null price are excluded instead of revalued at the current
+ *   shelf price. `MarkdownEvent.revenueImpact` is not part of this ratio.
  */
 export async function calculateRealTimeWastePct(
   options?: WasteCalculationOptions
@@ -625,9 +665,7 @@ export async function calculateRealTimeWastePct(
     const volumetricKind = `%${SCRAP_VOLUMETRIC_BUCKET_KIND}%`;
     const wasteTimeSql = Prisma.sql`AND "timestamp" >= ${startDate} AND "timestamp" <= ${endDate}`;
 
-    const salesTimeSql = Prisma.sql`AND t."timestamp" >= ${startDate} AND t."timestamp" <= ${endDate}`;
-
-    const [storeSetting, wasteAggRows, salesAggRows] = await Promise.all([
+    const [storeSetting, wasteAggRows, saleLines] = await Promise.all([
       findLatestStoreSetting(),
       prisma.$queryRaw<Array<{ discardValue: number; bucketUnits: number }>>(Prisma.sql`
         SELECT
@@ -655,21 +693,18 @@ export async function calculateRealTimeWastePct(
         WHERE "Transaction_Type" = 'Waste'
         ${wasteTimeSql}
       `),
-      prisma.$queryRaw<Array<{ grossSalesRevenue: number }>>(Prisma.sql`
-        SELECT COALESCE(SUM(
-          ABS(t."Qty_Change") * CASE
-            WHEN p."retailPrice" IS NOT NULL AND p."retailPrice" > 0 THEN p."retailPrice"
-            ELSE t."Unit_Cost_At_Time" / (
-              1 - LEAST(0.95::float8, GREATEST(0.05::float8, COALESCE(p."targetMargin", 0.4)))
-            )
-          END
-        ), 0)::float8 AS "grossSalesRevenue"
-        FROM "Inventory_Transactions" t
-        INNER JOIN products p ON p.id = t."Product_ID"
-        WHERE t."Transaction_Type" IN ('Sale'::"TransactionType", 'POS_Sale'::"TransactionType")
-          AND t."Qty_Change" < 0
-        ${salesTimeSql}
-      `),
+      prisma.inventoryTransaction.findMany({
+        where: {
+          transactionType: { in: [TransactionType.Sale, TransactionType.POS_Sale] },
+          qtyChange: { lt: 0 },
+          timestamp: { gte: startDate, lte: endDate },
+        },
+        select: {
+          transactionType: true,
+          qtyChange: true,
+          realizedLineRevenue: true,
+        },
+      }),
     ]);
 
     const targetWastePct = storeSetting?.targetWastePct ?? 2.5;
@@ -696,7 +731,8 @@ export async function calculateRealTimeWastePct(
       ).totalDollars;
     }
 
-    const grossSalesRevenue = Number((salesAggRows[0]?.grossSalesRevenue ?? 0).toFixed(2));
+    const recognizedSales = sumRecognizedGrossSales(saleLines);
+    const grossSalesRevenue = recognizedSales.grossSalesRevenue;
 
     // 4. Apply Master Plan Formula: (Valor Total Descarte + Valor Scraps Volumétricos) / Ventas Brutas Totales
     const roundedDiscardValue = Number(totalDiscardValue.toFixed(2));
@@ -721,6 +757,10 @@ export async function calculateRealTimeWastePct(
       targetPct: targetWastePct,
       minSalesForRatio: MIN_GROSS_SALES_FOR_WASTE_RATIO,
     });
+    const legacyDisclosure = legacySaleDisclosure(
+      recognizedSales.legacyUnpricedSaleCount,
+      recognizedSales.legacyUnpricedSaleUnits
+    );
 
     const econ = scrapTotalsForBucketCount(1, scrapInputs);
 
@@ -735,7 +775,11 @@ export async function calculateRealTimeWastePct(
       volumetricScrapBucketsCount: Number(volumetricScrapBucketsCount.toFixed(2)),
       totalWasteValue,
       grossSalesRevenue: roundedGrossSales,
-      formulaBreakdown,
+      legacyUnpricedSaleCount: recognizedSales.legacyUnpricedSaleCount,
+      legacyUnpricedSaleUnits: recognizedSales.legacyUnpricedSaleUnits,
+      formulaBreakdown: legacyDisclosure
+        ? `${formulaBreakdown} ${legacyDisclosure}`
+        : formulaBreakdown,
       scrapBucketInputs: {
         volumeL: scrapInputs.volumeL,
         densityKgPerL: scrapInputs.densityKgPerL,
