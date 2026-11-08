@@ -23,6 +23,29 @@ test('missing path fails closed', () => {
   assert.deepEqual(decideFreshNavigation('orders', admin), { action: 'redirect', location: '/login' });
 });
 
+test('nested paths follow the same role matrix', () => {
+  const admin = user('ADMIN');
+  const floor = user('FLOOR_STAFF');
+  const receiving = user('RECEIVING_CLERK');
+  assert.ok(admin && floor && receiving);
+  assert.deepEqual(decideFreshNavigation('/admin/settings', floor), {
+    action: 'redirect',
+    location: '/inventory/floor',
+  });
+  assert.deepEqual(decideFreshNavigation('/admin/settings', admin), { action: 'allow' });
+  assert.deepEqual(decideFreshNavigation('/admin/executive', floor), {
+    action: 'redirect',
+    location: '/inventory/floor',
+  });
+  assert.deepEqual(decideFreshNavigation('/inventory', floor), {
+    action: 'redirect',
+    location: '/inventory/floor',
+  });
+  assert.deepEqual(decideFreshNavigation('/inventory/floor', floor), { action: 'allow' });
+  assert.deepEqual(decideFreshNavigation('/inventory', receiving), { action: 'allow' });
+  assert.deepEqual(decideFreshNavigation('/inventory/floor', admin), { action: 'allow' });
+});
+
 test('fresh navigation sends each role to a page they can open', () => {
   const admin = user('ADMIN');
   const floor = user('FLOOR_STAFF');

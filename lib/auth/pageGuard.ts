@@ -5,9 +5,11 @@ import { decideFreshNavigation, FRESH_PATH_HEADER } from '@/lib/auth/pageAccess'
 import type { AuthSessionUser } from '@/lib/auth/staffSnapshot';
 
 /**
- * Server boundary for a protected navigation, including client-side RSC requests.
- * The root layout is reused across transitions, so each protected segment calls this again.
- * Redirects before children render. Does not grant a role the page matrix denies.
+ * Server boundary for one protected URL.
+ * Segment layouts do not re-render for a child route of the same segment
+ * (`/admin` to `/admin/settings`, `/inventory/floor` to `/inventory`).
+ * Call this with that page's path before any sensitive read in the page or its loader.
+ * A layout redirect does not, by itself, stop a loader that has already started.
  */
 export async function guardFreshPage(knownPath?: string): Promise<AuthSessionUser> {
   const headerList = await headers();

@@ -6,6 +6,7 @@ import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { auth } from "@/auth";
 import { RoleProvider } from "@/components/auth/RoleProvider";
+import { RefreshOnBrowserHistory } from "@/components/auth/RefreshOnBrowserHistory";
 import { OfflineSyncProvider } from "@/components/offline/OfflineSyncProvider";
 import { AuthError, getSessionUser } from "@/lib/auth/session";
 import { decidePageAccess, FRESH_PATH_HEADER } from "@/lib/auth/pageAccess";
@@ -81,6 +82,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         className="flex min-h-full flex-col bg-slate-950 text-slate-100"
       >
         <RoleProvider session={session}>
+          <RefreshOnBrowserHistory />
           <OfflineSyncProvider>{children}</OfflineSyncProvider>
         </RoleProvider>
       </body>
