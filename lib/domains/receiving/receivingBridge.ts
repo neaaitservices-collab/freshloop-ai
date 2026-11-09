@@ -10,24 +10,20 @@ function retailUnitFromSubUnit(subUnit: string | undefined): RetailUnit {
   return 'units';
 }
 
-function stableLogId(result: InvoiceOcrResult, item: InvoiceOcrResult['lineItems'][number], index: number): string {
-  const slug = (item.productId || item.name || `line-${index}`)
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .slice(0, 48);
-  return `scan-${result.invoiceNumber}-${slug}`;
-}
-
-/** Maps OCR output into receiving-board rows (pricing happens before `postReceipt`). */
+/** Maps OCR output into receiving-board rows. Ids stay unposted until the server assigns them. */
 export function receivingLogsFromInvoice(result: InvoiceOcrResult): ReceivingLog[] {
-  return result.lineItems
-    .filter((item) => item.name && Number(item.unitCost) >= 0)
+  const lines = result.lineItems.filter((item) => item.name && Number(item.unitCost) >= 0);
+  return lines
     .map((item, index) => {
       const catalogName = item.matchedProductName?.trim();
       const productId = item.productId?.trim();
       return {
-        id: stableLogId(result, item, index),
-        itemName: catalogName || item.name,
+        id: `unassigned-invoice-line-${index + 1}`,
+        canPost: false,
+        invoiceNumber: result.invoiceNumber,
+        invoiceDate: result.invoiceDate,
+        printedName: item.name,
+        itemName: item.name,
         invoiceLineName: catalogName && catalogName !== item.name ? item.name : undefined,
         productId: productId || undefined,
         casesReceived: Number(item.quantity) > 0 ? Number(item.quantity) : 1,

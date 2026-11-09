@@ -64,7 +64,7 @@ test('reserved sample ids and the practice invoice number are rejected', () => {
 
 test('genuine sheet and OCR values that match a fixture still post', () => {
   const sheetBlueberries = {
-    externalLogId: 'sheet-row-12',
+    externalLogId: '11111111-1111-4111-8111-111111111111',
     itemName: 'Blueberries',
     casesReceived: 6,
     caseCost: 32.4,
@@ -114,16 +114,28 @@ test('a missing OCR draft is 404 and does not run the ledger commit', async () =
   if (!practice.ok) assert.equal(practice.status, 409);
 });
 
+test('a practice invoice id reaches the sample guard before the UUID rule', () => {
+  const parsed = validateReceivingLogPostInput(
+    line({ externalLogId: `scan-${DEMO_INVOICE_NUMBER}-apple` })
+  );
+  assert.equal(parsed.ok, true);
+  if (!parsed.ok) return;
+  assert.equal(parsed.input.externalLogId, `scan-${DEMO_INVOICE_NUMBER}-apple`);
+  const arranged = arrangeReceivingBatch([parsed.input]);
+  assert.equal(arranged.toPost.length, 0);
+  assert.match(arranged.results[0]?.stock.reason ?? '', /preview only/i);
+});
+
 test('mixed batch keeps sample rejections and genuine rows in request order', () => {
   const arranged = arrangeReceivingBatch([
     line({ externalLogId: 'sample-avocado', itemName: 'Hass Avocados (Mexico)', casesReceived: 4, caseCost: 84.5 }),
-    line({ externalLogId: 'sheet-row-12', itemName: 'Blueberries', casesReceived: 6, caseCost: 32.4 }),
+    line({ externalLogId: '22222222-2222-4222-8222-222222222222', itemName: 'Blueberries', casesReceived: 6, caseCost: 32.4 }),
     line({ externalLogId: 'sample-tomato', itemName: 'Hot House Tomatoes (Ontario)', casesReceived: 3, caseCost: 42 }),
   ]);
 
   assert.deepEqual(arranged.postIndexes, [1]);
   assert.equal(arranged.toPost.length, 1);
-  assert.equal(arranged.toPost[0]?.externalLogId, 'sheet-row-12');
+  assert.equal(arranged.toPost[0]?.externalLogId, '22222222-2222-4222-8222-222222222222');
   assert.equal(arranged.results[0]?.stock.posted, false);
   assert.equal(arranged.results[2]?.stock.posted, false);
   assert.match(arranged.results[0]?.stock.reason ?? '', /preview only/i);
@@ -141,7 +153,7 @@ test('mixed batch keeps sample rejections and genuine rows in request order', ()
 
   assert.deepEqual(
     arranged.results.map((row) => row.externalLogId),
-    ['sample-avocado', 'sheet-row-12', 'sample-tomato']
+    ['sample-avocado', '22222222-2222-4222-8222-222222222222', 'sample-tomato']
   );
   assert.equal(arranged.results[1]?.stock.posted, true);
   assert.equal(arranged.results[0]?.stock.posted, false);

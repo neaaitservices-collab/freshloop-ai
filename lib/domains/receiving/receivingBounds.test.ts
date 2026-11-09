@@ -13,6 +13,7 @@ const baseLine = {
   retailUnit: 'lbs' as const,
   marginMode: '40' as const,
   currentRetailPrice: 1.5,
+  externalLogId: '33333333-3333-4333-8333-333333333333',
 };
 
 test('receiving rejects a negative case cost and an unbounded quantity', () => {

@@ -40,12 +40,14 @@ export { prisma } from '@/lib/db/prisma';
 export class InventoryLedgerError extends Error {
   public readonly code: string;
   public readonly statusCode: number;
+  public readonly details?: unknown;
 
-  constructor(message: string, code: string = 'LEDGER_ERROR', statusCode: number = 400) {
+  constructor(message: string, code: string = 'LEDGER_ERROR', statusCode: number = 400, details?: unknown) {
     super(message);
     this.name = 'InventoryLedgerError';
     this.code = code;
     this.statusCode = statusCode;
+    this.details = details;
   }
 }
 
