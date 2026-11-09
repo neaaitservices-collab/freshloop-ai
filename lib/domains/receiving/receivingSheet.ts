@@ -1,3 +1,7 @@
+import {
+  DELIVERY_ID_HEADERS,
+  normalizeDeliveryUuid,
+} from '@/lib/domains/receiving/deliveryIdentity';
 import type { ReceivingLog } from '@/lib/domains/receiving/yieldPricing';
 
 export const RECEIVING_SHEET_NAME = 'Receiving_logs';
@@ -20,6 +24,9 @@ const COUNT_HEADERS = new Set([
 ]);
 const COST_HEADERS = new Set(['new case cost', 'case cost', 'casecost', 'cost']);
 
+export const MISSING_DELIVERY_ID_WARNING =
+  'Some receiving rows cannot be posted. Each delivery needs its own UUID in Delivery ID, Line ID, or External ID. A repeated UUID blocks every row that uses it. FreshLoop only reads the sheet.';
+
 function normalizeHeader(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 }
@@ -41,23 +48,50 @@ export function parseReceivingSheetValues(values: unknown[][]): ReceivingLog[] {
   const itemIndex = headers.findIndex((header) => ITEM_HEADERS.has(header));
   const countIndex = headers.findIndex((header) => COUNT_HEADERS.has(header));
   const costIndex = headers.findIndex((header) => COST_HEADERS.has(header));
+  const idIndex = headers.findIndex((header) => DELIVERY_ID_HEADERS.has(header));
 
   if (itemIndex < 0 || countIndex < 0 || costIndex < 0) return [];
 
-  const logs: ReceivingLog[] = [];
+  const draft: Array<{
+    index: number;
+    itemName: string;
+    casesReceived: number;
+    caseCost: number;
+    deliveryId: string | null;
+  }> = [];
   values.slice(1).forEach((row, index) => {
     const itemName = String(row?.[itemIndex] ?? '').trim();
     const casesReceived = parseNumber(row?.[countIndex]);
     const caseCost = parseNumber(row?.[costIndex]);
     if (!itemName || casesReceived === null || caseCost === null) return;
     if (casesReceived < 0 || caseCost < 0) return;
-    logs.push({
-      id: `sheet-row-${index + 2}`,
+    const rawId = idIndex >= 0 ? String(row?.[idIndex] ?? '').trim() : '';
+    draft.push({
+      index,
       itemName,
       casesReceived,
       caseCost,
+      deliveryId: normalizeDeliveryUuid(rawId),
     });
   });
+  const idCount = new Map<string, number>();
+  for (const row of draft) {
+    if (!row.deliveryId) continue;
+    idCount.set(row.deliveryId, (idCount.get(row.deliveryId) ?? 0) + 1);
+  }
+
+  const logs: ReceivingLog[] = [];
+  for (const row of draft) {
+    const duplicated = Boolean(row.deliveryId && (idCount.get(row.deliveryId) ?? 0) > 1);
+    const canPost = Boolean(row.deliveryId) && !duplicated;
+    logs.push({
+      id: canPost && row.deliveryId ? row.deliveryId : `unassigned-sheet-row-${row.index + 2}`,
+      itemName: row.itemName,
+      casesReceived: row.casesReceived,
+      caseCost: row.caseCost,
+      canPost,
+    });
+  }
 
   return logs;
 }
@@ -131,12 +165,13 @@ export async function loadReceivingLogs(deps?: {
       };
     }
 
+    const missingIdentity = logs.some((log) => log.canPost === false);
     return {
       success: true,
       source: 'google_sheets',
       sheetName: RECEIVING_SHEET_NAME,
       logs,
-      warning: null,
+      warning: missingIdentity ? MISSING_DELIVERY_ID_WARNING : null,
     };
   } catch (error) {
     return unavailableReceivingLogs(

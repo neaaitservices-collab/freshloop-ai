@@ -3,6 +3,8 @@ import { loadReceivingLogs, RECEIVING_SHEET_NAME } from '@/lib/domains/receiving
 import {
   buildSavedPackRecord,
   postReceivingLogToInventory,
+  receivingLineHttpStatus,
+  receivingValidationHttpStatus,
   validateReceivingLogPostInput,
 } from '@/lib/domains/receiving/receivingLogPost';
 import { getSupplierNameById } from '@/lib/domains/suppliers/suppliers';
@@ -51,7 +53,15 @@ export async function POST(req: NextRequest) {
 
     const validated = validateReceivingLogPostInput(body as Parameters<typeof validateReceivingLogPostInput>[0]);
     if (!validated.ok) {
-      return NextResponse.json({ success: false, error: validated.error }, { status: 400 });
+      const status = receivingValidationHttpStatus(validated.error);
+      return NextResponse.json(
+        {
+          success: false,
+          error: validated.error,
+          ...(status === 409 ? { code: 'RETIRED_DELIVERY_ID' } : {}),
+        },
+        { status }
+      );
     }
     const input = validated.input;
     const sampleReason = sampleReceivingRejection(input);
@@ -67,14 +77,19 @@ export async function POST(req: NextRequest) {
     const posted = await postReceivingLogToInventory(input, actor.id, supplierName);
     const stock = posted.stock;
 
-    return NextResponse.json({
-      success: true,
-      destination: stock.posted ? 'ledger' : 'session',
-      sheetName: RECEIVING_SHEET_NAME,
-      record,
-      stock,
-      savedCount: savedPacks.length,
-    });
+    const status = receivingLineHttpStatus(stock);
+    return NextResponse.json(
+      {
+        success: status === 200,
+        destination: stock.posted ? 'ledger' : 'session',
+        sheetName: RECEIVING_SHEET_NAME,
+        record,
+        stock,
+        savedCount: savedPacks.length,
+        ...(status === 409 ? { error: stock.posted ? undefined : stock.reason, code: 'DELIVERY_CONFLICT' } : {}),
+      },
+      { status }
+    );
   } catch (error) {
     const authRes = authErrorResponse(error);
     if (authRes) return authRes;

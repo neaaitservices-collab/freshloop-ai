@@ -1,11 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Department } from '@prisma/client';
-import { getMovingAverageCostMap, prisma } from '@/lib/domains/inventory/ledger';
+import { InventoryLedgerError, getMovingAverageCostMap, prisma } from '@/lib/domains/inventory/ledger';
 import { loadProductCatalog } from '@/lib/domains/catalog/productCatalog';
 import {
   assertDraftLinesCommittable,
   commitInvoiceOcrReceipts,
-  invoiceIdempotencyKey,
   saveInvoiceOcrDraft,
   type OcrDraftLine,
   type OcrDraftPayload,
@@ -21,7 +20,6 @@ import { findLatestStoreSetting } from '@/lib/domains/stats/storeSettingSelect';
 import { matchProductWithScore } from '@/lib/domains/inventory/productMatching';
 import { recordOcrScanAnalytics } from '@/lib/domains/suppliers/analyticsPersistence';
 import { VENDOR_PRICE_ALERT_DEFAULT_PCT } from '@/lib/domains/suppliers/vendorAnalyticsTypes';
-import { upsertSupplierByName } from '@/lib/domains/suppliers/suppliers';
 import { assertHotPathRateLimit } from '@/lib/security/rateLimit';
 import { invoiceOcrCommitBodySchema } from '@/lib/security/schemas/invoiceOcr';
 import {
@@ -532,6 +530,7 @@ export async function POST(req: NextRequest) {
         })),
         invoiceMeta: {
           vendorName: payload.vendorName,
+          supplierId: commitBody.supplierId,
           invoiceNumber: payload.invoiceNumber,
           invoiceDate: payload.invoiceDate,
           totalAmount: payload.totalAmount,
@@ -539,48 +538,38 @@ export async function POST(req: NextRequest) {
         },
         manualReviewOverride: commitBody.manualReviewOverride,
         actorIsManager,
-        idempotencyKey: invoiceIdempotencyKey(payload.vendorName, payload.invoiceNumber),
         draftId: draft.id,
       });
       } catch (error) {
-        const uniqueViolation =
-          typeof error === 'object' &&
-          error !== null &&
-          'code' in error &&
-          (error as { code?: string }).code === 'P2002';
-        if (uniqueViolation) {
-          return NextResponse.json({
-            success: true,
-            committed: true,
-            idempotent: true,
-            timestamp: new Date().toISOString(),
-          });
+        if (error instanceof InventoryLedgerError) {
+          const details =
+            error.details && typeof error.details === 'object' ? (error.details as Record<string, unknown>) : {};
+          return NextResponse.json(
+            { success: false, error: error.message, code: error.code, ...details },
+            { status: error.statusCode }
+          );
         }
         throw error;
       }
 
-      void upsertSupplierByName({ name: payload.vendorName })
-        .then((supplier) =>
-          recordOcrScanAnalytics({
-            supplierId: supplier.id,
-            lines: payload.lines.map((line) => ({
-              item_name: line.line_name ?? line.product_id,
-              product_id: line.product_id,
-              unit_cost: line.unit_cost,
-              historical_avg_cost: null,
-              cost_variance_pct: null,
-              line_confidence: line.line_confidence,
-              needs_manual_review: line.requires_approval,
-            })),
-            analyticsThresholdPct: VENDOR_PRICE_ALERT_DEFAULT_PCT,
-          })
-        )
-        .catch((err: unknown) => {
-          logServerError('POST /api/invoice-ocr analytics', err, {
-            path: '/api/invoice-ocr',
-            operation: 'vendor-analytics-persist',
-          });
+      void recordOcrScanAnalytics({
+        supplierId: commitBody.supplierId,
+        lines: payload.lines.map((line) => ({
+          item_name: line.line_name ?? line.product_id,
+          product_id: line.product_id,
+          unit_cost: line.unit_cost,
+          historical_avg_cost: null,
+          cost_variance_pct: null,
+          line_confidence: line.line_confidence,
+          needs_manual_review: line.requires_approval,
+        })),
+        analyticsThresholdPct: VENDOR_PRICE_ALERT_DEFAULT_PCT,
+      }).catch((err: unknown) => {
+        logServerError('POST /api/invoice-ocr analytics', err, {
+          path: '/api/invoice-ocr',
+          operation: 'vendor-analytics-persist',
         });
+      });
 
       return NextResponse.json({
         success: true,

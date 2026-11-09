@@ -430,6 +430,7 @@ model Supplier {
   priceVarianceLogs      PriceVarianceLog[]
   qualityEvents          SupplierQualityEvent[]
   receivingDispositions  ReceivingDisposition[]
+  invoiceDocuments       SupplierInvoiceDocument[]
 
   @@map("suppliers")
 }
@@ -645,6 +646,132 @@ model LedgerIdempotencyKey {
   createdAt DateTime @default(now()) @map("created_at")
 
   @@map("ledger_idempotency_keys")
+}
+
+/// One persisted delivery UUID. The payload hash rejects a reused id with different goods.
+/// One document per saved supplier, invoice number, and exact invoice date.
+model SupplierInvoiceDocument {
+  id                 String   @id @default(cuid())
+  supplierId         String   @map("supplier_id")
+  supplier           Supplier @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  invoiceKey         String   @map("invoice_key")
+  invoiceKeyCompact  String   @map("invoice_key_compact")
+  invoiceNumber      String   @map("invoice_number")
+  /// Display text from the first confirmed sight. Not a second identity.
+  invoiceDate        String?  @map("invoice_date")
+  /// Exact date identity. Null rows cannot be posted.
+  invoiceDateKey     String?  @map("invoice_date_key")
+  /// Historical `invoice:vendor:number` ledger key adopted without a new stock post.
+  legacyKey          String?  @map("legacy_key")
+  adoptedAt          DateTime? @map("adopted_at")
+  adoptedBy          String?  @map("adopted_by")
+  createdAt          DateTime @default(now()) @map("created_at")
+  lines              SupplierInvoiceLine[]
+  dateLinks          SupplierInvoiceDateLink[]
+  keyAliases         SupplierInvoiceKeyAlias[]
+  lineAliases        SupplierInvoiceLineAlias[]
+  events             SupplierInvoiceEvent[]
+
+  @@unique([supplierId, invoiceKey, invoiceDateKey])
+  @@index([supplierId, invoiceKeyCompact])
+  @@index([supplierId])
+  @@map("supplier_invoice_documents")
+}
+
+/// Line identity is assigned once. Printed text aligns rescans; catalog match does not.
+model SupplierInvoiceLine {
+  id         String                  @id @default(uuid())
+  documentId String                  @map("document_id")
+  document   SupplierInvoiceDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  printedKey String                  @map("printed_key")
+  occurrence Int
+  ordinal    Int
+  /// Set only for lines present when an older receipt for this supplier was adopted.
+  heldByLegacy Boolean               @default(false) @map("held_by_legacy")
+  aliases    SupplierInvoiceLineAlias[]
+
+  @@unique([documentId, printedKey, occurrence])
+  @@index([documentId])
+  @@map("supplier_invoice_lines")
+}
+
+/// A confirmed alternate date for the same paper invoice. Not inferred from OCR.
+model SupplierInvoiceDateLink {
+  id         String                  @id @default(cuid())
+  documentId String                  @map("document_id")
+  document   SupplierInvoiceDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  dateKey    String                  @map("date_key")
+  actorId    String                  @map("actor_id")
+  createdAt  DateTime                @default(now()) @map("created_at")
+
+  @@unique([documentId, dateKey])
+  @@index([dateKey])
+  @@map("supplier_invoice_date_links")
+}
+
+/// A confirmed alternate spelling of the same invoice number. Spaces stay meaningful until confirmed.
+model SupplierInvoiceKeyAlias {
+  id         String                  @id @default(cuid())
+  documentId String                  @map("document_id")
+  document   SupplierInvoiceDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  invoiceKey String                  @map("invoice_key")
+  actorId    String                  @map("actor_id")
+  createdAt  DateTime                @default(now()) @map("created_at")
+
+  @@unique([documentId, invoiceKey])
+  @@index([invoiceKey])
+  @@map("supplier_invoice_key_aliases")
+}
+
+/// A confirmed rename of one printed line. The delivery UUID does not change.
+model SupplierInvoiceLineAlias {
+  id         String                  @id @default(cuid())
+  documentId String                  @map("document_id")
+  document   SupplierInvoiceDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  lineId     String                  @map("line_id")
+  line       SupplierInvoiceLine     @relation(fields: [lineId], references: [id], onDelete: Cascade)
+  printedKey String                  @map("printed_key")
+  occurrence Int
+  actorId    String                  @map("actor_id")
+  createdAt  DateTime                @default(now()) @map("created_at")
+
+  @@unique([documentId, printedKey, occurrence])
+  @@index([lineId])
+  @@map("supplier_invoice_line_aliases")
+}
+
+/// Audit row for a clerk's confirmation. Stock posts are not implied by an event.
+model SupplierInvoiceEvent {
+  id         String                   @id @default(cuid())
+  documentId String?                  @map("document_id")
+  document   SupplierInvoiceDocument? @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  supplierId String                   @map("supplier_id")
+  actorId    String                   @map("actor_id")
+  action     String
+  detail     Json
+  createdAt  DateTime                 @default(now()) @map("created_at")
+
+  @@index([supplierId, createdAt])
+  @@index([documentId])
+  @@map("supplier_invoice_events")
+}
+
+model ReceivingDelivery {
+  id               String   @id
+  payloadHash      String   @map("payload_hash")
+  itemName         String   @map("item_name")
+  productId        String?  @map("product_id")
+  casesReceived    Float    @map("cases_received")
+  caseCost         Float    @map("case_cost")
+  packSize         Float    @map("pack_size")
+  splitFactor      Float    @map("split_factor")
+  unitsAdded       Float    @map("units_added")
+  transactionId    String?  @map("transaction_id")
+  catalogProductId String?  @map("catalog_product_id")
+  productName      String   @map("product_name")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  @@map("receiving_deliveries")
 }
 
 /// One production run. Inserted in the same transaction as that run's ledger rows.

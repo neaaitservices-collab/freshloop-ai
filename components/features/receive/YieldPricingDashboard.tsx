@@ -25,10 +25,12 @@ import {
   applyPresetMarginToUnitPrice,
   parseCatalogPriceInput,
 } from '@/lib/domains/receiving/catalogItemPricing';
-import { consumeStashedReceivingScan } from '@/lib/domains/receiving/receivingBridge';
 import { readReceivingPrefs, writeReceivingPrefs } from '@/lib/domains/receiving/receivingPreferences';
 import type { ReceivingDispositionRow } from '@/lib/domains/receiving/receivingDisposition';
 import type { ReceivingLogSource } from '@/lib/domains/receiving/receivingSheet';
+import { interpretReceivingBatchResponse } from '@/lib/domains/receiving/receivingBatchResult';
+import { describeBatchSaveOutcome } from '@/lib/domains/receiving/invoiceIdentityHold';
+import { SUPPLIER_REQUIRED_ERROR } from '@/lib/domains/receiving/invoiceDeliveryId';
 
 interface LogsResponse {
   success: boolean;
@@ -211,7 +213,15 @@ async function postLogsBatchToInventory(
   results: Array<{
     externalLogId?: string;
     itemName: string;
-    stock: { posted: boolean; reason?: string; onHand?: number; productId?: string };
+    stock: {
+      posted: boolean;
+      reason?: string;
+      onHand?: number;
+      productId?: string;
+      idempotent?: boolean;
+      conflict?: boolean;
+      unitsAdded?: number;
+    };
   }>;
   error?: string;
 }> {
@@ -229,7 +239,15 @@ async function postLogsBatchToInventory(
     results?: Array<{
       externalLogId?: string;
       itemName: string;
-      stock: { posted: boolean; reason?: string; onHand?: number; productId?: string };
+      stock: {
+        posted: boolean;
+        reason?: string;
+        onHand?: number;
+        productId?: string;
+        idempotent?: boolean;
+        conflict?: boolean;
+        unitsAdded?: number;
+      };
     }>;
   } = {};
   try {
@@ -237,10 +255,11 @@ async function postLogsBatchToInventory(
   } catch {
     json = {};
   }
-  if (!response.ok || !json.success || !Array.isArray(json.results)) {
-    return { ok: false, results: [], error: json.error || 'Batch save failed.' };
+  const interpreted = interpretReceivingBatchResponse(response.status, json);
+  if (!interpreted.apply) {
+    return { ok: false, results: [], error: interpreted.error || 'Batch save failed.' };
   }
-  return { ok: true, results: json.results };
+  return { ok: true, results: interpreted.results, error: interpreted.error };
 }
 
 function MovedNoticeBanner({ notice }: { notice: string }) {
@@ -381,12 +400,6 @@ export function YieldPricingDashboard({
     setHiddenLogIds(readHiddenIds());
     void loadLogs(seeded);
     void loadDispositions();
-    const stashed = consumeStashedReceivingScan();
-    if (stashed?.logs.length) {
-      setStashedScanLogs(stashed.logs);
-      setSelectedId(stashed.logs[0]?.id ?? null);
-      if (stashed.note) setMovedNotice(stashed.note);
-    }
   }, [seeded]);
 
   const visibleLogs = useMemo(() => {
@@ -744,6 +757,18 @@ export function YieldPricingDashboard({
 
   const handleSave = async () => {
     if (!selected || animatingOutIds.has(selected.id) || savingAll) return;
+    if (selected.invoiceNumber && !supplierId) {
+      setErrorMessage(SUPPLIER_REQUIRED_ERROR);
+      return;
+    }
+    if (selected.canPost === false) {
+      setErrorMessage(
+        selected.invoiceNumber
+          ? 'This invoice line does not have a server delivery id yet. Choose a saved supplier and wait for the lines to be identified.'
+          : 'This sheet row has no Delivery ID, so it was not posted. Add a UUID in the Delivery ID column and keep it with that delivery.'
+      );
+      return;
+    }
     const savedId = selected.id;
     const savedName = selected.itemName;
     const pricing = resolveLogPricing(selected, livePricing());
@@ -772,8 +797,14 @@ export function YieldPricingDashboard({
   };
 
   const handleSaveAll = async () => {
-    const targets = bulkLogs.filter((log) => !animatingOutIds.has(log.id));
-    if (targets.length === 0 || saving || savingAll) return;
+    const targets = bulkLogs.filter((log) => !animatingOutIds.has(log.id) && log.canPost !== false);
+    if (saving || savingAll) return;
+    if (targets.length === 0) {
+      setErrorMessage(
+        'None of these rows have a Delivery ID, so nothing was posted. Add a UUID on each delivery before saving.'
+      );
+      return;
+    }
 
     const live = livePricing();
     setSavingAll(true);
@@ -784,6 +815,7 @@ export function YieldPricingDashboard({
 
     const failed: string[] = [];
     let savedCount = 0;
+    let replayCount = 0;
     let lastName = '';
     let lastOnHand = 0;
     let lastProductId: string | undefined;
@@ -819,6 +851,7 @@ export function YieldPricingDashboard({
           markLogPosted(log.id);
           purgeLogFromLocalSources(log.id);
         }
+        if (row.stock.idempotent) replayCount += 1;
         savedCount += 1;
         lastName = label;
         lastOnHand = Number(row.stock.onHand) || 0;
@@ -838,27 +871,21 @@ export function YieldPricingDashboard({
       window.dispatchEvent(new CustomEvent('freshloop-inventory-updated'));
     }
 
-    if (savedCount === 1 && failed.length === 0) {
+    const outcome = describeBatchSaveOutcome({
+      savedCount,
+      replayCount,
+      failed,
+      targetCount: targets.length,
+    });
+    if (outcome.notice) setMovedNotice(outcome.notice);
+    if (outcome.error) setErrorMessage(outcome.error);
+    if (outcome.savedMessage) {
       const stockHref = lastProductId
         ? `/inventory?highlight=${encodeURIComponent(lastProductId)}`
         : '/inventory';
       setMovedNotice(`__STOCK__${stockHref}__${lastName}__${formatUnits(lastOnHand)}__${lastUnit}`);
-      setSavedMessage('Saved to inventory.');
-      return;
+      setSavedMessage(outcome.savedMessage);
     }
-
-    if (savedCount > 0 && failed.length === 0) {
-      setMovedNotice(`Saved ${savedCount} items to inventory.`);
-      return;
-    }
-
-    if (savedCount > 0) {
-      setMovedNotice(`Saved ${savedCount} of ${targets.length} items to inventory.`);
-      setErrorMessage(`Still on the list: ${failed.join('; ')}`);
-      return;
-    }
-
-    setErrorMessage(failed.length ? `Nothing saved. ${failed.join('; ')}` : 'Nothing saved.');
   };
 
   return (

@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { InventoryLedgerError, executeBundleSale, prisma } from '@/lib/domains/inventory/ledger';
-import { postProductReceipt, postReceipt } from '@/lib/domains/inventory/stock';
+import { postProductReceipt } from '@/lib/domains/inventory/stock';
+import { postReceivingLogToInventory } from '@/lib/domains/receiving/receivingLogPost';
 import {
   commitInvoiceOcrReceipts,
   saveInvoiceOcrDraft,
@@ -80,8 +81,9 @@ test('duplicate receiving external ids post once', { skip: !hasDb }, async (t) =
   }
 
   const stamp = `recv-dup-${Date.now()}`;
-  const externalLogId = `line-${stamp}`;
+  const externalLogId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
   t.after(async () => {
+    await prisma.receivingDelivery.deleteMany({ where: { id: externalLogId } });
     await prisma.ledgerIdempotencyKey.deleteMany({ where: { key: `recv:${externalLogId}` } });
     await prisma.inventoryLot.deleteMany({
       where: { product: { name: `Dup Apple ${stamp}` } },
@@ -92,35 +94,26 @@ test('duplicate receiving external ids post once', { skip: !hasDb }, async (t) =
     await prisma.product.deleteMany({ where: { name: `Dup Apple ${stamp}` } });
   });
 
-  const first = await postReceipt({
+  const line = {
     itemName: `Dup Apple ${stamp}`,
     casesReceived: 1,
     caseCost: 12,
     packSize: 4,
     splitFactor: 1,
-    retailPrice: 5,
-    retailUnit: 'units',
-    staffId: 'test-staff',
+    retailUnit: 'units' as const,
+    marginMode: '40' as const,
+    currentRetailPrice: 5,
     externalLogId,
-  });
-  const second = await postReceipt({
-    itemName: `Dup Apple ${stamp}`,
-    casesReceived: 1,
-    caseCost: 12,
-    packSize: 4,
-    splitFactor: 1,
-    retailPrice: 5,
-    retailUnit: 'units',
-    staffId: 'test-staff',
-    externalLogId,
-  });
+  };
+  const first = await postReceivingLogToInventory(line, 'test-staff', null);
+  const second = await postReceivingLogToInventory(line, 'test-staff', null);
 
-  assert.equal(first.posted, true);
-  assert.equal(second.posted, true);
-  if (first.posted && second.posted) {
-    assert.equal(second.idempotent, true);
-    assert.equal(second.unitsAdded, 0);
-    const onHand = await getCurrentStock(first.productId, InventoryLocation.Retail_Floor);
+  assert.equal(first.stock.posted, true);
+  assert.equal(second.stock.posted, true);
+  if (first.stock.posted && second.stock.posted) {
+    assert.equal(second.stock.idempotent, true);
+    assert.equal(second.stock.unitsAdded, first.stock.unitsAdded);
+    const onHand = await getCurrentStock(first.stock.productId, InventoryLocation.Retail_Floor);
     assert.equal(onHand, 4);
   }
 });
@@ -162,22 +155,30 @@ test('duplicate invoice commits post once', { skip: !hasDb }, async (t) => {
       },
     ],
   });
-  const key = `invoice:vendor ${stamp}:inv-${stamp}`;
+  const supplier = await prisma.supplier.create({ data: { name: `Supplier ${stamp}` } });
 
   t.after(async () => {
-    await prisma.ledgerIdempotencyKey.deleteMany({ where: { key } });
+    const deliveries = await prisma.receivingDelivery.findMany({
+      where: { itemName: `Invoice Apple ${stamp}` },
+      select: { id: true },
+    });
+    await prisma.ledgerIdempotencyKey.deleteMany({
+      where: { key: { in: deliveries.map((row) => `recv:${row.id}`) } },
+    });
+    await prisma.receivingDelivery.deleteMany({ where: { id: { in: deliveries.map((row) => row.id) } } });
+    await prisma.supplierInvoiceDocument.deleteMany({ where: { supplierId: supplier.id } });
     await prisma.invoiceOcrDraft.deleteMany({ where: { id: draft.id } });
-    await prisma.invoiceLineItem.deleteMany({ where: { inventoryItem: { productId: product.id } } });
+    await prisma.invoiceLineItem.deleteMany({ where: { invoice: { invoiceNumber: `INV-${stamp}` } } });
     await prisma.vendorInvoice.deleteMany({ where: { invoiceNumber: `INV-${stamp}` } });
     await prisma.inventoryLot.deleteMany({ where: { productId: product.id } });
     await prisma.inventoryTransaction.deleteMany({ where: { productId: product.id } });
     await prisma.product.delete({ where: { id: product.id } });
+    await prisma.supplier.delete({ where: { id: supplier.id } });
   });
 
   const input = {
     staffId: 'test-staff',
     referenceId: `INV-${stamp}`,
-    idempotencyKey: key,
     draftId: draft.id,
     actorIsManager: false,
     confirmedItems: [
@@ -192,6 +193,7 @@ test('duplicate invoice commits post once', { skip: !hasDb }, async (t) => {
     ],
     invoiceMeta: {
       vendorName: `Vendor ${stamp}`,
+      supplierId: supplier.id,
       invoiceNumber: `INV-${stamp}`,
       invoiceDate: '2026-11-08',
       totalAmount: 4,
@@ -200,17 +202,8 @@ test('duplicate invoice commits post once', { skip: !hasDb }, async (t) => {
   };
 
   const firstCommit = await commitInvoiceOcrReceipts(input);
-  let duplicate = false;
-  try {
-    await commitInvoiceOcrReceipts(input);
-  } catch (error) {
-    duplicate =
-      typeof error === 'object' &&
-      error !== null &&
-      'code' in error &&
-      (error as { code?: string }).code === 'P2002';
-  }
-  assert.equal(duplicate, true);
+  const secondCommit = await commitInvoiceOcrReceipts(input);
+  assert.equal(secondCommit.transactionsCreated, 0);
   assert.equal(firstCommit.transactionsCreated, 1);
   const onHand = await getCurrentStock(product.id, InventoryLocation.Retail_Floor);
   assert.equal(onHand, 2);

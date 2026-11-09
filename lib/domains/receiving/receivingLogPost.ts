@@ -1,4 +1,21 @@
-import { postReceipt, type PostedReceipt, type SkippedReceipt } from '@/lib/domains/inventory/stock';
+import {
+  postReceipt,
+  type ConflictReceipt,
+  type PostedReceipt,
+  type SkippedReceipt,
+} from '@/lib/domains/inventory/stock';
+import { getCurrentStock, prisma } from '@/lib/domains/inventory/ledger';
+import type { LotTx } from '@/lib/domains/inventory/lots';
+import {
+  DELIVERY_UUID_REQUIRED_ERROR,
+  isLegacyScanDeliveryId,
+  isRetiredPositionalDeliveryId,
+  LEGACY_SCAN_STASH_ERROR,
+  normalizeDeliveryUuid,
+  ReceivingDeliveryConflict,
+  receivingDeliveryPayloadHash,
+  RETIRED_POSITIONAL_DELIVERY_ERROR,
+} from '@/lib/domains/receiving/deliveryIdentity';
 import { sampleReceivingRejection } from '@/lib/domains/receiving/sampleReceivingGuard';
 import { getSupplierNameById } from '@/lib/domains/suppliers/suppliers';
 import {
@@ -31,7 +48,20 @@ export interface ReceivingLogPostInput {
 export interface ReceivingLogPostResult {
   externalLogId?: string;
   itemName: string;
-  stock: PostedReceipt | SkippedReceipt;
+  stock: PostedReceipt | SkippedReceipt | ConflictReceipt;
+}
+
+export function receivingValidationHttpStatus(error: string): 400 | 409 {
+  if (error === RETIRED_POSITIONAL_DELIVERY_ERROR || error === LEGACY_SCAN_STASH_ERROR) {
+    return 409;
+  }
+  return 400;
+}
+
+export function receivingLineHttpStatus(
+  stock: PostedReceipt | SkippedReceipt | ConflictReceipt
+): 200 | 409 {
+  return stock.posted === false && stock.conflict === true ? 409 : 200;
 }
 
 function parseCaseRetail(raw: number | null | undefined): number | undefined {
@@ -74,6 +104,37 @@ export function validateReceivingLogPostInput(body: Partial<ReceivingLogPostInpu
   if (caseCost < 0 || caseCost > 1_000_000) {
     return { ok: false, error: 'Case cost must be zero or greater and at most 1,000,000.' };
   }
+  const rawDeliveryId = body.externalLogId?.trim() ?? '';
+  if (!rawDeliveryId) return { ok: false, error: DELIVERY_UUID_REQUIRED_ERROR };
+  const sampleReason = sampleReceivingRejection({ externalLogId: rawDeliveryId });
+  if (sampleReason) {
+    return {
+      ok: true,
+      input: {
+        itemName,
+        productId: body.productId?.trim() || undefined,
+        casesReceived,
+        caseCost,
+        packSize,
+        splitFactor,
+        retailUnit,
+        marginMode,
+        customMarginPercent: Number(body.customMarginPercent) || 0,
+        currentRetailPrice,
+        caseRetailPrice: body.caseRetailPrice,
+        supplierId: body.supplierId?.trim() || undefined,
+        externalLogId: rawDeliveryId,
+      },
+    };
+  }
+  if (isRetiredPositionalDeliveryId(rawDeliveryId)) {
+    return { ok: false, error: RETIRED_POSITIONAL_DELIVERY_ERROR };
+  }
+  if (isLegacyScanDeliveryId(rawDeliveryId)) {
+    return { ok: false, error: LEGACY_SCAN_STASH_ERROR };
+  }
+  const deliveryId = normalizeDeliveryUuid(rawDeliveryId);
+  if (!deliveryId) return { ok: false, error: DELIVERY_UUID_REQUIRED_ERROR };
 
   return {
     ok: true,
@@ -90,7 +151,7 @@ export function validateReceivingLogPostInput(body: Partial<ReceivingLogPostInpu
       currentRetailPrice,
       caseRetailPrice: body.caseRetailPrice,
       supplierId: body.supplierId?.trim() || undefined,
-      externalLogId: body.externalLogId,
+      externalLogId: deliveryId,
     },
   };
 }
@@ -98,7 +159,8 @@ export function validateReceivingLogPostInput(body: Partial<ReceivingLogPostInpu
 export async function postReceivingLogToInventory(
   input: ReceivingLogPostInput,
   actorId: string,
-  supplierName: string | null
+  supplierName: string | null,
+  db?: LotTx
 ): Promise<ReceivingLogPostResult> {
   const sampleReason = sampleReceivingRejection(input);
   if (sampleReason) {
@@ -111,6 +173,31 @@ export async function postReceivingLogToInventory(
 
   const targetMargin = resolveTargetMargin(input.marginMode, input.customMarginPercent ?? 0);
   const caseRetailPrice = parseCaseRetail(input.caseRetailPrice);
+
+  const deliveryId = normalizeDeliveryUuid(input.externalLogId ?? '');
+  if (deliveryId) {
+    const held = await (db ?? prisma).supplierInvoiceLine.findUnique({
+      where: { id: deliveryId },
+      select: { heldByLegacy: true },
+    });
+    if (held?.heldByLegacy) {
+      const productId = input.productId?.trim() || '';
+      return {
+        externalLogId: input.externalLogId,
+        itemName: input.itemName,
+        stock: {
+          posted: true,
+          idempotent: true,
+          unitsAdded: 0,
+          onHand: productId ? await getCurrentStock(productId) : 0,
+          productId,
+          productName: input.itemName,
+          transactionId: '',
+          reason: 'This invoice was already received before the upgrade. Stock was not added again.',
+        },
+      };
+    }
+  }
 
   try {
     const stock = await postReceipt({
@@ -127,7 +214,20 @@ export async function postReceivingLogToInventory(
       targetMargin,
       supplier: supplierName,
       externalLogId: input.externalLogId,
-    });
+      delivery: input.externalLogId
+        ? {
+            payloadHash: receivingDeliveryPayloadHash({
+              itemName: input.itemName,
+              productId: input.productId,
+              casesReceived: input.casesReceived,
+              caseCost: input.caseCost,
+              packSize: input.packSize,
+              splitFactor: input.splitFactor,
+            }),
+            productId: input.productId,
+          }
+        : undefined,
+    }, db);
 
     return {
       externalLogId: input.externalLogId,
@@ -135,6 +235,13 @@ export async function postReceivingLogToInventory(
       stock,
     };
   } catch (error) {
+    if (error instanceof ReceivingDeliveryConflict) {
+      return {
+        externalLogId: input.externalLogId,
+        itemName: input.itemName,
+        stock: { posted: false, conflict: true, reason: error.message },
+      };
+    }
     console.error('[postReceivingLogToInventory]', input.itemName, error);
     return {
       externalLogId: input.externalLogId,
@@ -147,7 +254,7 @@ export async function postReceivingLogToInventory(
 export interface ReceivingBatchSlot {
   externalLogId?: string;
   itemName: string;
-  stock: { posted: boolean; reason?: string };
+  stock: { posted: boolean; reason?: string; conflict?: boolean };
 }
 
 /**
