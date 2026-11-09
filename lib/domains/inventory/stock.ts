@@ -1,5 +1,6 @@
 import { Department, InventoryLocation, Prisma, TransactionType, UnitType } from '@prisma/client';
 import { ReceivingDeliveryConflict } from '@/lib/domains/receiving/deliveryIdentity';
+import { isLedgerIdempotencyConflict } from '@/lib/domains/inventory/idempotencyConflict';
 import { parsePosSalesDaysParam, posSalesWindowStart } from '@/lib/domains/inventory/posSalesUnits';
 import {
   getCurrentStock,
@@ -1395,7 +1396,11 @@ export async function moveRetailStock(
     fromLocation: InventoryLocation.Retail_Floor,
   };
 
+  try {
   await prisma.$transaction(async (tx) => {
+    if (clientMutationId?.trim()) {
+      await tx.ledgerIdempotencyKey.create({ data: { key: referenceId } });
+    }
     if (action === 'waste') {
       await consumeLotsFifo(tx, {
         productId,
@@ -1442,6 +1447,12 @@ export async function moveRetailStock(
       },
     });
   }, LEDGER_WRITE_TX);
+  } catch (error) {
+    if (clientMutationId?.trim() && isLedgerIdempotencyConflict(error)) {
+      return { level: await readStockLevel(productId), units: 0 };
+    }
+    throw error;
+  }
 
   invalidateInventoryCaches();
   return { level: await readStockLevel(productId), units: qty };

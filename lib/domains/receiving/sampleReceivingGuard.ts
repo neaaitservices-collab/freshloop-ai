@@ -49,7 +49,7 @@ export function sampleInvoiceCommitRejection(input: {
 
 export interface StoredOcrDraftGate {
   expiresAt: Date;
-  payload: { invoiceNumber?: string | null };
+  payload: { invoiceNumber?: string | null; vendorName?: string | null };
 }
 
 /**

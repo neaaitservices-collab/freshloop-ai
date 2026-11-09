@@ -138,6 +138,27 @@ export interface WasteKpiReport {
 // Prefix used in `referenceId` to distinguish volumetric kitchen scrap bucket logs
 export const VOLUMETRIC_SCRAP_REF_PREFIX = 'VOL-SCRAP-BUCKET';
 
+/**
+ * Stock sums ignore volumetric scrap rows.
+ * New rows store the bucket count with `qtyChange` 0. Older rows stored a
+ * positive quantity on an arbitrary SKU. Excluding the reference prefix
+ * corrects those historical quantities without rewriting them.
+ * Null reference ids stay in the sum.
+ */
+export function excludeVolumetricScrapFromStock(): {
+  OR: Array<
+    | { referenceId: null }
+    | { NOT: { referenceId: { startsWith: string } } }
+  >;
+} {
+  return {
+    OR: [
+      { referenceId: null },
+      { NOT: { referenceId: { startsWith: VOLUMETRIC_SCRAP_REF_PREFIX } } },
+    ],
+  };
+}
+
 // ============================================================================
 // 1. getCurrentStock(productId, location)
 // ============================================================================
@@ -176,6 +197,10 @@ export async function readShelfOnHandPair(
       ), 0)::float8 AS deli
     FROM "Inventory_Transactions" t
     WHERE t."Product_ID" = ${productId.trim()}
+      AND (
+        t."Reference_ID" IS NULL
+        OR t."Reference_ID" NOT LIKE ${`${VOLUMETRIC_SCRAP_REF_PREFIX}%`}
+      )
   `;
   const row = rows[0];
   return {
@@ -199,19 +224,24 @@ export async function getCurrentStock(
 
   try {
     const aggregation = await client.inventoryTransaction.aggregate({
-      where: location
-        ? {
-            productId: productId.trim(),
-            OR: [
-              // Inflows entering this specific location
-              { toLocation: location, qtyChange: { gt: 0 } },
-              // Outflows leaving this specific location
-              { fromLocation: location, qtyChange: { lt: 0 } },
-            ],
-          }
-        : {
-            productId: productId.trim(),
-          },
+      where: {
+        AND: [
+          excludeVolumetricScrapFromStock(),
+          location
+            ? {
+                productId: productId.trim(),
+                OR: [
+                  // Inflows entering this specific location
+                  { toLocation: location, qtyChange: { gt: 0 } },
+                  // Outflows leaving this specific location
+                  { fromLocation: location, qtyChange: { lt: 0 } },
+                ],
+              }
+            : {
+                productId: productId.trim(),
+              },
+        ],
+      },
       _sum: {
         qtyChange: true,
       },

@@ -1,4 +1,35 @@
+import { Department } from '@prisma/client';
 import { z } from 'zod';
+
+const invoiceOcrResolutionsSchema = z
+  .object({
+    vendorName: z.string().trim().min(1).max(256).optional(),
+    invoiceNumber: z.string().trim().min(1).max(128).optional(),
+    invoiceDate: z.string().trim().min(1).max(32).optional(),
+    lines: z
+      .array(
+        z
+          .object({
+            index: z.number().int().nonnegative().max(500),
+            line_name: z.string().trim().min(1).max(256).optional(),
+            quantity: z.number().finite().positive().max(1_000_000).optional(),
+            department: z.nativeEnum(Department).optional(),
+          })
+          .strict()
+      )
+      .max(500)
+      .optional(),
+  })
+  .strict();
+
+export const invoiceOcrResolveBodySchema = z
+  .object({
+    resolveDraft: z.literal(true),
+    draftId: z.string().trim().min(1).max(128),
+    manualReviewOverride: z.boolean().optional(),
+    resolutions: invoiceOcrResolutionsSchema,
+  })
+  .strict();
 
 export const invoiceOcrCommitBodySchema = z
   .object({
@@ -10,6 +41,8 @@ export const invoiceOcrCommitBodySchema = z
       .trim()
       .min(1, 'Select a saved supplier before this invoice can be received.'),
     manualReviewOverride: z.boolean().optional(),
+    /** Fills stored gaps. A clerk cannot clear an assumed department with this. */
+    resolutions: invoiceOcrResolutionsSchema.optional(),
   })
   .strict();
 

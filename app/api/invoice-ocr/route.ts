@@ -1,12 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { Department } from '@prisma/client';
+import { Prisma, Department } from '@prisma/client';
 import { InventoryLedgerError, getMovingAverageCostMap, prisma } from '@/lib/domains/inventory/ledger';
 import { loadProductCatalog } from '@/lib/domains/catalog/productCatalog';
 import {
-  assertDraftLinesCommittable,
   commitInvoiceOcrReceipts,
   saveInvoiceOcrDraft,
-  type OcrDraftLine,
   type OcrDraftPayload,
 } from '@/lib/domains/receiving/invoiceOcrCommit';
 import { generateContentWithFallback, tryParseModelJson } from '@/lib/domains/ai/gemini';
@@ -21,7 +19,7 @@ import { matchProductWithScore } from '@/lib/domains/inventory/productMatching';
 import { recordOcrScanAnalytics } from '@/lib/domains/suppliers/analyticsPersistence';
 import { VENDOR_PRICE_ALERT_DEFAULT_PCT } from '@/lib/domains/suppliers/vendorAnalyticsTypes';
 import { assertHotPathRateLimit } from '@/lib/security/rateLimit';
-import { invoiceOcrCommitBodySchema } from '@/lib/security/schemas/invoiceOcr';
+import { invoiceOcrCommitBodySchema, invoiceOcrResolveBodySchema } from '@/lib/security/schemas/invoiceOcr';
 import {
   INVOICE_OCR_CONFIDENCE_THRESHOLD,
   combineLineConfidence,
@@ -29,6 +27,12 @@ import {
   matchConfidenceFromCatalogScore,
   normalizeExtractionConfidence,
 } from '@/lib/domains/receiving/invoiceOcrConfidence';
+import { parseInvoiceIdentity, parseInvoiceLineFields } from '@/lib/domains/receiving/invoiceOcrParse';
+import {
+  applyOcrDraftResolutions,
+  buildAuthoritativeOcrDraft,
+  draftPostingBlockers,
+} from '@/lib/domains/receiving/invoiceOcrDraft';
 import type { RoleName } from '@/lib/utils/roles';
 
 export const maxDuration = 60;
@@ -58,6 +62,9 @@ export interface InvoiceOcrLineItemWithGuardrail {
   match_confidence: number | null;
   line_confidence: number;
   needs_manual_review: boolean;
+  department_assumed: boolean;
+  quantity_unreadable: boolean;
+  name_unreadable: boolean;
 }
 
 export interface InvoiceOcrApiResponse {
@@ -74,6 +81,7 @@ export interface InvoiceOcrApiResponse {
   low_confidence_items_count: number;
   ocr_confidence_threshold: number;
   draftId: string;
+  blockers?: string[];
   items: InvoiceOcrLineItemWithGuardrail[];
   // Backward-compatible shape for existing UI components
   data: {
@@ -88,8 +96,10 @@ export interface InvoiceOcrApiResponse {
       BAKERY: number;
       PANTRY: number;
     };
+    draftId?: string;
     lineItems: Array<{
       name: string;
+      deliveryId?: string;
       department: 'PRODUCE' | 'DAIRY' | 'BAKERY' | 'PANTRY';
       quantity: number;
       unit: string;
@@ -162,6 +172,8 @@ type RawOcrLineItem = {
   totalCost: number;
   caseRetailPrice?: number | null;
   extractionConfidence?: number;
+  departmentAssumed?: boolean;
+  quantityUnreadable?: boolean;
 };
 
 function evaluateCostGuardrailSync(
@@ -223,7 +235,10 @@ function evaluateCostGuardrailSync(
   const matchConfidence =
     matchScore !== null ? matchConfidenceFromCatalogScore(matchScore) : null;
   const lineConfidence = combineLineConfidence(extractionConfidence, matchConfidence);
-  const needsManualReview = lineNeedsManualReview(lineConfidence);
+  const needsManualReview =
+    lineNeedsManualReview(lineConfidence) ||
+    rawItem.quantityUnreadable === true ||
+    rawItem.departmentAssumed === true;
 
   return {
     item_name: rawItem.name,
@@ -248,6 +263,9 @@ function evaluateCostGuardrailSync(
     match_confidence: matchConfidence,
     line_confidence: lineConfidence,
     needs_manual_review: needsManualReview,
+    department_assumed: rawItem.departmentAssumed === true,
+    quantity_unreadable: rawItem.quantityUnreadable === true || !(rawItem.quantity > 0),
+    name_unreadable: !rawItem.name.trim() || rawItem.name.startsWith('Unread line '),
   };
 }
 
@@ -365,6 +383,8 @@ async function extractInvoiceWithGemini15FlashVision(
     unitCost: number;
     totalCost: number;
     caseRetailPrice?: number | null;
+    departmentAssumed?: boolean;
+    quantityUnreadable?: boolean;
   }>;
   modelNote: string;
 }> {
@@ -418,29 +438,27 @@ Rules: unitCost/totalCost per case when unit is cases; caseRetailPrice = printed
     );
   }
 
+  const identity = parseInvoiceIdentity(parsed);
   return {
-    vendorName: String(parsed.vendorName || 'Fresh Grocer Wholesale'),
-    invoiceNumber: String(
-      parsed.invoiceNumber || `INV-${Math.floor(Math.random() * 90000 + 10000)}`
-    ),
-    invoiceDate: String(parsed.invoiceDate || new Date().toISOString().split('T')[0]),
-    lineItems: parsed.lineItems.map((li: Record<string, unknown>) => {
-      const qty = Number(li.quantity) > 0 ? Number(li.quantity) : 1;
+    vendorName: identity.vendorName,
+    invoiceNumber: identity.invoiceNumber,
+    invoiceDate: identity.invoiceDate,
+    lineItems: parsed.lineItems.map((li: Record<string, unknown>, index: number) => {
+      const fields = parseInvoiceLineFields(li, index + 1);
       const unitCost = Number(li.unitCost ?? li.unit_cost) || 0;
       const totalCost =
-        Number(li.totalCost ?? li.total_cost) || Number((qty * unitCost).toFixed(2));
+        Number(li.totalCost ?? li.total_cost) ||
+        (fields.quantity > 0 ? Number((fields.quantity * unitCost).toFixed(2)) : 0);
       const caseRetailRaw = li.caseRetailPrice ?? li.case_retail_price ?? li.retail_price;
       const caseRetailPrice =
         caseRetailRaw !== undefined && caseRetailRaw !== null && Number(caseRetailRaw) > 0
           ? Number(caseRetailRaw)
           : null;
       return {
-        name: String(li.name || li.item_name || 'Vendor Line Item'),
-        department: (['PRODUCE', 'DAIRY', 'BAKERY', 'PANTRY'].includes(String(li.department))
-          ? String(li.department)
-          : 'PRODUCE') as 'PRODUCE' | 'DAIRY' | 'BAKERY' | 'PANTRY',
-        quantity: qty,
-        unit: String(li.unit || 'cases'),
+        name: fields.name,
+        department: fields.department,
+        quantity: fields.quantity,
+        unit: fields.unit,
         casePackSize: Number(li.casePackSize) > 0 ? Number(li.casePackSize) : 1,
         subUnit: String(li.subUnit || 'units'),
         unitCost,
@@ -450,9 +468,11 @@ Rules: unitCost/totalCost per case when unit is cases; caseRetailPrice = printed
           li.extractionConfidence ?? li.extraction_confidence ?? li.confidence,
           'photo'
         ),
+        departmentAssumed: fields.departmentAssumed,
+        quantityUnreadable: fields.quantityUnreadable,
       };
     }),
-    modelNote: `Read from the photo with ${modelUsed}.`,
+    modelNote: [`Read from the photo with ${modelUsed}.`, ...identity.gaps].filter(Boolean).join(' '),
   };
 }
 
@@ -469,6 +489,66 @@ export async function POST(req: NextRequest) {
     const limited = assertHotPathRateLimit(actor.id, 'invoiceOcr');
     if (limited) return limited;
     const rawBody = await req.json();
+    if (
+      rawBody &&
+      typeof rawBody === 'object' &&
+      (rawBody as { resolveDraft?: boolean }).resolveDraft === true
+    ) {
+      operation = 'commit';
+      const resolveBody = invoiceOcrResolveBodySchema.parse(rawBody);
+      actorId = actor.id;
+      const managerRoles: RoleName[] = ['ADMIN', 'STORE_MANAGER'];
+      const actorIsManager = managerRoles.includes(actor.role);
+      const saved = await prisma.$transaction(async (tx) => {
+        const rows = await tx.$queryRaw<
+          Array<{ id: string; payload: OcrDraftPayload; expires_at: Date; consumed_at: Date | null }>
+        >`
+          SELECT id, payload, expires_at, consumed_at
+          FROM invoice_ocr_drafts
+          WHERE id = ${resolveBody.draftId}
+          FOR UPDATE
+        `;
+        const row = rows[0];
+        if (!row) return { kind: 'missing' as const };
+        if (new Date(row.expires_at).getTime() < Date.now()) return { kind: 'expired' as const };
+        if (row.consumed_at) return { kind: 'consumed' as const };
+        const next = applyOcrDraftResolutions(row.payload, resolveBody.resolutions, {
+          actorIsManager,
+          manualReviewOverride: Boolean(resolveBody.manualReviewOverride),
+        });
+        await tx.invoiceOcrDraft.update({
+          where: { id: row.id },
+          data: { payload: next as unknown as Prisma.InputJsonValue },
+        });
+        return { kind: 'saved' as const, payload: next };
+      });
+      if (saved.kind === 'missing') {
+        return NextResponse.json(
+          { success: false, error: 'Invoice scan was not found. Scan the invoice again.' },
+          { status: 404 }
+        );
+      }
+      if (saved.kind === 'expired') {
+        return NextResponse.json(
+          { success: false, error: 'Invoice scan expired. Scan the invoice again.' },
+          { status: 409 }
+        );
+      }
+      if (saved.kind === 'consumed') {
+        return NextResponse.json(
+          { success: false, committed: false, error: 'This scan was already received.' },
+          { status: 409 }
+        );
+      }
+      const blockers = draftPostingBlockers(saved.payload, {
+        actorIsManager,
+        manualReviewOverride: Boolean(resolveBody.manualReviewOverride),
+      });
+      return NextResponse.json(
+        { success: true, committed: false, saved: true, blockers, payload: saved.payload },
+        { status: blockers.length > 0 ? 409 : 200 }
+      );
+    }
     if (
       rawBody &&
       typeof rawBody === 'object' &&
@@ -495,14 +575,29 @@ export async function POST(req: NextRequest) {
           { status: gate.ok ? 404 : gate.status }
         );
       }
-      const payload = draft.payload as unknown as OcrDraftPayload;
       const managerRoles: RoleName[] = ['ADMIN', 'STORE_MANAGER'];
       const actorIsManager = managerRoles.includes(actor.role);
-      assertDraftLinesCommittable(
-        payload.lines,
+      const storedPayload = draft.payload as unknown as OcrDraftPayload;
+      const payload = commitBody.resolutions
+        ? applyOcrDraftResolutions(storedPayload, commitBody.resolutions, {
+            actorIsManager,
+            manualReviewOverride: Boolean(commitBody.manualReviewOverride),
+          })
+        : storedPayload;
+      const blockers = draftPostingBlockers(payload, {
         actorIsManager,
-        Boolean(commitBody.manualReviewOverride)
-      );
+        manualReviewOverride: Boolean(commitBody.manualReviewOverride),
+      });
+      if (blockers.length > 0) {
+        await prisma.invoiceOcrDraft.update({
+          where: { id: draft.id },
+          data: { payload: payload as unknown as Prisma.InputJsonValue },
+        });
+        return NextResponse.json(
+          { success: false, committed: false, error: blockers[0], blockers },
+          { status: 409 }
+        );
+      }
       referenceId = payload.invoiceNumber;
       if (draft.consumedAt) {
         return NextResponse.json({
@@ -516,30 +611,30 @@ export async function POST(req: NextRequest) {
       let committed: Awaited<ReturnType<typeof commitInvoiceOcrReceipts>>;
       try {
         committed = await commitInvoiceOcrReceipts({
-        staffId: actor.id,
-        referenceId,
-        confirmedItems: payload.lines.map((line) => ({
-          product_id: line.product_id,
-          quantity: line.quantity,
-          quantity_kind: line.quantity_kind,
-          unit_cost: line.unit_cost,
-          line_name: line.line_name,
-          department: line.department,
-          case_pack_size: line.case_pack_size,
-          line_confidence: line.line_confidence,
-        })),
-        invoiceMeta: {
-          vendorName: payload.vendorName,
-          supplierId: commitBody.supplierId,
-          invoiceNumber: payload.invoiceNumber,
-          invoiceDate: payload.invoiceDate,
-          totalAmount: payload.totalAmount,
-          departmentBreakdown: payload.departmentBreakdown,
-        },
-        manualReviewOverride: commitBody.manualReviewOverride,
-        actorIsManager,
-        draftId: draft.id,
-      });
+          staffId: actor.id,
+          referenceId,
+          confirmedItems: payload.lines.map((line) => ({
+            product_id: line.product_id,
+            quantity: line.quantity,
+            quantity_kind: line.quantity_kind,
+            unit_cost: line.unit_cost,
+            line_name: line.line_name,
+            department: line.department,
+            case_pack_size: line.case_pack_size,
+            line_confidence: line.line_confidence,
+          })),
+          invoiceMeta: {
+            vendorName: payload.vendorName,
+            supplierId: commitBody.supplierId,
+            invoiceNumber: payload.invoiceNumber,
+            invoiceDate: payload.invoiceDate,
+            totalAmount: payload.totalAmount,
+            departmentBreakdown: payload.departmentBreakdown,
+          },
+          manualReviewOverride: commitBody.manualReviewOverride,
+          actorIsManager,
+          draftId: draft.id,
+        });
       } catch (error) {
         if (error instanceof InventoryLedgerError) {
           const details =
@@ -561,7 +656,7 @@ export async function POST(req: NextRequest) {
           historical_avg_cost: null,
           cost_variance_pct: null,
           line_confidence: line.line_confidence,
-          needs_manual_review: line.requires_approval,
+          needs_manual_review: line.review_reasons?.includes('low_confidence') ?? line.requires_approval,
         })),
         analyticsThresholdPct: VENDOR_PRICE_ALERT_DEFAULT_PCT,
       }).catch((err: unknown) => {
@@ -650,27 +745,26 @@ export async function POST(req: NextRequest) {
     const lowConfidenceItemsCount = auditedItems.filter((item) => item.needs_manual_review).length;
     const needsManualReview = lowConfidenceItemsCount > 0;
 
-    const draftLines: OcrDraftLine[] = auditedItems
-      .filter((item) => item.product_id)
-      .map((item) => ({
-        product_id: item.product_id as string,
-        quantity: item.quantity,
-        quantity_kind: item.unit.toLowerCase().includes('case') ? 'cases' : 'units',
-        unit_cost: item.unit_cost,
-        line_name: item.item_name,
-        department: item.department,
-        case_pack_size: item.case_pack_size,
-        line_confidence: item.line_confidence,
-        requires_approval: item.requires_approval,
-      }));
-    const draftPayload: OcrDraftPayload = {
+    const draftPayload = buildAuthoritativeOcrDraft({
       vendorName: extracted.vendorName,
       invoiceNumber: extracted.invoiceNumber,
       invoiceDate: extracted.invoiceDate,
       totalAmount,
       departmentBreakdown,
-      lines: draftLines,
-    };
+      lines: auditedItems.map((item) => ({
+        item_name: item.item_name,
+        product_id: item.product_id,
+        quantity: item.quantity,
+        unit: item.unit,
+        unit_cost: item.unit_cost,
+        department: item.department,
+        case_pack_size: item.case_pack_size,
+        line_confidence: item.line_confidence,
+        requires_approval: item.requires_approval,
+        department_assumed: item.department_assumed,
+        quantity_unreadable: item.quantity_unreadable,
+      })),
+    });
     const draft =
       ocrSource === 'sample' ? null : await saveInvoiceOcrDraft(actor.id, draftPayload);
 
@@ -688,6 +782,10 @@ export async function POST(req: NextRequest) {
       low_confidence_items_count: lowConfidenceItemsCount,
       ocr_confidence_threshold: INVOICE_OCR_CONFIDENCE_THRESHOLD,
       draftId: draft?.id ?? '',
+      blockers: draftPostingBlockers(draftPayload, {
+        actorIsManager: false,
+        manualReviewOverride: false,
+      }),
       items: auditedItems,
       data: {
         vendorName: extracted.vendorName,
@@ -695,6 +793,7 @@ export async function POST(req: NextRequest) {
         invoiceDate: extracted.invoiceDate,
         totalAmount,
         departmentBreakdown,
+        draftId: draft?.id ?? '',
         lineItems: auditedItems.map((item) => ({
           name: item.item_name,
           matchedProductName: item.matched_product_name,

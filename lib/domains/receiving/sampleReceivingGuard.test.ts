@@ -88,6 +88,7 @@ test('genuine sheet and OCR values that match a fixture still post', () => {
   const gate = gateStoredOcrDraft({
     expiresAt: new Date(Date.now() + 60_000),
     payload: {
+      vendorName: 'North Market',
       invoiceNumber: 'INV-500',
     },
   });

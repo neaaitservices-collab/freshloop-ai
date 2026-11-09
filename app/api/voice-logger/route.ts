@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { Department, TargetAction } from '@prisma/client';
+import { Department } from '@prisma/client';
 import { generateContentWithFallback, parseModelJson } from '@/lib/domains/ai/gemini';
 import {
   transcribeWithWhisper,
@@ -7,8 +7,6 @@ import {
   WhisperTranscriptionError,
 } from '@/lib/domains/ai/whisper';
 import { GEMINI_FLASH_MODEL_FALLBACKS } from '@/lib/domains/ai/geminiModels';
-import { prisma } from '@/lib/domains/inventory/ledger';
-import { moveRetailStock } from '@/lib/domains/inventory/stock';
 import { loadProductCatalog as loadCatalogProducts } from '@/lib/domains/catalog/productCatalog';
 import { handleApiRouteError } from '@/lib/domains/ai/apiError';
 import { authErrorResponse } from '@/lib/auth/http';
@@ -516,19 +514,6 @@ export async function POST(req: NextRequest) {
       typeof body.clientMutationId === 'string' ? body.clientMutationId.trim() : '';
 
     if (confirmCommit && Array.isArray(confirmedItems) && confirmedItems.length > 0) {
-      if (clientMutationId && confirmedItems[0]?.product_id) {
-        const { isOfflineMutationApplied } = await import('@/lib/domains/inventory/offlineMutation');
-        const batchProbe = `${clientMutationId}:0:${confirmedItems[0].product_id}`;
-        if (await isOfflineMutationApplied(batchProbe)) {
-          return NextResponse.json({
-            success: true,
-            committed: true,
-            deduped: true,
-            transactionsCreated: 0,
-            timestamp: new Date().toISOString(),
-          });
-        }
-      }
       const invalid = confirmedItems.find(
         (item) => !item.product_id?.trim() || !Number.isFinite(Number(item.quantity)) || Number(item.quantity) <= 0
       );
@@ -542,38 +527,19 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      let ledgerMoves = 0;
-
-      for (let index = 0; index < confirmedItems.length; index += 1) {
-        const item = confirmedItems[index]!;
-        const absQty = Math.abs(Number(item.quantity) || 1);
-        const ledgerAction = item.target_action === 'DISCARD' ? 'waste' : 'rescue';
-        const lineMutationId = clientMutationId
-          ? `${clientMutationId}:${index}:${item.product_id}`
-          : undefined;
-        await moveRetailStock(
-          item.product_id,
-          ledgerAction,
-          actor.id,
-          absQty,
-          lineMutationId
-        );
-        ledgerMoves += ledgerAction === 'rescue' ? 2 : 1;
-      }
-
-      const hasDiscard = confirmedItems.some((i) => i.target_action === 'DISCARD');
-      await prisma.voiceLog.create({
-        data: {
-          transcript: commitTranscript?.trim() || 'Voice floor log (confirmed)',
-          parsedData: confirmedItems,
-          targetAction: hasDiscard ? TargetAction.DISCARD : TargetAction.KITCHEN_RESCUE,
-        },
+      const { commitConfirmedVoiceItems } = await import('@/lib/domains/inventory/voiceCommit');
+      const committedVoice = await commitConfirmedVoiceItems({
+        actorId: actor.id,
+        clientMutationId,
+        confirmedItems,
+        transcript: commitTranscript,
       });
 
       return NextResponse.json({
         success: true,
         committed: true,
-        transactionsCreated: ledgerMoves,
+        deduped: committedVoice.deduped,
+        transactionsCreated: committedVoice.transactionsCreated,
         timestamp: new Date().toISOString(),
       });
     }

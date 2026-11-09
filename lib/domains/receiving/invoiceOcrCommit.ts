@@ -19,6 +19,17 @@ import type { ReceivingLogPostResult } from '@/lib/domains/receiving/receivingLo
 
 export type OcrQuantityKind = 'units' | 'cases';
 
+/** Preview lines say `unit: "cases"`. Commit must not treat that quantity as units. */
+export function quantityKindForInvoiceUnit(
+  unit: string | undefined,
+  explicit?: OcrQuantityKind
+): OcrQuantityKind {
+  if (explicit === 'cases' || explicit === 'units') return explicit;
+  const value = (unit ?? '').trim().toLowerCase();
+  if (value.includes('case') || value === 'cs' || value === 'ctn') return 'cases';
+  return 'units';
+}
+
 export interface OcrCommitLine {
   product_id: string;
   quantity: number;
@@ -32,6 +43,12 @@ export interface OcrCommitLine {
   match_confidence?: number;
   line_confidence?: number;
   needs_manual_review?: boolean;
+  department_assumed?: boolean;
+  quantity_unreadable?: boolean;
+  name_unreadable?: boolean;
+  review_reasons?: Array<
+    'low_confidence' | 'cost_guardrail' | 'department_assumed' | 'quantity_unreadable' | 'name_unreadable'
+  >;
 }
 
 export interface OcrInvoiceMeta {
@@ -126,6 +143,12 @@ export interface OcrDraftLine {
   case_pack_size?: number;
   line_confidence: number;
   requires_approval: boolean;
+  department_assumed?: boolean;
+  quantity_unreadable?: boolean;
+  name_unreadable?: boolean;
+  review_reasons?: Array<
+    'low_confidence' | 'cost_guardrail' | 'department_assumed' | 'quantity_unreadable' | 'name_unreadable'
+  >;
 }
 
 export interface OcrDraftPayload {
@@ -256,6 +279,32 @@ export async function commitInvoiceOcrReceipts(input: {
   try {
     result = await prisma.$transaction(
       async (tx) => {
+        if (input.draftId) {
+          const locked = await tx.$queryRaw<Array<{ consumed_at: Date | null; result: unknown }>>`
+            SELECT consumed_at, result FROM invoice_ocr_drafts WHERE id = ${input.draftId} FOR UPDATE
+          `;
+          const held = locked[0];
+          if (held?.consumed_at) {
+            const prior = held.result;
+            if (prior && typeof prior === 'object' && 'invoiceId' in prior) {
+              const stored = prior as {
+                invoiceId?: string | null;
+                receipts?: { transactionId: string; productId: string; unitsAdded: number; onHand: number }[];
+              };
+              return {
+                invoiceId: stored.invoiceId ?? null,
+                receipts: (stored.receipts ?? []).map((row) => ({ ...row, unitsAdded: 0 })),
+                transactionsCreated: 0,
+              };
+            }
+            throw new InventoryLedgerError(
+              'This scan was already received.',
+              'DRAFT_ALREADY_RECEIVED',
+              409,
+              { committed: false }
+            );
+          }
+        }
         const postedRows: ReceivingLogPostResult[] = [];
         for (const post of posts) {
           const row = await postReceivingLogToInventory(post, input.staffId, null, tx);

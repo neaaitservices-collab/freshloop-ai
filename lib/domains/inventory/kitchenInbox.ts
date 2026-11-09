@@ -11,6 +11,22 @@ export interface KitchenInboxRow {
   kitchenPrepQty: number;
 }
 
+/**
+ * Inbound kitchen quantity. A floor rescue writes a negative row and a positive
+ * row, both addressed to kitchen prep. Production consumption is a negative
+ * Rescue into the same location. Only the positive row is product received.
+ */
+export function kitchenInboxReceiptQty(
+  rows: Array<{ productId: string; qtyChange: number }>
+): Map<string, number> {
+  const totals = new Map<string, number>();
+  for (const row of rows) {
+    if (!(row.qtyChange > 0)) continue;
+    totals.set(row.productId, (totals.get(row.productId) ?? 0) + row.qtyChange);
+  }
+  return totals;
+}
+
 export async function getKitchenInbox(sinceHours = 24): Promise<KitchenInboxRow[]> {
   const since = new Date(Date.now() - sinceHours * 60 * 60 * 1000);
 
@@ -30,8 +46,8 @@ export async function getKitchenInbox(sinceHours = 24): Promise<KitchenInboxRow[
   >();
 
   for (const tx of transactions) {
-    const qty = Math.abs(tx.qtyChange);
-    if (qty <= 0) continue;
+    if (!(tx.qtyChange > 0)) continue;
+    const qty = tx.qtyChange;
     const existing = byProduct.get(tx.productId);
     if (!existing) {
       byProduct.set(tx.productId, {
