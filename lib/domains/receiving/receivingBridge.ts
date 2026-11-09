@@ -26,9 +26,9 @@ export function receivingLogsFromInvoice(result: InvoiceOcrResult): ReceivingLog
         itemName: item.name,
         invoiceLineName: catalogName && catalogName !== item.name ? item.name : undefined,
         productId: productId || undefined,
-        casesReceived: Number(item.quantity) > 0 ? Number(item.quantity) : 1,
+        casesReceived: Number(item.quantity) > 0 ? Number(item.quantity) : 0,
         caseCost: (() => {
-          const qty = Number(item.quantity) > 0 ? Number(item.quantity) : 1;
+          const qty = Number(item.quantity);
           const total = Number(item.totalCost) || 0;
           const unit = Number(item.unitCost) || 0;
           if (total > 0 && qty > 0) return Number((total / qty).toFixed(4));

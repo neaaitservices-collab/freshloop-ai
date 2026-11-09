@@ -10,6 +10,7 @@ test('missing invoice identity stays blank', () => {
   const identity = parseInvoiceIdentity({});
   assert.equal(identity.vendorName, '');
   assert.equal(identity.invoiceNumber, '');
+  assert.equal(identity.invoiceDate, '');
   assert.ok(identity.gaps.some((gap) => gap.includes('Invoice number')));
   assert.ok(identity.gaps.some((gap) => gap.includes('Vendor')));
 });

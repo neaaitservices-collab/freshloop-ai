@@ -33,7 +33,7 @@ export function parseInvoiceIdentity(raw: {
   return {
     vendorName,
     invoiceNumber,
-    invoiceDate: invoiceDate || new Date().toISOString().split('T')[0],
+    invoiceDate,
     gaps,
   };
 }
