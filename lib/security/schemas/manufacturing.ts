@@ -3,6 +3,7 @@ import { optionalSafeText, productIdSchema } from '@/lib/security/schemas/common
 
 export const manufacturingPostBodySchema = z
   .object({
+    operation_id: z.string().uuid(),
     recipe_id: z.string().trim().min(1).max(128),
     batch_output: z.number().finite().positive().max(100_000),
     ingredient_overrides: z

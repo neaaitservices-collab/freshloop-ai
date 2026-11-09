@@ -773,3 +773,15 @@ model ReceivingDelivery {
 
   @@map("receiving_deliveries")
 }
+
+/// One production run. Inserted in the same transaction as that run's ledger rows.
+/// `id` is the client operation id. A rolled-back batch deletes this row with the stock writes.
+model ManufacturingOperation {
+  id               String   @id
+  payloadHash      String   @map("payload_hash")
+  batchReferenceId String   @unique @map("batch_reference_id")
+  response         Json
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  @@map("manufacturing_operations")
+}

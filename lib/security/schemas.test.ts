@@ -15,6 +15,7 @@ describe('security schemas', () => {
   it('rejects unknown keys on manufacturing body', () => {
     assert.throws(() =>
       manufacturingPostBodySchema.parse({
+        operation_id: '6f1c1b5a-1d4e-4a1e-9c1a-6b2d3e4f5a6b',
         recipe_id: 'abc',
         batch_output: 10,
         staff_id: 'evil',
@@ -22,13 +23,24 @@ describe('security schemas', () => {
     );
   });
 
+  it('requires a manufacturing operation id', () => {
+    assert.throws(() =>
+      manufacturingPostBodySchema.parse({
+        recipe_id: 'recipe-1',
+        batch_output: 12,
+      })
+    );
+  });
+
   it('accepts valid manufacturing payload', () => {
     const parsed = manufacturingPostBodySchema.parse({
+      operation_id: '6f1c1b5a-1d4e-4a1e-9c1a-6b2d3e4f5a6b',
       recipe_id: 'recipe-1',
       batch_output: 12,
       enforce_stock_check: true,
     });
     assert.equal(parsed.batch_output, 12);
+    assert.equal(parsed.operation_id, '6f1c1b5a-1d4e-4a1e-9c1a-6b2d3e4f5a6b');
   });
 
   it('validates inventory move actions', () => {
