@@ -7,7 +7,7 @@ import { POST as reconcileInvoice } from '@/app/api/receiving-invoices/reconcile
 import { POST as postReceivingLog } from '@/app/api/receiving-logs/route';
 import { POST as postInvoiceOcr } from '@/app/api/invoice-ocr/route';
 import { AuthError } from '@/lib/auth/session';
-import { useReceivingStaffTestAuth } from '@/lib/auth/guardRoute';
+import { setReceivingStaffTestAuth } from '@/lib/auth/receivingStaffTestAuth';
 import { getCurrentStock, prisma } from '@/lib/domains/inventory/ledger';
 import { saveInvoiceOcrDraft } from '@/lib/domains/receiving/invoiceOcrCommit';
 import { readJsonResponse } from '@/lib/testing/posWebhookHttp';
@@ -49,7 +49,7 @@ test('receiving identity routes block unsafe replays and keep partial commits at
   });
 
   t.after(async () => {
-    useReceivingStaffTestAuth(null);
+    setReceivingStaffTestAuth(null);
     const deliveries = await prisma.receivingDelivery.findMany({
       where: { catalogProductId: { in: [apples.id, pears.id] } },
       select: { id: true },
@@ -58,7 +58,14 @@ test('receiving identity routes block unsafe replays and keep partial commits at
       where: {
         OR: [
           { key: { in: deliveries.map((row) => `recv:${row.id}`) } },
-          { key: { in: [`invoice:acme foods:old-${stamp}`, `invoice:other shop:old-${stamp}`] } },
+          {
+            key: {
+              in: [
+                `invoice:${`Http Supplier ${stamp}`.trim().toLowerCase()}:old-${stamp}`,
+                `invoice:other shop:old-${stamp}`,
+              ],
+            },
+          },
         ],
       },
     });
@@ -74,7 +81,7 @@ test('receiving identity routes block unsafe replays and keep partial commits at
     await prisma.user.delete({ where: { id: clerk.id } });
   });
 
-  useReceivingStaffTestAuth(async () => {
+  setReceivingStaffTestAuth(async () => {
     throw new AuthError('Unauthorized — sign in required.', 401);
   });
   const anonymous = await identifyInvoice(
@@ -87,14 +94,17 @@ test('receiving identity routes block unsafe replays and keep partial commits at
   );
   assert.equal(anonymous.status, 401);
 
-  useReceivingStaffTestAuth(async () => ({
-    id: clerk.id,
-    name: clerk.name,
-    email: clerk.email,
-    role: 'RECEIVING_CLERK',
-    position: clerk.position,
-    hourlyRate: null,
-  }));
+  const asRole = (role: 'RECEIVING_CLERK' | 'STORE_MANAGER') => {
+    setReceivingStaffTestAuth(async () => ({
+      id: clerk.id,
+      name: clerk.name,
+      email: clerk.email,
+      role,
+      position: clerk.position,
+      hourlyRate: null,
+    }));
+  };
+  asRole('RECEIVING_CLERK');
 
   const first = await readJsonResponse(
     await identifyInvoice(
@@ -142,6 +152,32 @@ test('receiving identity routes block unsafe replays and keep partial commits at
   assert.equal(yearApart.status, 409);
   assert.equal(yearApart.body.code, 'DATE_CONFLICT');
   assert.equal(await getCurrentStock(apples.id, InventoryLocation.Retail_Floor), 2);
+  const clerkLink = await readJsonResponse(
+    await reconcileInvoice(
+      request('/api/receiving-invoices/reconcile', {
+        action: 'link-date',
+        supplierId: supplier.id,
+        invoiceNumber: `N-${stamp}`,
+        invoiceDate: '2026-01-02',
+        lines: [{ printedName: `Apple ${stamp}` }],
+      })
+    )
+  );
+  assert.equal(clerkLink.status, 403);
+  asRole('STORE_MANAGER');
+  const managerLink = await readJsonResponse(
+    await reconcileInvoice(
+      request('/api/receiving-invoices/reconcile', {
+        action: 'link-date',
+        supplierId: supplier.id,
+        invoiceNumber: `N-${stamp}`,
+        invoiceDate: '2026-01-02',
+        lines: [{ printedName: `Apple ${stamp}` }],
+      })
+    )
+  );
+  assert.equal(managerLink.status, 200);
+  asRole('RECEIVING_CLERK');
 
   const missingDate = await readJsonResponse(
     await identifyInvoice(
@@ -302,6 +338,21 @@ test('receiving identity routes block unsafe replays and keep partial commits at
   assert.equal(renamed.body.code, 'RENAME_AMBIGUOUS');
   assert.equal(await getCurrentStock(apples.id, InventoryLocation.Retail_Floor), appleAfterExtra);
   const stored = (renamed.body.unmatchedStoredLines as { id: string }[])[0];
+  const clerkMap = await readJsonResponse(
+    await reconcileInvoice(
+      request('/api/receiving-invoices/reconcile', {
+        action: 'map-line',
+        supplierId: supplier.id,
+        invoiceNumber: `PAIR-${stamp}`,
+        invoiceDate: '2024-06-01',
+        lines: [{ printedName: `Apple ${stamp}` }, { printedName: `Renamed pear ${stamp}` }],
+        fromLineId: stored?.id,
+        mappedPrintedName: `Renamed pear ${stamp}`,
+      })
+    )
+  );
+  assert.equal(clerkMap.status, 403);
+  asRole('STORE_MANAGER');
   const mapped = await readJsonResponse(
     await reconcileInvoice(
       request('/api/receiving-invoices/reconcile', {
@@ -320,7 +371,7 @@ test('receiving identity routes block unsafe replays and keep partial commits at
   assert.equal(mappedLines[1]?.deliveryId, pairLines[1]?.deliveryId);
 
   const legacyNumber = `OLD-${stamp}`;
-  const legacyKey = `invoice:acme foods:${legacyNumber.toLowerCase()}`;
+  const legacyKey = `invoice:${supplier.name.trim().toLowerCase()}:${legacyNumber.toLowerCase()}`;
   const otherKey = `invoice:other shop:${legacyNumber.toLowerCase()}`;
   await prisma.ledgerIdempotencyKey.create({ data: { key: legacyKey } });
   await prisma.ledgerIdempotencyKey.create({ data: { key: otherKey } });
@@ -349,7 +400,38 @@ test('receiving identity routes block unsafe replays and keep partial commits at
   );
   assert.equal(legacyIdentity.status, 409);
   assert.equal(legacyIdentity.body.code, 'LEGACY_RECEIPT_PRESENT');
-  assert.equal((legacyIdentity.body.legacyReceipts as unknown[]).length, 2);
+  const legacyReceipts = legacyIdentity.body.legacyReceipts as { key: string }[];
+  assert.equal(legacyReceipts.length, 1);
+  assert.equal(legacyReceipts[0]?.key, legacyKey);
+  asRole('RECEIVING_CLERK');
+  const clerkAdopt = await readJsonResponse(
+    await reconcileInvoice(
+      request('/api/receiving-invoices/reconcile', {
+        action: 'adopt-legacy',
+        supplierId: supplier.id,
+        invoiceNumber: legacyNumber,
+        invoiceDate: '2024-07-01',
+        lines: [{ printedName: `Pear ${stamp}` }],
+        legacyKey,
+      })
+    )
+  );
+  assert.equal(clerkAdopt.status, 403);
+  asRole('STORE_MANAGER');
+  const mismatched = await readJsonResponse(
+    await reconcileInvoice(
+      request('/api/receiving-invoices/reconcile', {
+        action: 'adopt-legacy',
+        supplierId: supplier.id,
+        invoiceNumber: legacyNumber,
+        invoiceDate: '2024-07-01',
+        lines: [{ printedName: `Pear ${stamp}` }],
+        legacyKey: otherKey,
+      })
+    )
+  );
+  assert.equal(mismatched.status, 409);
+  assert.equal(await getCurrentStock(pears.id, InventoryLocation.Retail_Floor), beforeLegacy);
   const legacyDraft = await saveInvoiceOcrDraft(clerk.id, {
     vendorName: 'Acme Foods',
     invoiceNumber: legacyNumber,
@@ -445,6 +527,65 @@ test('receiving identity routes block unsafe replays and keep partial commits at
   assert.equal(adoptedCommit.body.transactionsCreated, 0);
   assert.equal(await getCurrentStock(pears.id, InventoryLocation.Retail_Floor), beforeLegacy);
   assert.equal(await prisma.ledgerIdempotencyKey.count({ where: { key: { in: [legacyKey, otherKey] } } }), 2);
+  asRole('RECEIVING_CLERK');
+  const addedLegacyLine = await readJsonResponse(
+    await reconcileInvoice(
+      request('/api/receiving-invoices/reconcile', {
+        action: 'add-lines',
+        supplierId: supplier.id,
+        invoiceNumber: legacyNumber,
+        invoiceDate: '2024-07-01',
+        lines: [{ printedName: `Pear ${stamp}` }, { printedName: `Legacy extra ${stamp}` }],
+        confirmNewPrintedNames: [`Legacy extra ${stamp}`],
+      })
+    )
+  );
+  assert.equal(addedLegacyLine.status, 200);
+  const extraLegacyId = (addedLegacyLine.body.lines as { deliveryId: string }[])[1]?.deliveryId;
+  const extraLegacyPost = await readJsonResponse(
+    await postReceivingLog(
+      request('/api/receiving-logs', {
+        itemName: `Legacy extra ${stamp}`,
+        productId: apples.id,
+        casesReceived: 1,
+        caseCost: 2,
+        packSize: 1,
+        splitFactor: 1,
+        retailUnit: 'units',
+        marginMode: '40',
+        currentRetailPrice: 0,
+        externalLogId: extraLegacyId,
+        supplierId: supplier.id,
+      })
+    )
+  );
+  assert.equal(extraLegacyPost.status, 200);
+  const extraLegacyStock = extraLegacyPost.body.stock as { posted?: boolean; unitsAdded?: number; idempotent?: boolean };
+  assert.equal(extraLegacyStock.posted, true);
+  assert.equal(extraLegacyStock.idempotent ?? false, false);
+  assert.equal(extraLegacyStock.unitsAdded, 1);
+  const separateBodies = await Promise.all(
+    [0, 1].map(() =>
+      reconcileInvoice(
+        request('/api/receiving-invoices/reconcile', {
+          action: 'separate-document',
+          supplierId: supplier.id,
+          invoiceNumber: `SEP-${stamp}`,
+          invoiceDate: '2024-09-01',
+          lines: [{ printedName: `Separate ${stamp}` }],
+        })
+      ).then(readJsonResponse)
+    )
+  );
+  assert.equal(separateBodies[0]?.status, 200);
+  assert.equal(separateBodies[1]?.status, 200);
+  assert.equal(separateBodies[0]?.body.documentId, separateBodies[1]?.body.documentId);
+  assert.equal(
+    await prisma.supplierInvoiceDocument.count({
+      where: { supplierId: supplier.id, invoiceKey: `sep-${stamp}` },
+    }),
+    1
+  );
 
   const conflictDraft = await saveInvoiceOcrDraft(clerk.id, {
     vendorName: `Http Supplier ${stamp}`,

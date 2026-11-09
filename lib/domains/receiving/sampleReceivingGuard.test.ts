@@ -114,6 +114,18 @@ test('a missing OCR draft is 404 and does not run the ledger commit', async () =
   if (!practice.ok) assert.equal(practice.status, 409);
 });
 
+test('a practice invoice id reaches the sample guard before the UUID rule', () => {
+  const parsed = validateReceivingLogPostInput(
+    line({ externalLogId: `scan-${DEMO_INVOICE_NUMBER}-apple` })
+  );
+  assert.equal(parsed.ok, true);
+  if (!parsed.ok) return;
+  assert.equal(parsed.input.externalLogId, `scan-${DEMO_INVOICE_NUMBER}-apple`);
+  const arranged = arrangeReceivingBatch([parsed.input]);
+  assert.equal(arranged.toPost.length, 0);
+  assert.match(arranged.results[0]?.stock.reason ?? '', /preview only/i);
+});
+
 test('mixed batch keeps sample rejections and genuine rows in request order', () => {
   const arranged = arrangeReceivingBatch([
     line({ externalLogId: 'sample-avocado', itemName: 'Hass Avocados (Mexico)', casesReceived: 4, caseCost: 84.5 }),

@@ -23,24 +23,67 @@ export interface InvoiceHoldAction {
 }
 
 /** Buttons the receiving screen may offer. A rename has no automatic add. */
+export interface IdentityHoldState {
+  code: string;
+  error: string;
+  newPrintedNames?: string[];
+  storedDates?: string[];
+  legacyReceipts?: { key: string; vendor: string; invoice: string }[];
+  unmatchedStoredLines?: { id: string; printedKey: string }[];
+}
+
+/** A new scan must not keep the previous paper's date or confirmation buttons. */
+export function clearedInvoiceIdentity(): { dateDraft: ''; identityHold: null } {
+  return { dateDraft: '', identityHold: null };
+}
+
+export function identityHoldFromResponse(body: {
+  success?: boolean;
+  code?: string;
+  error?: string;
+  newPrintedNames?: string[];
+  storedDates?: string[];
+  legacyReceipts?: { key: string; vendor: string; invoice: string }[];
+  unmatchedStoredLines?: { id: string; printedKey: string }[];
+} | null): IdentityHoldState | null {
+  if (!body || body.success) return null;
+  if (!body.code && !body.error) return null;
+  return {
+    code: body.code ?? 'LINE_MISMATCH',
+    error: body.error ?? 'This invoice needs a decision before it can be received.',
+    newPrintedNames: body.newPrintedNames,
+    storedDates: body.storedDates,
+    legacyReceipts: body.legacyReceipts,
+    unmatchedStoredLines: body.unmatchedStoredLines,
+  };
+}
+
+/** Operations and Production stash the scan. Only a screen that offers the picker requires a supplier first. */
+export function invoiceImportBlockedWithoutSupplier(options: {
+  offersSupplierPicker: boolean;
+  selectedSupplierId: string;
+}): boolean {
+  return options.offersSupplierPicker && options.selectedSupplierId.trim().length === 0;
+}
+
 export function invoiceHoldActions(code: string): InvoiceHoldAction[] {
   switch (code) {
     case 'DATE_CONFLICT':
       return [
-        { action: 'link-date', label: 'This is the same invoice' },
+        { action: 'link-date', label: 'Store manager: this is the same invoice' },
         { action: 'separate-document', label: 'This is a different dated delivery' },
       ];
     case 'WHITESPACE_CONFLICT':
       return [
-        { action: 'link-spelling', label: 'These are the same invoice number' },
+        { action: 'link-spelling', label: 'Store manager: these are the same invoice number' },
         { action: 'separate-spelling', label: 'These are different invoice numbers' },
       ];
     case 'LINES_NEED_CONFIRMATION':
       return [{ action: 'add-lines', label: 'Add the missing printed lines' }];
     case 'LEGACY_RECEIPT_PRESENT':
-      return [{ action: 'adopt-legacy', label: 'Attach the earlier receipt without adding stock' }];
+      return [{ action: 'adopt-legacy', label: 'Store manager: attach this supplier’s earlier receipt without adding stock' }];
     case 'RENAME_AMBIGUOUS':
-      return [{ action: 'map-line', label: 'Map this line onto the saved line' }];
+      return [{ action: 'map-line', label: 'Store manager: map this line onto the saved line' }];
     default:
       return [];
   }

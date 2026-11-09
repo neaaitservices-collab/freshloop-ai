@@ -8,6 +8,7 @@ import { DepartmentBadge } from '@/components/ui/DepartmentBadge';
 import { prepareImageDataUrlForOcr, prepareImageFileForOcr } from '@/lib/utils/prepareImageForOcr';
 import { AlertTriangle, ArrowRight, Camera, CheckCircle2, FileText, ImagePlus, Loader2, Sparkles, Upload, X } from 'lucide-react';
 import { ModalBody, ModalFooter, ModalHeader, ModalShell, ScrollTable } from '@/components/ui/layout';
+import { invoiceImportBlockedWithoutSupplier } from '@/lib/domains/receiving/invoiceIdentityHold';
 import { SupplierSelect } from '@/components/features/suppliers/SupplierSelect';
 import type { SupplierRecord } from '@/lib/domains/suppliers/suppliers';
 
@@ -179,12 +180,17 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
   const needsManagerGate =
     flaggedInvoice && (!managerCanApprove || !managerApprovedCosts);
 
+  const offersSupplierPicker = suppliers.length > 0 && Boolean(onSupplierChange);
+  const supplierBlocked = invoiceImportBlockedWithoutSupplier({
+    offersSupplierPicker,
+    selectedSupplierId,
+  });
+
   const handleAddToReceiving = () => {
-    if (!ocrResult || needsManagerGate || ocrResult.source === 'sample') return;
-    if (!selectedSupplierId) return;
+    if (!ocrResult || needsManagerGate || ocrResult.source === 'sample' || supplierBlocked) return;
     onInvoiceImported({
       ...ocrResult,
-      supplierId: selectedSupplierId,
+      supplierId: selectedSupplierId || undefined,
     });
     onClose();
   };
@@ -336,7 +342,7 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
                   label="Saved supplier for this invoice"
                 />
               ) : null}
-              {!selectedSupplierId ? (
+              {supplierBlocked ? (
                 <p className="rounded-2xl border border-amber-500/40 bg-amber-950/50 px-4 py-3 text-xs text-amber-100">
                   Select a saved supplier before this invoice can be received. The vendor name printed on the scan is not a supplier id.
                 </p>
@@ -603,11 +609,11 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
             <button
               type="button"
               onClick={handleAddToReceiving}
-              disabled={needsManagerGate || ocrResult.source === 'sample' || !selectedSupplierId}
+              disabled={needsManagerGate || ocrResult.source === 'sample' || supplierBlocked}
               title={
                 ocrResult.source === 'sample'
                   ? 'Sample invoice lines are not posted to inventory'
-                  : !selectedSupplierId
+                  : supplierBlocked
                     ? 'Select a saved supplier before this invoice can be received.'
                     : needsManagerGate
                       ? 'Manager must confirm flagged costs and low-confidence OCR lines'

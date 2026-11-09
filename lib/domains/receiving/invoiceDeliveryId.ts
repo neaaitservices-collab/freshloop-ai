@@ -39,13 +39,25 @@ export function compactInvoiceNumber(invoiceNumber: string): string {
 }
 
 /**
- * Exact date text. No day window and no format guessing. A missing or unread
- * date is not a match for a stored date.
+ * One calendar date, stored as YYYY-MM-DD. Year-first dates such as 2024-1-2
+ * and 2024/01/02 normalize to that form. Impossible days are rejected.
+ * Month-first and day-first strings are rejected so 01/02 is not guessed.
  */
 export function canonicalInvoiceDate(invoiceDate: string | null | undefined): string | null {
-  const text = (invoiceDate ?? '').trim().toLowerCase();
-  if (!text || text === 'unread' || text === 'unknown' || text === 'n/a' || text === 'na') return null;
-  return text;
+  const text = (invoiceDate ?? '').trim();
+  if (!text) return null;
+  const lower = text.toLowerCase();
+  if (lower === 'unread' || lower === 'unknown' || lower === 'n/a' || lower === 'na') return null;
+  const match = /^(\d{4})[./-](\d{1,2})[./-](\d{1,2})$/.exec(text);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) return null;
+  if (year < 1000 || year > 9999 || month < 1 || month > 12 || day < 1 || day > 31) return null;
+  const utc = new Date(Date.UTC(year, month - 1, day));
+  if (utc.getUTCFullYear() !== year || utc.getUTCMonth() !== month - 1 || utc.getUTCDate() !== day) return null;
+  return `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 }
 
 /** @deprecated Use canonicalInvoiceNumber. Punctuation is preserved. */

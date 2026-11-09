@@ -9,6 +9,7 @@ import {
 } from '@/lib/domains/receiving/invoiceOcrCommit';
 import {
   SUPPLIER_REQUIRED_ERROR,
+  reconcileSupplierInvoice,
   resolveSupplierInvoice,
 } from '@/lib/domains/receiving/supplierInvoiceIdentity';
 
@@ -416,6 +417,95 @@ test('supplier invoice identity is shared by the board and OCR commit', { skip: 
     where: { supplierId: supplierB.id, invoiceKey: freshNumber.toLowerCase() },
   });
   assert.equal(keptDate?.invoiceDate, '2026-02-02');
+
+  const spacedLater = await resolveSupplierInvoice({
+    supplierId: supplierA.id,
+    invoiceNumber: '1001 / A',
+    invoiceDate: '2026-03-03',
+    lines: [{ printedName: `Bananas ${stamp}` }],
+  });
+  assert.equal(spacedLater.ok, false);
+  if (!spacedLater.ok) assert.equal(spacedLater.code, 'WHITESPACE_CONFLICT');
+  const linkedSpelling = await reconcileSupplierInvoice({
+    actorId: `staff-${stamp}`,
+    actorRole: 'STORE_MANAGER',
+    action: 'link-spelling',
+    supplierId: supplierA.id,
+    invoiceNumber: '1001 / A',
+    invoiceDate: '2026-03-03',
+    lines: [{ printedName: `Bananas ${stamp}` }],
+  });
+  assert.equal(linkedSpelling.ok, false);
+  if (!linkedSpelling.ok) {
+    assert.equal(linkedSpelling.code, 'DATE_CONFLICT');
+    assert.deepEqual(linkedSpelling.details?.storedDates, ['2024-01-02']);
+  }
+  const linkedDate = await reconcileSupplierInvoice({
+    actorId: `staff-${stamp}`,
+    actorRole: 'STORE_MANAGER',
+    action: 'link-date',
+    supplierId: supplierA.id,
+    invoiceNumber: '1001 / A',
+    invoiceDate: '2026-03-03',
+    lines: [{ printedName: `Bananas ${stamp}` }],
+  });
+  assert.equal(linkedDate.ok, true);
+  if (linkedDate.ok && slash.ok) assert.equal(linkedDate.lines[0]?.deliveryId, slash.lines[0]?.deliveryId);
+
+  const badDateDraft = await saveInvoiceOcrDraft(`staff-${stamp}`, {
+    vendorName: `North ${stamp}`,
+    invoiceNumber: `DATE-${stamp}`,
+    invoiceDate: 'November 8, 2026',
+    totalAmount: 2,
+    departmentBreakdown: { PRODUCE: 2 },
+    lines: [
+      {
+        product_id: bananas.id,
+        quantity: 1,
+        quantity_kind: 'units',
+        unit_cost: 1,
+        line_name: `Bananas ${stamp}`,
+        department: 'PRODUCE',
+        line_confidence: 0.95,
+        requires_approval: false,
+      },
+    ],
+  });
+  let dateBlocked = false;
+  try {
+    await commitInvoiceOcrReceipts({
+      staffId: `staff-${stamp}`,
+      referenceId: `DATE-${stamp}`,
+      draftId: badDateDraft.id,
+      confirmedItems: [
+        {
+          product_id: bananas.id,
+          quantity: 1,
+          quantity_kind: 'units',
+          unit_cost: 1,
+          line_name: `Bananas ${stamp}`,
+          department: 'PRODUCE',
+        },
+      ],
+      invoiceMeta: {
+        vendorName: `North ${stamp}`,
+        supplierId: supplierA.id,
+        invoiceNumber: `DATE-${stamp}`,
+        invoiceDate: 'November 8, 2026',
+        totalAmount: 2,
+        departmentBreakdown: { PRODUCE: 2 },
+      },
+    });
+  } catch (error) {
+    dateBlocked = error instanceof InventoryLedgerError && error.code === 'DATE_REQUIRED';
+  }
+  assert.equal(dateBlocked, true);
+  assert.equal(
+    await prisma.supplierInvoiceDocument.count({
+      where: { supplierId: supplierA.id, invoiceNumber: { contains: `DATE-${stamp}` } },
+    }),
+    0
+  );
 
   let blocked = false;
   try {

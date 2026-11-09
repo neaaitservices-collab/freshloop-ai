@@ -126,6 +126,12 @@ test('invoice numbers keep punctuation and invoice lines stay unposted until the
   assert.notEqual(canonicalInvoiceNumber('A 12'), canonicalInvoiceNumber('A12'));
   assert.equal(canonicalInvoiceNumber('unread'), null);
   assert.equal(canonicalInvoiceDate(' 2026-11-08 '), '2026-11-08');
+  assert.equal(canonicalInvoiceDate('2024-1-2'), '2024-01-02');
+  assert.equal(canonicalInvoiceDate('2024/01/02'), '2024-01-02');
+  assert.equal(canonicalInvoiceDate('2024-02-29'), '2024-02-29');
+  assert.equal(canonicalInvoiceDate('2023-02-29'), null);
+  assert.equal(canonicalInvoiceDate('2024-02-31'), null);
+  assert.equal(canonicalInvoiceDate('11/08/2026'), null);
   assert.equal(canonicalInvoiceDate(''), null);
   assert.notEqual(canonicalInvoiceDate('2024-01-02'), canonicalInvoiceDate('2026-11-08'));
   assert.match(INVOICE_NUMBER_REUSE_POLICY, /different date/i);

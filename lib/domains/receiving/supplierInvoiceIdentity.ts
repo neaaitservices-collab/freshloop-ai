@@ -1,5 +1,7 @@
 import { Prisma } from '@prisma/client';
+import { AuthError } from '@/lib/auth/session';
 import { prisma } from '@/lib/domains/inventory/ledger';
+import type { RoleName } from '@/lib/utils/roles';
 import { normalizeProductPackFields } from '@/lib/domains/inventory/stock';
 import {
   canonicalInvoiceDate,
@@ -119,32 +121,37 @@ export function parseLegacyInvoiceKey(key: string): { vendor: string; invoice: s
   return { vendor: rest.slice(0, split), invoice: rest.slice(split + 1) };
 }
 
-async function legacyReceipts(db: Tx | typeof prisma, invoiceNumber: string) {
-  const exact = canonicalInvoiceNumber(invoiceNumber);
-  if (!exact) return [];
-  const compact = compactInvoiceNumber(exact);
-  const rows = await db.ledgerIdempotencyKey.findMany({
-    where: {
-      OR: [
-        { AND: [{ key: { startsWith: 'invoice:' } }, { key: { endsWith: `:${exact}` } }] },
-        { AND: [{ key: { startsWith: 'invoice:' } }, { key: { contains: compact } }] },
-      ],
-    },
-    select: { key: true },
-  });
-  const matches = new Map<string, { key: string; vendor: string; invoice: string }>();
-  for (const row of rows) {
-    const parsed = parseLegacyInvoiceKey(row.key);
-    if (!parsed) continue;
-    const parsedCompact = compactInvoiceNumber(parsed.invoice);
-    if (parsed.invoice !== exact && parsedCompact !== compact) continue;
-    matches.set(row.key, { key: row.key, vendor: parsed.vendor, invoice: parsed.invoice });
-  }
-  return [...matches.values()];
+function exactLegacyKeys(supplierName: string, invoiceNumber: string): string[] {
+  const vendor = supplierName.trim().toLowerCase();
+  const rawInvoice = invoiceNumber.trim().toLowerCase();
+  const canonical = canonicalInvoiceNumber(invoiceNumber);
+  const keys = new Set<string>();
+  if (vendor && rawInvoice) keys.add(`invoice:${vendor}:${rawInvoice}`);
+  if (vendor && canonical && canonical !== rawInvoice) keys.add(`invoice:${vendor}:${canonical}`);
+  return [...keys];
 }
 
-export async function findLegacyInvoiceReceipts(invoiceNumber: string) {
-  return legacyReceipts(prisma, invoiceNumber);
+export function legacyKeyMatchesSupplier(key: string, supplierName: string, invoiceNumber: string): boolean {
+  const parsed = parseLegacyInvoiceKey(key.trim());
+  if (!parsed) return false;
+  const vendor = supplierName.trim().toLowerCase();
+  if (parsed.vendor !== vendor) return false;
+  return exactLegacyKeys(supplierName, invoiceNumber).includes(key.trim().toLowerCase());
+}
+
+/** Exact `invoice:vendor:number` rows for this supplier name. Other vendors are ignored. */
+async function legacyReceipts(db: Tx | typeof prisma, supplierName: string, invoiceNumber: string) {
+  const keys = exactLegacyKeys(supplierName, invoiceNumber);
+  if (keys.length === 0) return [];
+  const rows = await db.ledgerIdempotencyKey.findMany({
+    where: { key: { in: keys } },
+    select: { key: true },
+  });
+  return rows.flatMap((row) => {
+    const parsed = parseLegacyInvoiceKey(row.key);
+    if (!parsed || !legacyKeyMatchesSupplier(row.key, supplierName, invoiceNumber)) return [];
+    return [{ key: row.key, vendor: parsed.vendor, invoice: parsed.invoice }];
+  });
 }
 
 async function loadCandidates(tx: Tx, supplierId: string, invoiceKey: string, compact: string) {
@@ -190,7 +197,7 @@ function toLines(document: DocumentGraph, slots: { printedKey: string; occurrenc
       printedKey: slot.printedKey,
       occurrence: slot.occurrence,
       ordinal,
-      alreadyReceived: Boolean(document.legacyKey),
+      alreadyReceived: chosen.line.heldByLegacy,
     });
   }
   if (unmatchedScan.length === 0) {
@@ -244,7 +251,7 @@ export async function resolveSupplierInvoice(input: {
   if (!supplierId) return fail('SUPPLIER_REQUIRED', SUPPLIER_REQUIRED_ERROR);
   const invoiceKey = canonicalInvoiceNumber(input.invoiceNumber);
   if (!invoiceKey) return fail('INVOICE_NUMBER_REQUIRED', INVOICE_NUMBER_REQUIRED_ERROR);
-  const supplier = await prisma.supplier.findUnique({ where: { id: supplierId }, select: { id: true } });
+  const supplier = await prisma.supplier.findUnique({ where: { id: supplierId }, select: { id: true, name: true } });
   if (!supplier) return fail('SUPPLIER_UNKNOWN', SUPPLIER_UNKNOWN_ERROR);
   const dateKey = canonicalInvoiceDate(input.invoiceDate);
   if (!dateKey) return fail('DATE_REQUIRED', DATE_REQUIRED_ERROR);
@@ -256,17 +263,36 @@ export async function resolveSupplierInvoice(input: {
   const compact = compactInvoiceNumber(invoiceKey);
 
   try {
-    return await writeResolved(supplierId, invoiceKey, compact, dateKey, input.invoiceNumber ?? invoiceKey, input.invoiceDate ?? dateKey, slots);
+    return await writeResolved(
+      supplierId,
+      supplier.name,
+      invoiceKey,
+      compact,
+      dateKey,
+      input.invoiceNumber ?? invoiceKey,
+      input.invoiceDate ?? dateKey,
+      slots
+    );
   } catch (error) {
     const unique =
       typeof error === 'object' && error !== null && 'code' in error && (error as { code?: string }).code === 'P2002';
     if (!unique) throw error;
-    return writeResolved(supplierId, invoiceKey, compact, dateKey, input.invoiceNumber ?? invoiceKey, input.invoiceDate ?? dateKey, slots);
+    return writeResolved(
+      supplierId,
+      supplier.name,
+      invoiceKey,
+      compact,
+      dateKey,
+      input.invoiceNumber ?? invoiceKey,
+      input.invoiceDate ?? dateKey,
+      slots
+    );
   }
 }
 
 async function writeResolved(
   supplierId: string,
+  supplierName: string,
   invoiceKey: string,
   compact: string,
   dateKey: string,
@@ -275,17 +301,13 @@ async function writeResolved(
   slots: { printedKey: string; occurrence: number }[]
 ): Promise<ResolveSupplierInvoiceResult> {
   return prisma.$transaction(async (tx) => {
-    const legacy = await legacyReceipts(tx, invoiceKey);
+    const legacy = await legacyReceipts(tx, supplierName, invoiceNumber);
     const candidates = await loadCandidates(tx, supplierId, invoiceKey, compact);
     const exact = candidates.filter(
       (document) => documentMatchesKey(document, invoiceKey) && documentMatchesDate(document, dateKey)
     );
     if (exact.length > 1) return fail('AMBIGUOUS_DOCUMENT', AMBIGUOUS_DOCUMENT_ERROR);
     if (exact.length === 1) return toLines(exact[0]!, slots);
-
-    if (legacy.length > 0) {
-      return fail('LEGACY_RECEIPT_PRESENT', LEGACY_RECEIPT_ERROR, { legacyReceipts: legacy });
-    }
 
     const sameNumber = candidates.filter((document) => documentMatchesKey(document, invoiceKey));
     if (sameNumber.length > 0) {
@@ -299,7 +321,11 @@ async function writeResolved(
     if (spelledApart.length > 0) {
       return fail('WHITESPACE_CONFLICT', WHITESPACE_CONFLICT_ERROR, {
         siblingKeys: [...new Set(spelledApart.map((document) => document.invoiceKey))],
+        storedDates: [...new Set(spelledApart.map((document) => document.invoiceDateKey ?? ''))],
       });
+    }
+    if (legacy.length > 0) {
+      return fail('LEGACY_RECEIPT_PRESENT', LEGACY_RECEIPT_ERROR, { legacyReceipts: legacy });
     }
 
     const created = await tx.supplierInvoiceDocument.create({
@@ -347,8 +373,20 @@ export type ReconcileAction =
   | 'map-line'
   | 'adopt-legacy';
 
+const MANAGER_RECONCILE_ACTIONS = new Set<ReconcileAction>([
+  'link-date',
+  'adopt-legacy',
+  'link-spelling',
+  'map-line',
+]);
+
+export function reconcileActionRequiresManager(action: ReconcileAction): boolean {
+  return MANAGER_RECONCILE_ACTIONS.has(action);
+}
+
 export async function reconcileSupplierInvoice(input: {
   actorId: string;
+  actorRole: RoleName;
   action: ReconcileAction;
   supplierId?: string | null;
   invoiceNumber?: string | null;
@@ -369,12 +407,19 @@ export async function reconcileSupplierInvoice(input: {
   if (!slots && input.action !== 'adopt-legacy') {
     return fail('PRINTED_LINE_REQUIRED', 'Each invoice line needs the printed description before it can be identified.');
   }
-  const supplier = await prisma.supplier.findUnique({ where: { id: supplierId }, select: { id: true } });
+  const supplier = await prisma.supplier.findUnique({ where: { id: supplierId }, select: { id: true, name: true } });
   if (!supplier) return fail('SUPPLIER_UNKNOWN', SUPPLIER_UNKNOWN_ERROR);
+  if (
+    reconcileActionRequiresManager(input.action) &&
+    input.actorRole !== 'ADMIN' &&
+    input.actorRole !== 'STORE_MANAGER'
+  ) {
+    throw new AuthError('Only a store manager or the owner can confirm this invoice match.', 403);
+  }
   const compact = compactInvoiceNumber(invoiceKey);
   const actorId = input.actorId.trim() || 'staff';
 
-  return prisma.$transaction(async (tx) => {
+  const run = () => prisma.$transaction(async (tx) => {
     const candidates = await loadCandidates(tx, supplierId, invoiceKey, compact);
     const exact = candidates.filter(
       (document) => documentMatchesKey(document, invoiceKey) && documentMatchesDate(document, dateKey)
@@ -384,8 +429,11 @@ export async function reconcileSupplierInvoice(input: {
       const legacyKey = input.legacyKey?.trim() ?? '';
       const parsed = parseLegacyInvoiceKey(legacyKey);
       const known = await tx.ledgerIdempotencyKey.findUnique({ where: { key: legacyKey } });
-      if (!parsed || !known || compactInvoiceNumber(parsed.invoice) !== compact) {
-        return fail('LEGACY_RECEIPT_PRESENT', 'That earlier receipt does not match this invoice number. Stock was not posted.');
+      if (!parsed || !known || !legacyKeyMatchesSupplier(legacyKey, supplier.name, input.invoiceNumber ?? invoiceKey)) {
+        return fail(
+          'LEGACY_RECEIPT_PRESENT',
+          'That earlier receipt is not an exact vendor and invoice match for the selected supplier. It was not attached, and stock was not changed.'
+        );
       }
       let document = exact[0];
       if (!document) {
@@ -406,6 +454,7 @@ export async function reconcileSupplierInvoice(input: {
                 printedKey: slot.printedKey,
                 occurrence: slot.occurrence,
                 ordinal,
+                heldByLegacy: true,
               })),
             },
           },
@@ -421,7 +470,15 @@ export async function reconcileSupplierInvoice(input: {
           where: { id: document.id },
           data: { legacyKey, adoptedAt: new Date(), adoptedBy: actorId },
         });
-        document = { ...document, legacyKey };
+        await tx.supplierInvoiceLine.updateMany({
+          where: { documentId: document.id },
+          data: { heldByLegacy: true },
+        });
+        document = {
+          ...document,
+          legacyKey,
+          lines: document.lines.map((line) => ({ ...line, heldByLegacy: true })),
+        };
       }
       await recordEvent(tx, {
         documentId: document.id,
@@ -461,6 +518,7 @@ export async function reconcileSupplierInvoice(input: {
         });
         return toLines(document, slots ?? []);
       }
+      if (exact.length === 1) return toLines(exact[0]!, slots ?? []);
       const created = await tx.supplierInvoiceDocument.create({
         data: {
           supplierId,
@@ -509,26 +567,30 @@ export async function reconcileSupplierInvoice(input: {
           siblingKeys: siblings.map((document) => document.invoiceKey),
         });
         const document = siblings[0]!;
-        if (!documentMatchesDate(document, dateKey)) {
-          return fail('DATE_CONFLICT', DATE_CONFLICT_ERROR, { storedDates: [document.invoiceDateKey ?? ''] });
+        if (!document.keyAliases.some((alias) => alias.invoiceKey === invoiceKey)) {
+          await tx.supplierInvoiceKeyAlias.create({
+            data: { documentId: document.id, invoiceKey, actorId },
+          });
+          document.keyAliases.push({
+            id: 'pending',
+            documentId: document.id,
+            invoiceKey,
+            actorId,
+            createdAt: new Date(),
+          });
         }
-        await tx.supplierInvoiceKeyAlias.create({
-          data: { documentId: document.id, invoiceKey, actorId },
-        });
-        document.keyAliases.push({
-          id: 'pending',
-          documentId: document.id,
-          invoiceKey,
-          actorId,
-          createdAt: new Date(),
-        });
         await recordEvent(tx, {
           documentId: document.id,
           supplierId,
           actorId,
           action: 'LINK_SPELLING',
-          detail: { invoiceKey, storedKey: document.invoiceKey, dateKey },
+          detail: { invoiceKey, storedKey: document.invoiceKey, dateKey, storedDate: document.invoiceDateKey },
         });
+        if (!documentMatchesDate(document, dateKey)) {
+          return fail('DATE_CONFLICT', DATE_CONFLICT_ERROR, {
+            storedDates: [document.invoiceDateKey ?? ''],
+          });
+        }
         return toLines(document, slots ?? []);
       }
       const created = await tx.supplierInvoiceDocument.create({
@@ -666,6 +728,28 @@ export async function reconcileSupplierInvoice(input: {
     document.lines.push(...createdLines);
     return toLines(document, slots ?? []);
   });
+
+  try {
+    return await run();
+  } catch (error) {
+    const unique =
+      typeof error === 'object' && error !== null && 'code' in error && (error as { code?: string }).code === 'P2002';
+    if (!unique) throw error;
+    try {
+      return await run();
+    } catch (retryError) {
+      const retryUnique =
+        typeof retryError === 'object' &&
+        retryError !== null &&
+        'code' in retryError &&
+        (retryError as { code?: string }).code === 'P2002';
+      if (!retryUnique) throw retryError;
+      return fail(
+        'AMBIGUOUS_DOCUMENT',
+        'That confirmation raced another save. Nothing else was posted. Submit the same confirmation again.'
+      );
+    }
+  }
 }
 
 export interface NumberedInvoicePostLine {

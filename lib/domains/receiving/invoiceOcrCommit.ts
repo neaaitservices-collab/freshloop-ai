@@ -207,24 +207,24 @@ export async function commitInvoiceOcrReceipts(input: {
 
   const supplierId = input.invoiceMeta?.supplierId?.trim() ?? '';
   if (!supplierId) throw new InventoryLedgerError(SUPPLIER_REQUIRED_ERROR, 'SUPPLIER_REQUIRED', 409);
-  const resolved = await resolveSupplierInvoice({
-    supplierId,
-    invoiceNumber: input.invoiceMeta?.invoiceNumber ?? '',
-    invoiceDate: input.invoiceMeta?.invoiceDate,
-    lines: input.confirmedItems.map((item) => ({ printedName: item.line_name?.trim() || '' })),
-  });
-  if (!resolved.ok) {
-    throw new InventoryLedgerError(resolved.error, resolved.code, 409, { committed: false, ...resolved.details });
-  }
   const dateKey = canonicalInvoiceDate(input.invoiceMeta?.invoiceDate);
-  const headerAt = dateKey && /^\d{4}-\d{2}-\d{2}$/.test(dateKey) ? new Date(`${dateKey}T00:00:00.000Z`) : null;
-  if (!headerAt || Number.isNaN(headerAt.getTime())) {
+  if (!dateKey) {
     throw new InventoryLedgerError(
-      'The invoice date must be YYYY-MM-DD before it can be received.',
+      'The invoice date must be a real calendar date before it can be received.',
       'DATE_REQUIRED',
       409,
       { committed: false }
     );
+  }
+  const headerAt = new Date(`${dateKey}T00:00:00.000Z`);
+  const resolved = await resolveSupplierInvoice({
+    supplierId,
+    invoiceNumber: input.invoiceMeta?.invoiceNumber ?? '',
+    invoiceDate: dateKey,
+    lines: input.confirmedItems.map((item) => ({ printedName: item.line_name?.trim() || '' })),
+  });
+  if (!resolved.ok) {
+    throw new InventoryLedgerError(resolved.error, resolved.code, 409, { committed: false, ...resolved.details });
   }
   const posts: Awaited<ReturnType<typeof invoiceLinePostInput>>[] = [];
   for (const [index, item] of input.confirmedItems.entries()) {

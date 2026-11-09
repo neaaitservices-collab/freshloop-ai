@@ -686,6 +686,8 @@ model SupplierInvoiceLine {
   printedKey String                  @map("printed_key")
   occurrence Int
   ordinal    Int
+  /// Set only for lines present when an older receipt for this supplier was adopted.
+  heldByLegacy Boolean               @default(false) @map("held_by_legacy")
   aliases    SupplierInvoiceLineAlias[]
 
   @@unique([documentId, printedKey, occurrence])

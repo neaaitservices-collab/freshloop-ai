@@ -1,10 +1,46 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  clearedInvoiceIdentity,
   describeBatchSaveOutcome,
   describeCommitRollback,
+  identityHoldFromResponse,
   invoiceHoldActions,
+  invoiceImportBlockedWithoutSupplier,
 } from '@/lib/domains/receiving/invoiceIdentityHold';
+
+test('a new scan clears the previous date and hold, and the next server hold replaces it', () => {
+  const cleared = clearedInvoiceIdentity();
+  assert.equal(cleared.dateDraft, '');
+  assert.equal(cleared.identityHold, null);
+  const next = identityHoldFromResponse({
+    success: false,
+    code: 'DATE_CONFLICT',
+    error: 'Confirm the date.',
+    storedDates: ['2024-01-02'],
+  });
+  assert.equal(next?.code, 'DATE_CONFLICT');
+  assert.deepEqual(next?.storedDates, ['2024-01-02']);
+  assert.deepEqual(
+    invoiceHoldActions(next?.code ?? '').map((action) => action.action),
+    ['link-date', 'separate-document']
+  );
+});
+
+test('operations and production can send a scan onward without a supplier picker', () => {
+  assert.equal(
+    invoiceImportBlockedWithoutSupplier({ offersSupplierPicker: false, selectedSupplierId: '' }),
+    false
+  );
+  assert.equal(
+    invoiceImportBlockedWithoutSupplier({ offersSupplierPicker: true, selectedSupplierId: '' }),
+    true
+  );
+  assert.equal(
+    invoiceImportBlockedWithoutSupplier({ offersSupplierPicker: true, selectedSupplierId: 'sup_1' }),
+    false
+  );
+});
 
 test('invoice holds require an explicit confirmation and a rename is not an automatic add', () => {
   assert.deepEqual(

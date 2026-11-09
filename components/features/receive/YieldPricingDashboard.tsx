@@ -25,7 +25,6 @@ import {
   applyPresetMarginToUnitPrice,
   parseCatalogPriceInput,
 } from '@/lib/domains/receiving/catalogItemPricing';
-import { consumeStashedReceivingScan } from '@/lib/domains/receiving/receivingBridge';
 import { readReceivingPrefs, writeReceivingPrefs } from '@/lib/domains/receiving/receivingPreferences';
 import type { ReceivingDispositionRow } from '@/lib/domains/receiving/receivingDisposition';
 import type { ReceivingLogSource } from '@/lib/domains/receiving/receivingSheet';
@@ -401,12 +400,6 @@ export function YieldPricingDashboard({
     setHiddenLogIds(readHiddenIds());
     void loadLogs(seeded);
     void loadDispositions();
-    const stashed = consumeStashedReceivingScan();
-    if (stashed?.logs.length) {
-      setStashedScanLogs(stashed.logs);
-      setSelectedId(stashed.logs[0]?.id ?? null);
-      if (stashed.note) setMovedNotice(stashed.note);
-    }
   }, [seeded]);
 
   const visibleLogs = useMemo(() => {

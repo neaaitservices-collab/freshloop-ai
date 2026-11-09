@@ -11,9 +11,15 @@ import { Button } from '@/components/ui/Button';
 import { Card, CardBody } from '@/components/ui/Card';
 import type { ReceivingLogsResult } from '@/lib/domains/receiving/receivingSheet';
 import type { InvoiceOcrResult } from '@/lib/types';
-import { receivingLogsFromInvoice } from '@/lib/domains/receiving/receivingBridge';
+import { consumeStashedReceivingScan, receivingLogsFromInvoice } from '@/lib/domains/receiving/receivingBridge';
 import { SUPPLIER_REQUIRED_ERROR } from '@/lib/domains/receiving/invoiceDeliveryId';
-import { invoiceHoldActions, type InvoiceHoldAction } from '@/lib/domains/receiving/invoiceIdentityHold';
+import {
+  clearedInvoiceIdentity,
+  identityHoldFromResponse,
+  invoiceHoldActions,
+  type IdentityHoldState,
+  type InvoiceHoldAction,
+} from '@/lib/domains/receiving/invoiceIdentityHold';
 import type { ReceivingLog } from '@/lib/domains/receiving/yieldPricing';
 import type { SupplierRecord } from '@/lib/domains/suppliers/suppliers';
 
@@ -25,13 +31,7 @@ export function ReceiveScreen({ initial }: { initial: ReceivingLogsResult }) {
   const [selectedSupplierId, setSelectedSupplierId] = useState('');
   const [supplierLoadError, setSupplierLoadError] = useState<string | null>(null);
   const [identityNonce, setIdentityNonce] = useState(0);
-  const [identityHold, setIdentityHold] = useState<{
-    code: string;
-    error: string;
-    newPrintedNames?: string[];
-    legacyReceipts?: { key: string; vendor: string; invoice: string }[];
-    unmatchedStoredLines?: { id: string; printedKey: string }[];
-  } | null>(null);
+  const [identityHold, setIdentityHold] = useState<IdentityHoldState | null>(null);
   const [dateDraft, setDateDraft] = useState('');
 
   const loadSuppliers = useCallback(() => {
@@ -57,9 +57,19 @@ export function ReceiveScreen({ initial }: { initial: ReceivingLogsResult }) {
 
   useEffect(() => {
     loadSuppliers();
+    const stashed = consumeStashedReceivingScan();
+    if (!stashed?.logs.length) return;
+    const cleared = clearedInvoiceIdentity();
+    setDateDraft(cleared.dateDraft);
+    setIdentityHold(cleared.identityHold);
+    setScannedLogs(stashed.logs);
+    setScanNote(stashed.note);
   }, [loadSuppliers]);
 
   const handleInvoiceImported = (result: InvoiceOcrResult) => {
+    const cleared = clearedInvoiceIdentity();
+    setDateDraft(cleared.dateDraft);
+    setIdentityHold(cleared.identityHold);
     const next = receivingLogsFromInvoice(result);
     setScannedLogs(next);
     if (result.supplierId) setSelectedSupplierId(result.supplierId);
@@ -115,13 +125,7 @@ export function ReceiveScreen({ initial }: { initial: ReceivingLogsResult }) {
         };
         if (cancelled) return;
         if (!response.ok || !json.success || !Array.isArray(json.lines)) {
-          setIdentityHold({
-            code: json.code ?? 'LINE_MISMATCH',
-            error: json.error ?? SUPPLIER_REQUIRED_ERROR,
-            newPrintedNames: json.newPrintedNames,
-            legacyReceipts: json.legacyReceipts,
-            unmatchedStoredLines: json.unmatchedStoredLines,
-          });
+          setIdentityHold(identityHoldFromResponse(json));
           setScanNote(json.error ?? SUPPLIER_REQUIRED_ERROR);
           setScannedLogs((prev) =>
             prev.map((log) => (log.invoiceNumber ? { ...log, canPost: false } : log))
@@ -144,7 +148,12 @@ export function ReceiveScreen({ initial }: { initial: ReceivingLogsResult }) {
         );
       })
       .catch(() => {
-        if (!cancelled) setScanNote(SUPPLIER_REQUIRED_ERROR);
+        if (cancelled) return;
+        setScanNote(SUPPLIER_REQUIRED_ERROR);
+        setIdentityHold(null);
+        setScannedLogs((prev) =>
+          prev.map((log) => (log.invoiceNumber ? { ...log, canPost: false } : log))
+        );
       });
     return () => {
       cancelled = true;
@@ -175,11 +184,21 @@ export function ReceiveScreen({ initial }: { initial: ReceivingLogsResult }) {
       }),
     })
       .then(async (response) => {
-        const json = (await response.json()) as { success?: boolean; error?: string };
+        const json = (await response.json()) as {
+          success?: boolean;
+          error?: string;
+          code?: string;
+          storedDates?: string[];
+          newPrintedNames?: string[];
+          legacyReceipts?: { key: string; vendor: string; invoice: string }[];
+          unmatchedStoredLines?: { id: string; printedKey: string }[];
+        };
         if (!response.ok || !json.success) {
+          setIdentityHold(identityHoldFromResponse(json));
           setScanNote(json.error ?? 'That confirmation was not saved.');
           return;
         }
+        setIdentityHold(null);
         setIdentityNonce((value) => value + 1);
       })
       .catch(() => setScanNote('That confirmation did not reach the server.'));
@@ -253,7 +272,7 @@ export function ReceiveScreen({ initial }: { initial: ReceivingLogsResult }) {
                           variant="secondary"
                           onClick={() => confirmHold('adopt-legacy', receipt.key)}
                         >
-                          Attach {receipt.vendor} / {receipt.invoice} without adding stock
+                          Store manager: attach {receipt.vendor} / {receipt.invoice} without adding stock
                         </Button>
                       ))
                     : null}

@@ -178,9 +178,9 @@ export async function postReceivingLogToInventory(
   if (deliveryId) {
     const held = await (db ?? prisma).supplierInvoiceLine.findUnique({
       where: { id: deliveryId },
-      select: { document: { select: { legacyKey: true } } },
+      select: { heldByLegacy: true },
     });
-    if (held?.document.legacyKey) {
+    if (held?.heldByLegacy) {
       const productId = input.productId?.trim() || '';
       return {
         externalLogId: input.externalLogId,

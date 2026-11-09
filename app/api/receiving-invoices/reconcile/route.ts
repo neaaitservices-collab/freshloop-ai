@@ -38,6 +38,7 @@ export async function POST(req: NextRequest) {
     const body = await parseJsonBody(req, bodySchema);
     const resolved = await reconcileSupplierInvoice({
       actorId: actor.id,
+      actorRole: actor.role,
       action: body.action,
       supplierId: body.supplierId,
       invoiceNumber: body.invoiceNumber,
