@@ -99,7 +99,6 @@ test('mixed draft keeps the unreadable line and blocks the whole commit', () => 
   );
   assert.equal(staff.lines[1]?.line_name, 'Lemons');
   assert.equal(staff.lines[1]?.quantity, 3);
-  assert.equal(staff.lines[1]?.delivery_id, draft.lines[1]?.delivery_id);
   assert.equal(staff.lines[1]?.department_assumed, true);
   assert.equal(staff.totalAmount, Number((2 * 5 + 3 * 4).toFixed(2)));
   const resolved = applyOcrDraftResolutions(

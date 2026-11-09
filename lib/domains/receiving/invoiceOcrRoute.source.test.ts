@@ -3,13 +3,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
-const route = fs.readFileSync(
-  path.join(process.cwd(), 'app/api/invoice-ocr/route.ts'),
-  'utf8'
-);
+const route = fs.readFileSync(path.join(process.cwd(), 'app/api/invoice-ocr/route.ts'), 'utf8');
 
-test('invoice commit route stores every line and refuses before any ledger write', () => {
-  assert.match(route, /settleStoredOcrDraft/);
+test('invoice commit keeps every scanned line and posts through the supplier invoice identity', () => {
   assert.match(route, /buildAuthoritativeOcrDraft/);
-  assert.equal(route.includes('invoiceIdempotencyKey'), false);
+  assert.match(route, /draftPostingBlockers/);
+  assert.match(route, /commitInvoiceOcrReceipts/);
+  assert.match(route, /supplierId: commitBody\.supplierId/);
+  assert.equal(route.includes('invoice-draft:'), false);
+  assert.equal(route.includes('settleStoredOcrDraft'), false);
+  assert.equal(route.includes('newDeliveryUuid'), false);
 });

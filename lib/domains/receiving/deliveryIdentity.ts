@@ -1,71 +1,92 @@
+import { createHash } from 'node:crypto';
+export {
+  isDeliveryUuid,
+  normalizeDeliveryUuid,
+  normalizeInvoiceIdentity,
+  RECEIVING_INVOICE_NAMESPACE,
+  uuidV5,
+} from '@/lib/domains/receiving/invoiceDeliveryId';
+
 /**
- * Delivery identity is a UUID assigned once by the server.
- * The fingerprint is a separate canonical description of the posted facts.
- * Changing quantity, cost, pack, supplier, or product must not mint a new id.
- * This module is imported by the receiving screen, so it does not use node:crypto.
+ * Receiving delivery identity.
+ *
+ * Google Sheets is read with the values API only. This app does not write the
+ * sheet, so it cannot store a UUID it invents on each read. A delivery id is
+ * valid only when the source already persisted one:
+ * - Sheet column "Delivery ID", "Line ID", or "External ID"
+ * - A numbered invoice line, whose UUID v5 is derived from the invoice number and line slot
+ *
+ * Row numbers and content hashes are not identities. `sheet-row-N` keys already
+ * in the ledger stay there and are not reused for new posts.
  */
 
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+export const DELIVERY_ID_HEADERS = new Set([
+  'delivery id',
+  'line id',
+  'external id',
+  'deliveryid',
+  'lineid',
+  'externalid',
+]);
 
-export const RECEIPT_FP_PREFIX = 'FLFP1:';
+export const RETIRED_POSITIONAL_DELIVERY_ERROR =
+  'Row-position ids such as sheet-row-2 are retired and were not posted. Add a new Delivery ID (UUID) on that delivery. Existing ledger history was not changed.';
 
-export function isDeliveryUuid(value: string | null | undefined): boolean {
-  const id = value?.trim() ?? '';
-  if (!id || id === '00000000-0000-0000-0000-000000000000') return false;
-  return UUID_RE.test(id);
+export const DELIVERY_UUID_REQUIRED_ERROR =
+  'A Delivery ID (UUID) persisted on the source line is required. FreshLoop does not assign one from the row number.';
+
+export const DELIVERY_PAYLOAD_CONFLICT_ERROR =
+  'This Delivery ID was already received with a different item, quantity, or cost. Use a new UUID for a new delivery.';
+
+export const LEGACY_SCAN_STASH_ERROR =
+  'This line still uses a pre-UUID scan id (scan-…). Open the invoice again so each numbered line gets a stable Delivery ID. That old id was not posted, and existing ledger rows were not removed.';
+
+const POSITIONAL_RE = /^sheet-row-\d+$/i;
+const UNASSIGNED_RE = /^unassigned-sheet-row-\d+$/i;
+const UNASSIGNED_INVOICE_RE = /^unassigned-invoice-line-\d+$/i;
+const LEGACY_SCAN_RE = /^scan-/i;
+
+/** Display-only or historical row indexes. Never claim these as a new receive. */
+export function isRetiredPositionalDeliveryId(value: string): boolean {
+  const id = value.trim();
+  return POSITIONAL_RE.test(id) || UNASSIGNED_RE.test(id) || UNASSIGNED_INVOICE_RE.test(id);
 }
 
-export function normalizeDeliveryUuid(value: string | null | undefined): string | null {
-  const id = value?.trim().toLowerCase() ?? '';
-  return isDeliveryUuid(id) ? id : null;
+/** Browser stashes from before UUID delivery ids. Rejected, not replayed. */
+export function isLegacyScanDeliveryId(value: string): boolean {
+  return LEGACY_SCAN_RE.test(value.trim());
 }
 
-/** Server and browser both provide randomUUID. Call this only when assigning a new line. */
-export function newDeliveryUuid(): string {
-  if (typeof crypto === 'undefined' || typeof crypto.randomUUID !== 'function') {
-    throw new Error('crypto.randomUUID is required to assign a delivery id.');
-  }
-  return crypto.randomUUID().toLowerCase();
-}
-
-export interface ReceiptFacts {
+export interface ReceivingDeliveryFingerprint {
   itemName: string;
   productId?: string | null;
   casesReceived: number;
   caseCost: number;
   packSize: number;
   splitFactor: number;
-  supplier?: string | null;
 }
 
-function round4(value: number): number {
+function normQty(value: number): number {
   return Number(value.toFixed(4));
 }
 
-/** Immutable facts for one delivery. Identity is not part of this string. */
-export function receiptFingerprint(facts: ReceiptFacts): string {
-  return JSON.stringify({
-    itemName: facts.itemName.trim(),
-    productId: facts.productId?.trim() || null,
-    casesReceived: round4(facts.casesReceived),
-    caseCost: round4(facts.caseCost),
-    packSize: round4(facts.packSize),
-    splitFactor: round4(facts.splitFactor),
-    supplier: facts.supplier?.trim() || null,
+/** Stable comparison payload. The UUID remains the identity; this only detects edits. */
+export function receivingDeliveryPayloadHash(input: ReceivingDeliveryFingerprint): string {
+  const canonical = JSON.stringify({
+    itemName: input.itemName.trim().toLowerCase(),
+    productId: input.productId?.trim() || null,
+    casesReceived: normQty(input.casesReceived),
+    caseCost: normQty(input.caseCost),
+    packSize: normQty(input.packSize),
+    splitFactor: normQty(input.splitFactor),
   });
+  return createHash('sha256').update(canonical).digest('hex');
 }
 
-export function receiptNotes(summary: string, fingerprint: string): string {
-  return `${RECEIPT_FP_PREFIX}${fingerprint}\n${summary}`;
+export class ReceivingDeliveryConflict extends Error {
+  readonly status = 409 as const;
+  constructor(message = DELIVERY_PAYLOAD_CONFLICT_ERROR) {
+    super(message);
+    this.name = 'ReceivingDeliveryConflict';
+  }
 }
-
-export function fingerprintFromNotes(notes: string | null | undefined): string | null {
-  if (!notes?.startsWith(RECEIPT_FP_PREFIX)) return null;
-  const end = notes.indexOf('\n');
-  const raw = end === -1 ? notes.slice(RECEIPT_FP_PREFIX.length) : notes.slice(RECEIPT_FP_PREFIX.length, end);
-  return raw || null;
-}
-
-export const RECEIPT_CONFLICT_REASON =
-  'This delivery id was already received with different item, quantity, cost, pack, or supplier. It was not posted again.';

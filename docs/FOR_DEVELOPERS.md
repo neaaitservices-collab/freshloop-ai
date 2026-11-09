@@ -153,13 +153,21 @@ All handlers use `export const dynamic = 'force-dynamic'` unless noted. Errors o
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| `GET` | `/api/receiving-logs` | `loadReceivingLogs()` — Google Sheet or sample rows |
-| `POST` | `/api/receiving-logs` | Save pack → `postReceipt()` / yield math (`yieldPricing.ts`) |
+| `GET` | `/api/receiving-logs` | `loadReceivingLogs()` — read-only Google Sheet. No sample rows. |
+| `POST` | `/api/receiving-logs` | Save one delivery UUID → `postReceipt()`. Same UUID and payload is a no-op. A different payload is 409. |
+| `POST` | `/api/receiving-invoices/identity` | Assign or reuse supplier, number, and exact-date line UUIDs. Conflicts do not post. |
+| `POST` | `/api/receiving-invoices/reconcile` | Record a confirmed date, spelling, missing-line, rename, or legacy-receipt decision. |
 | `GET` | `/api/receiving-dispositions` | Pending vendor credits |
 | `POST` | `/api/receiving-dispositions` | Create disposition (not received / removed) |
 | `PATCH` | `/api/receiving-dispositions/[id]` | Resolve credit |
 
 **Receive UI session keys:** `freshloop-posted-receiving`, `freshloop-receiving-hidden` (optimistic hide before refetch).
+
+**Delivery identity.** The sheet is read-only (`GOOGLE_SHEETS_API_KEY` values GET). FreshLoop does not write a UUID back. Add a column named `Delivery ID`, `Line ID`, or `External ID`. Generate the UUID once per delivery and leave that cell with the row when it is sorted or reused. A new delivery needs a new UUID even when the item and cost match. Rows without a UUID, and every row that repeats a UUID, are shown with `canPost: false`. `sheet-row-N` is rejected with 409 and does not delete old `recv:sheet-row-N` ledger keys.
+
+Numbered invoices are identified by a saved `suppliers.id`, the invoice number, and the exact invoice date. Punctuation and internal spaces stay, so `1001/A`, `1001-A`, `A 12`, and `A12` are different until someone confirms otherwise. The printed vendor name is not a supplier id. A missing date, a different date, or a spacing collision returns 409 and does not post. `POST /api/receiving-invoices/reconcile` records the choice. A receiving clerk can add missing lines or open a separate document. Linking a date, linking a spelling, mapping a renamed line, and adopting an older receipt require a store manager or the owner. An older `invoice:vendor:number` key matches only when the vendor text is exactly the selected supplier's name. Lines added after that adoption still post stock. Year-first dates normalize to `YYYY-MM-DD`; impossible days and month-first dates are rejected. The server assigns each printed line a UUID once (`supplier_invoice_lines`). A rescan reuses that UUID when the printed text aligns, including when the catalog match appears, disappears, or changes. A changed product, quantity, case cost, or pack on that same UUID is 409 and does not create another receipt. A scan that only adds missing printed lines waits for confirmation before those lines are saved. A renamed line is not appended as a new receipt; it has to be mapped onto the saved line UUID. That exact supplier key blocks a new post until a manager adopts it, and the ledger key is left in place. The receiving board (`POST /api/receiving-invoices/identity`, then `POST /api/receiving-logs`) and direct OCR commit (`commitInvoiceOcrReceipts`) both use that registry. A blank invoice number or a missing saved supplier stays unposted. Old browser stashes whose ids start with `scan-` return 409 with `LEGACY_SCAN_STASH_ERROR`. Shelf price is not part of the physical receipt fingerprint.
+
+Apply `20261108220000_receiving_delivery_uuid`, then `20261108223000_supplier_invoice_identity`, then `20261108233000_supplier_invoice_reconciliation`, then `20261108234000_supplier_invoice_line_legacy_hold` manually after review. Pushing this branch does not migrate production. No two migration folders on this branch share a timestamp. `20261028000000_recipe_labor_packaging` and `20261028000001_recipe_schema_align` are sequential recipe migrations. There is no manufacturing migration in this order. PR 65 must use this same supplier id, exact date, punctuation-and-space-preserving invoice number, and stored line UUID. It must not key receipts on vendor name, a whitespace-stripped number, a product match, or a row index.
 
 Bridge from invoice OCR: `lib/domains/receiving/receivingBridge.ts` (`receivingLogsFromInvoice`, `consumeStashedReceivingScan`).
 

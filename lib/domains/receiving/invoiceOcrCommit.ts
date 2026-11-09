@@ -1,25 +1,21 @@
 import { Department, InventoryLocation, Prisma } from '@prisma/client';
-import { prisma } from '@/lib/domains/inventory/ledger';
+import { InventoryLedgerError, prisma } from '@/lib/domains/inventory/ledger';
 import { invalidateInventoryCaches } from '@/lib/domains/inventory/inventoryCache';
-import {
-  findOrCreatePurchaseProduct,
-  normalizeProductPackFields,
-  postProductReceipt,
-  productPackWriteData,
-  type PurchaseProductNameCatalog,
-} from '@/lib/domains/inventory/stock';
-import { resolveSupplierIdForVendorName } from '@/lib/domains/suppliers/suppliers';
-import {
-  fingerprintFromNotes,
-  receiptFingerprint,
-  receiptNotes,
-} from '@/lib/domains/receiving/deliveryIdentity';
+import { normalizeProductPackFields } from '@/lib/domains/inventory/stock';
 import {
   INVOICE_OCR_CONFIDENCE_THRESHOLD,
   computeCommitLineConfidence,
   lineNeedsManualReview,
 } from '@/lib/domains/receiving/invoiceOcrConfidence';
 import { sampleInvoiceCommitRejection } from '@/lib/domains/receiving/sampleReceivingGuard';
+import { canonicalInvoiceDate } from '@/lib/domains/receiving/invoiceDeliveryId';
+import { postReceivingLogToInventory } from '@/lib/domains/receiving/receivingLogPost';
+import {
+  invoiceLinePostInput,
+  resolveSupplierInvoice,
+  SUPPLIER_REQUIRED_ERROR,
+} from '@/lib/domains/receiving/supplierInvoiceIdentity';
+import type { ReceivingLogPostResult } from '@/lib/domains/receiving/receivingLogPost';
 
 export type OcrQuantityKind = 'units' | 'cases';
 
@@ -47,7 +43,12 @@ export interface OcrCommitLine {
   match_confidence?: number;
   line_confidence?: number;
   needs_manual_review?: boolean;
-  delivery_id?: string;
+  department_assumed?: boolean;
+  quantity_unreadable?: boolean;
+  name_unreadable?: boolean;
+  review_reasons?: Array<
+    'low_confidence' | 'cost_guardrail' | 'department_assumed' | 'quantity_unreadable' | 'name_unreadable'
+  >;
 }
 
 export interface OcrInvoiceMeta {
@@ -59,15 +60,6 @@ export interface OcrInvoiceMeta {
   departmentBreakdown: Record<string, number>;
   rawOcrJson?: unknown;
 }
-
-type ReceiptProductRow = {
-  id: string;
-  casePackSize: number | null;
-  receivePackSize: number | null;
-  splitFactor: number | null;
-  name: string;
-  department: Department;
-};
 
 const receiptProductSelect = {
   casePackSize: true,
@@ -154,16 +146,9 @@ export interface OcrDraftLine {
   department_assumed?: boolean;
   quantity_unreadable?: boolean;
   name_unreadable?: boolean;
-  /** Stored with the draft. Empty means the line has no open review reason. */
   review_reasons?: Array<
-    | 'low_confidence'
-    | 'cost_guardrail'
-    | 'department_assumed'
-    | 'quantity_unreadable'
-    | 'name_unreadable'
+    'low_confidence' | 'cost_guardrail' | 'department_assumed' | 'quantity_unreadable' | 'name_unreadable'
   >;
-  /** Assigned once when the scan is stored. Corrections must not replace it. */
-  delivery_id?: string;
 }
 
 export interface OcrDraftPayload {
@@ -175,42 +160,19 @@ export interface OcrDraftPayload {
   lines: OcrDraftLine[];
 }
 
-export function invoiceIdempotencyKey(vendorName: string, invoiceNumber: string): string {
-  return `invoice:${vendorName.trim().toLowerCase()}:${invoiceNumber.trim().toLowerCase()}`;
-}
-
 /** Commit uses the stored scan. Client confidence and cost flags are not an input. */
 export function assertDraftLinesCommittable(
   lines: OcrDraftLine[],
   actorIsManager: boolean,
   manualReviewOverride: boolean
 ): void {
-  const managerMayResolve = manualReviewOverride && actorIsManager;
-  const blocked = lines.filter((line) => {
-    const reasons = line.review_reasons ?? [
-      ...(line.requires_approval ? (['cost_guardrail'] as const) : []),
-      ...(line.department_assumed ? (['department_assumed'] as const) : []),
-      ...(line.quantity_unreadable || !(line.quantity > 0) ? (['quantity_unreadable'] as const) : []),
-      ...(line.name_unreadable || line.line_name?.startsWith('Unread line ')
-        ? (['name_unreadable'] as const)
-        : []),
-      ...(lineNeedsManualReview(line.line_confidence) ? (['low_confidence'] as const) : []),
-    ];
-    return reasons.some((reason) => {
-      if (reason === 'quantity_unreadable' || reason === 'name_unreadable') return true;
-      if (
-        reason === 'low_confidence' ||
-        reason === 'cost_guardrail' ||
-        reason === 'department_assumed'
-      ) {
-        return !managerMayResolve;
-      }
-      return true;
-    });
-  });
+  const blocked = lines.filter(
+    (line) => line.requires_approval || lineNeedsManualReview(line.line_confidence)
+  );
   if (blocked.length === 0) return;
+  if (manualReviewOverride && actorIsManager) return;
   throw new Error(
-    `${blocked.length} invoice line(s) still need a quantity, a name, or a store manager before they can post.`
+    `${blocked.length} invoice line(s) need a store manager before they can post. Low-confidence or cost-guardrail lines were not accepted from the browser.`
   );
 }
 
@@ -223,181 +185,6 @@ export async function saveInvoiceOcrDraft(staffId: string, payload: OcrDraftPayl
     },
     select: { id: true },
   });
-}
-
-export class ReceiptIdentityConflict extends Error {
-  readonly status = 409;
-  constructor(message: string) {
-    super(message);
-    this.name = 'ReceiptIdentityConflict';
-  }
-}
-
-export async function writeInvoiceReceipts(
-  tx: Prisma.TransactionClient,
-  input: {
-    staffId: string;
-    referenceId: string;
-    confirmedItems: OcrCommitLine[];
-    invoiceMeta?: OcrInvoiceMeta | null;
-    supplierName?: string | null;
-  }
-) {
-  let invoiceId: string | null = null;
-  if (input.invoiceMeta) {
-    const meta = input.invoiceMeta;
-    const supplierId =
-      meta.supplierId?.trim() ||
-      (await resolveSupplierIdForVendorName(meta.vendorName, tx));
-    const invoice = await tx.vendorInvoice.create({
-      data: {
-        vendorName: meta.vendorName,
-        supplierId,
-        invoiceNumber: meta.invoiceNumber,
-        invoiceDate: new Date(meta.invoiceDate),
-        totalAmount: meta.totalAmount,
-        departmentBreakdown: meta.departmentBreakdown,
-        rawOcrJson: meta.rawOcrJson ?? undefined,
-        status: 'RECEIVED',
-      },
-    });
-    invoiceId = invoice.id;
-  }
-
-  const nameCatalog: PurchaseProductNameCatalog = await tx.product.findMany({
-    where: { isManufactured: false },
-    select: { id: true, name: true },
-  });
-
-  const explicitIds = [
-    ...new Set(
-      input.confirmedItems.map((item) => String(item.product_id ?? '').trim()).filter(Boolean)
-    ),
-  ];
-  const prefetched = explicitIds.length
-    ? await tx.product.findMany({
-        where: { id: { in: explicitIds } },
-        select: { id: true, ...receiptProductSelect },
-      })
-    : [];
-  const productsById = new Map<string, ReceiptProductRow>(prefetched.map((row) => [row.id, row]));
-  const receipts = [];
-
-  for (const item of input.confirmedItems) {
-    let productId = String(item.product_id ?? '').trim();
-    if (!productId) {
-      const lineName = item.line_name?.trim();
-      if (!lineName) {
-        throw new Error('Each invoice line needs a catalog match or a line name to create a product.');
-      }
-      const linePack = item.case_pack_size && item.case_pack_size > 0 ? item.case_pack_size : undefined;
-      const ensured = await findOrCreatePurchaseProduct(
-        {
-          itemName: lineName,
-          department: item.department,
-          receivePackSize: linePack,
-          casePackSize: linePack,
-          unitCost: Number(item.unit_cost) > 0 ? Number(item.unit_cost) : undefined,
-        },
-        tx,
-        nameCatalog
-      );
-      productId = ensured.id;
-    }
-
-    let product = productsById.get(productId);
-    if (!product) {
-      const loaded = await tx.product.findUnique({
-        where: { id: productId },
-        select: { id: true, ...receiptProductSelect },
-      });
-      if (!loaded) throw new Error(`Product was not found: ${productId}`);
-      product = loaded;
-      productsById.set(productId, product);
-    }
-
-    if (item.case_pack_size && item.case_pack_size > 0) {
-      const divisor = product.splitFactor && product.splitFactor > 0 ? product.splitFactor : 1;
-      const packData = productPackWriteData(item.case_pack_size, divisor);
-      product = await tx.product.update({
-        where: { id: productId },
-        data: packData,
-        select: { id: true, ...receiptProductSelect },
-      });
-      productsById.set(productId, product);
-    }
-
-    const packFields = normalizeProductPackFields({
-      receivePackSize: product.receivePackSize,
-      splitFactor: product.splitFactor,
-      casePackSize: product.casePackSize,
-    });
-    const { units, unitCost } = resolveInvoiceReceipt(item, packFields.casePackSize);
-    if (!(units > 0)) {
-      throw new Error(`Receive quantity must be greater than zero for ${product.name}.`);
-    }
-
-    const deliveryId = item.delivery_id?.trim() || '';
-    const lineKey = deliveryId ? `recv:${deliveryId}` : '';
-    const fingerprint = receiptFingerprint({
-      itemName: item.line_name?.trim() || product.name,
-      productId: item.product_id?.trim() || null,
-      casesReceived: item.quantity,
-      caseCost: item.unit_cost,
-      packSize: item.case_pack_size && item.case_pack_size > 0 ? item.case_pack_size : 1,
-      splitFactor: 1,
-      supplier: input.supplierName?.trim() || input.invoiceMeta?.vendorName || null,
-    });
-    if (lineKey) {
-      const existingKey = await tx.ledgerIdempotencyKey.findUnique({ where: { key: lineKey } });
-      if (existingKey) {
-        const existingRow = await tx.inventoryTransaction.findFirst({
-          where: { referenceId: lineKey },
-          select: { notes: true },
-        });
-        if (fingerprintFromNotes(existingRow?.notes) !== fingerprint) {
-          throw new ReceiptIdentityConflict(
-            'A delivery on this invoice was already received with different facts.'
-          );
-        }
-        continue;
-      }
-      await tx.ledgerIdempotencyKey.create({ data: { key: lineKey } });
-    }
-
-    const receipt = await postProductReceipt(
-      {
-        productId,
-        quantityUnits: units,
-        unitCostAtTime: unitCost,
-        staffId: input.staffId,
-        referenceId: lineKey || input.referenceId,
-        toLocation: item.to_location ?? InventoryLocation.Retail_Floor,
-        notes: receiptNotes('Confirmed Invoice OCR Receipt', fingerprint),
-      },
-      tx
-    );
-    receipts.push(receipt);
-
-    if (invoiceId) {
-      const lineConfidence = computeCommitLineConfidence(item, product.name);
-      await tx.invoiceLineItem.create({
-        data: {
-          invoiceId,
-          name: item.line_name ?? product.name,
-          department: item.department ?? product.department,
-          quantity: units,
-          unit: 'units',
-          unitCost,
-          totalCost: Number((unitCost * units).toFixed(2)),
-          casePackSize: packFields.receivePackSize,
-          ocrLineConfidence: lineConfidence,
-        },
-      });
-    }
-  }
-
-  return { invoiceId, receipts, transactionsCreated: receipts.length };
 }
 
 export async function commitInvoiceOcrReceipts(input: {
@@ -441,31 +228,192 @@ export async function commitInvoiceOcrReceipts(input: {
     actorIsManager: Boolean(input.actorIsManager),
   });
 
-  const result = await prisma.$transaction(
-    async (tx) => {
-      if (input.idempotencyKey) {
-        await tx.ledgerIdempotencyKey.create({ data: { key: input.idempotencyKey } });
-      }
-      const committed = await writeInvoiceReceipts(tx, {
-        staffId: input.staffId,
-        referenceId: input.referenceId,
-        confirmedItems: input.confirmedItems,
-        invoiceMeta: input.invoiceMeta,
-        supplierName: input.invoiceMeta?.vendorName,
-      });
-      if (input.draftId) {
-        await tx.invoiceOcrDraft.update({
-          where: { id: input.draftId },
-          data: {
-            consumedAt: new Date(),
-            result: committed as unknown as Prisma.InputJsonValue,
-          },
-        });
-      }
-      return committed;
-    },
-    { timeout: 20_000 }
-  );
+  const supplierId = input.invoiceMeta?.supplierId?.trim() ?? '';
+  if (!supplierId) throw new InventoryLedgerError(SUPPLIER_REQUIRED_ERROR, 'SUPPLIER_REQUIRED', 409);
+  const dateKey = canonicalInvoiceDate(input.invoiceMeta?.invoiceDate);
+  if (!dateKey) {
+    throw new InventoryLedgerError(
+      'The invoice date must be a real calendar date before it can be received.',
+      'DATE_REQUIRED',
+      409,
+      { committed: false }
+    );
+  }
+  const headerAt = new Date(`${dateKey}T00:00:00.000Z`);
+  const resolved = await resolveSupplierInvoice({
+    supplierId,
+    invoiceNumber: input.invoiceMeta?.invoiceNumber ?? '',
+    invoiceDate: dateKey,
+    lines: input.confirmedItems.map((item) => ({ printedName: item.line_name?.trim() || '' })),
+  });
+  if (!resolved.ok) {
+    throw new InventoryLedgerError(resolved.error, resolved.code, 409, { committed: false, ...resolved.details });
+  }
+  const posts: Awaited<ReturnType<typeof invoiceLinePostInput>>[] = [];
+  for (const [index, item] of input.confirmedItems.entries()) {
+    const identity = resolved.lines[index];
+    if (!identity) {
+      throw new InventoryLedgerError('A saved invoice line was missing.', 'LINE_MISMATCH', 409, { committed: false });
+    }
+    posts.push(
+      await invoiceLinePostInput(
+        {
+          printedName: item.line_name?.trim() || '',
+          productId: item.product_id,
+          quantity: item.quantity,
+          unitCost: item.unit_cost,
+          quantityKind: item.quantity_kind === 'cases' ? 'cases' : 'units',
+          casePackSize: item.case_pack_size,
+        },
+        identity.deliveryId,
+        supplierId
+      )
+    );
+  }
+
+  let result: {
+    invoiceId: string | null;
+    receipts: { transactionId: string; productId: string; unitsAdded: number; onHand: number }[];
+    transactionsCreated: number;
+  };
+  try {
+    result = await prisma.$transaction(
+      async (tx) => {
+        if (input.draftId) {
+          const locked = await tx.$queryRaw<Array<{ consumed_at: Date | null; result: unknown }>>`
+            SELECT consumed_at, result FROM invoice_ocr_drafts WHERE id = ${input.draftId} FOR UPDATE
+          `;
+          const held = locked[0];
+          if (held?.consumed_at) {
+            const prior = held.result;
+            if (prior && typeof prior === 'object' && 'invoiceId' in prior) {
+              const stored = prior as {
+                invoiceId?: string | null;
+                receipts?: { transactionId: string; productId: string; unitsAdded: number; onHand: number }[];
+              };
+              return {
+                invoiceId: stored.invoiceId ?? null,
+                receipts: (stored.receipts ?? []).map((row) => ({ ...row, unitsAdded: 0 })),
+                transactionsCreated: 0,
+              };
+            }
+            throw new InventoryLedgerError(
+              'This scan was already received.',
+              'DRAFT_ALREADY_RECEIVED',
+              409,
+              { committed: false }
+            );
+          }
+        }
+        const postedRows: ReceivingLogPostResult[] = [];
+        for (const post of posts) {
+          const row = await postReceivingLogToInventory(post, input.staffId, null, tx);
+          if (!row.stock.posted) {
+            const rolledBack: ReceivingLogPostResult[] = postedRows.map((earlier) => ({
+              externalLogId: earlier.externalLogId,
+              itemName: earlier.itemName,
+              stock: {
+                posted: false,
+                reason: 'Rolled back because a later line conflicted. Stock was not added for this line.',
+              },
+            }));
+            rolledBack.push(row);
+            throw new InventoryLedgerError(row.stock.reason ?? 'Stock was not updated.', 'DELIVERY_CONFLICT', 409, {
+              committed: false,
+              results: rolledBack,
+            });
+          }
+          postedRows.push(row);
+        }
+
+        const meta = input.invoiceMeta;
+        let invoiceId: string | null = null;
+        let createdHeader = false;
+        if (meta) {
+          const existingHeader = await tx.vendorInvoice.findFirst({
+            where: { supplierId, invoiceNumber: meta.invoiceNumber, invoiceDate: headerAt },
+            select: { id: true },
+          });
+          if (existingHeader) {
+            invoiceId = existingHeader.id;
+          } else {
+            const invoice = await tx.vendorInvoice.create({
+              data: {
+                vendorName: meta.vendorName,
+                supplierId,
+                invoiceNumber: meta.invoiceNumber,
+                invoiceDate: headerAt,
+                totalAmount: meta.totalAmount,
+                departmentBreakdown: meta.departmentBreakdown,
+                rawOcrJson: meta.rawOcrJson ?? undefined,
+                status: 'RECEIVED',
+              },
+            });
+            invoiceId = invoice.id;
+            createdHeader = true;
+          }
+        }
+
+        const receipts = postedRows.map((row) => ({
+          transactionId: row.stock.posted ? row.stock.transactionId : '',
+          productId: row.stock.posted ? row.stock.productId : '',
+          unitsAdded: row.stock.posted ? row.stock.unitsAdded : 0,
+          onHand: row.stock.posted ? row.stock.onHand : 0,
+        }));
+
+        if (createdHeader && invoiceId) {
+          for (const [index, item] of input.confirmedItems.entries()) {
+            const productId = receipts[index]?.productId || String(item.product_id ?? '');
+            const product = productId
+              ? await tx.product.findUnique({
+                  where: { id: productId },
+                  select: receiptProductSelect,
+                })
+              : null;
+            const packFields = normalizeProductPackFields({
+              receivePackSize: product?.receivePackSize,
+              splitFactor: product?.splitFactor,
+              casePackSize: product?.casePackSize,
+            });
+            const { units, unitCost } = resolveInvoiceReceipt(item, packFields.casePackSize);
+            await tx.invoiceLineItem.create({
+              data: {
+                invoiceId,
+                name: item.line_name ?? product?.name ?? 'Invoice line',
+                department: item.department ?? product?.department ?? 'PRODUCE',
+                quantity: units > 0 ? units : item.quantity,
+                unit: 'units',
+                unitCost,
+                totalCost: Number((unitCost * (units > 0 ? units : item.quantity)).toFixed(2)),
+                casePackSize: packFields.receivePackSize,
+                ocrLineConfidence: computeCommitLineConfidence(item, product?.name),
+              },
+            });
+          }
+        }
+
+        const committed = {
+          invoiceId,
+          receipts,
+          transactionsCreated: postedRows.filter((row) => row.stock.posted && row.stock.idempotent !== true).length,
+        };
+        if (input.draftId) {
+          await tx.invoiceOcrDraft.update({
+            where: { id: input.draftId },
+            data: {
+              consumedAt: new Date(),
+              result: committed as unknown as Prisma.InputJsonValue,
+            },
+          });
+        }
+        return committed;
+      },
+      { timeout: 20_000 }
+    );
+  } catch (error) {
+    if (error instanceof InventoryLedgerError) throw error;
+    throw error;
+  }
 
   invalidateInventoryCaches();
   return result;

@@ -1,6 +1,5 @@
 import type { Department } from '@prisma/client';
 import { lineNeedsManualReview } from '@/lib/domains/receiving/invoiceOcrConfidence';
-import { newDeliveryUuid, normalizeDeliveryUuid } from '@/lib/domains/receiving/deliveryIdentity';
 import {
   quantityKindForInvoiceUnit,
   type OcrDraftLine,
@@ -41,7 +40,6 @@ export interface AuditedDraftSourceLine {
   requires_approval: boolean;
   department_assumed?: boolean;
   quantity_unreadable?: boolean;
-  delivery_id?: string;
 }
 
 export interface OcrDraftResolution {
@@ -107,7 +105,6 @@ export function buildAuthoritativeOcrDraft(input: {
       review_reasons: undefined,
     });
     return {
-      delivery_id: normalizeDeliveryUuid(line.delivery_id) ?? newDeliveryUuid(),
       product_id: line.product_id?.trim() ?? '',
       quantity: quantityUnreadable ? 0 : line.quantity,
       quantity_kind: quantityKindForInvoiceUnit(line.unit) as OcrQuantityKind,
@@ -201,14 +198,13 @@ function recomputeDraftEconomics(payload: OcrDraftPayload): OcrDraftPayload {
  */
 export function draftResolutionFingerprint(payload: OcrDraftPayload): string {
   const lines = [...payload.lines].sort((a, b) =>
-    (a.delivery_id ?? '').localeCompare(b.delivery_id ?? '')
+    `${a.product_id}|${a.line_name ?? ''}`.localeCompare(`${b.product_id}|${b.line_name ?? ''}`)
   );
   return JSON.stringify({
     vendorName: payload.vendorName.trim(),
     invoiceNumber: payload.invoiceNumber.trim(),
     invoiceDate: payload.invoiceDate,
     lines: lines.map((line) => ({
-      deliveryId: line.delivery_id ?? '',
       name: line.line_name ?? '',
       quantity: line.quantity,
       unitCost: line.unit_cost,

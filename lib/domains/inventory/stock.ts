@@ -1,4 +1,6 @@
 import { Department, InventoryLocation, Prisma, TransactionType, UnitType } from '@prisma/client';
+import { ReceivingDeliveryConflict } from '@/lib/domains/receiving/deliveryIdentity';
+import { isLedgerIdempotencyConflict } from '@/lib/domains/inventory/idempotencyConflict';
 import { parsePosSalesDaysParam, posSalesWindowStart } from '@/lib/domains/inventory/posSalesUnits';
 import {
   getCurrentStock,
@@ -14,13 +16,6 @@ import {
   resolveParCases,
   stockFromPar,
 } from '@/lib/domains/inventory/parLevel';
-import { isLedgerIdempotencyConflict } from '@/lib/domains/inventory/idempotencyConflict';
-import {
-  RECEIPT_CONFLICT_REASON,
-  fingerprintFromNotes,
-  receiptFingerprint,
-  receiptNotes,
-} from '@/lib/domains/receiving/deliveryIdentity';
 import {
   hasOfflineMutationReference,
   offlineReferenceId,
@@ -113,10 +108,18 @@ export interface PostedReceipt {
   onHand: number;
   transactionId: string;
   idempotent?: boolean;
+  reason?: string;
 }
 
 export interface SkippedReceipt {
   posted: false;
+  reason: string;
+  conflict?: false;
+}
+
+export interface ConflictReceipt {
+  posted: false;
+  conflict: true;
   reason: string;
 }
 
@@ -160,23 +163,12 @@ export async function findOrCreatePurchaseProduct(
     }
   }
 
-  const catalogMatch = nameCatalog ? matchProduct(name, nameCatalog) : null;
-  if (catalogMatch) {
-    await client.product.update({
-      where: { id: catalogMatch.id },
-      data: { catalogActive: true },
-    });
-    return { id: catalogMatch.id, name: catalogMatch.name, created: false };
-  }
-
-  if (db) {
-    const lockName = `purchase-sku:${name.toLowerCase()}`;
-    await db.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${lockName}))`;
-  }
-  const products = await client.product.findMany({
-    where: { isManufactured: false },
-    select: { id: true, name: true },
-  });
+  const products =
+    nameCatalog ??
+    (await client.product.findMany({
+      where: { isManufactured: false },
+      select: { id: true, name: true },
+    }));
   const match = matchProduct(name, products);
   if (match) {
     await client.product.update({
@@ -1104,9 +1096,13 @@ export async function postReceipt(input: {
   staffId?: string;
   targetMargin?: number;
   supplier?: string | null;
-  /** Stable client line id. A repeat posts nothing and returns the first receipt. */
+  /** Persisted delivery UUID. A repeat of the same payload returns the original receipt. */
   externalLogId?: string;
-}): Promise<PostedReceipt | SkippedReceipt> {
+  delivery?: {
+    payloadHash: string;
+    productId?: string | null;
+  };
+}, db?: LotTx): Promise<PostedReceipt | SkippedReceipt | ConflictReceipt> {
   let packData: ReturnType<typeof productPackWriteData>;
   try {
     packData = productPackWriteData(input.packSize, input.splitFactor);
@@ -1121,24 +1117,27 @@ export async function postReceipt(input: {
 
   const unitCost = unitsPerCase > 0 ? input.caseCost / unitsPerCase : input.caseCost;
   const supplierLabel = input.supplier?.trim() || 'Received at the dock';
-  const fingerprint = receiptFingerprint({
-    itemName: input.itemName,
-    productId: input.productId,
-    casesReceived: input.casesReceived,
-    caseCost: input.caseCost,
-    packSize: input.packSize,
-    splitFactor: input.splitFactor,
-    supplier: supplierLabel,
-  });
-  const idempotencyKey = input.externalLogId?.trim()
-    ? `recv:${input.externalLogId.trim()}`
-    : '';
+  const deliveryId = input.externalLogId?.trim().toLowerCase() ?? '';
+  const idempotencyKey = deliveryId ? `recv:${deliveryId}` : '';
   const referenceId = idempotencyKey || `RCV-${Date.now()}`;
-  let posted: { product: { id: string; name: string }; created: { id: string } };
-  try {
-    posted = await prisma.$transaction(async (tx) => {
-    if (idempotencyKey) {
-      await tx.ledgerIdempotencyKey.create({ data: { key: idempotencyKey } });
+  const payloadHash = input.delivery?.payloadHash ?? '';
+  let posted:
+    | { product: { id: string; name: string }; created: { id: string } }
+    | { replay: { catalogProductId: string | null; productName: string; unitsAdded: number; transactionId: string | null } };
+  const run = async (tx: LotTx) => {
+    if (deliveryId && payloadHash) {
+      const existing = await tx.receivingDelivery.findUnique({ where: { id: deliveryId } });
+      if (existing) {
+        if (existing.payloadHash !== payloadHash) throw new ReceivingDeliveryConflict();
+        return {
+          replay: {
+            catalogProductId: existing.catalogProductId,
+            productName: existing.productName,
+            unitsAdded: existing.unitsAdded,
+            transactionId: existing.transactionId,
+          },
+        };
+      }
     }
     const ensured = await findOrCreatePurchaseProduct(
       {
@@ -1187,10 +1186,7 @@ export async function postReceipt(input: {
         unitCostAtTime: Number(unitCost.toFixed(4)),
         referenceId,
         expirationDate,
-        notes: receiptNotes(
-          `Received ${input.casesReceived} cases of ${input.itemName}`,
-          fingerprint
-        ),
+        notes: `Received ${input.casesReceived} cases of ${input.itemName}`,
       },
     });
     await createLotOnReceive(tx, {
@@ -1202,36 +1198,78 @@ export async function postReceipt(input: {
       receiveReferenceId: referenceId,
       receiveTransactionId: created.id,
     });
-    return { product, created };
-  });
-  } catch (error) {
-    if (idempotencyKey && isLedgerIdempotencyConflict(error)) {
-      const existing = await prisma.inventoryTransaction.findFirst({
-        where: { referenceId },
-        select: { id: true, productId: true, notes: true },
+    if (deliveryId && payloadHash) {
+      await tx.receivingDelivery.create({
+        data: {
+          id: deliveryId,
+          payloadHash,
+          itemName: input.itemName,
+          productId: input.delivery?.productId?.trim() || null,
+          casesReceived: input.casesReceived,
+          caseCost: input.caseCost,
+          packSize: input.packSize,
+          splitFactor: input.splitFactor,
+          unitsAdded,
+          transactionId: created.id,
+          catalogProductId: product.id,
+          productName: product.name,
+        },
       });
-      const storedFingerprint = fingerprintFromNotes(existing?.notes);
-      if (!existing || storedFingerprint !== fingerprint) {
-        return {
-          posted: false,
-          reason: RECEIPT_CONFLICT_REASON,
-        };
+    }
+    if (idempotencyKey) {
+      await tx.ledgerIdempotencyKey.create({ data: { key: idempotencyKey } });
+    }
+    return { product, created };
+  };
+  try {
+    posted = db ? await run(db) : await prisma.$transaction(run);
+  } catch (error) {
+    if (db) throw error;
+    const uniqueViolation =
+      typeof error === 'object' &&
+      error !== null &&
+      'code' in error &&
+      (error as { code?: string }).code === 'P2002';
+    if (idempotencyKey && uniqueViolation) {
+      const existing = deliveryId
+        ? await prisma.receivingDelivery.findUnique({ where: { id: deliveryId } })
+        : null;
+      if (!existing) {
+        throw new ReceivingDeliveryConflict(
+          'This delivery id is already recorded. Existing ledger history was not changed, and this post was not applied.'
+        );
       }
-      const productId = existing.productId;
+      if (!payloadHash || existing.payloadHash !== payloadHash) {
+        throw new ReceivingDeliveryConflict();
+      }
+      const productId = existing.catalogProductId ?? '';
       return {
         posted: true,
         idempotent: true,
         productId,
-        productName: input.itemName,
-        unitsAdded: 0,
-        onHand: await getCurrentStock(productId),
-        transactionId: existing.id,
+        productName: existing.productName,
+        unitsAdded: existing.unitsAdded,
+        onHand: productId ? await getCurrentStock(productId) : 0,
+        transactionId: existing.transactionId ?? '',
       };
     }
     throw error;
   }
 
-  invalidateInventoryCaches();
+  if ('replay' in posted) {
+    const productId = posted.replay.catalogProductId ?? '';
+    return {
+      posted: true,
+      idempotent: true,
+      productId,
+      productName: posted.replay.productName,
+      unitsAdded: posted.replay.unitsAdded,
+      onHand: productId ? await getCurrentStock(productId) : 0,
+      transactionId: posted.replay.transactionId ?? '',
+    };
+  }
+
+  if (!db) invalidateInventoryCaches();
   const onHand = await getCurrentStock(posted.product.id);
   return {
     posted: true,
@@ -1262,8 +1300,7 @@ export async function postProductReceipt(
   const unitsAdded = Number(Math.abs(input.quantityUnits).toFixed(4));
   if (!(unitsAdded > 0)) throw new Error('Receive quantity must be greater than zero.');
 
-  const reader = db ?? prisma;
-  const product = await reader.product.findUnique({ where: { id: productId } });
+  const product = await prisma.product.findUnique({ where: { id: productId } });
   if (!product) throw new Error('Product was not found.');
 
   const unitCost = Number(Math.max(0, input.unitCostAtTime).toFixed(4));

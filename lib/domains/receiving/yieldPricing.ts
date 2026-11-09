@@ -17,6 +17,15 @@ export interface ReceivingLog {
   invoiceLineName?: string;
   /** When OCR reads a printed case shelf / list price on the invoice. */
   suggestedCaseFloorPrice?: number;
+  /**
+   * Sheet rows without a persisted Delivery ID are visible but must not be posted.
+   * Omitted means the line already has its own id (invoice UUID).
+   */
+  canPost?: boolean;
+  /** Printed invoice description. Line identity uses this, not the catalog match. */
+  printedName?: string;
+  invoiceNumber?: string;
+  invoiceDate?: string;
 }
 
 export interface YieldQuote {

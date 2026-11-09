@@ -1,5 +1,15 @@
 import type { RoleName } from '@/lib/utils/roles';
 import { AuthError, requireRoles, requireSessionUser } from '@/lib/auth/session';
+import type { AuthSessionUser } from '@/lib/auth/staffSnapshot';
+
+type ReceivingStaffTestAuth = () => Promise<AuthSessionUser>;
+
+function receivingStaffTestAuth(): ReceivingStaffTestAuth | null {
+  if (process.env.NODE_ENV === 'production') return null;
+  const hook = (globalThis as { __freshloopReceivingStaffTestAuth?: ReceivingStaffTestAuth })
+    .__freshloopReceivingStaffTestAuth;
+  return typeof hook === 'function' ? hook : null;
+}
 
 /** Any authenticated staff member (middleware already enforces login on /api). */
 export async function requireAuthenticatedStaff() {
@@ -25,6 +35,8 @@ export async function requireOwnerOrStoreManagerForBundles() {
 }
 
 export async function requireReceivingStaff() {
+  const testAuth = receivingStaffTestAuth();
+  if (testAuth) return testAuth();
   return requireRoles(['ADMIN', 'STORE_MANAGER', 'RECEIVING_CLERK']);
 }
 
