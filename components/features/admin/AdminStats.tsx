@@ -60,7 +60,7 @@ export function AdminMetricGrid({ stats }: { stats: StoreStats | null }) {
       <Metric
         label="Value rescued (30d)"
         value={formatCurrency(stats.rescuedValue)}
-        detail="Retail $ sent floor → kitchen in the last 30 days."
+        detail="Retail $ sent floor → production in the last 30 days."
         icon={DollarSign}
         accent="text-emerald-400"
       />

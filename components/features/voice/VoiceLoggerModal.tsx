@@ -95,7 +95,7 @@ const FALLBACK_CATALOG_OPTIONS: Array<{
   { id: 'prod-heavy-cream', name: 'Whole Heavy Cream 40%', department: 'DAIRY' },
   { id: 'prod-greek-yogurt', name: 'Greek Whole Milk Yogurt (750g)', department: 'DAIRY' },
   { id: 'prod-sourdough-boule', name: 'Artisanal Sourdough Boule', department: 'BAKERY' },
-  { id: 'prod-evoo-5l', name: 'Extra Virgin Olive Oil (Bulk Kitchen)', department: 'PANTRY' },
+  { id: 'prod-evoo-5l', name: 'Extra Virgin Olive Oil (Bulk Production)', department: 'PANTRY' },
 ];
 
 export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
@@ -112,7 +112,7 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [lastAudioBlob, setLastAudioBlob] = useState<Blob | null>(null);
   const [spokenText, setSpokenText] = useState(
-    'Pull 12 very ripe Hass avocados for kitchen rescue and discard 3 lbs of crushed tomatoes'
+    'Pull 12 very ripe Hass avocados for production rescue and discard 3 lbs of crushed tomatoes'
   );
   const [parsing, setParsing] = useState(false);
   const [committing, setCommitting] = useState(false);
@@ -595,7 +595,7 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
                   rows={2}
                   value={spokenText}
                   onChange={(e) => setSpokenText(e.target.value)}
-                  placeholder="Example: Pull 15 lbs of ripe tomatoes for the kitchen and discard 2 moldy sourdough loaves..."
+                  placeholder="Example: Pull 15 lbs of ripe tomatoes for production and discard 2 moldy sourdough loaves..."
                   className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-teal-500/60"
                 />
               </div>
@@ -786,7 +786,7 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
                             className="min-h-11 w-full rounded-xl border border-zinc-700 bg-zinc-900 px-2.5 py-2 text-xs font-bold text-white"
                           >
                             <option value="PULL_RESCUE">
-                              PULL_RESCUE (Kitchen)
+                              PULL_RESCUE (Production)
                             </option>
                             <option value="DISCARD">
                               DISCARD (Waste)

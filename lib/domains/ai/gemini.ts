@@ -578,7 +578,7 @@ export async function processVoiceFloorLog(
   }
 
   try {
-    const prompt = `You are Ambient Voice Floor Logger for FreshLoop AI in a fresh grocery store / kitchen.
+    const prompt = `You are Ambient Voice Floor Logger for FreshLoop AI in a fresh grocery store / production.
 Your task is to listen to spoken floor audio or transcript (e.g., "Logged 10 lbs bruised apples and 4L heavy cream") and return structured JSON adhering to this schema:
 {
   "transcript": "string (verbatim transcript of spoken audio)",
@@ -593,7 +593,7 @@ Your task is to listen to spoken floor audio or transcript (e.g., "Logged 10 lbs
       "allergenWarnings": ["string"]
     }
   ],
-  "kitchenRescueNotes": "string (suggested immediate kitchen action or store markdown note)",
+  "kitchenRescueNotes": "string (suggested immediate production action or store markdown note)",
   "estimatedWasteSavedValue": number
 }
 
@@ -621,7 +621,7 @@ Rules:
       parsedItems: (parsed.parsedItems as VoiceLoggerResult['parsedItems']) || [],
       kitchenRescueNotes: String(
         parsed.kitchenRescueNotes ||
-          'Transfer items immediately to prep kitchen for Recipe Fusion.'
+          'Transfer items immediately to production prep for Recipe Fusion.'
       ),
       estimatedWasteSavedValue: Number(parsed.estimatedWasteSavedValue) || 38.5,
     };

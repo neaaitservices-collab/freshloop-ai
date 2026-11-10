@@ -45,7 +45,7 @@ export async function listMarkdownSuggestions(limit = 12): Promise<MarkdownSugge
       suggestedPrice,
       rationale:
         row.daysRemaining <= pullDays
-          ? 'Inside pull window — prioritize markdown before kitchen rescue or waste.'
+          ? 'Inside pull window — prioritize markdown before production rescue or waste.'
           : 'Approaching pull window — early markdown may recover revenue.',
     };
   });

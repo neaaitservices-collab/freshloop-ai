@@ -222,10 +222,10 @@ function matchSpokenItemToCatalog(
 // ============================================================================
 
 const VOICE_FLOOR_LOGGER_PROMPT = `You are the FreshLoop AI Voice Floor Logger for an independent supermarket.
-Analyze the spoken audio or text transcript from floor/kitchen staff and return ONLY valid JSON with this exact structure:
+Analyze the spoken audio or text transcript from floor/production staff and return ONLY valid JSON with this exact structure:
 {
   "transcript": "verbatim transcript of what was spoken",
-  "notes": "brief actionable summary for kitchen or floor",
+  "notes": "brief actionable summary for production or floor",
   "items": [
     {
       "item_name": "string (product name mentioned)",
@@ -240,7 +240,7 @@ Analyze the spoken audio or text transcript from floor/kitchen staff and return 
 }
 
 Strict classification rules:
-- target_action MUST be either "PULL_RESCUE" (if edible/usable for kitchen prep such as overripe, bruised, near expiry, day-old) or "DISCARD" (if spoiled, moldy, crushed, contaminated, or unsafe).
+- target_action MUST be either "PULL_RESCUE" (if edible/usable for production prep such as overripe, bruised, near expiry, day-old) or "DISCARD" (if spoiled, moldy, crushed, contaminated, or unsafe).
 - Always extract numeric quantity > 0.`;
 
 function mapVoiceParserItems(items: Record<string, unknown>[]) {

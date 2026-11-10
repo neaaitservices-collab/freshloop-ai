@@ -68,7 +68,7 @@ export const FALLBACK_RECIPES: FallbackRecipeCatalogEntry[] = [
       },
       {
         ingredientProductId: 'prod-evoo-5l',
-        ingredientName: 'Extra Virgin Olive Oil (Bulk Kitchen)',
+        ingredientName: 'Extra Virgin Olive Oil (Bulk Production)',
         requiredQty: 0.5,
         unit: 'LITER' as UnitType,
         allowVariance: false,
@@ -119,7 +119,7 @@ export const FALLBACK_RECIPES: FallbackRecipeCatalogEntry[] = [
     aliases: ['rec-avocado-guacamole', 'rec-003'],
     name: 'Avocado & Ontario Tomato Guacamole Cups',
     outputProductId: 'prod-deli-guacamole',
-    outputProductName: 'Fresh Kitchen Rescue Guacamole Cup (6 oz)',
+    outputProductName: 'Fresh Production Rescue Guacamole Cup (6 oz)',
     outputUnit: 'TUB' as UnitType,
     outputShelfLifeDays: 2,
     batchYieldQty: 30,
