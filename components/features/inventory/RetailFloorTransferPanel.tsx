@@ -6,6 +6,7 @@ import {
   SubInventoryTransferList,
 } from '@/components/features/inventory/SubInventoryTransferList';
 import type { PerformInventoryMove } from '@/components/features/inventory/SubInventoryTransferBar';
+import { inShortDatedTransferQueue } from '@/lib/domains/inventory/pullSensitivity';
 import { filterRetailFloorLevels } from '@/lib/domains/inventory/subInventoryView';
 import { useRole } from '@/components/auth/RoleProvider';
 import { canManageBundleDeals } from '@/lib/auth/staffCapabilities';
@@ -59,16 +60,14 @@ export function RetailFloorTransferPanel({
       );
     }
     if (priorityOnly) {
-      list = list.filter(
-        (row) => row.daysRemaining <= row.pullDays || row.low || row.isMarkdown
-      );
+      list = list.filter((row) => inShortDatedTransferQueue(row.daysRemaining, pullDays));
     }
     return list.sort(
       (a, b) =>
         (priorityOnly ? a.daysRemaining - b.daysRemaining : 0) ||
         a.name.localeCompare(b.name)
     );
-  }, [levels, priorityOnly, query, departmentFilter]);
+  }, [levels, priorityOnly, pullDays, query, departmentFilter]);
 
   return (
     <div
