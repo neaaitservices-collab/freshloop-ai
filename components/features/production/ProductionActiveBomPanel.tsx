@@ -31,6 +31,7 @@ interface ProductionActiveBomPanelProps {
   /** Wide main column vs omitted (legacy `dense` still tightens table padding). */
   layout?: 'wide' | 'compact';
   onCreateBom?: () => void;
+  loadError?: string | null;
 }
 
 function categoryTone(category: string): string {
@@ -166,6 +167,7 @@ export function ProductionActiveBomPanel({
   canExecuteBatch = true,
   initialManufacturingCatalog = null,
   onCreateBom,
+  loadError = null,
 }: ProductionActiveBomPanelProps) {
   const isCompactLayout = layout === 'compact' || dense;
   const [search, setSearch] = useState('');
@@ -464,7 +466,11 @@ export function ProductionActiveBomPanel({
           <div className="rounded-2xl border border-slate-800 bg-slate-950/80 p-3 text-emerald-400">
             <ChefHat className="h-8 w-8" aria-hidden />
           </div>
-          {recipes.length === 0 ? (
+          {loadError && recipes.length === 0 ? (
+            <p role="alert" className="max-w-sm text-sm font-bold text-rose-200">
+              {loadError}
+            </p>
+          ) : recipes.length === 0 ? (
             <>
               <p className="text-sm font-bold text-slate-200">No BOM recipes yet</p>
               <p className="max-w-sm text-xs leading-relaxed text-slate-500">

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { apiErrorFromUnknown, handleApiRouteError } from '@/lib/domains/ai/apiError';
 import { authErrorResponse } from '@/lib/auth/http';
-import { requireOperationalStaff } from '@/lib/auth/guardRoute';
+import { requireManagerStaff, requireOperationalStaff } from '@/lib/auth/guardRoute';
 import { requireSessionUser } from '@/lib/auth/session';
 import { parseJsonBody } from '@/lib/security/parseJsonBody';
 import { inventoryLevelsPatchSchema } from '@/lib/security/schemas/inventory';
@@ -134,6 +134,7 @@ export async function PATCH(req: NextRequest) {
     }
 
     if (body.action === 'markdown') {
+      await requireManagerStaff();
       const discountPct =
         typeof body.discountPct === 'number' && Number.isFinite(body.discountPct)
           ? body.discountPct

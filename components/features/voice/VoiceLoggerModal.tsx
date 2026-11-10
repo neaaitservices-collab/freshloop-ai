@@ -112,7 +112,7 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [lastAudioBlob, setLastAudioBlob] = useState<Blob | null>(null);
   const [spokenText, setSpokenText] = useState(
-    'Retirar 12 unidades de aguacate hass muy maduro para rescate en cocina y descartar 3 lbs de tomates aplastados'
+    'Pull 12 very ripe Hass avocados for kitchen rescue and discard 3 lbs of crushed tomatoes'
   );
   const [parsing, setParsing] = useState(false);
   const [committing, setCommitting] = useState(false);
@@ -207,7 +207,7 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
           parseVoiceRef.current(blob);
         } else {
           setPipelinePhase('idle');
-          setErrorMsg('Se alcanzó el límite de tiempo sin audio capturado.');
+          setErrorMsg('The time limit was reached with no audio captured.');
         }
       },
     });
@@ -232,7 +232,7 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
     } catch {
       setIsRecording(false);
       setPipelinePhase('idle');
-      setErrorMsg('No se pudo acceder al micrófono. Usa el simulador de texto o revisa permisos.');
+      setErrorMsg('Could not access the microphone. Use the text box or check permissions.');
     }
   };
 
@@ -252,7 +252,7 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
       }
     } else if (autoParse) {
       setPipelinePhase('idle');
-      setErrorMsg('No se capturó audio. Mantén el botón mientras hablas o escribe en el simulador.');
+      setErrorMsg('No audio was captured. Hold the button while you speak, or type in the box.');
     } else {
       setPipelinePhase('idle');
     }
@@ -317,8 +317,8 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
           json.error ||
             json.message ||
             (res.status === 503
-              ? 'Servicio de voz no disponible — revise OPENAI_API_KEY en el servidor.'
-              : 'Error al analizar comando de voz')
+              ? 'Voice service is unavailable. Check OPENAI_API_KEY on the server.'
+              : 'Could not parse the voice command.')
         );
       }
 
@@ -326,7 +326,7 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
 
       const rawItems: EditableVoiceDraftItem[] = Array.isArray(json.items)
         ? (json.items as Record<string, unknown>[]).map((it) => ({
-            item_name: String(it.item_name || 'Producto'),
+            item_name: String(it.item_name || 'Product'),
             product_id: it.product_id ? String(it.product_id) : '',
             matched_product_name: it.matched_product_name
               ? String(it.matched_product_name)
@@ -469,7 +469,7 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
                 <OfflineSyncBadge />
               </div>
               <p className="text-xs text-zinc-400">
-                Push-to-talk (Whisper) + parser LLM • Ningún dato se guarda sin tu confirmación
+                Push-to-talk (Whisper) + parser LLM • Nothing is saved until you confirm
               </p>
             </div>
           </div>
@@ -495,7 +495,7 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
             <VoicePipelineErrorBanner
               message={errorMsg}
               onRetry={() => void handleParseVoiceWithAI(lastAudioBlob)}
-              retryLabel={lastAudioBlob?.size ? 'Reintentar audio' : 'Reintentar análisis'}
+              retryLabel={lastAudioBlob?.size ? 'Retry audio' : 'Retry parse'}
               onDismiss={() => setErrorMsg(null)}
             />
           ) : null}
@@ -544,40 +544,40 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
 
                 <p className="font-extrabold text-sm text-white">
                   {processingAudio || parsing
-                    ? 'Transcribiendo con Whisper y analizando comando…'
+                    ? 'Transcribing with Whisper and parsing the command…'
                     : isRecording
                       ? toggleRecordMode
-                        ? 'Grabando… toca de nuevo para terminar'
-                        : 'Mantén presionado y habla… suelta para enviar'
+                        ? 'Recording… tap again to finish'
+                        : 'Hold and speak… release to send'
                       : toggleRecordMode
-                        ? 'Toca el micrófono para grabar una nota corta'
-                        : 'Mantén el micrófono — nota de voz push-to-talk'}
+                        ? 'Tap the microphone to record a short note'
+                        : 'Hold the microphone — push-to-talk voice note'}
                 </p>
                 <button
                   type="button"
                   onClick={() => setToggleRecordMode((v) => !v)}
                   className="mt-2 text-[10px] font-bold uppercase tracking-wider text-teal-400/90 hover:text-teal-300"
                 >
-                  Modo: {toggleRecordMode ? 'Tap para iniciar/parar' : 'Mantener presionado (recomendado)'}
+                  Mode: {toggleRecordMode ? 'Tap to start/stop' : 'Hold to talk (recommended)'}
                 </button>
                 <p className="text-zinc-400 text-xs mt-1 max-w-md">
-                  La IA extraerá los productos, aplicará coincidencia difusa contra el catálogo y abrirá el bucle de confirmación antes de afectar el Ledger.
+                  The model extracts products, matches them to the catalog, and opens a confirmation step before anything hits the ledger.
                 </p>
               </div>
 
               {/* Spoken Text Simulator Input */}
               <div className="space-y-2">
                 <label className="font-bold text-zinc-300 text-xs flex items-center justify-between">
-                  <span>Transcripción Hablada / Simulador Rápido de Voz</span>
+                  <span>Spoken text / quick voice simulator</span>
                   <span className="text-teal-400 font-mono text-[10px]">
-                    Whisper + texto (sin streaming)
+                    Whisper + text (no streaming)
                   </span>
                 </label>
                 <textarea
                   rows={2}
                   value={spokenText}
                   onChange={(e) => setSpokenText(e.target.value)}
-                  placeholder="Ej: Retirar 15 lbs de tomates maduros para cocina y descartar 2 hogazas de masa madre con moho..."
+                  placeholder="Example: Pull 15 lbs of ripe tomatoes for the kitchen and discard 2 moldy sourdough loaves..."
                   className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-teal-500/60"
                 />
               </div>
@@ -595,13 +595,13 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
                 <div className="space-y-1">
                   <div className="flex items-center gap-2">
                     <span className="font-black text-amber-300 text-xs uppercase tracking-wider">
-                      Bucle de Confirmación Asíncrono Requerido
+                      Confirmation required before posting
                     </span>
                   </div>
                   <p className="text-amber-100/90 text-xs leading-relaxed">
-                    Verifica lo que interpretó Gemini 1.5 Flash. Puedes presionar{' '}
-                    <strong className="text-white">[EDITAR]</strong> para corregir cantidades, acción o producto vinculado antes de{' '}
-                    <strong className="text-emerald-300">[CONFIRMAR Y REGISTRAR]</strong> en{' '}
+                    Check what the model heard. Press{' '}
+                    <strong className="text-white">[EDIT]</strong> to fix quantity, action, or the linked product before{' '}
+                    <strong className="text-emerald-300">[CONFIRM AND POST]</strong> to{' '}
                     <code className="font-mono">Inventory_Transactions</code>.
                   </p>
                 </div>
@@ -613,7 +613,7 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
                   <Volume2 className="w-4 h-4 text-teal-400 shrink-0" />
                   <div>
                     <span className="text-[10px] font-bold uppercase text-zinc-500 block">
-                      Audio Interpretado por IA
+                      Audio interpreted by the model
                     </span>
                     <p className="text-xs font-semibold text-white italic">
                       &ldquo;{transcript}&rdquo;
@@ -621,7 +621,7 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
                   </div>
                 </div>
                 <span className="px-2.5 py-1 rounded-lg bg-zinc-900 border border-zinc-700 text-[10px] font-mono text-zinc-300 shrink-0">
-                  {draftItems.length} ítem(s) detectados
+                  {draftItems.length} item(s) detected
                 </span>
               </div>
 
@@ -649,7 +649,7 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
                             </span>
                           </div>
                           <p className="text-[11px] text-zinc-400">
-                            Voz detectada: &ldquo;{item.item_name}&rdquo; • ID:{' '}
+                            Heard: &ldquo;{item.item_name}&rdquo; • ID:{' '}
                             <code className="text-zinc-300">{item.product_id}</code>
                           </p>
                         </div>
@@ -676,7 +676,7 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
                       <div className="grid grid-cols-3 gap-2 pt-2 border-t border-zinc-800/80 text-xs">
                         <div className="p-2 rounded-xl bg-zinc-900/70">
                           <span className="text-[10px] text-zinc-500 block">
-                            Cantidad
+                            Quantity
                           </span>
                           <strong className="text-white font-mono">
                             {item.quantity} {item.unit}
@@ -684,7 +684,7 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
                         </div>
                         <div className="p-2 rounded-xl bg-zinc-900/70">
                           <span className="text-[10px] text-zinc-500 block">
-                            Condición Física
+                            Condition
                           </span>
                           <strong className="text-amber-300">
                             {item.condition}
@@ -692,7 +692,7 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
                         </div>
                         <div className="p-2 rounded-xl bg-zinc-900/70">
                           <span className="text-[10px] text-zinc-500 block">
-                            Destino Ledger
+                            Ledger destination
                           </span>
                           <strong className="text-emerald-300 font-mono">
                             {item.target_action === 'PULL_RESCUE'
@@ -706,7 +706,7 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
                       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-3 border-t border-zinc-800">
                         <div>
                           <label className="text-[10px] font-bold text-zinc-400 uppercase block mb-1">
-                            Producto del Catálogo (Fuzzy Match)
+                            Catalog product (fuzzy match)
                           </label>
                           <select
                             value={item.product_id}
@@ -734,7 +734,7 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
 
                         <div>
                           <label className="text-[10px] font-bold text-zinc-400 uppercase block mb-1">
-                            Cantidad ({item.unit})
+                            Quantity ({item.unit})
                           </label>
                           <input
                             type="number"
@@ -755,7 +755,7 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
 
                         <div>
                           <label className="text-[10px] font-bold text-zinc-400 uppercase block mb-1">
-                            Acción Destino
+                            Destination action
                           </label>
                           <select
                             value={item.target_action}
@@ -768,10 +768,10 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
                             className="min-h-11 w-full rounded-xl border border-zinc-700 bg-zinc-900 px-2.5 py-2 text-xs font-bold text-white"
                           >
                             <option value="PULL_RESCUE">
-                              PULL_RESCUE (Cocina)
+                              PULL_RESCUE (Kitchen)
                             </option>
                             <option value="DISCARD">
-                              DISCARD (Merma / Basura)
+                              DISCARD (Waste)
                             </option>
                           </select>
                         </div>
@@ -793,7 +793,7 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
               </div>
               <div className="space-y-1">
                 <h4 className="text-lg font-black text-white">
-                  ¡Confirmado y Registrado en el Ledger Inmutable!
+                  Confirmed and posted to the ledger
                 </h4>
                 <p className="text-xs text-zinc-400 max-w-md mx-auto">
                   {savedOffline ? (
@@ -803,7 +803,7 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
                     </>
                   ) : (
                     <>
-                      Se registraron <strong className="text-emerald-400">{draftItems.length}</strong> movimientos verificados por humano en{' '}
+                      <strong className="text-emerald-400">{draftItems.length}</strong> human-checked moves were posted to{' '}
                       <code className="text-zinc-200">Inventory_Transactions</code>.
                     </>
                   )}
@@ -821,7 +821,7 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
                 onClick={onClose}
                 className="inline-flex min-h-11 items-center rounded-xl px-4 py-2 text-xs font-bold text-zinc-400 hover:text-white cursor-pointer"
               >
-                Cancelar
+                Cancel
               </button>
 
               <button
@@ -836,13 +836,13 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
                     <span>
                       {processingAudio
                         ? 'Whisper + parser…'
-                        : 'Analizando texto…'}
+                        : 'Parsing text…'}
                     </span>
                   </>
                 ) : (
                   <>
                     <Sparkles className="w-4 h-4 fill-zinc-950" />
-                    <span>Procesar Voz (Abrir Confirmación)</span>
+                    <span>Process voice (open confirmation)</span>
                   </>
                 )}
               </button>
@@ -857,7 +857,7 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
                 className="inline-flex min-h-11 items-center gap-1.5 rounded-xl border border-zinc-800 bg-zinc-900 px-3.5 py-2 text-xs font-bold text-zinc-400 hover:text-white cursor-pointer"
               >
                 <RotateCcw className="w-3.5 h-3.5" />
-                <span>Regrabar</span>
+                <span>Record again</span>
               </button>
 
               <div className="flex items-center gap-2.5">
@@ -872,7 +872,7 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
                   }`}
                 >
                   <Edit3 className="w-4 h-4" />
-                  <span>{isEditMode ? '[GUARDAR EDICIÓN]' : '[EDITAR]'}</span>
+                  <span>{isEditMode ? '[SAVE EDIT]' : '[EDIT]'}</span>
                 </button>
 
                 {/* PHYSICAL [CONFIRMAR Y REGISTRAR] BUTTON */}
@@ -885,12 +885,12 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
                   {committing ? (
                     <>
                       <Loader2 className="w-4 h-4 animate-spin" />
-                      <span>Registrando en Ledger...</span>
+                      <span>Posting to the ledger...</span>
                     </>
                   ) : (
                     <>
                       <Check className="w-4 h-4 stroke-[3]" />
-                      <span>[CONFIRMAR Y REGISTRAR]</span>
+                      <span>[CONFIRM AND POST]</span>
                     </>
                   )}
                 </button>
@@ -905,14 +905,14 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
                 onClick={handleReset}
                 className="inline-flex min-h-11 items-center rounded-xl px-4 py-2 text-xs font-bold text-zinc-400 hover:text-white cursor-pointer"
               >
-                Registrar Otro Audio
+                Log another note
               </button>
               <button
                 type="button"
                 onClick={onClose}
                 className="inline-flex min-h-11 items-center rounded-xl px-6 py-2.5 text-xs font-black bg-emerald-400 hover:bg-emerald-300 text-zinc-950 cursor-pointer"
               >
-                Cerrar y Actualizar Piso
+                Close and refresh the floor
               </button>
             </div>
           )}

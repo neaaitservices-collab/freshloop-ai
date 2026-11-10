@@ -80,12 +80,12 @@ export const VolumetricScrapForm: React.FC<VolumetricScrapFormProps> = ({
     try {
       await onLogScrapBuckets(bucketsCount, event);
       setLastLoggedToast(
-        `+${bucketsCount} cubeta(s) (${event.estimatedWeightKg} kg · $${event.estimatedScrapCostValue.toFixed(2)})`
+        `+${bucketsCount} bucket(s) (${event.estimatedWeightKg} kg · $${event.estimatedScrapCostValue.toFixed(2)})`
       );
       setTimeout(() => setLastLoggedToast(null), 3500);
     } catch (err) {
       const message =
-        err instanceof Error ? err.message : 'No se pudo registrar el scrap volumétrico.';
+        err instanceof Error ? err.message : 'Could not log volumetric scrap.';
       setErrorToast(message);
       setTimeout(() => setErrorToast(null), 5000);
     } finally {
@@ -97,7 +97,7 @@ export const VolumetricScrapForm: React.FC<VolumetricScrapFormProps> = ({
 
   return (
     <section
-      aria-label="Registro volumétrico de scrap"
+      aria-label="Volumetric scrap log"
       className={
         compact
           ? 'rounded-2xl border border-emerald-500/25 bg-slate-900/90 p-3 shadow-lg'
@@ -124,7 +124,7 @@ export const VolumetricScrapForm: React.FC<VolumetricScrapFormProps> = ({
                     : 'text-base font-black text-emerald-300 sm:text-lg'
                 }
               >
-                Registro Volumétrico ({volumeLabel}L)
+                Volumetric log ({volumeLabel}L)
               </h2>
               <span
                 className="rounded-full border border-slate-600 px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide text-slate-300"
@@ -171,7 +171,7 @@ export const VolumetricScrapForm: React.FC<VolumetricScrapFormProps> = ({
             const presetKg = (bucketPreset * weightPerBucketKg).toFixed(1);
             const presetCost = (bucketPreset * costPerBucket).toFixed(2);
             const label =
-              bucketPreset === 1 ? '+1 Cubeta' : `+${bucketPreset} Cubetas`;
+              bucketPreset === 1 ? '+1 bucket' : `+${bucketPreset} buckets`;
             return (
               <button
                 key={bucketPreset}
@@ -191,7 +191,7 @@ export const VolumetricScrapForm: React.FC<VolumetricScrapFormProps> = ({
                 {!compact ? (
                   <div className="mt-1.5 font-mono text-[11px] text-slate-400">
                     <span className="block">{presetKg} kg est.</span>
-                    <strong className="text-rose-300">+${presetCost} merma</strong>
+                    <strong className="text-rose-300">+${presetCost} scrap</strong>
                   </div>
                 ) : (
                   <span className="font-mono text-[9px] text-rose-300">+${presetCost}</span>
@@ -214,7 +214,7 @@ export const VolumetricScrapForm: React.FC<VolumetricScrapFormProps> = ({
                 htmlFor="volumetric-scrap-custom"
                 className="block text-[10px] font-bold uppercase tracking-wide text-slate-500"
               >
-                Cantidad Personalizada (X Cubetas {volumeLabel}L)
+                Custom quantity ({volumeLabel}L buckets)
               </label>
             ) : null}
             <div className="mt-1.5 flex flex-wrap items-center gap-2">
@@ -255,7 +255,7 @@ export const VolumetricScrapForm: React.FC<VolumetricScrapFormProps> = ({
             ) : compact ? (
               'Scrap'
             ) : (
-              'Registrar Scrap'
+              'Log scrap'
             )}
           </button>
         </div>
@@ -270,17 +270,17 @@ export const VolumetricScrapForm: React.FC<VolumetricScrapFormProps> = ({
       >
         <div className={compact ? 'flex flex-wrap gap-1.5' : 'flex flex-wrap gap-2 text-[11px]'}>
           <span className="rounded-full border border-emerald-500/30 bg-emerald-950/50 px-3 py-1 font-semibold text-emerald-100">
-            Acumulado KPI (30 días):{' '}
+            KPI total (30 days):{' '}
             <span className="font-mono text-white">
-              {totalBucketsLoggedToday} cubetas ({totalVolumeTodayL}L)
+              {totalBucketsLoggedToday} buckets ({totalVolumeTodayL}L)
             </span>
           </span>
           <span className="rounded-full border border-emerald-500/30 bg-emerald-950/50 px-3 py-1 font-semibold text-emerald-100">
-            Peso Orgánico:{' '}
+            Organic weight:{' '}
             <span className="font-mono text-amber-200">{totalWeightTodayKg} kg</span>
           </span>
           <span className="rounded-full border border-emerald-500/30 bg-emerald-950/50 px-3 py-1 font-semibold text-emerald-100">
-            Impacto en KPI Merma:{' '}
+            Scrap KPI impact:{' '}
             <span className="font-mono text-rose-300">
               ${totalScrapCostToday.toFixed(2)}
             </span>
@@ -308,7 +308,7 @@ export const VolumetricScrapForm: React.FC<VolumetricScrapFormProps> = ({
               className="inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1 text-[11px] font-semibold text-slate-400 transition-colors hover:text-white"
             >
               <RotateCcw className="h-3 w-3" />
-              Actualizar KPI
+              Refresh KPI
             </button>
           )}
         </div>

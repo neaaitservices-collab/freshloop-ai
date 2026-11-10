@@ -4,6 +4,7 @@ import {
   RecipeFusionResult,
   VoiceLoggerResult,
 } from '@/lib/types';
+import { boundedAttemptMs, createAttemptAbort, geminiFailureDetail } from '@/lib/domains/ai/invoiceScan';
 import { GEMINI_FLASH_MODEL_FALLBACKS } from '@/lib/domains/ai/geminiModels';
 import { parseInvoiceIdentity, parseInvoiceLineFields } from '@/lib/domains/receiving/invoiceOcrParse';
 
@@ -65,7 +66,10 @@ type GeminiSdkClient = {
     model: string;
     generationConfig: Record<string, unknown>;
   }) => {
-    generateContent: (parts: GeminiContentPart[]) => Promise<{
+    generateContent: (
+      parts: GeminiContentPart[],
+      requestOptions?: { signal?: AbortSignal }
+    ) => Promise<{
       response: { text: () => string };
     }>;
   };
@@ -103,6 +107,10 @@ export type GenerateContentOptions = {
   preferRestApi?: boolean;
   /** Merged into generationConfig (JSON mode, caps, temperature). */
   generationConfig?: Record<string, unknown>;
+  /** AbortController timeout for one Gemini attempt (invoice OCR uses 22s). */
+  attemptTimeoutMs?: number;
+  /** Absolute time after which the model ladder must not start another attempt. */
+  deadlineAtMs?: number;
 };
 
 const MODEL_LIST_TTL_MS = 30 * 60 * 1000;
@@ -162,7 +170,8 @@ async function tryGeminiRestGenerateContent(
   promptText: string,
   inlinePart: { data: string; mimeType: string } | undefined,
   genConfig: Record<string, unknown>,
-  remember: (model: string, detail: string) => void
+  remember: (model: string, detail: string) => void,
+  signal?: AbortSignal
 ): Promise<string | null> {
   const parts: any[] = [{ text: promptText }];
   if (inlinePart) {
@@ -194,11 +203,16 @@ async function tryGeminiRestGenerateContent(
   let keyUnauthorized = false;
   for (const attempt of attempts) {
     if (attempt.label === 'bearer' && !keyUnauthorized) continue;
+    if (signal?.aborted) {
+      remember(modelName, `${attempt.label} timed out`);
+      return null;
+    }
     try {
       const response = await fetch(attempt.url, {
         method: 'POST',
         headers: attempt.headers,
         body: payload,
+        signal,
       });
       const raw = await response.text();
       if (response.ok) {
@@ -214,8 +228,8 @@ async function tryGeminiRestGenerateContent(
         }
         remember(modelName, `${attempt.label} ${response.status} ${raw.slice(0, 180)}`);
       }
-    } catch (e: any) {
-      remember(modelName, `${attempt.label} ${e?.message || 'request failed'}`);
+    } catch (e: unknown) {
+      remember(modelName, `${attempt.label} ${geminiFailureDetail(e)}`);
     }
   }
   return null;
@@ -227,7 +241,8 @@ function tryGeminiSdkGenerateContent(
   promptText: string,
   inlinePart: { data: string; mimeType: string } | undefined,
   genConfig: Record<string, unknown>,
-  remember: (model: string, detail: string) => void
+  remember: (model: string, detail: string) => void,
+  signal?: AbortSignal
 ): Promise<string | null> {
   const sdk = getGenAIClient(apiKey);
   if (!sdk) return Promise.resolve(null);
@@ -246,11 +261,11 @@ function tryGeminiSdkGenerateContent(
           },
         });
       }
-      const result = await model.generateContent(parts);
+      const result = await model.generateContent(parts, signal ? { signal } : undefined);
       const text = result.response.text();
       return text || null;
-    } catch (e: any) {
-      remember(modelName, e?.message || 'SDK request failed');
+    } catch (e: unknown) {
+      remember(modelName, geminiFailureDetail(e));
       return null;
     }
   })();
@@ -291,56 +306,94 @@ export async function generateContentWithFallback(
     modelsToTry = ranked.length ? ranked : preferredModels.slice(0, maxTry);
   }
 
+  const runBounded = async (
+    modelName: string,
+    run: (signal?: AbortSignal) => Promise<string | null>
+  ): Promise<{ text: string | null; stop: boolean }> => {
+    const limit = boundedAttemptMs(Date.now(), options);
+    if (limit === null) {
+      remember(modelName, 'time budget spent');
+      return { text: null, stop: true };
+    }
+    const attempt = limit === 'unlimited' ? null : createAttemptAbort(limit);
+    try {
+      return { text: await run(attempt?.signal), stop: false };
+    } finally {
+      attempt?.cancel();
+    }
+  };
+
   for (const modelName of modelsToTry) {
     try {
       let text: string | null = null;
+      let stop = false;
 
       if (preferRest) {
-        text = await tryGeminiRestGenerateContent(
-          modelName,
-          apiKey,
-          promptText,
-          inlinePart,
-          genConfig,
-          remember
-        );
-        if (!text) {
-          text = await tryGeminiSdkGenerateContent(
-            apiKey,
+        const rest = await runBounded(modelName, (signal) =>
+          tryGeminiRestGenerateContent(
             modelName,
+            apiKey,
             promptText,
             inlinePart,
             genConfig,
-            remember
+            remember,
+            signal
+          )
+        );
+        text = rest.text;
+        stop = rest.stop;
+        if (!text && !stop) {
+          const sdk = await runBounded(modelName, (signal) =>
+            tryGeminiSdkGenerateContent(
+              apiKey,
+              modelName,
+              promptText,
+              inlinePart,
+              genConfig,
+              remember,
+              signal
+            )
           );
+          text = sdk.text;
+          stop = sdk.stop;
         }
       } else {
-        text = await tryGeminiSdkGenerateContent(
-          apiKey,
-          modelName,
-          promptText,
-          inlinePart,
-          genConfig,
-          remember
-        );
-        if (!text) {
-          text = await tryGeminiRestGenerateContent(
-            modelName,
+        const sdk = await runBounded(modelName, (signal) =>
+          tryGeminiSdkGenerateContent(
             apiKey,
+            modelName,
             promptText,
             inlinePart,
             genConfig,
-            remember
+            remember,
+            signal
+          )
+        );
+        text = sdk.text;
+        stop = sdk.stop;
+        if (!text && !stop) {
+          const rest = await runBounded(modelName, (signal) =>
+            tryGeminiRestGenerateContent(
+              modelName,
+              apiKey,
+              promptText,
+              inlinePart,
+              genConfig,
+              remember,
+              signal
+            )
           );
+          text = rest.text;
+          stop = rest.stop;
         }
       }
 
+      if (stop) break;
       if (text) {
         return { text, modelUsed: modelName };
       }
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'request failed';
-      remember(modelName, message);
+      remember(modelName, geminiFailureDetail(err));
     }
   }
 
@@ -360,12 +413,17 @@ export async function generateContentWithFallback(
         line.includes('no longer available') ||
         line.includes('not found')
     );
+  const timedOut =
+    failures.length > 0 &&
+    failures.every((line) => /timed out|time budget spent/i.test(line));
   throw new Error(
-    rejected
-      ? 'The photo could not be read. The Gemini key on this store was rejected.'
-      : modelUnavailable
-        ? 'The vision model is unavailable on this API key. Set GEMINI_OCR_MODEL=gemini-3.8-flash and restart the dev server.'
-        : failures[0] || 'The invoice reader could not reach the model.'
+    timedOut
+      ? 'The invoice reader timed out before a result came back. Try a closer photo of the line items.'
+      : rejected
+        ? 'The photo could not be read. The Gemini key on this store was rejected.'
+        : modelUnavailable
+          ? 'The vision model is unavailable on this API key. Set GEMINI_OCR_MODEL=gemini-3.8-flash and restart the dev server.'
+          : failures[0] || 'The invoice reader could not reach the model.'
   );
 }
 

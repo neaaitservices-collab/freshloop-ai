@@ -3,7 +3,7 @@ import { LotAllocationError } from '@/lib/domains/inventory/lots';
 import { applyRetailMarkdown, moveKitchenPrepToWaste, moveRetailStock } from '@/lib/domains/inventory/stock';
 import { apiError, apiErrorFromUnknown } from '@/lib/domains/ai/apiError';
 import { authErrorResponse } from '@/lib/auth/http';
-import { requireOperationalStaff } from '@/lib/auth/guardRoute';
+import { requireManagerStaff, requireOperationalStaff } from '@/lib/auth/guardRoute';
 import { parseJsonBody } from '@/lib/security/parseJsonBody';
 import { inventoryMoveBodySchema } from '@/lib/security/schemas/inventory';
 import { assertMutationRateLimit } from '@/lib/security/rateLimit';
@@ -20,6 +20,7 @@ export async function POST(req: NextRequest) {
     const { productId, action } = body;
 
     if (action === 'markdown') {
+      await requireManagerStaff();
       const discountPct = body.discountPct ?? 30;
       const marked = await applyRetailMarkdown(productId, actor.id, discountPct);
       return NextResponse.json({

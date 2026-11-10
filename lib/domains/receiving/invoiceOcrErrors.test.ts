@@ -24,4 +24,17 @@ describe('invoiceOcrErrorResponse', () => {
   it('returns null for unknown errors', () => {
     assert.equal(invoiceOcrErrorResponse(new Error('database exploded')), null);
   });
+
+  it('keeps a scan timeout worded as a timeout', async () => {
+    const res = invoiceOcrErrorResponse(
+      new Error(
+        'The invoice reader timed out before a result came back. Try a closer photo of the line items.'
+      )
+    );
+    assert.ok(res);
+    assert.equal(res.status, 504);
+    const body = await res.json();
+    assert.match(body.error, /timed out/i);
+    assert.doesNotMatch(body.error, /supplier/i);
+  });
 });

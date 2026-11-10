@@ -74,6 +74,9 @@ export function canonicalPrintedLine(name: string | null | undefined): string | 
 export const SUPPLIER_REQUIRED_ERROR =
   'Select a saved supplier before this invoice can be received. The vendor name printed on the scan is not a supplier id.';
 
+export const INVOICE_IDENTITY_NETWORK_ERROR =
+  'The invoice identity check did not reach the server. This is not a missing supplier. Try again.';
+
 export const INVOICE_NUMBER_REUSE_POLICY =
   'The same saved supplier, invoice number, and exact invoice date replay. A different date, a missing date, or a number that differs by spaces is a conflict until someone confirms it. Confirming a different dated delivery creates a separate document. Nothing is replayed or posted before that confirmation.';
 
