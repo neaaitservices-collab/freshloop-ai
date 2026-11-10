@@ -53,6 +53,7 @@ export function useOptimisticInventoryLevels(initialLevels: StockLevel[] | null)
       quantity?: number;
       staffId?: string;
       discountPct?: number;
+      clientMutationId?: string;
       row: SubInventoryTransferRow;
     }) => {
       if (inFlight.current.has(input.productId)) {
@@ -61,6 +62,7 @@ export function useOptimisticInventoryLevels(initialLevels: StockLevel[] | null)
           error: 'This item is already updating — wait a moment.',
         };
       }
+      inFlight.current.add(input.productId);
 
       const quantity =
         input.action === 'markdown'
@@ -77,7 +79,6 @@ export function useOptimisticInventoryLevels(initialLevels: StockLevel[] | null)
         })
       );
 
-      inFlight.current.add(input.productId);
       let result: Awaited<ReturnType<typeof executeInventoryMove>>;
       try {
         result = await executeInventoryMove({
@@ -86,10 +87,22 @@ export function useOptimisticInventoryLevels(initialLevels: StockLevel[] | null)
           quantity: input.action === 'markdown' ? undefined : quantity,
           staffId: input.staffId,
           discountPct: input.discountPct,
+          clientMutationId: input.clientMutationId,
           broadcast: false,
         });
       } finally {
         inFlight.current.delete(input.productId);
+      }
+
+      if (result.success && result.queuedOffline) {
+        const level = levelsRef.current.find((row) => row.productId === input.productId);
+        if (level) {
+          return {
+            success: true as const,
+            level,
+            message: transferSuccessMessage(input.action, input.row, level, result.units ?? quantity),
+          };
+        }
       }
 
       if (result.success && result.level) {
