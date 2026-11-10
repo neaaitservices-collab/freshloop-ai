@@ -36,6 +36,7 @@ import {
   receivingStockWasAdded,
 } from '@/lib/domains/receiving/invoiceIdentityHold';
 import { SUPPLIER_REQUIRED_ERROR } from '@/lib/domains/receiving/invoiceDeliveryId';
+import { receivingLogRemainsVisible } from '@/lib/domains/receiving/receivingListVisibility';
 
 interface LogsResponse {
   success?: boolean;
@@ -411,17 +412,24 @@ export function YieldPricingDashboard({
     });
   }, [extraLogs, stashedScanLogs, logs]);
 
-  const openLogs = useMemo(
-    () => visibleLogs.filter((log) => !postedIds.has(log.id) && !hiddenLogIds.has(log.id)),
-    [visibleLogs, postedIds, hiddenLogIds]
-  );
-
   const invoiceLogIds = useMemo(() => {
     const ids = new Set<string>();
     for (const log of extraLogs) ids.add(log.id);
     for (const log of stashedScanLogs) ids.add(log.id);
     return ids;
   }, [extraLogs, stashedScanLogs]);
+
+  const openLogs = useMemo(
+    () =>
+      visibleLogs.filter((log) =>
+        receivingLogRemainsVisible(log, {
+          postedIds,
+          hiddenIds: hiddenLogIds,
+          invoiceIds: invoiceLogIds,
+        })
+      ),
+    [visibleLogs, postedIds, hiddenLogIds, invoiceLogIds]
+  );
 
   const bulkLogs = useMemo(() => {
     const invoiceOpen = openLogs.filter((log) => invoiceLogIds.has(log.id));
