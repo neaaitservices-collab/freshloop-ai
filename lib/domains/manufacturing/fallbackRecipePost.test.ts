@@ -90,11 +90,33 @@ test('execute path rejects fallback ids before a stock write, and the UI hides e
   const modal = readFileSync('components/features/recipes/RecipeProductionModal.tsx', 'utf8');
   assert.match(modal, /Recipes unavailable, retry/);
   assert.match(modal, />\s*Retry\s*</);
+  assert.match(modal, /batchActionLabel\(/);
+  assert.match(modal, /sm:hidden/);
   assert.equal(modal.includes('KITCHEN_RECIPES_CATALOG'), false);
-  assert.equal(modal.includes('rec-panzanella-001'), false);
+  for (const demoId of ['rec-panzanella-001', 'rec-parfait-002', 'rec-guacamole-003']) {
+    assert.equal(modal.includes(demoId), false, demoId);
+  }
   assert.match(modal, /!catalogUnavailable && selectedRecipe && !completedBatch/);
 
   const panel = readFileSync('components/features/production/ProductionActiveBomPanel.tsx', 'utf8');
   assert.match(panel, /Recipes unavailable, retry/);
   assert.match(panel, /canExecuteBatch && !catalogReadOnly/);
+  assert.match(panel, /summaryLoading \?/);
+  assert.match(panel, /onManufacturingReadOnlyChange/);
+});
+
+test('production BOM keeps loading skeletons and the read-only catalog callback', () => {
+  for (const file of [
+    'components/features/production/ProductionActiveBomPanel.tsx',
+    'components/features/production/ProductionDashboard.tsx',
+    'components/features/production/productionDashboardTypes.ts',
+  ]) {
+    const source = readFileSync(file, 'utf8');
+    assert.match(source, /summaryLoading/, file);
+    assert.match(source, /onManufacturingReadOnlyChange/, file);
+  }
+  const dashboard = readFileSync('components/features/production/ProductionDashboard.tsx', 'utf8');
+  assert.match(dashboard, /summaryLoading=\{!statsReady\}/);
+  assert.match(dashboard, /onManufacturingReadOnlyChange=\{setManufacturingReadOnly\}/);
+  assert.match(dashboard, /canExecuteProductionBatch\(activeUser\?\.role\) && !manufacturingReadOnly/);
 });
