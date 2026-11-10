@@ -52,7 +52,7 @@ export function ProductionMobileSectionNav({
             type="button"
             onClick={() => onChange(tab.id)}
             className={cn(
-              'relative flex min-h-11 flex-col items-center justify-center gap-0.5 rounded-xl px-1 py-2 text-[10px] font-bold leading-tight transition-colors',
+              'relative flex min-h-11 flex-col items-center justify-center gap-0.5 rounded-xl px-1 py-2 text-xs font-bold leading-tight transition-colors',
               selected
                 ? 'bg-emerald-500/20 text-emerald-100 ring-1 ring-emerald-500/35'
                 : 'text-slate-400 hover:bg-slate-800/80 hover:text-slate-200'

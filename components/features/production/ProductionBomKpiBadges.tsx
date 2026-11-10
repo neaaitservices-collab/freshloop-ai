@@ -10,7 +10,22 @@ export interface ProductionBomSummary {
   avgMargin: number;
 }
 
-export function ProductionBomKpiBadges({ summary }: { summary: ProductionBomSummary }) {
+export function ProductionBomKpiBadges({
+  summary,
+  loading = false,
+}: {
+  summary: ProductionBomSummary;
+  loading?: boolean;
+}) {
+  if (loading) {
+    return (
+      <div className="grid grid-cols-2 gap-2 md:grid-cols-4" aria-hidden>
+        {Array.from({ length: 4 }, (_, index) => (
+          <div key={index} className="h-14 animate-pulse rounded-xl border border-slate-800 bg-slate-900/80" />
+        ))}
+      </div>
+    );
+  }
   const items = [
     { label: 'Total recipes', value: String(summary.totalRecipes), tone: 'text-white' },
     {
@@ -32,18 +47,18 @@ export function ProductionBomKpiBadges({ summary }: { summary: ProductionBomSumm
   ];
 
   return (
-    <div className="-mx-1 flex gap-2 overflow-x-auto pb-0.5 snap-x snap-mandatory [scrollbar-width:none] lg:mx-0 lg:flex-wrap lg:overflow-visible lg:pb-0 [&::-webkit-scrollbar]:hidden">
+    <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
       {items.map((item) => (
         <div
           key={item.label}
           className={cn(
-            'shrink-0 snap-start rounded-xl border px-3 py-2 sm:px-4 sm:py-2.5 lg:shrink',
+            'min-w-0 rounded-xl border px-3 py-2 sm:px-4 sm:py-2.5',
             item.highlight
               ? 'border-rose-500/40 bg-rose-950/40'
               : 'border-slate-700/80 bg-slate-900/80'
           )}
         >
-          <p className="text-[9px] font-bold uppercase tracking-wider text-slate-500">
+          <p className="text-xs font-bold uppercase tracking-wider text-slate-300">
             {item.label}
           </p>
           <p className={cn('mt-0.5 font-mono text-sm font-black tabular-nums sm:text-base', item.tone)}>

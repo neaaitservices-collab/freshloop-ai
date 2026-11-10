@@ -4,6 +4,7 @@ import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react'
 import { DepartmentBadge } from '@/components/ui/DepartmentBadge';
 import { useRole } from '@/components/auth/RoleProvider';
 import { notifyInventoryUpdated } from '@/lib/domains/inventory/inventoryMoveClient';
+import { locationLabel } from '@/lib/domains/inventory/locationLabel';
 import { OfflineSyncBadge } from '@/components/ui/OfflineSyncBadge';
 import { postJsonOrQueue } from '@/lib/offline/mutationClient';
 import { createClientMutationId } from '@/lib/offline/queue';
@@ -683,7 +684,7 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
                         ) : (
                           <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-rose-950 text-rose-300 border border-rose-500/40 text-[11px] font-extrabold">
                             <Trash2 className="w-3.5 h-3.5" />
-                            DISCARD (Retail → Waste_Bin)
+                            DISCARD (Sales floor → {locationLabel('Waste_Bin')})
                           </span>
                         )}
                       </div>
@@ -715,7 +716,7 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
                           <strong className="text-emerald-300 font-mono">
                             {item.target_action === 'PULL_RESCUE'
                               ? 'Production prep'
-                              : 'Waste_Bin'}
+                              : locationLabel('Waste_Bin')}
                           </strong>
                         </div>
                       </div>

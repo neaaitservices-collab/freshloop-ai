@@ -170,8 +170,8 @@ function TransferQtyPicker({
         onClick={() => onChange(max)}
         className={`min-h-11 shrink-0 px-3 py-2 font-bold text-slate-300 hover:bg-slate-800/80 disabled:opacity-40 ${
           unified
-            ? 'rounded-r-xl bg-slate-900/80 text-[11px]'
-            : `rounded-lg border border-slate-700 text-slate-400 ${compact ? 'min-h-11 text-[10px]' : 'min-h-12 text-[11px]'}`
+            ? 'rounded-r-xl bg-slate-900/80 text-xs'
+            : `rounded-lg border border-slate-700 text-slate-300 ${compact ? 'min-h-11 text-xs' : 'min-h-12 text-xs'}`
         }`}
       >
         All
@@ -187,7 +187,7 @@ function TransferQtyPicker({
     >
       <span
         className={`font-bold uppercase tracking-wide text-slate-500 ${
-          unified ? 'text-[10px]' : compact ? 'w-full text-[9px]' : 'text-[10px]'
+          unified ? 'text-xs' : compact ? 'w-full text-xs' : 'text-xs'
         }`}
       >
         {label}
