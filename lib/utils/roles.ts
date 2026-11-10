@@ -64,6 +64,9 @@ export function canVisit(role: RoleName, pathname: string): boolean {
     return true;
   }
 
+  // Every signed-in role may open their own profile. Session checks stay in the page and API.
+  if (path === '/profile') return true;
+
   if (path === '/admin' || path.startsWith('/admin/')) {
     return isManager(role);
   }
