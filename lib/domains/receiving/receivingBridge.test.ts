@@ -42,4 +42,5 @@ test('scanned rows stay unposted until the server assigns a supplier delivery id
   assert.equal(logs[1]?.id, 'unassigned-invoice-line-2');
   assert.equal(logs[0]?.invoiceNumber, 'INV-100');
   assert.equal(logs[0]?.casesReceived, 4);
+  assert.equal(logs[1]?.casesReceived, 0);
 });
