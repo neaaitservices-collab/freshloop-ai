@@ -29,7 +29,11 @@ import { readReceivingPrefs, writeReceivingPrefs } from '@/lib/domains/receiving
 import type { ReceivingDispositionRow } from '@/lib/domains/receiving/receivingDisposition';
 import type { ReceivingLogSource } from '@/lib/domains/receiving/receivingSheet';
 import { interpretReceivingBatchResponse } from '@/lib/domains/receiving/receivingBatchResult';
-import { describeBatchSaveOutcome } from '@/lib/domains/receiving/invoiceIdentityHold';
+import {
+  alreadyReceivedNotice,
+  describeBatchSaveOutcome,
+  receivingStockWasAdded,
+} from '@/lib/domains/receiving/invoiceIdentityHold';
 import { SUPPLIER_REQUIRED_ERROR } from '@/lib/domains/receiving/invoiceDeliveryId';
 
 interface LogsResponse {
@@ -171,19 +175,28 @@ async function postLogToInventory(
   let json: {
     success?: boolean;
     error?: string;
-    stock?: { posted?: boolean; reason?: string; onHand?: number; productId?: string };
+    stock?: {
+      posted?: boolean;
+      reason?: string;
+      onHand?: number;
+      productId?: string;
+      idempotent?: boolean;
+      unitsAdded?: number;
+    };
   } = {};
   try {
     json = await response.json();
   } catch {
     json = {};
   }
-  const reason = json.stock?.reason || json.error || 'Save failed.';
+  const stock = json.stock;
+  const reason = stock?.reason || json.error || 'Save failed.';
   return {
-    ok: response.ok && Boolean(json.success) && Boolean(json.stock?.posted),
+    ok: response.ok && Boolean(json.success) && Boolean(stock?.posted),
+    added: receivingStockWasAdded(stock),
     reason,
-    onHand: Number(json.stock?.onHand),
-    productId: typeof json.stock?.productId === 'string' ? json.stock.productId : undefined,
+    onHand: Number(stock?.onHand),
+    productId: typeof stock?.productId === 'string' ? stock.productId : undefined,
   };
 }
 
@@ -788,6 +801,12 @@ export function YieldPricingDashboard({
       }
 
       rememberPricing(savedName, pricing);
+      if (!result.added) {
+        markLogPosted(savedId);
+        purgeLogFromLocalSources(savedId);
+        setMovedNotice(alreadyReceivedNotice(result.reason));
+        return;
+      }
       finishSavedLog(savedId, savedName, result.onHand, result.productId);
     } catch {
       setErrorMessage('Save failed. Check the connection and try again.');
@@ -851,7 +870,10 @@ export function YieldPricingDashboard({
           markLogPosted(log.id);
           purgeLogFromLocalSources(log.id);
         }
-        if (row.stock.idempotent) replayCount += 1;
+        if (!receivingStockWasAdded(row.stock)) {
+          replayCount += 1;
+          continue;
+        }
         savedCount += 1;
         lastName = label;
         lastOnHand = Number(row.stock.onHand) || 0;

@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  alreadyReceivedNotice,
   clearedInvoiceIdentity,
   describeBatchSaveOutcome,
   describeCommitRollback,
   identityHoldFromResponse,
   invoiceHoldActions,
   invoiceImportBlockedWithoutSupplier,
+  receivingStockWasAdded,
 } from '@/lib/domains/receiving/invoiceIdentityHold';
 
 test('a new scan clears the previous date and hold, and the next server hold replaces it', () => {
@@ -67,13 +69,39 @@ test('a mixed batch reports the posted row and the conflict separately', () => {
   assert.match(mixed.notice ?? '', /Saved 1 of 2/);
   assert.match(mixed.error ?? '', /Pears/);
   const replay = describeBatchSaveOutcome({
-    savedCount: 2,
+    savedCount: 0,
     replayCount: 2,
     failed: [],
     targetCount: 2,
   });
   assert.match(replay.notice ?? '', /already received/);
   assert.equal(replay.savedMessage, undefined);
+  const mixedReplay = describeBatchSaveOutcome({
+    savedCount: 1,
+    replayCount: 1,
+    failed: [],
+    targetCount: 2,
+  });
+  assert.match(mixedReplay.notice ?? '', /Saved 1 item/);
+  assert.match(mixedReplay.notice ?? '', /already received/);
+  assert.equal(mixedReplay.savedMessage, undefined);
+  assert.doesNotMatch(mixedReplay.notice ?? '', /Saved 2/);
+});
+
+test('a posted replay or a zero-unit receipt is not a new save', () => {
+  assert.equal(
+    receivingStockWasAdded({ posted: true, idempotent: true, unitsAdded: 0 }),
+    false
+  );
+  assert.equal(
+    receivingStockWasAdded({ posted: true, idempotent: true, unitsAdded: 4 }),
+    false
+  );
+  assert.equal(receivingStockWasAdded({ posted: true, unitsAdded: 0 }), false);
+  assert.equal(receivingStockWasAdded({ posted: true, unitsAdded: 4 }), true);
+  assert.equal(receivingStockWasAdded({ posted: false, unitsAdded: 4 }), false);
+  assert.match(alreadyReceivedNotice('This invoice was already received before the upgrade. Stock was not added again.'), /not added again/);
+  assert.match(alreadyReceivedNotice('  '), /Already received/);
 });
 
 test('a rolled-back commit lists each line and does not claim stock was added', () => {
