@@ -201,7 +201,7 @@ function TransferQtyPicker({
         <div className="flex flex-wrap items-center gap-1">{stepper}</div>
       )}
       {unified ? (
-        <span className="text-[10px] font-medium text-slate-500">
+        <span className="text-xs font-medium text-slate-500">
           {unit} · max {formatUnits(max)}
         </span>
       ) : null}
@@ -324,23 +324,23 @@ export function SubInventoryTransferBar({
     'inline-flex min-h-12 min-w-12 flex-1 items-center justify-center gap-1.5 rounded-xl px-3 py-3 text-xs font-black disabled:cursor-not-allowed disabled:opacity-50 sm:flex-none';
 
   const compactBtn =
-    'inline-flex min-h-11 min-w-11 flex-1 items-center justify-center gap-1 rounded-lg p-3 text-[10px] font-black disabled:cursor-not-allowed disabled:opacity-50';
+    'inline-flex min-h-11 min-w-11 flex-1 items-center justify-center gap-1 rounded-lg p-3 text-xs font-black disabled:cursor-not-allowed disabled:opacity-50';
 
   const primaryBtn =
     'inline-flex min-h-11 flex-1 items-center justify-center gap-1.5 rounded-xl px-3 py-2.5 text-xs font-black disabled:cursor-not-allowed disabled:opacity-50 sm:flex-none';
 
   const secondaryBtn =
-    'inline-flex min-h-11 flex-1 items-center justify-center gap-1.5 rounded-xl border px-3 py-2 text-[11px] font-bold disabled:cursor-not-allowed disabled:opacity-50 sm:flex-none sm:min-h-12';
+    'inline-flex min-h-11 flex-1 items-center justify-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-bold disabled:cursor-not-allowed disabled:opacity-50 sm:flex-none sm:min-h-12';
 
   const bundleBtn =
-    'inline-flex min-h-11 flex-1 items-center justify-center gap-1.5 rounded-xl border border-amber-500/40 bg-amber-950/40 px-3 py-2 text-[11px] font-bold text-amber-100 hover:bg-amber-950/60 disabled:cursor-not-allowed disabled:opacity-50 sm:flex-none sm:min-h-12';
+    'inline-flex min-h-11 flex-1 items-center justify-center gap-1.5 rounded-xl border border-amber-500/40 bg-amber-950/40 px-3 py-2 text-xs font-bold text-amber-100 hover:bg-amber-950/60 disabled:cursor-not-allowed disabled:opacity-50 sm:flex-none sm:min-h-12';
 
   return (
     <div
       className={`flex min-w-0 w-full max-w-full flex-col gap-3 ${compact ? 'min-w-0 sm:min-w-[12rem]' : operations ? '' : 'rounded-xl border border-slate-800/80 bg-slate-950/50 p-3'}`}
     >
       {!compact && !operations ? (
-        <div className="flex flex-wrap gap-2 text-[11px] font-mono">
+        <div className="flex flex-wrap gap-2 text-xs font-mono">
           <span className="rounded-lg border border-emerald-500/30 bg-emerald-950/40 px-2 py-1 text-emerald-300">
             Floor: {formatUnits(row.onHand)} {unit}
           </span>
@@ -481,7 +481,7 @@ export function SubInventoryTransferBar({
       ) : null}
 
       {busy && !performMove ? (
-        <span className="flex items-center gap-1 text-[10px] text-slate-500">
+        <span className="flex items-center gap-1 text-xs text-slate-500">
           <Loader2 className="h-3 w-3 animate-spin" />
           Updating ledger…
         </span>

@@ -6,6 +6,7 @@ import { Package } from 'lucide-react';
 import { Card, CardBody, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
+import { sumInboxByProduct } from '@/lib/domains/inventory/inboxReceipts';
 import { filterKitchenPrepLevels } from '@/lib/domains/inventory/subInventoryView';
 import type { StockLevel } from '@/lib/domains/inventory/stock';
 import { formatUnits, stockUnitLabel } from '@/lib/domains/receiving/yieldPricing';
@@ -52,12 +53,13 @@ export function KitchenIncomingRescueQueue({
       }
       if (inboxJson.success && Array.isArray(inboxJson.items)) {
         setInbox(
-          (inboxJson.items as { productId: string; qtyReceived: number; lastReceivedAt: string }[]).map(
-            (row) => ({
-              productId: row.productId,
-              qtyReceived: row.qtyReceived,
-              lastReceivedAt: row.lastReceivedAt,
-            })
+          sumInboxByProduct(
+            inboxJson.items as {
+              productId: string;
+              qtyReceived: number;
+              lastReceivedAt: string;
+              staffName?: string;
+            }[]
           )
         );
       } else {

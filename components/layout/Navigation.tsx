@@ -19,7 +19,7 @@ import {
 } from 'lucide-react';
 import { useRole } from '@/components/auth/RoleProvider';
 import { navItemsForRole, type NavItem } from '@/lib/navigation/navItems';
-import { splitPhoneNav } from '@/lib/navigation/phoneNav';
+import { splitPhoneNav, visiblePhoneNavItems } from '@/lib/navigation/phoneNav';
 import { homePathForRole } from '@/lib/utils/roleRouting';
 import { isManager, ROLE_LABELS, type RoleName } from '@/lib/utils/roles';
 
@@ -80,7 +80,7 @@ export function Navigation({ onVoice }: { onVoice?: () => void } = {}) {
   const mobileNavRef = useRef<HTMLElement | null>(null);
   const role = activeUser?.role ?? null;
   const items = navItemsForRole(role).map((item) => withIcon(item, role));
-  const phoneNav = splitPhoneNav(items);
+  const phoneNav = splitPhoneNav(visiblePhoneNavItems(items, Boolean(onVoice)));
   const moreActive = phoneNav.more.some((item) => (item.href ? isActive(pathname, item.href) : false));
 
   useEffect(() => {
@@ -139,17 +139,17 @@ export function Navigation({ onVoice }: { onVoice?: () => void } = {}) {
         <div className="space-y-2 border-t border-slate-800 p-2">
           {collapsed ? null : activeUser ? (
             <div className="px-1">
-              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+              <p className="text-xs font-bold uppercase tracking-wider text-slate-500">
                 Signed in
               </p>
               <p className="mt-1 truncate text-xs font-bold text-slate-100">{activeUser.name}</p>
-              <p className="truncate text-[10px] text-slate-500">
+              <p className="truncate text-xs text-slate-500">
                 {ROLE_LABELS[activeUser.role]}
               </p>
               <button
                 type="button"
                 onClick={() => void signOutUser()}
-                className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-900/60 px-2 py-2 text-[11px] font-bold text-slate-300 hover:bg-slate-800"
+                className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-900/60 px-2 py-2 text-xs font-bold text-slate-300 hover:bg-slate-800"
               >
                 Sign out
               </button>

@@ -33,7 +33,7 @@ export function RecipeFusionCard({
     <article className="flex h-full w-full min-w-0 flex-col justify-between rounded-2xl border border-slate-800/90 bg-gradient-to-br from-slate-900/90 via-slate-900/70 to-slate-950 p-4 shadow-lg backdrop-blur-md transition-colors hover:border-blue-800/40 sm:rounded-3xl sm:p-5 md:p-6">
       <header className="min-w-0 space-y-3 md:space-y-4">
         <div className="flex min-w-0 flex-wrap items-start justify-between gap-3">
-          <span className="inline-flex min-w-0 max-w-full flex-1 items-center gap-1.5 rounded-full border border-blue-900/40 bg-blue-950/30 px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-wider text-blue-200/90 sm:text-[11px]">
+          <span className="inline-flex min-w-0 max-w-full flex-1 items-center gap-1.5 rounded-full border border-blue-900/40 bg-blue-950/30 px-2.5 py-1 text-xs font-extrabold uppercase tracking-wider text-blue-200/90 sm:text-xs">
             <Sparkles className="h-3.5 w-3.5 shrink-0 fill-blue-400/80 text-blue-400/80" />
             <span className="truncate">{recipe.category}</span>
           </span>
@@ -54,14 +54,14 @@ export function RecipeFusionCard({
         </h3>
 
         <div>
-          <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+          <p className="mb-1.5 text-xs font-bold uppercase tracking-wider text-slate-500">
             Rescued ingredients
           </p>
           <div className="flex flex-wrap gap-2">
             {recipe.ingredientsUsed.map((ing, idx) => (
               <span
                 key={`${ing.name}-${idx}`}
-                className="inline-flex max-w-full items-center gap-1 rounded-lg border border-slate-800 bg-slate-950/50 px-2.5 py-1.5 text-[11px] text-slate-300 sm:text-xs"
+                className="inline-flex max-w-full items-center gap-1 rounded-lg border border-slate-800 bg-slate-950/50 px-2.5 py-1.5 text-xs text-slate-300 sm:text-xs"
               >
                 <DepartmentBadge department={ing.department} size="sm" />
                 <span className="font-semibold text-slate-200">{ing.name}</span>
@@ -139,7 +139,7 @@ export function RecipeFusionCard({
             ) : null}
 
             {recipe.allergens && recipe.allergens.length > 0 ? (
-              <p className="text-[11px] font-bold text-rose-400/90">
+              <p className="text-xs font-bold text-rose-400/90">
                 Allergens: {recipe.allergens.join(', ')}
               </p>
             ) : null}
