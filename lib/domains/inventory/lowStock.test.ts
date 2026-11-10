@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   belowParSkus,
+  forecastApprovalLines,
   listedForecastLines,
   outOfStockSkus,
   stockAlertCounts,
@@ -79,4 +80,22 @@ test('forecast banner count matches the listed forecast lines', () => {
   assert.equal(forecastNotLow.forecastDriven, true);
   assert.equal(orders.outOfStock, 1);
   assert.equal(orders.belowPar, 2);
+});
+
+test('bulk approve still includes below-par and out-of-stock forecast rows', () => {
+  const belowParForecast = rated(1, 4, { forecastDriven: true, low: true });
+  const outOfStockForecast = rated(0, 4, { forecastDriven: true, low: true });
+  const bannerOnly = rated(8, 2, { forecastDriven: true, low: true });
+  const forecastNotLow = rated(9, 2, { forecastDriven: true });
+  const levels = [belowParForecast, outOfStockForecast, bannerOnly, forecastNotLow];
+  const approved = forecastApprovalLines(levels);
+  const banner = listedForecastLines(levels);
+  assert.deepEqual(approved, [belowParForecast, outOfStockForecast, bannerOnly]);
+  assert.deepEqual(banner, [bannerOnly]);
+  assert.equal(stockAlertCounts(levels).forecastSuggested, banner.length);
+  const sent = new Set([belowParForecast]);
+  assert.deepEqual(
+    forecastApprovalLines(levels, (row) => sent.has(row)),
+    [outOfStockForecast, bannerOnly]
+  );
 });

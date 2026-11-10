@@ -25,7 +25,7 @@ import { Toast } from '@/components/ui/Toast';
 import { formatCurrency, formatUnits, stockUnitLabel } from '@/lib/domains/receiving/yieldPricing';
 import { cn } from '@/lib/utils/cn';
 import { fieldMatchesNeedle } from '@/lib/utils/searchNeedle';
-import { listedForecastLines, stockAlertCounts } from '@/lib/domains/inventory/lowStock';
+import { forecastApprovalLines, listedForecastLines, stockAlertCounts } from '@/lib/domains/inventory/lowStock';
 import { stockFromPar } from '@/lib/domains/inventory/parLevel';
 import type { StockLevel } from '@/lib/domains/inventory/stock';
 
@@ -217,7 +217,11 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
   const orderCost = activeOrders.reduce((sum, group) => sum + group.suggested, 0);
   const approvedCount = activeOrders.reduce((sum, group) => sum + group.approved.length, 0);
   const forecastLines = useMemo(
-    () => listedForecastLines(orderingLevels, (row) => marks[row.productId] === 'sent'),
+    () => forecastApprovalLines(orderingLevels, (row) => marks[row.productId] === 'sent'),
+    [orderingLevels, marks]
+  );
+  const forecastBannerCount = useMemo(
+    () => listedForecastLines(orderingLevels, (row) => marks[row.productId] === 'sent').length,
     [orderingLevels, marks]
   );
 
@@ -564,7 +568,7 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
               <span>
                 {loading
                   ? 'Reading the ledger…'
-                  : `${stockAlerts.belowPar} below par · ${forecastLines.length} suggested by forecast · ${stockAlerts.outOfStock} out of stock${
+                  : `${stockAlerts.belowPar} below par · ${forecastBannerCount} suggested by forecast · ${stockAlerts.outOfStock} out of stock${
                       orderCost > 0
                         ? ` — ${formatCurrency(orderCost)} open across ${activeOrders.length} supplier${activeOrders.length === 1 ? '' : 's'}.`
                         : ''

@@ -45,12 +45,23 @@ export function forecastSuggestedSkus<T extends ParStockRow>(levels: T[]): T[] {
   );
 }
 
-/** Same rows as `forecastSuggestedSkus`, with an optional hide (sent lines). */
+/** Same rows as `forecastSuggestedSkus`, with an optional hide (sent lines). Banner count only. */
 export function listedForecastLines<T extends ParStockRow>(
   levels: T[],
   isHidden?: (row: T) => boolean
 ): T[] {
   return forecastSuggestedSkus(levels).filter((row) => !isHidden?.(row));
+}
+
+/**
+ * Bulk "Approve forecasted POs" set. Every low forecast row that is not sent,
+ * including rows already counted as below par or out of stock.
+ */
+export function forecastApprovalLines<T extends { low?: boolean; forecastDriven?: boolean }>(
+  levels: T[],
+  isSent?: (row: T) => boolean
+): T[] {
+  return levels.filter((row) => Boolean(row.low) && Boolean(row.forecastDriven) && !isSent?.(row));
 }
 
 export function stockAlertCounts<T extends ParStockRow>(levels: T[]): {
