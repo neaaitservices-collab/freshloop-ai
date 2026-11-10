@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { receivingLogsFromInvoice } from '@/lib/domains/receiving/receivingBridge';
+import { identifiedLineCanPost, receivingLogsFromInvoice } from '@/lib/domains/receiving/receivingBridge';
 import { splitUnreadReceivingLines } from '@/lib/domains/receiving/receivingLogPost';
 import type { InvoiceOcrResult } from '@/lib/types';
 
@@ -34,6 +34,12 @@ const invoice: InvoiceOcrResult = {
     },
   ],
 };
+
+test('a zero quantity stays unpostable after the supplier assigns a delivery id', () => {
+  assert.equal(identifiedLineCanPost(4), true);
+  assert.equal(identifiedLineCanPost(0), false);
+  assert.equal(identifiedLineCanPost(undefined), false);
+});
 
 test('scanned rows stay unposted until the server assigns a supplier delivery id', () => {
   const logs = receivingLogsFromInvoice(invoice);

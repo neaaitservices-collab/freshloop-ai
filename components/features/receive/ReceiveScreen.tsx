@@ -11,7 +11,11 @@ import { Button } from '@/components/ui/Button';
 import { Card, CardBody } from '@/components/ui/Card';
 import type { ReceivingDeliveryListResult } from '@/lib/domains/receiving/receivingDeliveries';
 import type { InvoiceOcrResult } from '@/lib/types';
-import { consumeStashedReceivingScan, receivingLogsFromInvoice } from '@/lib/domains/receiving/receivingBridge';
+import {
+  consumeStashedReceivingScan,
+  identifiedLineCanPost,
+  receivingLogsFromInvoice,
+} from '@/lib/domains/receiving/receivingBridge';
 import {
   INVOICE_IDENTITY_NETWORK_ERROR,
   SUPPLIER_REQUIRED_ERROR,
@@ -143,7 +147,11 @@ export function ReceiveScreen({ initial }: { initial: ReceivingDeliveryListResul
             const assigned = json.lines?.[cursor];
             cursor += 1;
             if (!assigned?.deliveryId) return { ...log, canPost: false };
-            return { ...log, id: assigned.deliveryId, canPost: true };
+            return {
+              ...log,
+              id: assigned.deliveryId,
+              canPost: identifiedLineCanPost(log.casesReceived),
+            };
           });
         });
         setScanNote(
