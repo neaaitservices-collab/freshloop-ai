@@ -10,6 +10,7 @@ export const salesPostBodySchema = z
     bundleId: optionalSafeText(128),
     bundleSku: optionalSafeText(128),
     externalRef: optionalSafeText(128),
+    clientMutationId: z.string().trim().min(8).max(128),
   })
   .strict()
   .superRefine((body, ctx) => {

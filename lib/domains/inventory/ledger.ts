@@ -7,6 +7,8 @@ import {
   InventoryTransaction,
 } from '@prisma/client';
 import { invalidateInventoryCaches } from '@/lib/domains/inventory/inventoryCache';
+import { isLedgerIdempotencyConflict } from '@/lib/domains/inventory/idempotencyConflict';
+import { replayBundleSale } from '@/lib/domains/inventory/saleIdempotency';
 import { SCRAP_VOLUMETRIC_BUCKET_KIND } from '@/lib/domains/inventory/volumetricScrapLedger';
 import { consumeLotsFifo, LotAllocationError } from '@/lib/domains/inventory/lots';
 import {
@@ -58,6 +60,8 @@ export interface ExecuteBundleSaleOptions {
   allowNegativeStock?: boolean;
   /** Join a caller-owned transaction. Caller invalidates caches after commit. */
   db?: Prisma.TransactionClient;
+  /** `sale:<storeId>:<clientMutationId>`. Inserted in the same transaction as the sale rows. */
+  idempotencyKey?: string;
 }
 
 export interface ExplodedComponentDeduction {
@@ -82,6 +86,7 @@ export interface BundleSaleExecutionResult {
   deductions: ExplodedComponentDeduction[];
   transactions: InventoryTransaction[];
   executedAt: string;
+  idempotent?: boolean;
 }
 
 export interface WasteCalculationOptions {
@@ -510,7 +515,7 @@ export async function executeBundleSale(
     }
 
     const referenceCode =
-      externalRef?.trim() || `POS-KIT-${bundle.bundleSku}-${Date.now()}`;
+      externalRef?.trim() || options?.idempotencyKey || `POS-KIT-${bundle.bundleSku}-${Date.now()}`;
     const allowNegative = options?.allowNegativeStock === true;
     const bundleGrossRevenue = Number((bundle.bundlePrice * quantitySold).toFixed(2));
 
@@ -575,7 +580,20 @@ export async function executeBundleSale(
     // 3. Execute atomic ledger + FIFO lot write for all exploded components.
     // Lock order is product id. The allocation stays on the plan object so the
     // sort cannot attach one component's revenue to another.
+    if (!options?.db && options?.idempotencyKey) {
+      const prior = await prisma.ledgerIdempotencyKey.findUnique({
+        where: { key: options.idempotencyKey },
+      });
+      if (prior) {
+        const existing = await replayBundleSale(prisma, referenceCode, bundle);
+        if (existing) return existing;
+      }
+    }
+
     const writeBundle = async (tx: Prisma.TransactionClient) => {
+      if (options?.idempotencyKey) {
+        await tx.ledgerIdempotencyKey.create({ data: { key: options.idempotencyKey } });
+      }
       const rows: InventoryTransaction[] = [];
       const ordered = [...pricedPlans].sort((a, b) => a.productId.localeCompare(b.productId));
       for (const [index, plan] of ordered.entries()) {
@@ -607,9 +625,18 @@ export async function executeBundleSale(
       return rows;
     };
 
-    const createdTransactions = options?.db
-      ? await writeBundle(options.db)
-      : await prisma.$transaction(writeBundle);
+    let createdTransactions: InventoryTransaction[];
+    try {
+      createdTransactions = options?.db
+        ? await writeBundle(options.db)
+        : await prisma.$transaction(writeBundle);
+    } catch (error) {
+      if (options?.idempotencyKey && isLedgerIdempotencyConflict(error)) {
+        const existing = await replayBundleSale(prisma, referenceCode, bundle);
+        if (existing) return existing;
+      }
+      throw error;
+    }
     if (!options?.db) invalidateInventoryCaches();
 
     // 4. Build execution summary
@@ -646,6 +673,7 @@ export async function executeBundleSale(
       deductions,
       transactions: createdTransactions,
       executedAt: new Date().toISOString(),
+      idempotent: false,
     };
   } catch (error) {
     if (error instanceof InventoryLedgerError) throw error;

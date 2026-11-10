@@ -3,6 +3,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { InventoryLedgerError, executeBundleSale, prisma } from '@/lib/domains/inventory/ledger';
 import { invalidateInventoryCaches } from '@/lib/domains/inventory/inventoryCache';
 import { recordProductSale } from '@/lib/domains/inventory/recordSale';
+import { isLedgerIdempotencyConflict } from '@/lib/domains/inventory/idempotencyConflict';
+import { saleIdempotencyKey, saleStoreId } from '@/lib/domains/inventory/saleIdempotency';
 import { handleApiRouteError } from '@/lib/domains/ai/apiError';
 import { parseJsonBody } from '@/lib/security/parseJsonBody';
 import { posWebhookBodySchema } from '@/lib/security/schemas/posWebhook';
@@ -43,13 +45,20 @@ export async function POST(req: NextRequest) {
     const outcome = await prisma.$transaction(
       async (db) => {
         await db.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${externalRef}))`;
+        const saleKey = saleIdempotencyKey(await saleStoreId(db), externalRef);
+        const existingKey = await db.ledgerIdempotencyKey.findUnique({ where: { key: saleKey } });
         const existing = await db.inventoryTransaction.findFirst({
           where: { referenceId: externalRef },
           select: { id: true },
         });
-        if (existing) {
-          return { idempotent: true as const, results: [] as unknown[] };
+        if (existingKey || existing) {
+          const results = await db.inventoryTransaction.findMany({
+            where: { referenceId: externalRef },
+            orderBy: { timestamp: 'asc' },
+          });
+          return { idempotent: true as const, results };
         }
+        await db.ledgerIdempotencyKey.create({ data: { key: saleKey } });
 
         const resolved: Array<
           | { kind: 'bundle'; bundleSku: string; quantity: number }
@@ -130,6 +139,18 @@ export async function POST(req: NextRequest) {
       results: outcome.results,
     });
   } catch (error) {
+    if (externalRef && isLedgerIdempotencyConflict(error)) {
+      const results = await prisma.inventoryTransaction.findMany({
+        where: { referenceId: externalRef },
+        orderBy: { timestamp: 'asc' },
+      });
+      return NextResponse.json({
+        success: true,
+        idempotent: true,
+        processed: results.length,
+        results,
+      });
+    }
     return handleApiRouteError('POST /api/pos/webhook', error, 'POS webhook processing failed.', {
       path: '/api/pos/webhook',
       referenceId: externalRef || undefined,
