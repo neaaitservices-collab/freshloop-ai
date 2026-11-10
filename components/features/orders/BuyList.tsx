@@ -25,6 +25,7 @@ import { Toast } from '@/components/ui/Toast';
 import { formatCurrency, formatUnits, stockUnitLabel } from '@/lib/domains/receiving/yieldPricing';
 import { cn } from '@/lib/utils/cn';
 import { fieldMatchesNeedle } from '@/lib/utils/searchNeedle';
+import { stockAlertCounts } from '@/lib/domains/inventory/lowStock';
 import { stockFromPar } from '@/lib/domains/inventory/parLevel';
 import type { StockLevel } from '@/lib/domains/inventory/stock';
 
@@ -211,7 +212,8 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
     [grouped, marks]
   );
 
-  const lowCount = activeOrders.reduce((sum, group) => sum + group.open.length, 0);
+  const openCount = activeOrders.reduce((sum, group) => sum + group.open.length, 0);
+  const stockAlerts = useMemo(() => stockAlertCounts(orderingLevels), [orderingLevels]);
   const orderCost = activeOrders.reduce((sum, group) => sum + group.suggested, 0);
   const approvedCount = activeOrders.reduce((sum, group) => sum + group.approved.length, 0);
   const forecastLines = useMemo(
@@ -526,7 +528,7 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
             title="What to buy"
             description="Forecasted case counts use POS velocity, lead time, and day-of-week demand. Search for an item to add it manually; supplier edits regroup lines instantly."
             action={
-              <Button variant="secondary" className="text-xs" disabled={lowCount === 0} onClick={() => window.print()}>
+              <Button variant="secondary" className="text-xs" disabled={openCount === 0} onClick={() => window.print()}>
                 <Printer className="h-3.5 w-3.5" />
                 Print order PDF
               </Button>
@@ -548,28 +550,27 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
           <Card
             className={cn(
               'mt-5',
-              lowCount > 0 ? 'border-amber-800/40 bg-amber-950/20' : 'border-emerald-800/40 bg-emerald-950/15'
+              openCount > 0 || stockAlerts.outOfStock > 0
+                ? 'border-amber-800/40 bg-amber-950/20'
+                : 'border-emerald-800/40 bg-emerald-950/15'
             )}
           >
             <CardBody className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between py-3">
             <div className="min-w-0 space-y-2">
             <p className="flex items-start gap-2 text-sm font-semibold text-slate-100">
               <AlertTriangle
-                className={`mt-0.5 h-4 w-4 shrink-0 ${lowCount > 0 ? 'text-amber-400/90' : 'text-emerald-400/90'}`}
+                className={`mt-0.5 h-4 w-4 shrink-0 ${openCount > 0 || stockAlerts.outOfStock > 0 ? 'text-amber-400/90' : 'text-emerald-400/90'}`}
               />
               <span>
                 {loading
                   ? 'Reading the ledger…'
-                  : lowCount > 0
-                    ? `${lowCount} LOW STOCK ${lowCount === 1 ? 'ITEM' : 'ITEMS'} — ${formatCurrency(orderCost)} suggested across ${activeOrders.length} supplier${activeOrders.length === 1 ? '' : 's'}.`
-                    : 'Every item is at or above its alert level.'}
+                  : `${stockAlerts.belowPar} below par · ${stockAlerts.forecastSuggested} suggested by forecast · ${stockAlerts.outOfStock} out of stock${
+                      orderCost > 0
+                        ? ` — ${formatCurrency(orderCost)} open across ${activeOrders.length} supplier${activeOrders.length === 1 ? '' : 's'}.`
+                        : ''
+                    }`}
               </span>
             </p>
-            {forecastLines.length > 0 ? (
-              <p className="text-[11px] text-slate-400">
-                {forecastLines.length} line{forecastLines.length === 1 ? '' : 's'} driven by velocity forecast.
-              </p>
-            ) : null}
             </div>
             <div className="flex shrink-0 flex-wrap items-center gap-2">
             <Button
@@ -584,7 +585,7 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
             <Button
               variant="success"
               className="text-xs"
-              disabled={lowCount === 0}
+              disabled={openCount === 0}
               onClick={() =>
                 openDraft(
                   draftForAll(
