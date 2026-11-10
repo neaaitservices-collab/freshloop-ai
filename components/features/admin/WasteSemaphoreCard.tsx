@@ -7,20 +7,10 @@ import { AlertOctagon, Info, Loader2, Settings2, ShieldCheck } from 'lucide-reac
 import type { WasteKpiReport } from '@/lib/domains/inventory/ledger';
 import { formatCurrency } from '@/lib/domains/receiving/yieldPricing';
 import { legacySaleDisclosure } from '@/lib/domains/inventory/saleRevenue';
-import { MIN_GROSS_SALES_FOR_WASTE_RATIO } from '@/lib/domains/stats/wasteKpi';
+import { MIN_GROSS_SALES_FOR_WASTE_RATIO, officialWastePctLabel } from '@/lib/domains/stats/wasteKpi';
 import { cn } from '@/lib/utils/cn';
 import { WasteFormulaBreakdown } from '@/components/features/admin/WasteFormulaBreakdown';
 import { DashboardCard } from '@/components/features/admin/DashboardCard';
-
-function impliedWastePct(totalWaste: number, sales: number): number | null {
-  if (!Number.isFinite(sales) || sales <= 0 || totalWaste <= 0) return null;
-  return Number(Math.min(999.99, (totalWaste / sales) * 100).toFixed(1));
-}
-
-function formatRatioDisplay(pct: number): string {
-  if (pct > 100) return '>100%';
-  return `${pct.toFixed(1)}%`;
-}
 
 export function WasteSemaphoreCard({
   wasteKpi,
@@ -45,33 +35,14 @@ export function WasteSemaphoreCard({
     wasteKpi && wasteKpi.legacyUnpricedSaleCount > 0
       ? legacySaleDisclosure(wasteKpi.legacyUnpricedSaleCount, wasteKpi.legacyUnpricedSaleUnits)
       : '';
-  const totalWaste = wasteKpi?.totalWasteValue ?? discard + scrap;
-  const implied = wastePct === null ? impliedWastePct(totalWaste, sales) : null;
   const salesShort = sales > 0 && sales < MIN_GROSS_SALES_FOR_WASTE_RATIO;
   const salesRemaining = Math.max(0, MIN_GROSS_SALES_FOR_WASTE_RATIO - sales);
-  const over =
-    wastePct != null
-      ? (wasteKpi?.isExceedingTarget ?? wastePct > target)
-      : !salesShort && implied != null
-        ? implied > target
-        : false;
+  const ratioKnown = wastePct != null && Number.isFinite(wastePct);
+  const over = ratioKnown ? (wasteKpi?.isExceedingTarget ?? wastePct > target) : false;
 
   const scaleMax = Math.max(target * 1.5, target + 5, 10);
-  const barPct =
-    wastePct != null
-      ? Math.min(100, (wastePct / scaleMax) * 100)
-      : implied != null
-        ? Math.min(100, (implied / scaleMax) * 100)
-        : 0;
-
-  const displayPct =
-    wastePct != null
-      ? formatRatioDisplay(wastePct)
-      : implied != null && !salesShort
-        ? formatRatioDisplay(implied)
-        : wastePct === 0
-          ? '0.0%'
-          : '—';
+  const barPct = ratioKnown ? Math.min(100, (wastePct / scaleMax) * 100) : 0;
+  const displayPct = officialWastePctLabel(wastePct);
 
   return (
     <DashboardCard
@@ -89,28 +60,19 @@ export function WasteSemaphoreCard({
               <span
                 className={cn(
                   'h-2.5 w-2.5 rounded-full',
-                  wastePct != null
+                  ratioKnown
                     ? over
                       ? 'animate-pulse bg-rose-500 shadow-[0_0_8px_2px_rgba(244,63,94,0.7)]'
                       : 'bg-emerald-400 shadow-[0_0_8px_2px_rgba(52,211,153,0.6)]'
                     : salesShort
                       ? 'bg-amber-400 shadow-[0_0_8px_2px_rgba(251,191,36,0.5)]'
-                      : implied != null
-                        ? over
-                          ? 'bg-rose-500 shadow-[0_0_8px_2px_rgba(244,63,94,0.7)]'
-                          : 'bg-emerald-400 shadow-[0_0_8px_2px_rgba(52,211,153,0.6)]'
-                        : 'bg-slate-600'
+                      : 'bg-slate-600'
                 )}
                 aria-hidden
               />
               <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
                 Waste semáforo
               </p>
-              {salesShort ? (
-                <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold text-amber-300">
-                  Preview
-                </span>
-              ) : null}
             </div>
 
             {refreshing && !wasteKpi ? (
@@ -123,24 +85,18 @@ export function WasteSemaphoreCard({
                 <p
                   className={cn(
                     'font-mono text-4xl font-black tabular-nums tracking-tight sm:text-5xl',
-                    wastePct != null
+                    ratioKnown
                       ? over
                         ? 'text-rose-400'
                         : 'text-emerald-400'
-                      : salesShort && implied != null
+                      : salesShort
                         ? 'text-amber-300'
-                        : implied != null
-                          ? over
-                            ? 'text-rose-400'
-                            : 'text-emerald-400'
-                          : wastePct === 0
-                            ? 'text-emerald-400'
-                            : 'text-slate-500'
+                        : 'text-slate-500'
                   )}
                 >
                   {displayPct}
                 </p>
-                { (wastePct != null && wastePct > 100) || (implied != null && implied > 100) ? (
+                {ratioKnown && wastePct > 100 ? (
                   <span className="text-xs font-medium text-slate-400">
                     (Waste exceeds POS sales)
                   </span>
@@ -165,7 +121,7 @@ export function WasteSemaphoreCard({
               <div
                 className={cn(
                   'h-full rounded-full transition-all duration-500',
-                  over || (implied != null && implied > target)
+                  over
                     ? 'bg-gradient-to-r from-amber-500 to-rose-500'
                     : 'bg-emerald-500'
                 )}
@@ -207,7 +163,7 @@ export function WasteSemaphoreCard({
                 <span>{(target - wastePct).toFixed(1)} pts under goal. Great job!</span>
               </span>
             )
-          ) : salesShort && implied != null ? (
+          ) : salesShort ? (
             <div className="flex items-start gap-2 text-slate-300">
               <Info className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
               <div>

@@ -15,6 +15,16 @@ export function kpiLookbackRange(
   return { startDate, endDate };
 }
 
+/**
+ * Headline for the admin waste card. A null ratio (sales under the floor) stays a dash.
+ * Callers must not substitute an unofficial percentage in that case.
+ */
+export function officialWastePctLabel(wastePct: number | null | undefined): string {
+  if (wastePct == null || !Number.isFinite(wastePct)) return '—';
+  if (wastePct > 100) return '>100%';
+  return `${wastePct.toFixed(1)}%`;
+}
+
 export function computeWastePct(
   totalWasteValue: number,
   grossSalesRevenue: number
