@@ -6,18 +6,14 @@ import { DepartmentBadge } from '@/components/ui/DepartmentBadge';
 import { Button } from '@/components/ui/Button';
 import {
   Sparkles,
-  Utensils,
   ChevronDown,
   ChevronUp,
   ChefHat,
-  CheckCircle,
   Printer,
 } from 'lucide-react';
-import { cn } from '@/lib/utils/cn';
 
 export interface RecipeFusionCardProps {
   recipe: RecipeFusionResult;
-  onSendToKitchen?: (recipeId: string) => void;
   onOpenDeliModal?: (recipe: RecipeFusionResult) => void;
   onExecuteBatch?: (recipe: RecipeFusionResult) => void;
 }
@@ -28,17 +24,10 @@ export interface RecipeFusionCardProps {
  */
 export function RecipeFusionCard({
   recipe,
-  onSendToKitchen,
   onOpenDeliModal,
   onExecuteBatch,
 }: RecipeFusionCardProps) {
   const [expanded, setExpanded] = useState(false);
-  const [sent, setSent] = useState(false);
-
-  const handleSend = () => {
-    setSent(true);
-    onSendToKitchen?.(recipe.id);
-  };
 
   return (
     <article className="flex h-full w-full min-w-0 flex-col justify-between rounded-2xl border border-slate-800/90 bg-gradient-to-br from-slate-900/90 via-slate-900/70 to-slate-950 p-4 shadow-lg backdrop-blur-md transition-colors hover:border-blue-800/40 sm:rounded-3xl sm:p-5 md:p-6">
@@ -192,29 +181,6 @@ export function RecipeFusionCard({
               Print Deli Tag
             </Button>
           ) : null}
-
-          <Button
-            type="button"
-            variant={sent ? 'secondary' : 'success'}
-            className={cn(
-              'min-h-11 w-full text-xs sm:col-span-2 lg:col-span-1',
-              sent && 'border-emerald-800/50 text-emerald-400'
-            )}
-            onClick={handleSend}
-            disabled={sent}
-          >
-            {sent ? (
-              <>
-                <CheckCircle className="h-4 w-4" />
-                Queued for Production
-              </>
-            ) : (
-              <>
-                <Utensils className="h-4 w-4" />
-                Queue for Production
-              </>
-            )}
-          </Button>
         </div>
       </footer>
     </article>
