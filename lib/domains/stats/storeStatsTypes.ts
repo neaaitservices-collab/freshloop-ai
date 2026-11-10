@@ -53,4 +53,6 @@ export interface StoreStats {
   /** Last 7 days — single source for rescue/discard chart (units + retail $). */
   outcomeDays: RescueOutcomeDay[];
   departmentAlerts: DepartmentAlert[];
+  /** Toronto dates for the production-transfer chart. Null keeps the default 7-day window. */
+  transferRangeLabel: string | null;
 }

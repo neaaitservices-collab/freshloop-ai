@@ -41,11 +41,16 @@ export function RescueOutcomeChart({
   className,
   tall = false,
   variant = 'default',
+  rangeLabel = null,
+  loading = false,
 }: {
   data: RescueOutcomeDay[];
   className?: string;
   tall?: boolean;
   variant?: 'default' | 'dashboard';
+  /** Exact Toronto dates. Null keeps the default last-7-days window. */
+  rangeLabel?: string | null;
+  loading?: boolean;
 }) {
   const [measure, setMeasure] = useState<Measure>('usd');
 
@@ -68,9 +73,9 @@ export function RescueOutcomeChart({
     <DashboardCard className={cn('flex flex-col', className)}>
       <header className="shrink-0 space-y-2">
         <div>
-          <h2 className="text-base font-black text-slate-100">Rescue vs discard outcomes</h2>
+          <h2 className="text-base font-black text-slate-100">Production transfers vs discard</h2>
           <p className="mt-1 text-sm text-slate-400">
-            Last 7 days · floor → kitchen rescue vs floor waste (ledger)
+            {rangeLabel ?? 'Last 7 days'} · Floor to Production transfers vs floor waste (ledger)
           </p>
           {variant === 'default' ? (
             <p className="mt-0.5 text-xs text-slate-500">
@@ -113,7 +118,7 @@ export function RescueOutcomeChart({
               <span className="font-mono font-bold tabular-nums text-emerald-300">
                 {summary.rescueSharePct}%
               </span>{' '}
-              of handled retail $ rescued this week
+              of handled retail $ moved to production
             </p>
           ) : null}
         </div>
@@ -176,9 +181,13 @@ export function RescueOutcomeChart({
         ) : null}
       </header>
 
-      {!hasData ? (
+      {loading ? (
+        <div className="mt-3 h-56 animate-pulse rounded-xl bg-slate-900/50" aria-busy="true" />
+      ) : !hasData ? (
         <p className="mt-3 py-10 text-center text-sm text-slate-500">
-          No rescue or floor waste logged this week.
+          {rangeLabel
+            ? 'No Production transfers or floor waste in this range.'
+            : 'No Production transfers or floor waste logged in the last 7 days.'}
         </p>
       ) : (
         <div
@@ -225,7 +234,7 @@ export function RescueOutcomeChart({
               />
               <Bar
                 dataKey="recovered"
-                name="Kitchen rescue"
+                name="Production transfers"
                 fill={EMERALD}
                 radius={[6, 6, 0, 0]}
                 animationDuration={700}

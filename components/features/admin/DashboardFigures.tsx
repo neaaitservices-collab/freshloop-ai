@@ -9,20 +9,26 @@ import type { WasteKpiReport } from '@/lib/domains/inventory/ledger';
 import { subscribeInventoryUpdated } from '@/lib/domains/inventory/inventoryMoveClient';
 import { subscribeKpiUpdated } from '@/lib/domains/stats/kpiEvents';
 import { FRESHLOOP_SETTINGS_UPDATED } from '@/lib/domains/stats/settingsEvents';
+import { StatsDateFilter } from '@/components/features/admin/StatsDateFilter';
 
-let inflightAdminStatsPromise: Promise<{
-  stats?: StoreStats;
-  wasteKpi?: WasteKpiReport;
-  error?: string;
-}> | null = null;
+const inflightAdminStats = new Map<
+  string,
+  Promise<{
+    stats?: StoreStats;
+    wasteKpi?: WasteKpiReport;
+    error?: string;
+  }>
+>();
 
-async function fetchAdminStatsCoalesced(): Promise<{
+function fetchAdminStats(query: string): Promise<{
   stats?: StoreStats;
   wasteKpi?: WasteKpiReport;
   error?: string;
 }> {
-  if (inflightAdminStatsPromise) return inflightAdminStatsPromise;
-  inflightAdminStatsPromise = fetch('/api/admin/stats', { cache: 'no-store' })
+  const existing = inflightAdminStats.get(query);
+  if (existing) return existing;
+  const url = query ? `/api/admin/stats?${query}` : '/api/admin/stats';
+  const promise = fetch(url, { cache: 'no-store' })
     .then(async (res) => {
       const json = await res.json();
       if (!res.ok || !json.success) {
@@ -35,9 +41,10 @@ async function fetchAdminStatsCoalesced(): Promise<{
     })
     .catch(() => ({ error: 'Network error — showing last loaded stats.' }))
     .finally(() => {
-      inflightAdminStatsPromise = null;
+      inflightAdminStats.delete(query);
     });
-  return inflightAdminStatsPromise;
+  inflightAdminStats.set(query, promise);
+  return promise;
 }
 
 export function DashboardFiguresSkeleton() {
@@ -49,9 +56,13 @@ export function DashboardFiguresSkeleton() {
 export function DashboardFigures({
   stats: initialStats,
   initialWasteKpi = null,
+  statsQuery = '',
+  rangeError = null,
 }: {
   stats: StoreStats | null;
   initialWasteKpi?: WasteKpiReport | null;
+  statsQuery?: string;
+  rangeError?: string | null;
 }) {
   const expectsServerStats = initialStats !== null;
   const [stats, setStats] = useState<StoreStats | null>(initialStats);
@@ -71,7 +82,7 @@ export function DashboardFigures({
     if (!opts?.silent) setStatsRefreshing(true);
     setStatsError(null);
     try {
-      const result = await fetchAdminStatsCoalesced();
+      const result = await fetchAdminStats(statsQuery);
       if (result.error) {
         setStatsError(result.error);
         return;
@@ -85,7 +96,7 @@ export function DashboardFigures({
     } finally {
       if (!opts?.silent) setStatsRefreshing(false);
     }
-  }, []);
+  }, [statsQuery]);
 
   useEffect(() => {
     if (initialStats !== null) return;
@@ -125,6 +136,12 @@ export function DashboardFigures({
 
   return (
     <section className="space-y-6" aria-label="Store KPI dashboard">
+      <StatsDateFilter />
+      {rangeError ? (
+        <p className="rounded-xl border border-rose-900/50 bg-rose-950/30 px-4 py-3 text-sm text-rose-200">
+          {rangeError}
+        </p>
+      ) : null}
       {statsError ? (
         <p className="rounded-xl border border-amber-900/50 bg-amber-950/30 px-4 py-3 text-sm text-amber-200">
           {statsError}
@@ -136,6 +153,8 @@ export function DashboardFigures({
         wasteKpi={wasteKpi}
         refreshing={statsRefreshing}
         showActionLoadingPlaceholders={!expectsServerStats && stats === null}
+        rangeLabel={stats?.transferRangeLabel}
+        chartLoading={statsRefreshing}
       />
 
       {stats ? (
