@@ -2,40 +2,59 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { ArrowDownToLine, ChefHat } from 'lucide-react';
+import { useSearchParams } from 'next/navigation';
+import { ArrowDownToLine } from 'lucide-react';
+import { StatsDateFilter } from '@/components/features/admin/StatsDateFilter';
 import { Card, CardBody, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
+import {
+  PRODUCTION_INBOX_EMPTY,
+  PRODUCTION_INBOX_TITLE,
+  productionInboxQuery,
+} from '@/lib/domains/inventory/productionInboxQuery';
 import { formatUnits, stockUnitLabel } from '@/lib/domains/receiving/yieldPricing';
+import { formatTorontoDateTime } from '@/lib/domains/stats/storeTime';
 import { cn } from '@/lib/utils/cn';
 
 interface InboxItem {
+  id?: string;
   productId: string;
   name: string;
   unitType: string;
   qtyReceived: number;
   lastReceivedAt: string;
-  kitchenPrepQty: number;
+  staffName?: string;
 }
 
-export function KitchenFloorInbox({ focusInbox }: { focusInbox?: boolean }) {
+export function KitchenFloorInbox({
+  focusInbox,
+  defaultPreset = null,
+}: {
+  focusInbox?: boolean;
+  defaultPreset?: 'day' | null;
+}) {
+  const search = useSearchParams();
   const [items, setItems] = useState<InboxItem[]>([]);
   const [loading, setLoading] = useState(true);
   const ref = useRef<HTMLElement>(null);
+  const query = defaultPreset === 'day' ? productionInboxQuery(search) : 'hours=24';
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/inventory/kitchen-inbox?hours=24', { cache: 'no-store' });
+      const res = await fetch(`/api/inventory/kitchen-inbox?${query}`, { cache: 'no-store' });
       const json = await res.json();
       if (json.success && Array.isArray(json.items)) {
         setItems(json.items as InboxItem[]);
+      } else {
+        setItems([]);
       }
     } catch {
       setItems([]);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [query]);
 
   useEffect(() => {
     void load();
@@ -53,74 +72,59 @@ export function KitchenFloorInbox({ focusInbox }: { focusInbox?: boolean }) {
     ref.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }, [focusInbox, loading, items.length]);
 
-  if (loading) {
-    return (
-      <Card className="mb-4">
-        <CardBody className="py-4 text-sm text-slate-500">Checking floor rescues…</CardBody>
-      </Card>
-    );
-  }
-
-  if (items.length === 0) {
-    return (
-      <Card className="mb-4 border-slate-800/80">
-        <CardBody className="flex flex-col gap-2 py-4 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <p className="text-sm font-bold text-slate-200">Floor inbox empty</p>
-            <p className="text-xs text-slate-500">Nothing rescued from the floor in the last 24 hours.</p>
-          </div>
-          <Link href="/inventory/floor">
-            <Button variant="secondary" className="text-xs">
-              Open floor view
-            </Button>
-          </Link>
-        </CardBody>
-      </Card>
-    );
-  }
-
   return (
-    <section ref={ref}>
-    <Card className={cn('mb-4 border-blue-900/40 bg-blue-950/15', focusInbox && 'ring-1 ring-blue-800/60')}>
-      <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex items-start gap-2">
-          <ArrowDownToLine className="mt-0.5 h-5 w-5 text-blue-300/90" />
-          <div>
-            <CardTitle>
-              {items.length} new from the floor
-            </CardTitle>
-            <CardDescription>Rescue transfers to production prep · last 24h</CardDescription>
-          </div>
-        </div>
-        <Link href="/inventory/floor" className="shrink-0">
-          <Button variant="secondary" className="text-xs">
-            Floor transfers
-          </Button>
-        </Link>
-      </CardHeader>
-      <CardBody className="pt-0">
-        <ul className="divide-y divide-slate-800/80 rounded-xl border border-slate-800/80">
-          {items.map((item) => (
-            <li
-              key={item.productId}
-              className="flex flex-col gap-2 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between"
-            >
-              <div>
-                <p className="text-sm font-bold text-slate-100">{item.name}</p>
-                <p className="text-[11px] text-slate-500">
-                  +{formatUnits(item.qtyReceived)} {stockUnitLabel(item.unitType)} from floor ·{' '}
-                  {formatUnits(item.kitchenPrepQty)} in prep now
-                </p>
-              </div>
-              <Button variant="primary" className="text-xs py-2">
-                <ChefHat className="h-3.5 w-3.5" />
-                Use in prep
+    <section ref={ref} className="mb-4" aria-label={PRODUCTION_INBOX_TITLE}>
+      {defaultPreset ? <StatsDateFilter defaultPreset={defaultPreset} heading={PRODUCTION_INBOX_TITLE} /> : null}
+      {loading ? (
+        <Card className="mt-3">
+          <CardBody className="py-4 text-sm text-slate-500" aria-busy="true">
+            Loading Production transfers…
+          </CardBody>
+        </Card>
+      ) : items.length === 0 ? (
+        <Card className="mt-3 border-slate-800/80">
+          <CardBody className="flex flex-col gap-2 py-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-sm font-bold text-slate-200">{PRODUCTION_INBOX_TITLE}</p>
+              <p className="text-xs text-slate-500">{PRODUCTION_INBOX_EMPTY}</p>
+            </div>
+            <Link href="/inventory/floor">
+              <Button variant="secondary" className="text-xs">
+                Open floor view
               </Button>
-            </li>
-          ))}
-        </ul>
-      </CardBody>
-    </Card>
+            </Link>
+          </CardBody>
+        </Card>
+      ) : (
+        <Card className={cn('mt-3 border-blue-900/40 bg-blue-950/15', focusInbox && 'ring-1 ring-blue-800/60')}>
+          <CardHeader>
+            <div className="flex items-start gap-2">
+              <ArrowDownToLine className="mt-0.5 h-5 w-5 text-blue-300/90" />
+              <div>
+                <CardTitle>{PRODUCTION_INBOX_TITLE}</CardTitle>
+                <CardDescription>
+                  {items.length} item{items.length === 1 ? '' : 's'} moved to production
+                </CardDescription>
+              </div>
+            </div>
+          </CardHeader>
+          <CardBody className="pt-0">
+            <ul className="divide-y divide-slate-800/80 rounded-xl border border-slate-800/80">
+              {items.map((item) => (
+                <li key={item.id ?? `${item.productId}-${item.lastReceivedAt}`} className="px-3 py-2.5">
+                  <p className="text-sm font-bold text-slate-100">{item.name}</p>
+                  <p className="text-[11px] text-slate-400">
+                    {formatUnits(item.qtyReceived)} {stockUnitLabel(item.unitType)}
+                  </p>
+                  <p className="text-[11px] text-slate-500">
+                    {item.staffName?.trim() || 'Floor'} · {formatTorontoDateTime(item.lastReceivedAt)}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          </CardBody>
+        </Card>
+      )}
     </section>
   );
 }

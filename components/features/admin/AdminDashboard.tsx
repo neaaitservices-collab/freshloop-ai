@@ -16,12 +16,16 @@ export function AdminDashboard({
   refreshing = false,
   showActionLoadingPlaceholders = false,
   className,
+  rangeLabel = null,
+  chartLoading = false,
 }: {
   stats: StoreStats | null;
   wasteKpi: WasteKpiReport | null;
   refreshing?: boolean;
   showActionLoadingPlaceholders?: boolean;
   className?: string;
+  rangeLabel?: string | null;
+  chartLoading?: boolean;
 }) {
   const outcomeDays = stats?.outcomeDays ?? [];
 
@@ -65,7 +69,13 @@ export function AdminDashboard({
         </div>
         <div className="lg:col-span-7">
           {stats ? (
-            <LazyRescueOutcomeChart data={outcomeDays} tall variant="dashboard" />
+            <LazyRescueOutcomeChart
+              data={outcomeDays}
+              tall
+              variant="dashboard"
+              rangeLabel={rangeLabel ?? stats?.transferRangeLabel}
+              loading={chartLoading}
+            />
           ) : (
             <DashboardCard className="min-h-[360px] animate-pulse bg-slate-900/40" aria-busy />
           )}
