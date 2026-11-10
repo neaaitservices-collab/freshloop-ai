@@ -16,6 +16,7 @@ import {
 } from '@/lib/domains/stats/settingsEvents';
 import type { PlatformSettings } from '@/lib/domains/stats/platformSettings';
 import { OperationsLiveTransfers } from '@/components/features/operations/OperationsLiveTransfers';
+import type { StockLevel } from '@/lib/domains/inventory/stock';
 import {
   Activity,
   DollarSign,
@@ -24,7 +25,12 @@ import {
   RefreshCw,
 } from 'lucide-react';
 
-export default function OperationsCenter() {
+export default function OperationsCenter({
+  initialLevels,
+}: {
+  /** Ledger rows from the server. Null means that read failed and the client should retry. */
+  initialLevels: StockLevel[] | null;
+}) {
   const router = useRouter();
   const [pullSensitivityDays, setPullSensitivityDays] = useState<2 | 3 | 4>(3);
   const [settingsLoading, setSettingsLoading] = useState(false);
@@ -136,7 +142,10 @@ export default function OperationsCenter() {
         </div>
 
         <div className="min-w-0 max-w-full">
-          <OperationsLiveTransfers pullDays={pullSensitivityDays} />
+          <OperationsLiveTransfers
+            pullDays={pullSensitivityDays}
+            initialLevels={initialLevels}
+          />
         </div>
       </PageMain>
 
