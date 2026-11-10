@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { ExternalLink, LayoutGrid, Search } from 'lucide-react';
 import { useRole } from '@/components/auth/RoleProvider';
@@ -22,6 +22,10 @@ import {
   subInventoryTabsForRole,
   type SubInventoryTab,
 } from '@/lib/domains/inventory/subInventoryView';
+import {
+  IN_STOCK_LEVELS_PATH,
+  interpretInventoryLevelsBody,
+} from '@/lib/domains/inventory/levelsResponse';
 import type { StockLevel } from '@/lib/domains/inventory/stock';
 import { cn } from '@/lib/utils/cn';
 
@@ -56,6 +60,7 @@ export function LiveSubInventoryTransfers({
   const { activeUser } = useRole();
   const { levels, setLevels, performMove } = useOptimisticInventoryLevels(initialLevels);
   const [loading, setLoading] = useState(initialLevels === null);
+  const levelCount = useRef(initialLevels?.length ?? 0);
   const [toast, setToast] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [skuQuery, setSkuQuery] = useState('');
@@ -68,25 +73,30 @@ export function LiveSubInventoryTransfers({
   const floorUnits = retailFloorBalance(levels);
   const kitchenUnits = kitchenPrepBalance(levels);
 
+  useEffect(() => {
+    levelCount.current = levels.length;
+  }, [levels.length]);
+
   const loadFullCatalog = useCallback(
     async (opts?: { silent?: boolean }) => {
       if (!opts?.silent) setLoading(true);
       try {
-        const res = await fetch(
-          `/api/inventory/levels?inStockOnly=1&includePosSales=1&salesDays=${encodeURIComponent(String(pullDays))}`,
-          { cache: 'no-store' }
-        );
-        const json = await res.json();
-        if (json.success && Array.isArray(json.levels)) {
-          setLevels(filterLevelsWithAnyStock(json.levels as StockLevel[]));
+        const res = await fetch(IN_STOCK_LEVELS_PATH, { cache: 'no-store' });
+        const json = await res.json().catch(() => null);
+        const parsed = interpretInventoryLevelsBody(res.ok, json);
+        if ('error' in parsed) {
+          if (levelCount.current === 0) setError(parsed.error);
+          return;
         }
+        setLevels(filterLevelsWithAnyStock(parsed.levels as StockLevel[]));
+        setError(null);
       } catch {
-        setError('Live stock levels could not be loaded.');
+        if (levelCount.current === 0) setError('Live stock levels could not be loaded.');
       } finally {
         if (!opts?.silent) setLoading(false);
       }
     },
-    [setLevels, pullDays]
+    [setLevels]
   );
 
   const applyLevel = useCallback(
@@ -100,6 +110,7 @@ export function LiveSubInventoryTransfers({
     if (!Array.isArray(initialLevels)) return;
     setLevels(filterLevelsWithAnyStock(initialLevels));
     setLoading(false);
+    setError(null);
   }, [initialLevels, setLevels]);
 
   useEffect(() => {
@@ -209,28 +220,33 @@ export function LiveSubInventoryTransfers({
               : 'overflow-y-auto pt-5'
           )}
         >
-          <SubInventoryWorkspace
-            levels={levels}
-            loading={loading}
-            pullDays={pullDays}
-            staffId={activeUser?.id ?? 'staff-operations'}
-            retailPriorityOnly={false}
-            showRetailCatalog={false}
-            layoutVariant="operations"
-            listDensity={compact ? 'compact' : 'default'}
-            query={skuQuery}
-            activeTab={tabs.includes(activeTab) ? activeTab : tabs[0]}
-            onActiveTabChange={setActiveTab}
-            hideTabSwitcher
-            performMove={performMove}
-            onSuccess={(message) => {
-              setToast(message);
-              setError(null);
-            }}
-            onError={(message) => setError(message)}
-          />
+          {loading || levels.length > 0 || !error ? (
+            <SubInventoryWorkspace
+              levels={levels}
+              loading={loading}
+              pullDays={pullDays}
+              staffId={activeUser?.id ?? 'staff-operations'}
+              retailPriorityOnly={false}
+              showRetailCatalog={false}
+              layoutVariant="operations"
+              listDensity={compact ? 'compact' : 'default'}
+              query={skuQuery}
+              activeTab={tabs.includes(activeTab) ? activeTab : tabs[0]}
+              onActiveTabChange={setActiveTab}
+              hideTabSwitcher
+              performMove={performMove}
+              onSuccess={(message) => {
+                setToast(message);
+                setError(null);
+              }}
+              onError={(message) => setError(message)}
+            />
+          ) : null}
           {error ? (
-            <p className="mt-3 rounded-xl border border-rose-900/50 bg-rose-950/30 px-3 py-2 text-xs font-semibold text-rose-400">
+            <p
+              role="alert"
+              className="rounded-xl border border-rose-900/50 bg-rose-950/30 px-3 py-2 text-xs font-semibold text-rose-300"
+            >
               {error}
             </p>
           ) : null}
