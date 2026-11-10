@@ -4,6 +4,10 @@ import { ZodError } from 'zod';
 import { AuthError } from '@/lib/auth/session';
 import { InvalidJsonBodyError } from '@/lib/security/parseJsonBody';
 import { InventoryLedgerError } from '@/lib/domains/inventory/ledger';
+import {
+  SalePayloadConflictError,
+  SaleReplayUnavailableError,
+} from '@/lib/domains/inventory/saleIdempotency';
 
 export type ApiErrorLogContext = Record<string, unknown> & {
   actorId?: string;
@@ -114,6 +118,9 @@ export function apiErrorFromUnknown(
   }
   if (error instanceof ZodError) {
     return apiError(zodErrorMessage(error), 400);
+  }
+  if (error instanceof SalePayloadConflictError || error instanceof SaleReplayUnavailableError) {
+    return apiError(error.message, error.statusCode);
   }
   if (error instanceof InventoryLedgerError) {
     logServerError('inventory-ledger', error, {

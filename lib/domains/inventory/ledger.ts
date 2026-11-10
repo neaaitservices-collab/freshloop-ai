@@ -8,7 +8,11 @@ import {
 } from '@prisma/client';
 import { invalidateInventoryCaches } from '@/lib/domains/inventory/inventoryCache';
 import { isLedgerIdempotencyConflict } from '@/lib/domains/inventory/idempotencyConflict';
-import { replayBundleSale } from '@/lib/domains/inventory/saleIdempotency';
+import {
+  claimBundleSaleReplay,
+  SalePayloadConflictError,
+  SaleReplayUnavailableError,
+} from '@/lib/domains/inventory/saleIdempotency';
 import { SCRAP_VOLUMETRIC_BUCKET_KIND } from '@/lib/domains/inventory/volumetricScrapLedger';
 import { consumeLotsFifo, LotAllocationError } from '@/lib/domains/inventory/lots';
 import {
@@ -60,7 +64,7 @@ export interface ExecuteBundleSaleOptions {
   allowNegativeStock?: boolean;
   /** Join a caller-owned transaction. Caller invalidates caches after commit. */
   db?: Prisma.TransactionClient;
-  /** `sale:<storeId>:<clientMutationId>`. Inserted in the same transaction as the sale rows. */
+  /** `sale:staff:<clientMutationId>`. Inserted in the same transaction as the sale rows. */
   idempotencyKey?: string;
 }
 
@@ -580,14 +584,19 @@ export async function executeBundleSale(
     // 3. Execute atomic ledger + FIFO lot write for all exploded components.
     // Lock order is product id. The allocation stays on the plan object so the
     // sort cannot attach one component's revenue to another.
+    const claimReplay = () =>
+      claimBundleSaleReplay(prisma, {
+        referenceId: referenceCode,
+        idempotencyKey: options?.idempotencyKey,
+        quantitySold,
+        bundle,
+      });
+
     if (!options?.db && options?.idempotencyKey) {
       const prior = await prisma.ledgerIdempotencyKey.findUnique({
         where: { key: options.idempotencyKey },
       });
-      if (prior) {
-        const existing = await replayBundleSale(prisma, referenceCode, bundle);
-        if (existing) return existing;
-      }
+      if (prior) return claimReplay();
     }
 
     const writeBundle = async (tx: Prisma.TransactionClient) => {
@@ -631,9 +640,8 @@ export async function executeBundleSale(
         ? await writeBundle(options.db)
         : await prisma.$transaction(writeBundle);
     } catch (error) {
-      if (options?.idempotencyKey && isLedgerIdempotencyConflict(error)) {
-        const existing = await replayBundleSale(prisma, referenceCode, bundle);
-        if (existing) return existing;
+      if (options?.idempotencyKey && !options.db && isLedgerIdempotencyConflict(error)) {
+        return claimReplay();
       }
       throw error;
     }
@@ -676,7 +684,13 @@ export async function executeBundleSale(
       idempotent: false,
     };
   } catch (error) {
-    if (error instanceof InventoryLedgerError) throw error;
+    if (
+      error instanceof InventoryLedgerError ||
+      error instanceof SalePayloadConflictError ||
+      error instanceof SaleReplayUnavailableError
+    ) {
+      throw error;
+    }
     if (error instanceof LotAllocationError) {
       throw new InventoryLedgerError(error.message, 'INSUFFICIENT_COMPONENT_STOCK', 409);
     }

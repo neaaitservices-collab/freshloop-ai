@@ -3,8 +3,8 @@ import { apiErrorFromUnknown } from '@/lib/domains/ai/apiError';
 import { authErrorResponse } from '@/lib/auth/http';
 import { requireOperationalStaff } from '@/lib/auth/guardRoute';
 import { recordProductSale } from '@/lib/domains/inventory/recordSale';
-import { executeBundleSale, prisma } from '@/lib/domains/inventory/ledger';
-import { saleIdempotencyKey, saleStoreId } from '@/lib/domains/inventory/saleIdempotency';
+import { executeBundleSale } from '@/lib/domains/inventory/ledger';
+import { staffSaleIdempotencyKey } from '@/lib/domains/inventory/saleIdempotency';
 import { parseJsonBody } from '@/lib/security/parseJsonBody';
 import { salesPostBodySchema } from '@/lib/security/schemas/sales';
 import { assertMutationRateLimit } from '@/lib/security/rateLimit';
@@ -18,7 +18,7 @@ export async function POST(req: NextRequest) {
     if (limited) return limited;
 
     const body = await parseJsonBody(req, salesPostBodySchema);
-    const idempotencyKey = saleIdempotencyKey(await saleStoreId(prisma), body.clientMutationId);
+    const idempotencyKey = staffSaleIdempotencyKey(body.clientMutationId);
 
     if (body.bundleId || body.bundleSku) {
       const bundleId = body.bundleId ?? body.bundleSku ?? '';
