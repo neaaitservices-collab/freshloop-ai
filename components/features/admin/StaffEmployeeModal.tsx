@@ -56,7 +56,13 @@ export function StaffEmployeeModal({
   }, [open, onClose]);
 
   return (
-    <ModalShell open={open} onClose={onClose} width="sm" zIndexClass="z-[60]">
+    <ModalShell
+      open={open}
+      onClose={onClose}
+      width="sm"
+      zIndexClass="z-[60]"
+      labelledBy={titleId}
+    >
       <ModalHeader>
         <div className="flex items-start justify-between gap-3">
           <div>

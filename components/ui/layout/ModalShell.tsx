@@ -1,7 +1,17 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
+import { nextFocusIndex } from '@/lib/ui/dialogFocus';
 import { cn } from '@/lib/utils/cn';
+
+const FOCUSABLE =
+  'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+function focusableIn(panel: HTMLElement): HTMLElement[] {
+  return Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
+    (el) => !el.hasAttribute('disabled') && el.tabIndex >= 0
+  );
+}
 
 const PANEL_WIDTH = {
   sm: 'max-w-lg',
@@ -19,6 +29,8 @@ export function ModalShell({
   width = 'lg',
   panelClassName,
   overlayClassName,
+  labelledBy,
+  label,
 }: {
   open: boolean;
   onClose: () => void;
@@ -27,7 +39,48 @@ export function ModalShell({
   width?: keyof typeof PANEL_WIDTH;
   panelClassName?: string;
   overlayClassName?: string;
+  /** id of the visible title. Falls back to `label` or "Dialog". */
+  labelledBy?: string;
+  label?: string;
 }) {
+  const panelRef = useRef<HTMLDivElement>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
+  useEffect(() => {
+    if (!open) return;
+    const previouslyFocused =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const panel = panelRef.current;
+    const items = panel ? focusableIn(panel) : [];
+    (items[0] ?? panel)?.focus();
+
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        onCloseRef.current();
+        return;
+      }
+      if (event.key !== 'Tab' || !panel) return;
+      const current = focusableIn(panel);
+      if (current.length === 0) {
+        event.preventDefault();
+        panel.focus();
+        return;
+      }
+      const index = current.indexOf(document.activeElement as HTMLElement);
+      const next = nextFocusIndex(current.length, index, event.shiftKey);
+      event.preventDefault();
+      if (next >= 0) current[next]?.focus();
+    };
+
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      previouslyFocused?.focus();
+    };
+  }, [open]);
+
   if (!open) return null;
 
   return (
@@ -46,8 +99,12 @@ export function ModalShell({
         onClick={onClose}
       />
       <div
+        ref={panelRef}
         role="dialog"
         aria-modal="true"
+        tabIndex={-1}
+        aria-labelledby={labelledBy}
+        aria-label={labelledBy ? undefined : label ?? 'Dialog'}
         className={cn(
           'relative z-10 flex max-h-[min(92dvh,92vh)] w-full min-w-0 flex-col overflow-hidden',
           'rounded-2xl border border-slate-700 bg-slate-900 shadow-2xl',
