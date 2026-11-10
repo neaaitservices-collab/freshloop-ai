@@ -73,7 +73,7 @@ function LoginForm() {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               className="mt-1.5 min-h-12"
-              placeholder="floor@freshloop.test"
+              placeholder="name@store.com"
             />
           </label>
           <label className="block text-xs font-semibold text-slate-400">
@@ -121,14 +121,6 @@ function LoginForm() {
             Need an account? Sign up
           </Link>
         </p>
-        {process.env.NODE_ENV !== 'production' &&
-        process.env.NEXT_PUBLIC_SHOW_DEMO_LOGIN === 'true' ? (
-          <p className="mt-3 text-center text-[11px] text-slate-500">
-            Demo accounts (after seed): e.g.{' '}
-            <code className="text-slate-400">floor@freshloop.test</code> /{' '}
-            <code className="text-slate-400">freshloop</code>
-          </p>
-        ) : null}
     </AuthPageShell>
   );
 }
