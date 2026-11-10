@@ -1222,7 +1222,7 @@ export async function postReceipt(input: {
     return { product, created };
   };
   try {
-    posted = db ? await run(db) : await prisma.$transaction(run);
+    posted = db ? await run(db) : await prisma.$transaction(run, LEDGER_WRITE_TX);
   } catch (error) {
     if (db) throw error;
     const uniqueViolation =
@@ -1355,7 +1355,7 @@ export async function postProductReceipt(
 
   if (db) return write(db);
 
-  const result = await prisma.$transaction(write);
+  const result = await prisma.$transaction(write, LEDGER_WRITE_TX);
   invalidateInventoryCaches();
   return result;
 }
