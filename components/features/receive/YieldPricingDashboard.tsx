@@ -36,6 +36,7 @@ import {
   receivingStockWasAdded,
 } from '@/lib/domains/receiving/invoiceIdentityHold';
 import { SUPPLIER_REQUIRED_ERROR } from '@/lib/domains/receiving/invoiceDeliveryId';
+import { deliveryListPresentation } from '@/lib/domains/receiving/deliveryListPresentation';
 import { receivingLogRemainsVisible } from '@/lib/domains/receiving/receivingListVisibility';
 
 interface LogsResponse {
@@ -373,12 +374,11 @@ export function YieldPricingDashboard({
     try {
       const response = await fetch('/api/receiving-logs', { cache: 'no-store' });
       const json = (await response.json()) as LogsResponse;
-      if (!response.ok || json.success === false) {
+      if (!response.ok || json.success === false || !Array.isArray(json.logs)) {
         setWarning(json.warning || json.error || 'Deliveries could not be loaded.');
-        setLogs([]);
         return;
       }
-      const nextLogs = Array.isArray(json.logs) ? json.logs : [];
+      const nextLogs = json.logs;
       setLogs(nextLogs);
       setWarning(null);
       setSelectedId((current) => {
@@ -387,7 +387,6 @@ export function YieldPricingDashboard({
       });
     } catch {
       setWarning('Deliveries could not be loaded.');
-      setLogs([]);
     } finally {
       setLoading(false);
     }
@@ -455,7 +454,11 @@ export function YieldPricingDashboard({
     return rows;
   }, [openLogs, animatingOutIds, visibleLogs]);
 
-  const boardActive = openLogs.length > 0 || animatingOutIds.size > 0;
+  const listPresentation = deliveryListPresentation({
+    rowCount: listLogs.length,
+    loading,
+    warning,
+  });
 
   const extraKey = extraLogs.map((log) => log.id).join('|');
 
@@ -921,7 +924,6 @@ export function YieldPricingDashboard({
             Yield &amp; Pricing
           </h1>
           <p className="mt-1 text-xs text-slate-400">Deliveries</p>
-          {warning ? <p className="mt-1 text-xs text-rose-300">{warning}</p> : null}
         </div>
         <div className="flex gap-2">
           <Button variant="secondary" className="text-xs py-2" onClick={() => void loadLogs()}>
@@ -937,11 +939,21 @@ export function YieldPricingDashboard({
         </div>
       </div>
 
-      {loading && visibleLogs.length === 0 ? (
+      {listPresentation === 'loading' ? (
         <p className="text-sm text-slate-400">Loading deliveries…</p>
       ) : null}
 
-      {!loading && !boardActive && !warning ? (
+      {listPresentation === 'error' ? (
+        <Card className="border-rose-900/50 bg-rose-950/30">
+          <CardBody className="px-6 py-8">
+            <p className="text-sm font-semibold text-rose-100" role="alert">
+              {warning}
+            </p>
+          </CardBody>
+        </Card>
+      ) : null}
+
+      {listPresentation === 'empty' ? (
         <Card className="border-dashed border-slate-700 bg-slate-900/50 backdrop-blur-md transition-opacity duration-500">
           <CardBody className="flex flex-col items-center px-6 py-16 text-center">
             <Receipt className="h-16 w-16 text-slate-600" strokeWidth={1.1} aria-hidden />
@@ -973,20 +985,26 @@ export function YieldPricingDashboard({
         onMarkCredited={(id) => void handleMarkCredited(id)}
       />
 
-      {selected && boardActive ? (
+      {listPresentation === 'rows' ? (
         <div
           className={cn(
             'mx-auto flex max-w-3xl flex-col gap-5 pb-8 transition-opacity duration-300',
-            animatingOutIds.has(selected.id) && 'opacity-90'
+            selected && animatingOutIds.has(selected.id) && 'opacity-90'
           )}
         >
+          {warning ? (
+            <p className="rounded-2xl border border-rose-900/50 bg-rose-950/40 px-4 py-3 text-sm text-rose-100" role="alert">
+              {warning}
+            </p>
+          ) : null}
           <InvoiceItemsCarousel
             items={listLogs}
-            selectedId={selected.id}
+            selectedId={selected?.id ?? null}
             animatingOutIds={animatingOutIds}
             onSelect={setSelectedId}
           />
-
+          {selected ? (
+          <>
           <ReceivingPricingYieldCard
             compactHeader
             log={selected}
@@ -1059,6 +1077,8 @@ export function YieldPricingDashboard({
             onNotReceived={() => void postDisposition('NOT_RECEIVED')}
             onRemoveFromList={() => void postDisposition('REMOVED')}
           />
+          </>
+          ) : null}
         </div>
       ) : null}
     </div>
