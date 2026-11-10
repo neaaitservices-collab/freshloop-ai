@@ -86,7 +86,7 @@ const KITCHEN_RECIPES_CATALOG: KitchenRecipeDefinition[] = [
       },
       {
         ingredientProductId: 'prod-evoo-5l',
-        name: 'Extra Virgin Olive Oil (Bulk Kitchen)',
+        name: 'Extra Virgin Olive Oil (Bulk Production)',
         standardQtyPerBatch: 0.5,
         unit: 'LITER',
         movingAvgUnitCost: 5.7,
@@ -100,7 +100,7 @@ const KITCHEN_RECIPES_CATALOG: KitchenRecipeDefinition[] = [
     recipeName: 'Avocado & Ontario Tomato Guacamole Cups',
     category: 'Prepared Grab-n-Go',
     outputProductId: 'prod-deli-guacamole',
-    outputProductName: 'Fresh Kitchen Rescue Guacamole Cup (6 oz)',
+    outputProductName: 'Fresh Production Rescue Guacamole Cup (6 oz)',
     standardBatchYield: 30,
     outputUnit: 'TUB',
     targetRetailPrice: 4.99,

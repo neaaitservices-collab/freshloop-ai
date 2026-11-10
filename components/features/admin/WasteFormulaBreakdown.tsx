@@ -97,7 +97,7 @@ export function WasteFormulaBreakdown({
           </div>
 
           <div className="rounded-lg border border-amber-500/20 bg-amber-950/15 px-2.5 py-2">
-            <p className="text-[10px] font-medium text-amber-300/80">Kitchen Scrap</p>
+            <p className="text-[10px] font-medium text-amber-300/80">Production Scrap</p>
             <p className="mt-0.5 font-mono text-xs font-bold tabular-nums text-amber-200">
               {formatCurrency(scrap)}
             </p>

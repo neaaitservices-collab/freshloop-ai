@@ -133,7 +133,7 @@ export function buildExecutiveInsights(
     insights.push({
       id: 'rescue-strong',
       severity: 'success',
-      title: 'Kitchen rescue is protecting revenue',
+      title: 'Production rescue is protecting revenue',
       body: `~$${kpis.rescueValueUsd.toLocaleString()} retail equivalent rescued this period (monthly est.).`,
       ctaLabel: 'View ledger charts',
       ctaHref: '/admin',
@@ -145,7 +145,7 @@ export function buildExecutiveInsights(
       id: 'scrap-buckets',
       severity: 'info',
       title: 'Scrap bucket defaults drive KPI dollars',
-      body: 'Validate L × kg/L × $/kg so kitchen logs map to realistic financial impact.',
+      body: 'Validate L × kg/L × $/kg so production logs map to realistic financial impact.',
       ctaLabel: 'Bucket $ settings',
       ctaHref: '/admin/settings#kitchen-scrap',
     });

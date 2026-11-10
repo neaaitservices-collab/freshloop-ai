@@ -42,7 +42,7 @@ const DEPARTMENT_LABELS: Record<string, string> = {
   DAIRY: 'Dairy',
   BAKERY: 'Bakery',
   PANTRY: 'Pantry',
-  DELI_KITCHEN: 'Deli / Kitchen',
+  DELI_KITCHEN: 'Deli / Production',
 };
 
 export function departmentLabel(code: string): string {
