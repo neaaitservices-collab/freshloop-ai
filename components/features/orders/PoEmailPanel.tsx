@@ -44,9 +44,15 @@ export function PoEmailPanel({
           <Input
             value={draft.to}
             onChange={(event) => onChange({ ...draft, to: event.target.value })}
+            placeholder="Supplier email"
             className="mt-1 text-sm font-semibold"
           />
         </label>
+        {!draft.to.trim() ? (
+          <p className="text-xs text-slate-400">
+            No supplier email is stored. Type the recipient. An address is not guessed from the name.
+          </p>
+        ) : null}
         <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">
           Subject
           <Input

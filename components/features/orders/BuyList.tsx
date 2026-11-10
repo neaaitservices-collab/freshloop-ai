@@ -9,6 +9,7 @@ import {
   draftForAll,
   draftForRows,
   groupBySupplier,
+  storedSupplierRecipient,
   openOrderRows,
   type LineMark,
   type PoDraft,
@@ -78,6 +79,7 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
   const [levelSyncWarning, setLevelSyncWarning] = useState<string | null>(null);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [marks, setMarks] = useState<Record<string, LineMark>>({});
+  const [supplierEmails, setSupplierEmails] = useState<Record<string, string>>({});
   const [draft, setDraft] = useState<PoDraft | null>(null);
   const [sending, setSending] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
@@ -92,6 +94,33 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
   useEffect(() => {
     setPrintedAt(new Date().toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }));
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetch('/api/admin/suppliers', { cache: 'no-store' })
+      .then(async (response) => {
+        const json = (await response.json()) as {
+          success?: boolean;
+          suppliers?: Array<{ name?: string; contactEmail?: string | null }>;
+        };
+        if (cancelled || !response.ok || !json.success || !Array.isArray(json.suppliers)) return;
+        const next: Record<string, string> = {};
+        for (const row of json.suppliers) {
+          const name = row.name?.trim();
+          const email = storedSupplierRecipient(row.contactEmail);
+          if (name && email) next[name] = email;
+        }
+        setSupplierEmails(next);
+      })
+      .catch(() => {
+        /* Leave the recipient blank until someone types one. */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const emailFor = (supplier: string) => supplierEmails[supplier] ?? null;
 
   useEffect(() => {
     const syncFromServer = () => {
@@ -357,7 +386,7 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
                 mark={marks[row.productId]}
                 onOrder={onThisOrder(row)}
                 onAdd={() => addToOrder(row.productId)}
-                onEmail={() => openDraft(draftForRows(supplier, [row]))}
+                onEmail={() => openDraft(draftForRows(supplier, [row], emailFor(supplier)))}
                 onApprove={() => approve(row.productId)}
               />
             </li>
@@ -413,7 +442,7 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
                       mark={marks[row.productId]}
                       onOrder={onThisOrder(row)}
                       onAdd={() => addToOrder(row.productId)}
-                      onEmail={() => openDraft(draftForRows(supplier, [row]))}
+                      onEmail={() => openDraft(draftForRows(supplier, [row], emailFor(supplier)))}
                       onApprove={() => approve(row.productId)}
                     />
                   </td>
@@ -467,7 +496,7 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
               variant={approved.length > 0 ? 'success' : 'secondary'}
               className="text-xs"
               disabled={groupSend.length === 0}
-              onClick={() => openDraft(draftForRows(supplier, groupSend))}
+              onClick={() => openDraft(draftForRows(supplier, groupSend, emailFor(supplier)))}
             >
               <Mail className="h-3.5 w-3.5" />
               Send group email
@@ -566,7 +595,15 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
               className="text-xs"
               disabled={lowCount === 0}
               onClick={() =>
-                openDraft(draftForAll(activeOrders.map((group) => ({ supplier: group.supplier, rows: group.open }))))
+                openDraft(
+                  draftForAll(
+                    activeOrders.map((group) => ({
+                      supplier: group.supplier,
+                      rows: group.open,
+                      email: emailFor(group.supplier),
+                    }))
+                  )
+                )
               }
             >
               <Mail className="h-3.5 w-3.5" />
@@ -713,7 +750,7 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
                           variant={group.approved.length > 0 ? 'success' : 'primary'}
                           className="mt-2 w-full text-xs"
                           disabled={poRows.length === 0}
-                          onClick={() => openDraft(draftForRows(group.supplier, poRows))}
+                          onClick={() => openDraft(draftForRows(group.supplier, poRows, emailFor(group.supplier)))}
                         >
                           <Mail className="h-3.5 w-3.5" />
                           {group.approved.length > 0 ? 'Send PO email' : 'Send group email'}
