@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { receivingLogsFromInvoice } from '@/lib/domains/receiving/receivingBridge';
+import { splitUnreadReceivingLines } from '@/lib/domains/receiving/receivingLogPost';
 import type { InvoiceOcrResult } from '@/lib/types';
 
 const invoice: InvoiceOcrResult = {
@@ -43,4 +44,12 @@ test('scanned rows stay unposted until the server assigns a supplier delivery id
   assert.equal(logs[0]?.invoiceNumber, 'INV-100');
   assert.equal(logs[0]?.casesReceived, 4);
   assert.equal(logs[1]?.casesReceived, 0);
+  const split = splitUnreadReceivingLines([
+    { itemName: 'Avocados Hass', casesReceived: 4, externalLogId: 'keep' },
+    { itemName: 'Lemons', casesReceived: 0, externalLogId: 'skip' },
+  ]);
+  assert.equal(split.rest.length, 1);
+  assert.equal(split.rest[0]?.externalLogId, 'keep');
+  assert.equal(split.unread[0]?.stock.posted, false);
+  assert.match(split.unread[0]?.stock.reason ?? '', /not read/i);
 });

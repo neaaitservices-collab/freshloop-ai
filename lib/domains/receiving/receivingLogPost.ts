@@ -257,6 +257,26 @@ export interface ReceivingBatchSlot {
   stock: { posted: boolean; reason?: string; conflict?: boolean };
 }
 
+/** Unreadable quantities stay out of the post list so one blank line does not reject the batch. */
+export function splitUnreadReceivingLines<T extends { casesReceived?: number; itemName?: string; externalLogId?: string }>(
+  rows: T[]
+): { unread: ReceivingBatchSlot[]; rest: T[] } {
+  const unread: ReceivingBatchSlot[] = [];
+  const rest: T[] = [];
+  for (const row of rows) {
+    if (Number(row.casesReceived) > 0) {
+      rest.push(row);
+      continue;
+    }
+    unread.push({
+      externalLogId: row.externalLogId,
+      itemName: row.itemName?.trim() || 'Line',
+      stock: { posted: false, reason: 'Quantity was not read, so this line was not posted.' },
+    });
+  }
+  return { unread, rest };
+}
+
 /**
  * Keep sample rows in their request positions and queue only postable lines.
  * Filling `results[postIndexes[i]]` with the i-th post preserves order.
