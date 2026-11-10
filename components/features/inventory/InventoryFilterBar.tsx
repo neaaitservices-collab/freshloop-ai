@@ -2,6 +2,7 @@
 
 import React, { useMemo, useState } from 'react';
 import { ChevronDown, RotateCcw, Search, SlidersHorizontal } from 'lucide-react';
+import { allFilterOptionLabel } from '@/lib/domains/inventory/filterOptionLabel';
 import {
   EMPTY_INVENTORY_FILTERS,
   type InventoryFilters,
@@ -183,7 +184,7 @@ function FilterSelect({
       <select value={value} onChange={(e) => onChange(e.target.value)} className={SELECT}>
         {options.map((opt) => (
           <option key={opt} value={opt}>
-            {opt === 'ALL' ? `All ${label.toLowerCase()}s` : opt}
+            {opt === 'ALL' ? allFilterOptionLabel(label) : opt}
           </option>
         ))}
       </select>

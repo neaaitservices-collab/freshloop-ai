@@ -24,6 +24,14 @@ export function isInPullWindow(daysRemaining: number, pullDays: number): boolean
   return daysRemaining <= pullDays;
 }
 
+/**
+ * Floor transfers priority list. Uses the pull window printed on the page
+ * (≤ N days left), not a wider SKU override or low/markdown flag.
+ */
+export function inShortDatedTransferQueue(daysRemaining: number, labeledPullDays: number): boolean {
+  return isInPullWindow(daysRemaining, labeledPullDays);
+}
+
 export function pullWindowLabel(days: PullSensitivityDays): string {
   if (days === 2) return 'Strict (2d)';
   if (days === 4) return 'Extended (4d)';
