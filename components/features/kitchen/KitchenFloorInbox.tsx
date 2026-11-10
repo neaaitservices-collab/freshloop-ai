@@ -36,6 +36,7 @@ export function KitchenFloorInbox({
 }) {
   const search = useSearchParams();
   const [items, setItems] = useState<InboxItem[]>([]);
+  const [totalCount, setTotalCount] = useState(0);
   const [limitHint, setLimitHint] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const ref = useRef<HTMLElement>(null);
@@ -47,18 +48,24 @@ export function KitchenFloorInbox({
       const res = await fetch(`/api/inventory/kitchen-inbox?${query}`, { cache: 'no-store' });
       const json = await res.json();
       if (json.success && Array.isArray(json.items)) {
-        setItems(json.items as InboxItem[]);
+        const rows = json.items as InboxItem[];
+        const total = typeof json.count === 'number' ? json.count : rows.length;
+        setItems(rows);
+        setTotalCount(total);
         setLimitHint(
-          json.truncated === true && typeof json.limit === 'number'
+          total > rows.length && typeof json.limit === 'number'
             ? showingLatestLabel(json.limit)
             : null
         );
       } else {
         setItems([]);
+        setTotalCount(0);
         setLimitHint(null);
       }
     } catch {
       setItems([]);
+      setTotalCount(0);
+      setLimitHint(null);
     } finally {
       setLoading(false);
     }
@@ -111,7 +118,7 @@ export function KitchenFloorInbox({
               <div>
                 <CardTitle>{PRODUCTION_INBOX_TITLE}</CardTitle>
                 <CardDescription>
-                  {items.length} item{items.length === 1 ? '' : 's'} moved to production
+                  {totalCount} item{totalCount === 1 ? '' : 's'} moved to production
                   {limitHint ? ` · ${limitHint}` : ''}
                 </CardDescription>
               </div>

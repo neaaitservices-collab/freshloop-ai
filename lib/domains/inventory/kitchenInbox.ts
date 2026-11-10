@@ -69,7 +69,7 @@ export async function getKitchenInbox(
     prisma.inventoryTransaction.findMany({
       where,
       include: { product: true },
-      orderBy: { timestamp: 'desc' },
+      orderBy: [{ timestamp: 'desc' }, { id: 'desc' }],
       take: limit,
     }),
     prisma.inventoryTransaction.aggregate({

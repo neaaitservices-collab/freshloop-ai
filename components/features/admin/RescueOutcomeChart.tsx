@@ -43,7 +43,6 @@ export function RescueOutcomeChart({
   variant = 'default',
   rangeLabel = null,
   loading = false,
-  rowLimitHint = null,
 }: {
   data: RescueOutcomeDay[];
   className?: string;
@@ -52,8 +51,6 @@ export function RescueOutcomeChart({
   /** Exact Toronto dates. Null keeps the default last-7-days window. */
   rangeLabel?: string | null;
   loading?: boolean;
-  /** Set when the range has more ledger rows than the list cap. Day totals still cover the full range. */
-  rowLimitHint?: string | null;
 }) {
   const [measure, setMeasure] = useState<Measure>('usd');
 
@@ -80,7 +77,6 @@ export function RescueOutcomeChart({
           <p className="mt-1 text-sm text-slate-400">
             {rangeLabel ?? 'Last 7 days'} · Floor to Production transfers vs floor waste (ledger)
           </p>
-          {rowLimitHint ? <p className="mt-1 text-xs text-slate-400">{rowLimitHint}</p> : null}
           {variant === 'default' ? (
             <p className="mt-0.5 text-xs text-slate-500">
               Product moves only — volumetric scrap buckets count toward waste % above, not here.

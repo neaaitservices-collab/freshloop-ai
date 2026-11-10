@@ -8,7 +8,6 @@ import { AdminActionCenter } from '@/components/features/admin/AdminActionCenter
 import { DashboardCard } from '@/components/features/admin/DashboardCard';
 import type { StoreStats } from '@/lib/domains/stats/storeStatsTypes';
 import type { WasteKpiReport } from '@/lib/domains/inventory/ledger';
-import { showingLatestLabel } from '@/lib/domains/stats/rangeLimit';
 import { cn } from '@/lib/utils/cn';
 
 export function AdminDashboard({
@@ -76,11 +75,6 @@ export function AdminDashboard({
               variant="dashboard"
               rangeLabel={rangeLabel ?? stats?.transferRangeLabel}
               loading={chartLoading}
-              rowLimitHint={
-                stats.transferRangeTruncated && stats.transferRangeRowLimit
-                  ? showingLatestLabel(stats.transferRangeRowLimit)
-                  : null
-              }
             />
           ) : (
             <DashboardCard className="min-h-[360px] animate-pulse bg-slate-900/40" aria-busy />

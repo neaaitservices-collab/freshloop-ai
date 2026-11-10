@@ -8,7 +8,6 @@ import { getStockLevels } from '@/lib/domains/inventory/stock';
 import type { DepartmentAlert, StoreStats } from '@/lib/domains/stats/storeStatsTypes';
 import { findLatestStoreSetting } from '@/lib/domains/stats/storeSettingSelect';
 import { DEFAULT_KPI_LOOKBACK_DAYS, kpiLookbackRange } from '@/lib/domains/stats/wasteKpi';
-import { RANGE_ROW_LIMIT, rangeIsTruncated } from '@/lib/domains/stats/rangeLimit';
 import {
   enumerateYmd,
   formatBucketLabel,
@@ -52,28 +51,17 @@ interface RangeDayTotal {
 }
 
 interface RangeChartPage {
-  truncated: boolean;
-  limit: number;
   totalCount: number;
   totals: RangeDayTotal[];
 }
 
-/** Full-range sums by Toronto day. The row list is capped separately and does not feed these totals. */
-export async function loadRangeChart(
-  range: StoreInstantRange,
-  limit = RANGE_ROW_LIMIT
-): Promise<RangeChartPage> {
+/** Full-range sums by Toronto day. Day totals are SQL aggregates, not a capped row list. */
+export async function loadRangeChart(range: StoreInstantRange): Promise<RangeChartPage> {
   const where = {
     transactionType: { in: [TransactionType.Rescue, TransactionType.Waste] },
     timestamp: { gte: range.startUtc, lt: range.endUtc },
   };
-  const [listed, totalCount, totals] = await Promise.all([
-    prisma.inventoryTransaction.findMany({
-      where,
-      orderBy: { timestamp: 'desc' },
-      take: limit,
-      select: { id: true },
-    }),
+  const [totalCount, totals] = await Promise.all([
     prisma.inventoryTransaction.count({ where }),
     prisma.$queryRaw<
       Array<{
@@ -154,12 +142,7 @@ export async function loadRangeChart(
       GROUP BY 1
     `,
   ]);
-  if (listed.length > limit) {
-    throw new Error('Date range list exceeded its row cap.');
-  }
   return {
-    truncated: rangeIsTruncated(totalCount, limit),
-    limit,
     totalCount,
     totals: totals.map((row) => ({
       day: row.day,
@@ -462,7 +445,5 @@ async function loadStoreStats(transferRange?: StoreInstantRange | null): Promise
     })),
     departmentAlerts: Array.from(alerts.values()),
     transferRangeLabel: transferRange ? formatRangeLabel(transferRange.from, transferRange.to) : null,
-    transferRangeTruncated: chartWindow?.truncated ?? false,
-    transferRangeRowLimit: chartWindow?.limit ?? null,
   };
 }
