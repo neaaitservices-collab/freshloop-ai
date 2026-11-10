@@ -15,19 +15,12 @@ import {
   STOCK_REFRESH_NETWORK_ERROR,
   listLoadFailure,
 } from '@/lib/domains/http/clientLoadFailure';
+import { matchesStoredDepartment } from '@/lib/domains/inventory/inventoryCatalog';
 import type { StockLevel } from '@/lib/domains/inventory/stock';
 import type { DepartmentType } from '@/lib/types';
 import { useOptimisticInventoryLevels } from '@/hooks/use-optimistic-inventory-levels';
 
 const DEPARTMENTS: DepartmentType[] = ['PRODUCE', 'DAIRY', 'BAKERY', 'PANTRY'];
-
-function departmentForName(name: string): DepartmentType {
-  const lower = name.toLowerCase();
-  if (/cream|milk|yogurt|cheese|butter|egg/.test(lower)) return 'DAIRY';
-  if (/bread|sourdough|boule|loaf|pastry|bun|bakery/.test(lower)) return 'BAKERY';
-  if (/oil|olive|spice|grain|rice|pasta|sauce/.test(lower)) return 'PANTRY';
-  return 'PRODUCE';
-}
 
 export function FloorTransferPage({ levels: initialLevels }: { levels: StockLevel[] | null }) {
   const loading = initialLevels === null;
@@ -70,7 +63,7 @@ export function FloorTransferPage({ levels: initialLevels }: { levels: StockLeve
   }, [setLevels, pullDays]);
 
   const departmentFilter = useCallback(
-    (row: StockLevel) => department === 'ALL' || departmentForName(row.name) === department,
+    (row: StockLevel) => matchesStoredDepartment(row.department, department),
     [department]
   );
 
