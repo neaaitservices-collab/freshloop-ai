@@ -17,6 +17,8 @@ import {
 import { InvoiceItemsCarousel } from '@/components/features/receive/InvoiceItemsCarousel';
 import { ReceivingPricingYieldCard } from '@/components/features/receive/ReceivingPricingYieldCard';
 import { PackReceiptCard } from '@/components/features/receive/PackReceiptCard';
+import { useRole } from '@/components/auth/RoleProvider';
+import { canManageStaff } from '@/lib/auth/staffCapabilities';
 import { PendingVendorCreditsPanel } from '@/components/features/receive/PendingVendorCreditsPanel';
 import { Button } from '@/components/ui/Button';
 import { Card, CardBody } from '@/components/ui/Card';
@@ -307,6 +309,8 @@ export function YieldPricingDashboard({
   /** Global supplier for posts to `/api/receiving-logs`. */
   supplierId?: string;
 }) {
+  const { activeUser } = useRole();
+  const canResolveVendorCredit = canManageStaff(activeUser?.role);
   const seeded = initialLogs !== undefined;
   const [logs, setLogs] = useState<ReceivingLog[]>(initialLogs ?? []);
   const [warning, setWarning] = useState<string | null>(initialWarning);
@@ -957,6 +961,7 @@ export function YieldPricingDashboard({
       <PendingVendorCreditsPanel
         items={pendingCredits}
         resolvingId={resolvingCreditId}
+        canResolve={canResolveVendorCredit}
         onMarkCredited={(id) => void handleMarkCredited(id)}
       />
 
