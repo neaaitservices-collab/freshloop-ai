@@ -9,10 +9,13 @@ export function PendingVendorCreditsPanel({
   items,
   resolvingId,
   onMarkCredited,
+  canResolve = false,
 }: {
   items: ReceivingDispositionRow[];
   resolvingId: string | null;
   onMarkCredited: (id: string) => void;
+  /** Store managers and admins mark a vendor credit received. */
+  canResolve?: boolean;
 }) {
   if (items.length === 0) return null;
 
@@ -48,16 +51,18 @@ export function PendingVendorCreditsPanel({
             </div>
             <button
               type="button"
-              onClick={() => onMarkCredited(row.id)}
-              disabled={resolvingId === row.id}
-              className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-xl border border-emerald-500/40 bg-emerald-950/50 px-3 py-2 text-[11px] font-bold text-emerald-200 hover:bg-emerald-900/50 disabled:opacity-50"
+              onClick={() => {
+                if (canResolve) onMarkCredited(row.id);
+              }}
+              disabled={!canResolve || resolvingId === row.id}
+              className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-xl border border-emerald-500/40 bg-emerald-950/50 px-3 py-2 text-[11px] font-bold text-emerald-200 hover:bg-emerald-900/50 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {resolvingId === row.id ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
               ) : (
                 <CheckCircle2 className="h-3.5 w-3.5" />
               )}
-              Mark credited
+              {canResolve ? 'Mark credited' : 'Store manager only'}
             </button>
           </li>
         ))}

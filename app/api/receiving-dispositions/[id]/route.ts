@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { listPendingVendorCredits, resolveVendorCredit } from '@/lib/domains/receiving/receivingDisposition';
 import { authErrorResponse } from '@/lib/auth/http';
-import { requireReceivingStaff } from '@/lib/auth/guardRoute';
+import { requireManagerStaff } from '@/lib/auth/guardRoute';
 import { apiErrorFromUnknown } from '@/lib/domains/ai/apiError';
 
 export const dynamic = 'force-dynamic';
@@ -11,7 +11,7 @@ export async function PATCH(
   context: { params: Promise<{ id: string }> }
 ) {
   try {
-    await requireReceivingStaff();
+    await requireManagerStaff();
     const { id } = await context.params;
     const row = await resolveVendorCredit(id);
     if (!row) {
