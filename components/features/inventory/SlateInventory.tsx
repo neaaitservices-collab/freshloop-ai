@@ -12,20 +12,13 @@ import { Card, CardBody } from '@/components/ui/Card';
 import { Input, Select } from '@/components/ui/Input';
 import { Toast } from '@/components/ui/Toast';
 import { Button } from '@/components/ui/Button';
+import { matchesStoredDepartment } from '@/lib/domains/inventory/inventoryCatalog';
 import type { StockLevel } from '@/lib/domains/inventory/stock';
 import { useOptimisticInventoryLevels } from '@/hooks/use-optimistic-inventory-levels';
 import type { DepartmentType } from '@/lib/types';
 import { formatCurrency } from '@/lib/domains/receiving/yieldPricing';
 
 const DEPARTMENTS: DepartmentType[] = ['PRODUCE', 'DAIRY', 'BAKERY', 'PANTRY'];
-
-function departmentForName(name: string): DepartmentType {
-  const lower = name.toLowerCase();
-  if (/cream|milk|yogurt|cheese|butter|egg/.test(lower)) return 'DAIRY';
-  if (/bread|sourdough|boule|loaf|pastry|bun|bakery/.test(lower)) return 'BAKERY';
-  if (/oil|olive|spice|grain|rice|pasta|sauce/.test(lower)) return 'PANTRY';
-  return 'PRODUCE';
-}
 
 export function SlateInventory({
   levels: initialLevels,
@@ -78,10 +71,7 @@ export function SlateInventory({
   }, [setLevels, pullDays]);
 
   const departmentFilter = useCallback(
-    (row: StockLevel) => {
-      const dept = departmentForName(row.name);
-      return department === 'ALL' || dept === department;
-    },
+    (row: StockLevel) => matchesStoredDepartment(row.department, department),
     [department]
   );
 

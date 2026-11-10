@@ -12,6 +12,11 @@ export interface InventoryFilters {
   supplier: string;
 }
 
+/** Same comparison as the catalog department select: stored department, not the product name. */
+export function matchesStoredDepartment(stored: string, selected: string): boolean {
+  return selected === 'ALL' || stored === selected;
+}
+
 export const EMPTY_INVENTORY_FILTERS: InventoryFilters = {
   query: '',
   department: 'ALL',
@@ -81,7 +86,7 @@ export function applyInventoryFilters(
   const needle = filters.query.trim().toLowerCase();
   return levels.filter((row) => {
     if (opts?.inStockOnly && row.onHand <= 0) return false;
-    if (filters.department !== 'ALL' && row.department !== filters.department) return false;
+    if (!matchesStoredDepartment(row.department, filters.department)) return false;
     if (filters.category !== 'ALL' && categoryForRow(row) !== filters.category) return false;
     if (filters.productType !== 'ALL' && row.productType !== filters.productType) return false;
     if (filters.origin !== 'ALL' && (row.origin?.trim() ?? '') !== filters.origin) return false;
