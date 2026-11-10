@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   loadReceivingLogs,
+  receivingStatusDetail,
   SAMPLE_RECEIVING_LOGS,
   unavailableReceivingLogs,
   unconfiguredReceivingLogs,
@@ -25,6 +26,14 @@ test('missing sheet config returns no sample rows', async () => {
   assert.equal(result.source, 'unconfigured');
   assert.deepEqual(result.logs, []);
   assert.match(result.warning ?? '', /cannot be saved/i);
+  assert.match(result.warning ?? '', /GOOGLE_SHEETS_SPREADSHEET_ID/);
+  assert.match(result.warning ?? '', /GOOGLE_SHEETS_API_KEY/);
+  assert.match(result.warning ?? '', /Receiving_logs/);
+  assert.equal(receivingStatusDetail('unconfigured', result.warning), result.warning);
+  assert.equal(
+    receivingStatusDetail('sample', result.warning),
+    'Sample rows are not a delivery and are not saved.'
+  );
   assert.ok(SAMPLE_RECEIVING_LOGS.length > 0);
   assert.deepEqual(unconfiguredReceivingLogs().logs, []);
 });

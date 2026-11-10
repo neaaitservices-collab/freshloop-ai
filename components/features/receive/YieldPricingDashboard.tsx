@@ -27,7 +27,10 @@ import {
 } from '@/lib/domains/receiving/catalogItemPricing';
 import { readReceivingPrefs, writeReceivingPrefs } from '@/lib/domains/receiving/receivingPreferences';
 import type { ReceivingDispositionRow } from '@/lib/domains/receiving/receivingDisposition';
-import type { ReceivingLogSource } from '@/lib/domains/receiving/receivingSheet';
+import {
+  receivingStatusDetail,
+  type ReceivingLogSource,
+} from '@/lib/domains/receiving/receivingSheet';
 import { interpretReceivingBatchResponse } from '@/lib/domains/receiving/receivingBatchResult';
 import {
   alreadyReceivedNotice,
@@ -910,6 +913,8 @@ export function YieldPricingDashboard({
     }
   };
 
+  const statusDetail = receivingStatusDetail(source, warning);
+
   return (
     <div
       className={
@@ -929,10 +934,10 @@ export function YieldPricingDashboard({
               {sheetName}
             </span>
             <span>{sheetStatusLabel(source)}</span>
-            {warning ? (
+            {statusDetail ? (
               <span className="inline-flex items-center gap-1 text-slate-500">
                 <AlertTriangle className="h-3 w-3" />
-                {source === 'google_sheets' ? warning : 'Sample rows are not a delivery and are not saved.'}
+                {statusDetail}
               </span>
             ) : null}
           </p>
