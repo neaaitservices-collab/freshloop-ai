@@ -21,6 +21,7 @@ export type ProductionRecipeCatalogSectionProps = {
   canExecuteBom: boolean;
   onOpenDeliModal?: (recipe: RecipeFusionResult) => void;
   onExecuteBatch: (recipe: RecipeFusionResult) => void;
+  loadError?: string | null;
   className?: string;
 };
 
@@ -38,6 +39,7 @@ export const ProductionRecipeCatalogSection = forwardRef<
     canExecuteBom,
     onOpenDeliModal,
     onExecuteBatch,
+    loadError = null,
     className,
   },
   ref
@@ -110,6 +112,15 @@ export const ProductionRecipeCatalogSection = forwardRef<
         </div>
 
         <div className="grid min-w-0 grid-cols-1 gap-4">
+          {loadError && recipes.length === 0 ? (
+            <p role="alert" className="text-sm font-semibold text-rose-200">
+              {loadError}
+            </p>
+          ) : filtered.length === 0 ? (
+            <p className="text-sm text-slate-500">
+              {recipes.length === 0 ? 'No saved recipes.' : 'No recipes match your search.'}
+            </p>
+          ) : null}
           {filtered.map((recipe) => (
             <RecipeFusionCard
               key={recipe.id}

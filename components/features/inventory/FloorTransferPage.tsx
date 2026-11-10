@@ -10,6 +10,11 @@ import { SetBundlesListPanel } from '@/components/features/pricing/SetBundlesLis
 import { PageMain } from '@/components/ui/layout';
 import { canViewSetBundlePromos } from '@/lib/auth/staffCapabilities';
 import { Toast } from '@/components/ui/Toast';
+import {
+  STOCK_REFRESH_ERROR,
+  STOCK_REFRESH_NETWORK_ERROR,
+  listLoadFailure,
+} from '@/lib/domains/http/clientLoadFailure';
 import type { StockLevel } from '@/lib/domains/inventory/stock';
 import type { DepartmentType } from '@/lib/types';
 import { useOptimisticInventoryLevels } from '@/hooks/use-optimistic-inventory-levels';
@@ -33,6 +38,7 @@ export function FloorTransferPage({ levels: initialLevels }: { levels: StockLeve
   const pullDays = useStorePullSensitivityDays();
   const [toast, setToast] = useState<{ text: string; kitchen?: boolean } | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
   const { activeUser } = useRole();
 
   useEffect(() => {
@@ -41,11 +47,22 @@ export function FloorTransferPage({ levels: initialLevels }: { levels: StockLeve
         `/api/inventory/levels?includePosSales=1&salesDays=${encodeURIComponent(String(pullDays))}`,
         { cache: 'no-store' }
       )
-        .then((r) => r.json())
-        .then((json) => {
-          if (json.success && Array.isArray(json.levels)) {
-            setLevels(json.levels as StockLevel[]);
+        .then(async (response) => {
+          const json = (await response.json().catch(() => null)) as {
+            success?: boolean;
+            error?: string;
+            levels?: StockLevel[];
+          } | null;
+          const failure = listLoadFailure(response.ok, json, 'levels', STOCK_REFRESH_ERROR);
+          if (failure || !json || !Array.isArray(json.levels)) {
+            setRefreshError(failure ?? STOCK_REFRESH_ERROR);
+            return;
           }
+          setRefreshError(null);
+          setLevels(json.levels);
+        })
+        .catch(() => {
+          setRefreshError(STOCK_REFRESH_NETWORK_ERROR);
         });
     };
     window.addEventListener('freshloop-inventory-updated', sync);
@@ -113,7 +130,16 @@ export function FloorTransferPage({ levels: initialLevels }: { levels: StockLeve
         </label>
       </div>
 
-      {loading ? (
+      {refreshError ? (
+        <p
+          role="alert"
+          className="mb-4 rounded-xl border border-rose-500/40 bg-rose-950/40 px-3 py-2 text-sm font-semibold text-rose-100"
+        >
+          {refreshError}
+        </p>
+      ) : null}
+
+      {refreshError && levels.length === 0 ? null : loading ? (
         <div className="space-y-2">
           {Array.from({ length: 5 }, (_, i) => (
             <div key={i} className="h-20 animate-pulse rounded-xl bg-slate-800/80" />

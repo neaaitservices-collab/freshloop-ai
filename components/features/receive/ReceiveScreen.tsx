@@ -12,7 +12,10 @@ import { Card, CardBody } from '@/components/ui/Card';
 import type { ReceivingDeliveryListResult } from '@/lib/domains/receiving/receivingDeliveries';
 import type { InvoiceOcrResult } from '@/lib/types';
 import { consumeStashedReceivingScan, receivingLogsFromInvoice } from '@/lib/domains/receiving/receivingBridge';
-import { SUPPLIER_REQUIRED_ERROR } from '@/lib/domains/receiving/invoiceDeliveryId';
+import {
+  INVOICE_IDENTITY_NETWORK_ERROR,
+  SUPPLIER_REQUIRED_ERROR,
+} from '@/lib/domains/receiving/invoiceDeliveryId';
 import {
   clearedInvoiceIdentity,
   identityHoldFromResponse,
@@ -149,7 +152,7 @@ export function ReceiveScreen({ initial }: { initial: ReceivingDeliveryListResul
       })
       .catch(() => {
         if (cancelled) return;
-        setScanNote(SUPPLIER_REQUIRED_ERROR);
+        setScanNote(INVOICE_IDENTITY_NETWORK_ERROR);
         setIdentityHold(null);
         setScannedLogs((prev) =>
           prev.map((log) => (log.invoiceNumber ? { ...log, canPost: false } : log))

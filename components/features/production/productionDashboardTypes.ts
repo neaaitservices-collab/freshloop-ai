@@ -70,6 +70,7 @@ export type ProductionBomRailProps = {
   onBulkPrintDeliLabels?: (items: RecipeFusionResult[]) => void;
   onBrowseAll: () => void;
   onCreateBom?: () => void;
+  loadError?: string | null;
 };
 
 export type ProductionScrapRailProps = {

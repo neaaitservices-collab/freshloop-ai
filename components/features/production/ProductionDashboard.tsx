@@ -31,6 +31,11 @@ import {
 } from '@/components/modals/lazyModals';
 import { useProductionWasteKpi } from '@/hooks/use-production-waste-kpi';
 import { RecipeFusionResult } from '@/lib/types';
+import {
+  RECIPE_LOAD_ERROR,
+  RECIPE_LOAD_NETWORK_ERROR,
+  listLoadFailure,
+} from '@/lib/domains/http/clientLoadFailure';
 import { mapDbRecipeToFusionResult } from '@/lib/domains/manufacturing/mapDbRecipeToFusion';
 import type { KitchenRecipeDefinition } from '@/lib/domains/manufacturing/types';
 import type { ProductionBootstrapData } from '@/lib/domains/manufacturing/productionBootstrap';
@@ -78,6 +83,7 @@ function ProductionDashboardContent() {
   const [selectedCategory, setSelectedCategory] = useState<RecipeCatalogCategory>('ALL');
   const [searchQuery, setSearchQuery] = useState('');
   const [fusionError, setFusionError] = useState<string | null>(null);
+  const [recipeLoadError, setRecipeLoadError] = useState<string | null>(null);
   const [scrapToast, setScrapToast] = useState<string | null>(null);
 
   const [isInvoiceModalOpen, setIsInvoiceModalOpen] = useState(false);
@@ -106,19 +112,21 @@ function ProductionDashboardContent() {
   const fetchRecipes = useCallback(async () => {
     try {
       const bomRes = await fetch('/api/recipes', { cache: 'no-store' });
-      const bomJson = (await bomRes.json()) as {
+      const bomJson = (await bomRes.json().catch(() => null)) as {
         success?: boolean;
+        error?: string;
         recipes?: Parameters<typeof mapDbRecipeToFusionResult>[0][];
-      };
-      if (bomJson.success && Array.isArray(bomJson.recipes) && bomJson.recipes.length > 0) {
-        setSavedRecipeCount(bomJson.recipes.length);
-        setRecipes(bomJson.recipes.map(mapDbRecipeToFusionResult));
-      } else {
-        setRecipes([]);
-        setSavedRecipeCount(0);
+      } | null;
+      const failure = listLoadFailure(bomRes.ok, bomJson, 'recipes', RECIPE_LOAD_ERROR);
+      if (failure || !bomJson || !Array.isArray(bomJson.recipes)) {
+        setRecipeLoadError(failure ?? RECIPE_LOAD_ERROR);
+        return;
       }
+      setRecipeLoadError(null);
+      setSavedRecipeCount(bomJson.recipes.length);
+      setRecipes(bomJson.recipes.map(mapDbRecipeToFusionResult));
     } catch {
-      /* keep cached */
+      setRecipeLoadError(RECIPE_LOAD_NETWORK_ERROR);
     }
   }, []);
 
@@ -127,9 +135,12 @@ function ProductionDashboardContent() {
     void (async () => {
       try {
         const res = await fetch('/api/production/bootstrap', { cache: 'no-store' });
-        const json = (await res.json()) as { success?: boolean } & Partial<ProductionBootstrapData>;
+        const json = (await res.json().catch(() => null)) as
+          | ({ success?: boolean } & Partial<ProductionBootstrapData>)
+          | null;
         if (cancelled) return;
-        if (res.ok && json.success && json.wasteKpi && json.storeSettings) {
+        if (res.ok && json?.success && json.wasteKpi && json.storeSettings) {
+          setRecipeLoadError(null);
           setRecipes(Array.isArray(json.recipes) ? json.recipes : []);
           setSavedRecipeCount(
             typeof json.savedRecipeCount === 'number'
@@ -152,8 +163,9 @@ function ProductionDashboardContent() {
           });
           return;
         }
+        setRecipeLoadError(RECIPE_LOAD_ERROR);
       } catch {
-        /* fallback below */
+        if (!cancelled) setRecipeLoadError(RECIPE_LOAD_NETWORK_ERROR);
       }
       if (cancelled) return;
       void fetchRecipes();
@@ -251,6 +263,7 @@ function ProductionDashboardContent() {
                   }
                 : {})}
               onBrowseAll={scrollToCatalog}
+              loadError={recipeLoadError}
               onCreateBom={
                 canEditBom
                   ? () => {
@@ -266,6 +279,7 @@ function ProductionDashboardContent() {
               ref={catalogRef}
               savedRecipeCount={savedRecipeCount}
               recipes={recipes}
+              loadError={recipeLoadError}
               selectedCategory={selectedCategory}
               onCategoryChange={setSelectedCategory}
               searchQuery={searchQuery}
