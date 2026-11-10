@@ -70,7 +70,8 @@ export async function listReceivingDeliveryLogs(deps?: {
       logs: rows.map(receivingDeliveryToLog),
       warning: null,
     };
-  } catch {
+  } catch (error) {
+    console.error('[listReceivingDeliveryLogs]', error);
     return {
       success: false,
       source: 'ledger',
