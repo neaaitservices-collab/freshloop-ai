@@ -106,6 +106,9 @@ export interface ReceivingLogsResult {
   warning: string | null;
 }
 
+export const UNCONFIGURED_RECEIVING_WARNING =
+  'The receiving sheet is not connected. Set GOOGLE_SHEETS_SPREADSHEET_ID and GOOGLE_SHEETS_API_KEY on the server, and use a tab named Receiving_logs. Sample rows are not shown and cannot be saved as inventory. Scan an invoice to receive a delivery until the sheet is connected.';
+
 /** Sheet is not configured. Sample fixture rows are not returned. */
 export function unconfiguredReceivingLogs(): ReceivingLogsResult {
   return {
@@ -113,9 +116,20 @@ export function unconfiguredReceivingLogs(): ReceivingLogsResult {
     source: 'unconfigured',
     sheetName: RECEIVING_SHEET_NAME,
     logs: [],
-    warning:
-      'The receiving sheet is not connected. Sample rows are not shown and cannot be saved as inventory.',
+    warning: UNCONFIGURED_RECEIVING_WARNING,
   };
+}
+
+/** Status line next to the sheet badge. Unconfigured and unread sheets keep their real warning. */
+export function receivingStatusDetail(
+  source: ReceivingLogSource | 'sample',
+  warning: string | null
+): string | null {
+  if (source === 'google_sheets' || source === 'unconfigured' || source === 'unavailable') {
+    return warning;
+  }
+  if (!warning) return null;
+  return 'Sample rows are not a delivery and are not saved.';
 }
 
 /** Sheet was configured but could not be read. Sample rows are not substituted. */
