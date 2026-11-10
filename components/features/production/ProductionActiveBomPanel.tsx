@@ -138,7 +138,7 @@ function BomSortHeader({
         type="button"
         onClick={() => onToggle(column)}
         className={cn(
-          'inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-slate-500 transition-colors hover:text-slate-300',
+          'inline-flex items-center gap-1 text-xs font-bold uppercase tracking-wider text-slate-500 transition-colors hover:text-slate-300',
           align === 'right' && 'ml-auto'
         )}
       >
@@ -389,7 +389,7 @@ export function ProductionActiveBomPanel({
                   </>
                 )}
               </h2>
-              <p className="mt-0.5 text-[11px] text-slate-500">
+              <p className="mt-0.5 text-xs text-slate-500">
                 Print deli tags and check ingredient readiness before batching.
               </p>
             </div>
@@ -621,7 +621,7 @@ export function ProductionActiveBomPanel({
         <ScrollTable className={cn(isCompactLayout ? 'hidden' : 'hidden lg:block')}>
           <table className="w-full border-collapse text-left">
             <thead>
-              <tr className="border-b border-slate-800 bg-slate-950/80 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+              <tr className="border-b border-slate-800 bg-slate-950/80 text-xs font-bold uppercase tracking-wider text-slate-500">
                 <th className="w-12 px-4 py-4 sm:px-6">
                   <input
                     type="checkbox"
@@ -737,7 +737,7 @@ export function ProductionActiveBomPanel({
                       ${retailTotal > 0 ? retailTotal.toFixed(2) : recipe.targetRetailPrice.toFixed(2)}
                     </span>
                     {retailTotal > 0 ? (
-                      <span className="mt-0.5 block text-[10px] text-slate-500">
+                      <span className="mt-0.5 block text-xs text-slate-500">
                         @ ${recipe.targetRetailPrice.toFixed(2)} ea
                       </span>
                     ) : null}
@@ -750,7 +750,7 @@ export function ProductionActiveBomPanel({
                       <Button
                         type="button"
                         variant="secondary"
-                        className="inline-flex h-9 min-h-0 shrink-0 gap-1.5 border-emerald-500/35 bg-emerald-500/10 px-3 text-[11px] font-bold text-emerald-300 hover:bg-emerald-500/20"
+                        className="inline-flex h-9 min-h-0 shrink-0 gap-1.5 border-emerald-500/35 bg-emerald-500/10 px-3 text-xs font-bold text-emerald-300 hover:bg-emerald-500/20"
                         onClick={() => onPrintDeliLabel(recipe)}
                       >
                         <Printer className="h-3.5 w-3.5" />

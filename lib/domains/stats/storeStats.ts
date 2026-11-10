@@ -42,6 +42,118 @@ function unitRetail(retailPrice: number | null | undefined, unitCost: number): n
   return 0;
 }
 
+interface RangeDayTotal {
+  day: string;
+  recovered: number;
+  lost: number;
+  rescueUnits: number;
+  discardUnits: number;
+}
+
+interface RangeChartPage {
+  totalCount: number;
+  totals: RangeDayTotal[];
+}
+
+/** Full-range sums by Toronto day. Day totals are SQL aggregates, not a capped row list. */
+export async function loadRangeChart(range: StoreInstantRange): Promise<RangeChartPage> {
+  const where = {
+    transactionType: { in: [TransactionType.Rescue, TransactionType.Waste] },
+    timestamp: { gte: range.startUtc, lt: range.endUtc },
+  };
+  const [totalCount, totals] = await Promise.all([
+    prisma.inventoryTransaction.count({ where }),
+    prisma.$queryRaw<
+      Array<{
+        day: string;
+        recovered: number;
+        lost: number;
+        rescue_units: number;
+        discard_units: number;
+      }>
+    >`
+      SELECT
+        to_char(t."timestamp" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Toronto', 'YYYY-MM-DD') AS day,
+        COALESCE(SUM(
+          CASE
+            WHEN t."Transaction_Type" = 'Rescue'
+              AND t."To_Location" = 'Kitchen_Prep'
+              AND t."Qty_Change" > 0
+            THEN t."Qty_Change" * (
+              CASE
+                WHEN p."retailPrice" IS NOT NULL AND p."retailPrice" > 0 THEN p."retailPrice"
+                WHEN t."Unit_Cost_At_Time" > 0 THEN t."Unit_Cost_At_Time"
+                ELSE 0
+              END
+            )
+            ELSE 0
+          END
+        ), 0)::float8 AS recovered,
+        COALESCE(SUM(
+          CASE
+            WHEN t."Transaction_Type" = 'Waste'
+              AND (t."Reference_ID" IS NULL OR t."Reference_ID" NOT LIKE ${`${VOLUMETRIC_SCRAP_REF_PREFIX}%`})
+              AND (
+                t.notes IS NULL
+                OR (
+                  position('volumetric scrap' in lower(t.notes)) = 0
+                  AND position('cubeta' in lower(t.notes)) = 0
+                )
+              )
+            THEN abs(t."Qty_Change") * (
+              CASE
+                WHEN p."retailPrice" IS NOT NULL AND p."retailPrice" > 0 THEN p."retailPrice"
+                WHEN t."Unit_Cost_At_Time" > 0 THEN t."Unit_Cost_At_Time"
+                ELSE 0
+              END
+            )
+            ELSE 0
+          END
+        ), 0)::float8 AS lost,
+        COALESCE(SUM(
+          CASE
+            WHEN t."Transaction_Type" = 'Rescue'
+              AND t."To_Location" = 'Kitchen_Prep'
+              AND t."Qty_Change" > 0
+            THEN t."Qty_Change"
+            ELSE 0
+          END
+        ), 0)::float8 AS rescue_units,
+        COALESCE(SUM(
+          CASE
+            WHEN t."Transaction_Type" = 'Waste'
+              AND (t."Reference_ID" IS NULL OR t."Reference_ID" NOT LIKE ${`${VOLUMETRIC_SCRAP_REF_PREFIX}%`})
+              AND (
+                t.notes IS NULL
+                OR (
+                  position('volumetric scrap' in lower(t.notes)) = 0
+                  AND position('cubeta' in lower(t.notes)) = 0
+                )
+              )
+            THEN abs(t."Qty_Change")
+            ELSE 0
+          END
+        ), 0)::float8 AS discard_units
+      FROM "Inventory_Transactions" t
+      JOIN products p ON p.id = t."Product_ID"
+      WHERE t."timestamp" >= ${range.startUtc}
+        AND t."timestamp" < ${range.endUtc}
+        AND t."Transaction_Type" IN ('Rescue', 'Waste')
+      GROUP BY 1
+    `,
+  ]);
+  return {
+    totalCount,
+    totals: totals.map((row) => ({
+      day: row.day,
+      recovered: Number(row.recovered),
+      lost: Number(row.lost),
+      rescueUnits: Number(row.rescue_units),
+      discardUnits: Number(row.discard_units),
+    })),
+  };
+}
+
 function dayKey(date: Date): string {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -147,24 +259,7 @@ async function loadStoreStats(transferRange?: StoreInstantRange | null): Promise
     prisma.receivingDisposition.count({
       where: { reason: 'NOT_RECEIVED', status: 'PENDING_CREDIT' },
     }),
-    transferRange
-      ? prisma.inventoryTransaction.findMany({
-          where: {
-            transactionType: { in: [TransactionType.Rescue, TransactionType.Waste] },
-            timestamp: { gte: transferRange.startUtc, lt: transferRange.endUtc },
-          },
-          select: {
-            timestamp: true,
-            qtyChange: true,
-            unitCostAtTime: true,
-            transactionType: true,
-            toLocation: true,
-            notes: true,
-            referenceId: true,
-            product: { select: { retailPrice: true } },
-          },
-        })
-      : Promise.resolve(null),
+    transferRange ? loadRangeChart(transferRange) : Promise.resolve(null),
   ]);
 
   const levelById = new Map(stockLevels.map((row) => [row.productId, row]));
@@ -220,7 +315,7 @@ async function loadStoreStats(transferRange?: StoreInstantRange | null): Promise
   let discardValue = 0;
   let rescuedUnits = 0;
   let discardedUnits = 0;
-  const chartMovements = transferRange ? (chartWindow ?? []) : movements;
+  const chartMovements = transferRange ? [] : movements;
   const blankDay = () => ({
     lost: 0,
     recovered: 0,
@@ -300,6 +395,17 @@ async function loadStoreStats(transferRange?: StoreInstantRange | null): Promise
       const scored = scoreMovement(movement);
       if (!scored) continue;
       addToDay(legacyDays, legacyIndex.get(dayKey(movement.timestamp)), scored);
+    }
+  }
+  if (chartWindow) {
+    const byDay = new Map(chartWindow.totals.map((row) => [row.day, row]));
+    for (const day of rangeDays) {
+      const row = byDay.get(day.key);
+      if (!row) continue;
+      day.recovered = row.recovered;
+      day.lost = row.lost;
+      day.rescueUnits = row.rescueUnits;
+      day.discardUnits = row.discardUnits;
     }
   }
 

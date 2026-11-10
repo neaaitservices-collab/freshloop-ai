@@ -482,7 +482,7 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
                 <h3 className="font-black text-base sm:text-lg text-white">
                   Voice Floor Logger
                 </h3>
-                <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-full bg-teal-950 text-teal-300 border border-teal-500/40">
+                <span className="text-xs font-extrabold uppercase px-2 py-0.5 rounded-full bg-teal-950 text-teal-300 border border-teal-500/40">
                   Async Confirmation Loop
                 </span>
                 <OfflineSyncBadge />
@@ -575,7 +575,7 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
                 <button
                   type="button"
                   onClick={() => setToggleRecordMode((v) => !v)}
-                  className="mt-2 text-[10px] font-bold uppercase tracking-wider text-teal-400/90 hover:text-teal-300"
+                  className="mt-2 text-xs font-bold uppercase tracking-wider text-teal-400/90 hover:text-teal-300"
                 >
                   Mode: {toggleRecordMode ? 'Tap to start/stop' : 'Hold to talk (recommended)'}
                 </button>
@@ -588,7 +588,7 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
               <div className="space-y-2">
                 <label className="font-bold text-zinc-300 text-xs flex items-center justify-between">
                   <span>Spoken text / quick voice simulator</span>
-                  <span className="text-teal-400 font-mono text-[10px]">
+                  <span className="text-teal-400 font-mono text-xs">
                     Whisper + text (no streaming)
                   </span>
                 </label>
@@ -631,7 +631,7 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
                 <div className="flex items-center gap-2.5">
                   <Volume2 className="w-4 h-4 text-teal-400 shrink-0" />
                   <div>
-                    <span className="text-[10px] font-bold uppercase text-zinc-500 block">
+                    <span className="text-xs font-bold uppercase text-zinc-500 block">
                       Audio interpreted by the model
                     </span>
                     <p className="text-xs font-semibold text-white italic">
@@ -639,7 +639,7 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
                     </p>
                   </div>
                 </div>
-                <span className="px-2.5 py-1 rounded-lg bg-zinc-900 border border-zinc-700 text-[10px] font-mono text-zinc-300 shrink-0">
+                <span className="px-2.5 py-1 rounded-lg bg-zinc-900 border border-zinc-700 text-xs font-mono text-zinc-300 shrink-0">
                   {draftItems.length} item(s) detected
                 </span>
               </div>
@@ -663,11 +663,11 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
                             <span className="font-extrabold text-white text-sm">
                               {item.matched_product_name || item.item_name}
                             </span>
-                            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-teal-950 text-teal-300 border border-teal-500/30">
+                            <span className="text-xs font-mono px-2 py-0.5 rounded-full bg-teal-950 text-teal-300 border border-teal-500/30">
                               Match {(item.match_confidence * 100).toFixed(0)}%
                             </span>
                           </div>
-                          <p className="text-[11px] text-zinc-400">
+                          <p className="text-xs text-zinc-400">
                             Heard: &ldquo;{item.item_name}&rdquo; • ID:{' '}
                             <code className="text-zinc-300">{item.product_id}</code>
                           </p>
@@ -677,12 +677,12 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
                       {/* Target Action Badge */}
                       <div>
                         {item.target_action === 'PULL_RESCUE' ? (
-                          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-500/40 text-[11px] font-extrabold">
+                          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-500/40 text-xs font-extrabold">
                             <ArrowRightLeft className="w-3.5 h-3.5" />
-                            PULL_RESCUE (Retail → Production prep)
+                            PULL_RESCUE ({locationLabel('Retail_Floor')} → {locationLabel('Kitchen_Prep')})
                           </span>
                         ) : (
-                          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-rose-950 text-rose-300 border border-rose-500/40 text-[11px] font-extrabold">
+                          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-rose-950 text-rose-300 border border-rose-500/40 text-xs font-extrabold">
                             <Trash2 className="w-3.5 h-3.5" />
                             DISCARD (Sales floor → {locationLabel('Waste_Bin')})
                           </span>
@@ -694,7 +694,7 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
                     {!isEditMode ? (
                       <div className="grid grid-cols-3 gap-2 pt-2 border-t border-zinc-800/80 text-xs">
                         <div className="p-2 rounded-xl bg-zinc-900/70">
-                          <span className="text-[10px] text-zinc-500 block">
+                          <span className="text-xs text-zinc-500 block">
                             Quantity
                           </span>
                           <strong className="text-white font-mono">
@@ -702,7 +702,7 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
                           </strong>
                         </div>
                         <div className="p-2 rounded-xl bg-zinc-900/70">
-                          <span className="text-[10px] text-zinc-500 block">
+                          <span className="text-xs text-zinc-500 block">
                             Condition
                           </span>
                           <strong className="text-amber-300">
@@ -710,12 +710,12 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
                           </strong>
                         </div>
                         <div className="p-2 rounded-xl bg-zinc-900/70">
-                          <span className="text-[10px] text-zinc-500 block">
+                          <span className="text-xs text-zinc-500 block">
                             Ledger destination
                           </span>
                           <strong className="text-emerald-300 font-mono">
                             {item.target_action === 'PULL_RESCUE'
-                              ? 'Production prep'
+                              ? locationLabel('Kitchen_Prep')
                               : locationLabel('Waste_Bin')}
                           </strong>
                         </div>
@@ -724,7 +724,7 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
                       /* Interactive Edit Controls when [EDITAR] is toggled */
                       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-3 border-t border-zinc-800">
                         <div>
-                          <label className="text-[10px] font-bold text-zinc-400 uppercase block mb-1">
+                          <label className="text-xs font-bold text-zinc-400 uppercase block mb-1">
                             Catalog product (fuzzy match)
                           </label>
                           <select
@@ -752,7 +752,7 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
                         </div>
 
                         <div>
-                          <label className="text-[10px] font-bold text-zinc-400 uppercase block mb-1">
+                          <label className="text-xs font-bold text-zinc-400 uppercase block mb-1">
                             Quantity ({item.unit})
                           </label>
                           <input
@@ -773,7 +773,7 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
                         </div>
 
                         <div>
-                          <label className="text-[10px] font-bold text-zinc-400 uppercase block mb-1">
+                          <label className="text-xs font-bold text-zinc-400 uppercase block mb-1">
                             Destination action
                           </label>
                           <select

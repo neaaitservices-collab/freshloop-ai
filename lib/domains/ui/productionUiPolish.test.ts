@@ -4,7 +4,7 @@ import test from 'node:test';
 import { locationLabel } from '@/lib/domains/inventory/locationLabel';
 import { batchActionLabel } from '@/lib/domains/manufacturing/batchActionLabel';
 import { navItemsForRole } from '@/lib/navigation/navItems';
-import { PHONE_NAV_BAR_COUNT, splitPhoneNav } from '@/lib/navigation/phoneNav';
+import { PHONE_NAV_BAR_COUNT, splitPhoneNav, visiblePhoneNavItems } from '@/lib/navigation/phoneNav';
 
 test('phone nav keeps five items and parks the rest in More', () => {
   const admin = navItemsForRole('ADMIN');
@@ -23,6 +23,43 @@ test('phone nav keeps five items and parks the rest in More', () => {
     assert.equal(phone.more.length, 0, role);
     assert.equal(phone.bar.length, items.length, role);
   }
+});
+
+const PHONE_POLISH_FILES = [
+  'app/operations/page.tsx',
+  'components/features/inventory/SubInventoryTransferBar.tsx',
+  'components/features/inventory/SubInventoryTransferList.tsx',
+  'components/features/operations/OperationsCenter.tsx',
+  'components/features/operations/VolumetricScrapForm.tsx',
+  'components/features/production/ProductionActiveBomPanel.tsx',
+  'components/features/production/ProductionBomKpiBadges.tsx',
+  'components/features/production/ProductionDashboard.tsx',
+  'components/features/production/ProductionDashboardHeader.tsx',
+  'components/features/production/ProductionMobileSectionNav.tsx',
+  'components/features/recipes/ManualRecipeCreatorModal.tsx',
+  'components/features/recipes/RecipeFusionCard.tsx',
+  'components/features/recipes/RecipeProductionModal.tsx',
+  'components/features/voice/VoiceLoggerModal.tsx',
+  'components/layout/Navigation.tsx',
+];
+
+test('phone polish screens use at least 12px text', () => {
+  for (const file of PHONE_POLISH_FILES) {
+    const source = readFileSync(file, 'utf8');
+    assert.equal(/text-\[(?:8|9|10|11)px\]/.test(source), false, file);
+  }
+});
+
+test('phone nav omits Voice when there is no handler', () => {
+  const admin = navItemsForRole('ADMIN');
+  assert.equal(admin.some((item) => item.voice), true);
+  const hidden = visiblePhoneNavItems(admin, false);
+  assert.equal(hidden.some((item) => item.voice), false);
+  assert.equal(hidden.length, admin.length - 1);
+  const shown = visiblePhoneNavItems(admin, true);
+  assert.equal(shown.some((item) => item.id === 'voice'), true);
+  const split = splitPhoneNav(hidden);
+  assert.equal([...split.bar, ...split.more].some((item) => item.voice), false);
 });
 
 test('location labels are display-only and production locations share one name', () => {
