@@ -30,12 +30,12 @@ export function InvoiceItemsCarousel({
   if (items.length === 0) return null;
 
   return (
-    <section className="min-w-0" aria-label="Invoice items">
+    <section className="min-w-0" aria-label="Recent deliveries">
       <div className="mb-2 flex items-baseline justify-between gap-2 px-0.5">
         <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">
-          Invoice items ({items.length})
+          Recent deliveries ({items.length})
         </p>
-        <p className="text-[10px] text-slate-600">Swipe to browse · tap to edit</p>
+        <p className="text-[10px] text-slate-600">Swipe to browse deliveries · tap to edit</p>
       </div>
       <div
         ref={scrollRef}

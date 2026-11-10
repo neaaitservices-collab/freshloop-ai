@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { nextFocusIndex } from '@/lib/ui/dialogFocus';
 import { cn } from '@/lib/utils/cn';
 
@@ -83,7 +84,7 @@ export function ModalShell({
 
   if (!open) return null;
 
-  return (
+  const dialog = (
     <div
       className={cn(
         'fixed inset-0 flex items-end justify-center p-3 sm:items-center sm:p-6',
@@ -94,7 +95,7 @@ export function ModalShell({
     >
       <button
         type="button"
-        className="absolute inset-0"
+        className="absolute inset-0 z-0"
         aria-label="Close dialog"
         onClick={onClose}
       />
@@ -106,7 +107,7 @@ export function ModalShell({
         aria-labelledby={labelledBy}
         aria-label={labelledBy ? undefined : label ?? 'Dialog'}
         className={cn(
-          'relative z-10 flex max-h-[min(92dvh,92vh)] w-full min-w-0 flex-col overflow-hidden',
+          'pointer-events-auto relative z-10 flex max-h-[min(92dvh,92vh)] w-full min-w-0 flex-col overflow-hidden',
           'rounded-2xl border border-slate-700 bg-slate-900 shadow-2xl',
           PANEL_WIDTH[width],
           panelClassName
@@ -116,6 +117,10 @@ export function ModalShell({
       </div>
     </div>
   );
+
+  // Portaled so page chrome (z-40 nav) cannot cover the panel while it opens.
+  if (typeof document === 'undefined') return null;
+  return createPortal(dialog, document.body);
 }
 
 export function ModalHeader({

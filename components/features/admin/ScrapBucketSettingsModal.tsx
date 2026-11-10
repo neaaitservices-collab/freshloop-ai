@@ -109,7 +109,7 @@ export function ScrapBucketSettingsModal({
           <button
             type="button"
             onClick={onClose}
-            className="min-h-11 min-w-11 rounded-lg p-2 text-slate-400 hover:bg-slate-800 hover:text-white"
+            className="pointer-events-auto relative z-30 min-h-11 min-w-11 rounded-lg p-2 text-slate-400 hover:bg-slate-800 hover:text-white"
             aria-label="Close"
           >
             <X className="h-5 w-5" />
