@@ -342,7 +342,7 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
     return (
       <ModalShell open={isOpen} onClose={onClose} width="sm">
         <ModalBody>
-          <p className="text-sm text-slate-300">No hay recetas BOM disponibles.</p>
+          <p className="text-sm text-slate-300">No BOM recipes are available.</p>
         </ModalBody>
       </ModalShell>
     );
@@ -425,14 +425,14 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
         const msg =
           json.error ||
           json.message ||
-          'Acceso denegado: solo personal de producción puede ejecutar lotes BOM.';
+          'Access denied: only production staff can run a BOM batch.';
         setErrorMsg(msg);
         onBatchFailed?.(msg);
         return;
       }
 
       if (!res.ok || json.success === false) {
-        const msg = json.error || json.message || 'El lote falló en el servidor.';
+        const msg = json.error || json.message || 'The batch failed on the server.';
         setErrorMsg(msg);
         onBatchFailed?.(msg);
         return;
@@ -461,7 +461,7 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
       onClose();
     } catch {
       const msg =
-        'No se pudo contactar el servidor. Revisa la conexión e intenta de nuevo.';
+        'Could not reach the server. Check the connection and try again.';
       setErrorMsg(msg);
       onBatchFailed?.(msg);
     } finally {
@@ -485,17 +485,17 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
             <div>
               <div className="flex items-center gap-2">
                 <h3 className="font-black text-base sm:text-lg text-white">
-                  Ejecución de Manufactura &amp; BOM en Producción
+                  Production manufacturing and BOM
                 </h3>
                 <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-full bg-amber-950 text-amber-300 border border-amber-500/30">
                   RBAC: Production only
                 </span>
               </div>
               <p className="text-xs text-slate-400">
-                {activeUser?.name ?? 'Staff'} · {staffRole} — descuenta{' '}
-                <code className="text-amber-300">Production prep</code> y registra el
-                terminado en el ledger
-                {catalogLoading ? ' · actualizando stock…' : ''}
+                {activeUser?.name ?? 'Staff'} · {staffRole} — deducts{' '}
+                <code className="text-amber-300">Production prep</code> and posts the
+                finished item to the ledger
+                {catalogLoading ? ' · updating stock…' : ''}
               </p>
             </div>
           </div>
@@ -516,7 +516,7 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
             <div className="p-4 rounded-2xl bg-rose-950/80 border border-rose-500/50 text-rose-200 flex items-center gap-3">
               <AlertTriangle className="w-5 h-5 text-rose-400 shrink-0" />
               <div>
-                <p className="font-bold text-rose-300">Salvaguarda RBAC Activada</p>
+                <p className="font-bold text-rose-300">RBAC safeguard</p>
                 <p>{errorMsg}</p>
               </div>
             </div>
@@ -528,7 +528,7 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
               <div className="grid grid-cols-1 sm:grid-cols-12 gap-4">
                 <div className="sm:col-span-6">
                   <label className="font-bold text-zinc-400 uppercase text-[10px] tracking-wider block mb-1.5">
-                    Seleccionar Receta de Rescate (RecipeBOM)
+                    Rescue recipe (BOM)
                   </label>
                   <select
                     value={selectedRecipeId}
@@ -545,7 +545,7 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
 
                 <div className="sm:col-span-6">
                   <label className="font-bold text-zinc-400 uppercase text-[10px] tracking-wider block mb-1.5">
-                    Porciones Producidas
+                    Portions produced
                   </label>
                   <input
                     type="number"
@@ -576,16 +576,16 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
                   <div>
                     <div className="flex items-center gap-2">
                       <h4 className="font-extrabold text-sm text-white">
-                        Toggle de Varianza de Peso Real en Producción
+                        Actual weight used
                       </h4>
                       {varianceEnabled && (
                         <span className="px-2 py-0.5 rounded-full bg-amber-400 text-zinc-950 text-[10px] font-black uppercase">
-                          Ajuste Manual Activo
+                          Manual adjustment on
                         </span>
                       )}
                     </div>
                     <p className="text-zinc-400 text-[11px] mt-0.5">
-                      Permite a los cocineros ajustar manualmente los kg/lbs reales utilizados (ej. por recorte de partes dañadas o merma de limpieza) si difieren del BOM estándar.
+                      Cooks can enter the real kg or lb used (for trim or cleaning loss) when it differs from the standard BOM.
                     </p>
                   </div>
                 </div>
@@ -614,12 +614,12 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
                   <thead>
                     <tr className="bg-zinc-950 text-[10px] font-bold uppercase tracking-wider text-zinc-400 border-b border-zinc-800">
                       <th className="py-3 px-4">Ingrediente (production prep)</th>
-                      <th className="py-3 px-3 text-right">BOM Estándar</th>
+                      <th className="py-3 px-3 text-right">Standard BOM</th>
                       <th className="py-3 px-3 text-right">
-                        Peso Real Usado (kg/lbs)
+                        Actual weight used (kg/lb)
                       </th>
-                      <th className="py-3 px-3 text-right">Varianza</th>
-                      <th className="py-3 px-4 text-right">Costo MAC</th>
+                      <th className="py-3 px-3 text-right">Variance</th>
+                      <th className="py-3 px-4 text-right">MAC cost</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-zinc-800/80 text-xs">
@@ -628,8 +628,8 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
                         <td className="py-3 px-4">
                           <div className="font-bold text-white">{row.name}</div>
                           <div className="text-[10px] text-zinc-500 font-mono">
-                            Disponible en producción: {row.availableKitchenStock}{' '}
-                            {row.unit} • ${row.movingAvgUnitCost.toFixed(2)}/ud
+                            In production: {row.availableKitchenStock}{' '}
+                            {row.unit} • ${row.movingAvgUnitCost.toFixed(2)}/unit
                           </div>
                         </td>
 
@@ -692,7 +692,7 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-4 rounded-2xl bg-zinc-950 border border-zinc-800">
                 <div>
                   <span className="text-[10px] text-zinc-500 uppercase font-bold block">
-                    Costo Total Lote
+                    Total batch cost
                   </span>
                   <strong className="font-mono text-base font-black tabular-nums text-white">
                     ${totalBatchCost.toFixed(2)}
@@ -700,7 +700,7 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
                 </div>
                 <div>
                   <span className="text-[10px] text-zinc-500 uppercase font-bold block">
-                    Costo Unitario Salida
+                    Unit output cost
                   </span>
                   <strong className="font-mono text-base font-black tabular-nums text-amber-300">
                     ${unitOutputCost.toFixed(2)} / {selectedRecipe.outputUnit}
@@ -708,7 +708,7 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
                 </div>
                 <div>
                   <span className="text-[10px] text-zinc-500 uppercase font-bold block">
-                    PVP Sugerido Deli
+                    Suggested deli price
                   </span>
                   <strong className="font-mono text-base font-black tabular-nums text-emerald-400">
                     ${selectedRecipe.targetRetailPrice.toFixed(2)}
@@ -716,7 +716,7 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
                 </div>
                 <div>
                   <span className="text-[10px] text-zinc-500 uppercase font-bold block">
-                    Margen Bruto Real
+                    Gross margin
                   </span>
                   <strong className="font-mono text-base font-black tabular-nums text-emerald-400">
                     {projectedMarginPct}%
@@ -732,14 +732,14 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
               </div>
               <div className="space-y-1">
                 <h4 className="text-lg font-black text-white">
-                  ¡Lote de producción registrado en prep!
+                  Production batch posted to prep
                 </h4>
                 <p className="text-xs text-zinc-400 max-w-lg mx-auto">
-                  Se descontaron los insumos del BOM y se ingresaron{' '}
+                  BOM inputs were deducted and{' '}
                   <strong className="text-emerald-400">
-                    +{completedBatch.batchOutputQty} unidades
+                    +{completedBatch.batchOutputQty} units
                   </strong>{' '}
-                  de <strong className="text-white">{completedBatch.outputProductName}</strong> a un costo unitario de{' '}
+                  of <strong className="text-white">{completedBatch.outputProductName}</strong> were received at a unit cost of{' '}
                   <strong className="text-amber-300">
                     ${completedBatch.unitOutputCost.toFixed(2)}
                   </strong>.
@@ -755,7 +755,7 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
             onClick={onClose}
             className="inline-flex min-h-11 items-center rounded-xl px-4 py-2 text-xs font-bold text-zinc-400 hover:text-white cursor-pointer"
           >
-            {completedBatch ? 'Cerrar' : 'Cancelar'}
+            {completedBatch ? 'Close' : 'Cancel'}
           </button>
 
           {!completedBatch ? (
@@ -768,7 +768,7 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
               {submitting ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>Enviando lote…</span>
+                  <span>Sending batch…</span>
                 </>
               ) : (
                 <>

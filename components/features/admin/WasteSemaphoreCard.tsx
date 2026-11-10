@@ -74,7 +74,7 @@ export function WasteSemaphoreCard({
                 aria-hidden
               />
               <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
-                Waste semáforo
+                Waste traffic light
               </p>
             </div>
 
