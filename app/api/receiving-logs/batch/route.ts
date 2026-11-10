@@ -4,6 +4,7 @@ import {
   arrangeReceivingBatch,
   MAX_RECEIVING_BATCH_SIZE,
   postReceivingLogBatch,
+  splitUnreadReceivingLines,
   receivingValidationHttpStatus,
   validateReceivingLogPostInput,
   type ReceivingLogPostInput,
@@ -34,8 +35,9 @@ export async function POST(req: NextRequest) {
     }
 
     const supplierId = body.supplierId?.trim();
+    const { unread, rest } = splitUnreadReceivingLines(rawItems);
     const parsed: ReceivingLogPostInput[] = [];
-    for (const row of rawItems) {
+    for (const row of rest) {
       const validated = validateReceivingLogPostInput({
         ...row,
         supplierId: row.supplierId ?? supplierId,
@@ -59,13 +61,13 @@ export async function POST(req: NextRequest) {
     }
 
     const arranged = arrangeReceivingBatch(parsed);
-    const posted = await postReceivingLogBatch(arranged.toPost, actor.id);
-    const results = arranged.results;
+    const posted = parsed.length ? await postReceivingLogBatch(arranged.toPost, actor.id) : [];
     posted.forEach((row, index) => {
       const slot = arranged.postIndexes[index];
       if (slot === undefined) return;
-      results[slot] = row;
+      arranged.results[slot] = row;
     });
+    const results = [...unread, ...arranged.results];
     const savedCount = results.filter((r) => r.stock.posted).length;
     const conflict = results.some((row) => row.stock.posted === false && row.stock.conflict === true);
 
