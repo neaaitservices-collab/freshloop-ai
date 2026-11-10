@@ -10,6 +10,11 @@ function retailUnitFromSubUnit(subUnit: string | undefined): RetailUnit {
   return 'units';
 }
 
+/** An identified line can post only when the quantity was actually read. */
+export function identifiedLineCanPost(casesReceived: number | undefined): boolean {
+  return Number(casesReceived) > 0;
+}
+
 /** Maps OCR output into receiving-board rows. Ids stay unposted until the server assigns them. */
 export function receivingLogsFromInvoice(result: InvoiceOcrResult): ReceivingLog[] {
   const lines = result.lineItems.filter((item) => item.name && Number(item.unitCost) >= 0);
