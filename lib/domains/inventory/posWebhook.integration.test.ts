@@ -118,6 +118,9 @@ test('POS webhook sale ingestion and idempotency (requires DATABASE_URL)', { ski
     });
 
     t.after(async () => {
+      await prisma.ledgerIdempotencyKey.deleteMany({
+        where: { key: { endsWith: `:${externalRef}` } },
+      });
       await prisma.inventoryLot.deleteMany({ where: { productId: product.id } });
       await prisma.inventoryTransaction.deleteMany({
         where: {

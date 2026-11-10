@@ -3,7 +3,8 @@ import { apiErrorFromUnknown } from '@/lib/domains/ai/apiError';
 import { authErrorResponse } from '@/lib/auth/http';
 import { requireOperationalStaff } from '@/lib/auth/guardRoute';
 import { recordProductSale } from '@/lib/domains/inventory/recordSale';
-import { executeBundleSale } from '@/lib/domains/inventory/ledger';
+import { executeBundleSale, prisma } from '@/lib/domains/inventory/ledger';
+import { saleIdempotencyKey, saleStoreId } from '@/lib/domains/inventory/saleIdempotency';
 import { parseJsonBody } from '@/lib/security/parseJsonBody';
 import { salesPostBodySchema } from '@/lib/security/schemas/sales';
 import { assertMutationRateLimit } from '@/lib/security/rateLimit';
@@ -17,13 +18,20 @@ export async function POST(req: NextRequest) {
     if (limited) return limited;
 
     const body = await parseJsonBody(req, salesPostBodySchema);
+    const idempotencyKey = saleIdempotencyKey(await saleStoreId(prisma), body.clientMutationId);
 
     if (body.bundleId || body.bundleSku) {
       const bundleId = body.bundleId ?? body.bundleSku ?? '';
-      const result = await executeBundleSale(bundleId, body.externalRef ?? `POS-${Date.now()}`, {
+      const result = await executeBundleSale(bundleId, body.externalRef, {
         staffId: actor.id,
+        idempotencyKey,
       });
-      return NextResponse.json({ success: true, type: 'bundle', result });
+      return NextResponse.json({
+        success: true,
+        type: 'bundle',
+        idempotent: result.idempotent === true,
+        result,
+      });
     }
 
     const productId = body.productId!;
@@ -34,9 +42,15 @@ export async function POST(req: NextRequest) {
       staffId: actor.id,
       location: body.location,
       unitPriceOverride: body.unitPrice,
+      idempotencyKey,
     });
 
-    return NextResponse.json({ success: true, type: 'product', sale });
+    return NextResponse.json({
+      success: true,
+      type: 'product',
+      idempotent: sale.idempotent === true,
+      sale,
+    });
   } catch (error) {
     const authRes = authErrorResponse(error);
     if (authRes) return authRes;
