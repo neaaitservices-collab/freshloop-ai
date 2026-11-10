@@ -143,12 +143,13 @@ export function unresolvedLineReasons(
 
 /** Hard gaps always block. Confidence, cost, and assumed department need a manager. */
 export function draftPostingBlockers(
-  payload: Pick<OcrDraftPayload, 'vendorName' | 'invoiceNumber' | 'lines'>,
+  payload: Pick<OcrDraftPayload, 'vendorName' | 'invoiceNumber' | 'invoiceDate' | 'lines'>,
   options: { actorIsManager: boolean; manualReviewOverride: boolean }
 ): string[] {
   const blockers: string[] = [];
   if (!payload.vendorName.trim()) blockers.push('Vendor name was not read.');
   if (!payload.invoiceNumber.trim()) blockers.push('Invoice number was not read.');
+  if (!payload.invoiceDate?.trim()) blockers.push('Invoice date was not read.');
   const managerMayResolve = options.manualReviewOverride && options.actorIsManager;
   payload.lines.forEach((line, index) => {
     const reasons = unresolvedLineReasons(line, managerMayResolve);
