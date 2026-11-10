@@ -60,6 +60,7 @@ export function AdminDashboard({
             goalPct={stats?.targetWastePct ?? wasteKpi?.targetWastePct}
             refreshing={refreshing}
             className="min-h-[360px]"
+            retailLost={stats?.lostValue ?? null}
           />
         </div>
         <div className="lg:col-span-7">

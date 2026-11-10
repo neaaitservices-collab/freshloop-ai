@@ -4,6 +4,10 @@ import React from 'react';
 import { DollarSign, Leaf, Percent, TrendingDown } from 'lucide-react';
 import { Card, CardBody } from '@/components/ui/Card';
 import { formatCurrency } from '@/lib/domains/receiving/yieldPricing';
+import {
+  RETAIL_VALUE_LOST_DETAIL,
+  RETAIL_VALUE_LOST_LABEL,
+} from '@/lib/domains/stats/wasteDollarLabels';
 import type { StoreStats } from '@/lib/domains/stats/storeStatsTypes';
 
 function Metric({
@@ -61,9 +65,9 @@ export function AdminMetricGrid({ stats }: { stats: StoreStats | null }) {
         accent="text-emerald-400"
       />
       <Metric
-        label="Value lost (30d)"
+        label={RETAIL_VALUE_LOST_LABEL}
         value={formatCurrency(stats.lostValue)}
-        detail="Retail $ written off as floor discard (excludes volumetric scrap)."
+        detail={RETAIL_VALUE_LOST_DETAIL}
         icon={TrendingDown}
         accent="text-slate-300"
       />
