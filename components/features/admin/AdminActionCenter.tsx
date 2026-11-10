@@ -28,6 +28,7 @@ export function AdminActionCenter({
 }) {
   const pending = stats?.pendingApprovalsCount ?? 0;
   const lowCount = stats?.lowCount ?? 0;
+  const outOfStockCount = stats?.outOfStockCount ?? 0;
   const awaitingStats = stats === null && showLoadingPlaceholders;
 
   return (
@@ -86,15 +87,19 @@ export function AdminActionCenter({
               <p className="mt-1 text-sm leading-snug text-slate-200">
                 {awaitingStats ? (
                   'Loading…'
-                ) : lowCount > 0 ? (
+                ) : (
                   <>
                     <span className="font-mono text-lg font-black tabular-nums text-white">
                       {lowCount}
                     </span>{' '}
-                    SKUs low stock
+                    below par
+                    <span className="mt-1 block">
+                      <span className="font-mono text-lg font-black tabular-nums text-white">
+                        {outOfStockCount}
+                      </span>{' '}
+                      out of stock
+                    </span>
                   </>
-                ) : (
-                  <>All tracked SKUs at or above par.</>
                 )}
               </p>
             </div>

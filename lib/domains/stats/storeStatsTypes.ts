@@ -42,7 +42,10 @@ export interface StoreStats {
   /** Store setting: days-to-expiry window used for the pulls count. */
   pullSensitivityDays: number;
   pulls: number;
+  /** In-stock SKUs strictly under par. Matches the orders "below par" count. */
   lowCount: number;
+  /** Empty shelf on the same catalog. Not included in lowCount. */
+  outOfStockCount: number;
   /** Vendor credits / invoice dispositions awaiting manager review. */
   pendingApprovalsCount: number;
   rescueVsDiscard: RescueSlice[];

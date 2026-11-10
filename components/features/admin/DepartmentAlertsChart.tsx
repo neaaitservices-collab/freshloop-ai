@@ -42,7 +42,7 @@ export function DepartmentAlertsChart({
               width={28}
             />
             <Tooltip content={<ChartTooltip />} cursor={{ fill: 'rgba(148,163,184,0.08)' }} />
-            <Bar dataKey="low" name="Low stock" fill={AMBER} radius={[6, 6, 0, 0]} animationDuration={700} />
+            <Bar dataKey="low" name="Below par" fill={AMBER} radius={[6, 6, 0, 0]} animationDuration={700} />
             <Bar dataKey="expiring" name="Due in 48h" fill={CORAL} radius={[6, 6, 0, 0]} animationDuration={700} />
           </BarChart>
         </ResponsiveContainer>

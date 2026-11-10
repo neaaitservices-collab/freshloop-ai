@@ -2,10 +2,10 @@ import { InventoryLocation, TransactionType } from '@prisma/client';
 import { prisma, VOLUMETRIC_SCRAP_REF_PREFIX } from '@/lib/domains/inventory/ledger';
 import type { WasteKpiReport } from '@/lib/domains/inventory/ledger';
 import { calculateRealTimeWastePct } from '@/lib/domains/inventory/ledger';
+import { belowParSkus, isBelowPar, outOfStockSkus } from '@/lib/domains/inventory/lowStock';
 import { getStockLevels } from '@/lib/domains/inventory/stock';
 import type { DepartmentAlert, StoreStats } from '@/lib/domains/stats/storeStatsTypes';
 import { findLatestStoreSetting } from '@/lib/domains/stats/storeSettingSelect';
-import { resolveParCases } from '@/lib/domains/inventory/parLevel';
 import { DEFAULT_KPI_LOOKBACK_DAYS, kpiLookbackRange } from '@/lib/domains/stats/wasteKpi';
 
 export type {
@@ -41,7 +41,8 @@ function dayKey(date: Date): string {
   return `${year}-${month}-${day}`;
 }
 
-const CACHE_MS = 20_000;
+/** Same 60s window as the stock-level cache, so admin and orders do not age out apart. */
+const CACHE_MS = 60_000;
 let cachedStats: { at: number; value: Promise<StoreStats> } | null = null;
 
 export function invalidateStoreStats(): void {
@@ -139,14 +140,12 @@ async function loadStoreStats(): Promise<StoreStats> {
   let inventoryValue = 0;
   let expiringWithin48h = 0;
   let pulls = 0;
-  let lowCount = 0;
   const pullSensitivityDays =
     setting?.pullSensitivityDays === 2 ||
     setting?.pullSensitivityDays === 3 ||
     setting?.pullSensitivityDays === 4
       ? setting.pullSensitivityDays
       : 3;
-  const storeDefaultParCases = resolveParCases(null, setting?.defaultParCases ?? 2);
   const alerts = new Map<string, DepartmentAlert>();
   for (const department of Object.keys(DEPARTMENT_LABELS)) {
     alerts.set(department, { department: DEPARTMENT_LABELS[department], low: 0, expiring: 0 });
@@ -155,7 +154,6 @@ async function loadStoreStats(): Promise<StoreStats> {
   for (const product of products) {
     const level = levelById.get(product.id);
     const onHand = level?.onHand ?? 0;
-    const pack = product.casePackSize && product.casePackSize > 0 ? product.casePackSize : 1;
     const unitCost =
       level?.unitCost && level.unitCost > 0
         ? level.unitCost
@@ -164,15 +162,18 @@ async function loadStoreStats(): Promise<StoreStats> {
           : 0;
     if (onHand > 0) inventoryValue += onHand * unitCost;
 
-    const bucket = alerts.get(product.department);
-    if (!bucket || onHand <= 0) continue;
+    if (onHand <= 0) continue;
 
-    const parCases = resolveParCases(product.parCases, storeDefaultParCases);
-    const parUnits = level?.parUnits ?? parCases * pack;
-    if (onHand < parUnits) {
-      bucket.low += 1;
-      lowCount += 1;
+    let bucket = alerts.get(product.department);
+    if (!bucket) {
+      bucket = {
+        department: DEPARTMENT_LABELS[product.department] ?? product.department,
+        low: 0,
+        expiring: 0,
+      };
+      alerts.set(product.department, bucket);
     }
+    if (level && isBelowPar(level)) bucket.low += 1;
 
     const expiration = expirationById.get(product.id);
     if (level && level.onHand > 0 && level.daysRemaining <= level.pullDays) pulls += 1;
@@ -252,7 +253,8 @@ async function loadStoreStats(): Promise<StoreStats> {
     targetWastePct: setting?.targetWastePct ?? 2.5,
     pullSensitivityDays,
     pulls,
-    lowCount,
+    lowCount: belowParSkus(stockLevels).length,
+    outOfStockCount: outOfStockSkus(stockLevels).length,
     pendingApprovalsCount: pendingCredits,
     rescueVsDiscard: [
       { name: 'Kitchen rescue', units: Number(rescuedUnits.toFixed(2)) },
