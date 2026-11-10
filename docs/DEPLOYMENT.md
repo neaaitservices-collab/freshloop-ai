@@ -87,42 +87,63 @@ On every **pull request** and **push to `main`**:
 
 ### Database migrate (`.github/workflows/database-migrate.yml`)
 
-| Trigger | When |
-|---------|------|
-| Push to `main` | Changes under `prisma/migrations/**`, `prisma/schema.prisma`, or the workflow |
-| Manual | Actions → *Database migrate (production)* → Run workflow |
+**Manual only** (`workflow_dispatch`). There are **no inputs**. Pushing `main` does not run this workflow. Vercel auto-deploys `main` on its own, so application code can go live before the database has the matching schema.
+
+The job checks out the ref you select and runs `npm run db:push:prod` (`scripts/prisma-migrate-deploy.mjs` → `prisma migrate deploy`).
 
 **Repository secrets** (Settings → Secrets and variables → Actions):
 
 | Secret | Value |
 |--------|--------|
-| `DATABASE_URL` | Production pooler (6543) |
-| `DIRECT_URL` | Production direct (5432) |
+| `DATABASE_URL` | Required. Production pooler (port 6543). The job fails if it is empty. |
+| `DIRECT_URL` | Production direct session (port 5432). If empty, the job warns and the script derives a direct URL from `DATABASE_URL`. Set it explicitly. |
 
-Runs `npm run db:push:prod` → `prisma migrate deploy`.
+**Trigger**
 
-Seed is **not** automated in CI.
+- GitHub UI: **Actions → Database migrate (production) → Run workflow**. Pick the branch or tag that contains the migrations (usually `main`). Leave inputs blank — the workflow defines none — then run it.
+- CLI (no `-f` fields):
+
+```bash
+gh workflow run "Database migrate (production)" --ref main
+```
+
+`gh workflow run database-migrate.yml --ref main` is the same run.
+
+**Order.** Take a Supabase backup or snapshot first. Apply **additive** migrations before merging or deploying code that depends on them. A push to `main` starts the Vercel deploy immediately and does not wait for this job. Land backward-compatible SQL, run this workflow, verify, then merge the code that reads or writes the new schema.
+
+**Rollback.** The workflow only applies forward migrations. Restore the backup or snapshot to undo. Do not re-run the workflow to reverse SQL.
+
+**Verify** (read-only). Compare the latest row with the newest folder name under `prisma/migrations/`:
+
+```sql
+SELECT migration_name, finished_at, rolled_back_at
+FROM _prisma_migrations
+ORDER BY finished_at DESC NULLS LAST
+LIMIT 5;
+```
+
+Expect that `migration_name` to match the newest migration folder, `finished_at` set, and `rolled_back_at` null. Alternative, with production `DATABASE_URL` and `DIRECT_URL` set: `npx prisma migrate status`.
+
+Seed is **not** part of this workflow.
+
+> **Never seed production.** Do not run `npm run db:seed:prod`, and do not set `FRESHLOOP_ALLOW_DEMO_SEED=1`, against production. The seed is destructive: it deletes catalog and ledger data and sets the demo password `freshloop`.
 
 ---
 
 ## 4. First production bootstrap
 
-After Vercel’s first successful deploy:
+After the Vercel project exists, apply migrations before traffic depends on the schema. Prefer the workflow in §3 (backup first). With production `DATABASE_URL` and `DIRECT_URL` loaded locally, the same command is:
 
 ```bash
-# From your machine with production env loaded, OR rely on GitHub migrate workflow:
 npm run db:push:prod
-
-# Optional — demo catalog + @freshloop.test staff (password: freshloop):
-npm run db:seed:prod
 ```
 
-Package scripts:
+Do not seed production. `db:seed:prod` is blocked unless `FRESHLOOP_ALLOW_DEMO_SEED=1`, and that override deletes catalog and ledger rows and sets demo passwords to `freshloop`.
 
 | Script | Command |
 |--------|---------|
-| `db:push:prod` | `prisma migrate deploy` |
-| `db:seed:prod` | `NODE_ENV=production prisma db seed` |
+| `db:push:prod` | `prisma migrate deploy` (via `scripts/prisma-migrate-deploy.mjs`) |
+| `db:seed:prod` | `NODE_ENV=production prisma db seed` — **never against production** |
 | `ci` | lint + typecheck + build |
 
 ---
@@ -143,7 +164,7 @@ Package scripts:
 | Symptom | Fix |
 |---------|-----|
 | `prepared statement already exists` | Pooler URL + `pgbouncer=true` on `DATABASE_URL` |
-| Migrations fail on Vercel build | Migrations run in CI/local with `DIRECT_URL`, not during `next build` |
+| Migrations fail on Vercel build | Migrations are not part of `next build`. Apply them with the manual workflow or `npm run db:push:prod` using `DIRECT_URL` |
 | Auth redirect loops | `NEXTAUTH_URL` = production URL; set `AUTH_SECRET` |
 | Health `database: error` | Wrong `DATABASE_URL`, IP allowlist, or migrations not applied |
 | Too many DB connections | Pooler + `connection_limit=1`; Prisma client is singleton per instance |
