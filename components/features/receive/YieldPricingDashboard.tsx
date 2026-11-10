@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import { AlertTriangle, LayoutDashboard, Receipt, RefreshCw, Sheet } from 'lucide-react';
+import { LayoutDashboard, Receipt, RefreshCw } from 'lucide-react';
 import {
   calculateYieldQuote,
   caseFloorFromPerUnitFloor,
@@ -27,10 +27,6 @@ import {
 } from '@/lib/domains/receiving/catalogItemPricing';
 import { readReceivingPrefs, writeReceivingPrefs } from '@/lib/domains/receiving/receivingPreferences';
 import type { ReceivingDispositionRow } from '@/lib/domains/receiving/receivingDisposition';
-import {
-  receivingStatusDetail,
-  type ReceivingLogSource,
-} from '@/lib/domains/receiving/receivingSheet';
 import { interpretReceivingBatchResponse } from '@/lib/domains/receiving/receivingBatchResult';
 import {
   alreadyReceivedNotice,
@@ -40,25 +36,10 @@ import {
 import { SUPPLIER_REQUIRED_ERROR } from '@/lib/domains/receiving/invoiceDeliveryId';
 
 interface LogsResponse {
-  success: boolean;
-  source: ReceivingLogSource | 'sample';
-  sheetName: string;
-  logs: ReceivingLog[];
-  warning: string | null;
-}
-
-function normalizeLogSource(source: string | undefined): ReceivingLogSource | 'sample' {
-  if (source === 'google_sheets' || source === 'unconfigured' || source === 'unavailable') {
-    return source;
-  }
-  return 'sample';
-}
-
-function sheetStatusLabel(source: ReceivingLogSource | 'sample'): string {
-  if (source === 'google_sheets') return 'Live sheet';
-  if (source === 'unconfigured') return 'Sheet not connected';
-  if (source === 'unavailable') return 'Sheet unavailable';
-  return 'Sample preview';
+  success?: boolean;
+  logs?: ReceivingLog[];
+  error?: string;
+  warning?: string | null;
 }
 
 const POSTED_RECEIVING_KEY = 'freshloop-posted-receiving';
@@ -309,8 +290,6 @@ export function YieldPricingDashboard({
   embedded = false,
   extraLogs = [],
   initialLogs,
-  initialSource = 'unconfigured',
-  initialSheetName = 'Receiving_logs',
   initialWarning = null,
   onScanNext,
   onLogDisposition,
@@ -320,8 +299,7 @@ export function YieldPricingDashboard({
   embedded?: boolean;
   extraLogs?: ReceivingLog[];
   initialLogs?: ReceivingLog[];
-  initialSource?: ReceivingLogSource | 'sample';
-  initialSheetName?: string;
+  /** Set when the delivery table could not be read. The page stays up. */
   initialWarning?: string | null;
   onScanNext?: () => void;
   /** Drop scanned invoice lines from the parent list when removed / not received. */
@@ -331,8 +309,6 @@ export function YieldPricingDashboard({
 }) {
   const seeded = initialLogs !== undefined;
   const [logs, setLogs] = useState<ReceivingLog[]>(initialLogs ?? []);
-  const [source, setSource] = useState<ReceivingLogSource | 'sample'>(initialSource);
-  const [sheetName, setSheetName] = useState(initialSheetName);
   const [warning, setWarning] = useState<string | null>(initialWarning);
   const [loading, setLoading] = useState(!seeded);
   const [selectedId, setSelectedId] = useState<string | null>(initialLogs?.[0]?.id ?? null);
@@ -392,17 +368,20 @@ export function YieldPricingDashboard({
     try {
       const response = await fetch('/api/receiving-logs', { cache: 'no-store' });
       const json = (await response.json()) as LogsResponse;
+      if (!response.ok || json.success === false) {
+        setWarning(json.warning || json.error || 'Deliveries could not be loaded.');
+        setLogs([]);
+        return;
+      }
       const nextLogs = Array.isArray(json.logs) ? json.logs : [];
       setLogs(nextLogs);
-      setSource(normalizeLogSource(json.source));
-      setSheetName(json.sheetName || 'Receiving_logs');
-      setWarning(json.warning);
+      setWarning(null);
       setSelectedId((current) => {
         if (current) return current;
         return nextLogs[0]?.id ?? null;
       });
     } catch {
-      setWarning('Receiving logs could not be loaded.');
+      setWarning('Deliveries could not be loaded.');
       setLogs([]);
     } finally {
       setLoading(false);
@@ -781,7 +760,7 @@ export function YieldPricingDashboard({
       setErrorMessage(
         selected.invoiceNumber
           ? 'This invoice line does not have a server delivery id yet. Choose a saved supplier and wait for the lines to be identified.'
-          : 'This sheet row has no Delivery ID, so it was not posted. Add a UUID in the Delivery ID column and keep it with that delivery.'
+          : 'This delivery is already recorded. It is shown for reference and was not posted again.'
       );
       return;
     }
@@ -822,8 +801,11 @@ export function YieldPricingDashboard({
     const targets = bulkLogs.filter((log) => !animatingOutIds.has(log.id) && log.canPost !== false);
     if (saving || savingAll) return;
     if (targets.length === 0) {
+      const waitingOnSupplier = bulkLogs.some((log) => log.canPost === false && log.invoiceNumber);
       setErrorMessage(
-        'None of these rows have a Delivery ID, so nothing was posted. Add a UUID on each delivery before saving.'
+        waitingOnSupplier
+          ? 'None of these invoice lines have a server delivery id yet.'
+          : 'These deliveries are already recorded, so nothing was posted again.'
       );
       return;
     }
@@ -913,8 +895,6 @@ export function YieldPricingDashboard({
     }
   };
 
-  const statusDetail = receivingStatusDetail(source, warning);
-
   return (
     <div
       className={
@@ -928,19 +908,8 @@ export function YieldPricingDashboard({
           <h1 className={`${embedded ? 'sr-only' : 'text-2xl font-black tracking-tight text-white'}`}>
             Yield &amp; Pricing
           </h1>
-          <p className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-400">
-            <span className="inline-flex items-center gap-1 rounded-full border border-slate-700 bg-slate-900 px-2 py-0.5 font-bold text-slate-300">
-              <Sheet className="h-3 w-3 text-emerald-300" />
-              {sheetName}
-            </span>
-            <span>{sheetStatusLabel(source)}</span>
-            {statusDetail ? (
-              <span className="inline-flex items-center gap-1 text-slate-500">
-                <AlertTriangle className="h-3 w-3" />
-                {statusDetail}
-              </span>
-            ) : null}
-          </p>
+          <p className="mt-1 text-xs text-slate-400">Deliveries</p>
+          {warning ? <p className="mt-1 text-xs text-rose-300">{warning}</p> : null}
         </div>
         <div className="flex gap-2">
           <Button variant="secondary" className="text-xs py-2" onClick={() => void loadLogs()}>
@@ -957,23 +926,18 @@ export function YieldPricingDashboard({
       </div>
 
       {loading && visibleLogs.length === 0 ? (
-        <p className="text-sm text-slate-400">Loading receiving logs…</p>
+        <p className="text-sm text-slate-400">Loading deliveries…</p>
       ) : null}
 
-      {!loading && !boardActive ? (
+      {!loading && !boardActive && !warning ? (
         <Card className="border-dashed border-slate-700 bg-slate-900/50 backdrop-blur-md transition-opacity duration-500">
           <CardBody className="flex flex-col items-center px-6 py-16 text-center">
             <Receipt className="h-16 w-16 text-slate-600" strokeWidth={1.1} aria-hidden />
             <p className="mt-6 max-w-md text-lg font-black tracking-tight text-slate-100">
-              {source === 'google_sheets'
-                ? 'All items processed successfully'
-                : 'No delivery list to receive'}
+              No deliveries recorded
             </p>
             <p className="mt-2 max-w-sm text-sm text-slate-400">
-              {source === 'google_sheets'
-                ? 'Nothing left on this delivery. Scan the next invoice or pick another shipment when it arrives.'
-                : warning ||
-                  'Sample rows are not loaded. Scan a real invoice, or reconnect the receiving sheet.'}
+              Nothing has been posted yet. A receipt shows up here after it is saved.
             </p>
             <Button
               variant="success"
@@ -1073,6 +1037,7 @@ export function YieldPricingDashboard({
             stockOnHand={stockOnHand}
             stockMatched={stockMatched}
             alreadyInInventory={postedIds.has(selected.id)}
+            readOnly={selected.canPost === false && !selected.invoiceNumber}
             dispositionBusy={dispositionBusy}
             saveAllLabel={bulkLogs.length > 1 ? saveAllLabel : null}
             saveAllProgress={saveAllProgress}

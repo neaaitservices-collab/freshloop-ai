@@ -38,6 +38,7 @@ export function PackReceiptCard({
   stockOnHand,
   stockMatched,
   alreadyInInventory = false,
+  readOnly = false,
   dispositionBusy = false,
   saveAllLabel = null,
   saveAllProgress = null,
@@ -56,6 +57,8 @@ export function PackReceiptCard({
   stockOnHand: number | null;
   stockMatched: boolean;
   alreadyInInventory?: boolean;
+  /** Posted ledger row. Shown for reference, with no save or disposition actions. */
+  readOnly?: boolean;
   dispositionBusy?: boolean;
   saveAllLabel?: string | null;
   saveAllProgress?: string | null;
@@ -82,7 +85,8 @@ export function PackReceiptCard({
     saving,
     dispositionBusy,
     alreadyInInventory,
-    saveDisabled: quote.totalRetailUnits === null,
+    readOnly,
+    saveDisabled: quote.totalRetailUnits === null || readOnly,
     saveAllLabel,
     saveAllProgress,
     onSave,
@@ -118,7 +122,7 @@ export function PackReceiptCard({
               stockOnHand === null ? 'Checking…' : `${formatUnits(stockOnHand)} ${retailUnit}`
             }
           />
-          {!posted ? (
+          {!posted && !readOnly ? (
             <ReceiptRow
               label="In stock after save"
               value={
@@ -131,7 +135,7 @@ export function PackReceiptCard({
           <ReceiptRow label="Retail floor" value={formatCurrency(currentRetailPrice)} />
         </dl>
 
-        {!posted && stockOnHand !== null && !stockMatched ? (
+        {!posted && !readOnly && stockOnHand !== null && !stockMatched ? (
           <p className="px-4 pb-2 text-[11px] leading-relaxed text-slate-400 sm:px-5">
             Not in catalog yet — save posts this delivery to inventory.
           </p>

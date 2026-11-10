@@ -153,7 +153,7 @@ All handlers use `export const dynamic = 'force-dynamic'` unless noted. Errors o
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| `GET` | `/api/receiving-logs` | `loadReceivingLogs()` — read-only Google Sheet. No sample rows. |
+| `GET` | `/api/receiving-logs` | `listReceivingDeliveryLogs()` — newest 100 posted `receiving_deliveries` rows, read-only. Empty when none have been posted. A missing table returns a warning, not a 500. |
 | `POST` | `/api/receiving-logs` | Save one delivery UUID → `postReceipt()`. Same UUID and payload is a no-op. A different payload is 409. |
 | `POST` | `/api/receiving-invoices/identity` | Assign or reuse supplier, number, and exact-date line UUIDs. Conflicts do not post. |
 | `POST` | `/api/receiving-invoices/reconcile` | Record a confirmed date, spelling, missing-line, rename, or legacy-receipt decision. |
@@ -163,7 +163,7 @@ All handlers use `export const dynamic = 'force-dynamic'` unless noted. Errors o
 
 **Receive UI session keys:** `freshloop-posted-receiving`, `freshloop-receiving-hidden` (optimistic hide before refetch).
 
-**Delivery identity.** The sheet is read-only (`GOOGLE_SHEETS_API_KEY` values GET). FreshLoop does not write a UUID back. Add a column named `Delivery ID`, `Line ID`, or `External ID`. Generate the UUID once per delivery and leave that cell with the row when it is sorted or reused. A new delivery needs a new UUID even when the item and cost match. Rows without a UUID, and every row that repeats a UUID, are shown with `canPost: false`. `sheet-row-N` is rejected with 409 and does not delete old `recv:sheet-row-N` ledger keys.
+**Delivery identity.** Receive lists `receiving_deliveries` rows written when a delivery posts, including invoice OCR commit. A new delivery needs a new UUID even when the item and cost match. `sheet-row-N` is rejected with 409 and does not delete old `recv:sheet-row-N` ledger keys.
 
 Numbered invoices are identified by a saved `suppliers.id`, the invoice number, and the exact invoice date. Punctuation and internal spaces stay, so `1001/A`, `1001-A`, `A 12`, and `A12` are different until someone confirms otherwise. The printed vendor name is not a supplier id. A missing date, a different date, or a spacing collision returns 409 and does not post. `POST /api/receiving-invoices/reconcile` records the choice. A receiving clerk can add missing lines or open a separate document. Linking a date, linking a spelling, mapping a renamed line, and adopting an older receipt require a store manager or the owner. An older `invoice:vendor:number` key matches only when the vendor text is exactly the selected supplier's name. Lines added after that adoption still post stock. Year-first dates normalize to `YYYY-MM-DD`; impossible days and month-first dates are rejected. The server assigns each printed line a UUID once (`supplier_invoice_lines`). A rescan reuses that UUID when the printed text aligns, including when the catalog match appears, disappears, or changes. A changed product, quantity, case cost, or pack on that same UUID is 409 and does not create another receipt. A scan that only adds missing printed lines waits for confirmation before those lines are saved. A renamed line is not appended as a new receipt; it has to be mapped onto the saved line UUID. That exact supplier key blocks a new post until a manager adopts it, and the ledger key is left in place. The receiving board (`POST /api/receiving-invoices/identity`, then `POST /api/receiving-logs`) and direct OCR commit (`commitInvoiceOcrReceipts`) both use that registry. A blank invoice number or a missing saved supplier stays unposted. Old browser stashes whose ids start with `scan-` return 409 with `LEGACY_SCAN_STASH_ERROR`. Shelf price is not part of the physical receipt fingerprint.
 
@@ -221,7 +221,8 @@ Gemini helpers: `lib/domains/ai/gemini.ts`.
 | Module | Responsibility |
 |--------|----------------|
 | `yieldPricing.ts` | Yield quote, margin modes, `ReceivingLog` types, formatting |
-| `receivingSheet.ts` | Google Sheets loader + sample fallback |
+| `receivingDeliveries.ts` | Read posted `receiving_deliveries` for the receive board |
+| `receivingSheet.ts` | Sample fixture ids. Not a live data source. |
 | `receivingDisposition.ts` | CRUD for `ReceivingDisposition` |
 | `receivingBridge.ts` | Invoice → receiving logs, session stash |
 

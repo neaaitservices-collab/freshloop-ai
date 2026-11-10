@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { RECEIVING_SHEET_NAME } from '@/lib/domains/receiving/receivingSheet';
 import {
   arrangeReceivingBatch,
   MAX_RECEIVING_BATCH_SIZE,
@@ -74,7 +73,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       {
         success: !conflict,
-        sheetName: RECEIVING_SHEET_NAME,
         savedCount,
         failedCount: results.length - savedCount,
         results,
