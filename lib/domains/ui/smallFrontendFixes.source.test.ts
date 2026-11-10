@@ -31,6 +31,8 @@ test('voice cancel and the X close share one dismiss', () => {
   assert.match(src.slice(close - 420, close), /onClick=\{dismiss\}/);
   assert.match(src.slice(cancel - 420, cancel), /onClick=\{dismiss\}/);
   assert.match(src, /const dismiss = \(\) => \{\s*resetClosedSession\(\);\s*onClose\(\);/);
+  const reset = src.slice(src.indexOf('const resetClosedSession'), src.indexOf('const dismiss'));
+  assert.equal(reset.includes('setCommitting'), false);
 });
 
 test('/voice is a guarded redirect, not a config bypass', () => {
@@ -74,6 +76,9 @@ test('receive list is labeled as deliveries', () => {
 test('dialog close controls stay above the backdrop', () => {
   const shell = read('components/ui/layout/ModalShell.tsx');
   assert.match(shell, /createPortal\(dialog, document\.body\)/);
+  assert.match(shell, /setMounted\(true\)/);
+  assert.equal(shell.includes('typeof document'), false);
+  assert.match(shell, /topModal\(\) !== id/);
   assert.match(shell, /className="absolute inset-0 z-0"/);
   assert.match(shell, /pointer-events-auto relative z-10/);
   for (const file of [

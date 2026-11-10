@@ -191,7 +191,6 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
     setRecordingSeconds(0);
     setLastAudioBlob(null);
     setParsing(false);
-    setCommitting(false);
     setStep('CAPTURE');
     setIsEditMode(false);
     setTranscript('');

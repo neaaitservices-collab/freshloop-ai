@@ -1,9 +1,25 @@
 'use client';
 
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { nextFocusIndex } from '@/lib/ui/dialogFocus';
 import { cn } from '@/lib/utils/cn';
+
+/** Open shells by ascending open order. Escape and Tab belong to the latest one. */
+const openModalSeq = new Map<symbol, number>();
+let nextModalSeq = 0;
+
+function topModal(): symbol | undefined {
+  let top: symbol | undefined;
+  let best = -1;
+  for (const [id, seq] of openModalSeq) {
+    if (seq >= best) {
+      best = seq;
+      top = id;
+    }
+  }
+  return top;
+}
 
 const FOCUSABLE =
   'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
@@ -46,10 +62,24 @@ export function ModalShell({
 }) {
   const panelRef = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose);
+  const stackId = useRef(Symbol('modal'));
+  const seqRef = useRef(0);
+  const [mounted, setMounted] = useState(false);
   onCloseRef.current = onClose;
+  if (!open) {
+    seqRef.current = 0;
+  } else if (seqRef.current === 0) {
+    seqRef.current = ++nextModalSeq;
+  }
 
   useEffect(() => {
-    if (!open) return;
+    setMounted(true);
+  }, []);
+
+  useEffect(() => {
+    if (!open || !mounted) return;
+    const id = stackId.current;
+    openModalSeq.set(id, seqRef.current);
     const previouslyFocused =
       document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const panel = panelRef.current;
@@ -57,12 +87,15 @@ export function ModalShell({
     (items[0] ?? panel)?.focus();
 
     const onKey = (event: KeyboardEvent) => {
+      if (topModal() !== id) return;
       if (event.key === 'Escape') {
         event.preventDefault();
+        event.stopImmediatePropagation();
         onCloseRef.current();
         return;
       }
       if (event.key !== 'Tab' || !panel) return;
+      event.stopImmediatePropagation();
       const current = focusableIn(panel);
       if (current.length === 0) {
         event.preventDefault();
@@ -77,12 +110,13 @@ export function ModalShell({
 
     document.addEventListener('keydown', onKey);
     return () => {
+      openModalSeq.delete(id);
       document.removeEventListener('keydown', onKey);
       previouslyFocused?.focus();
     };
-  }, [open]);
+  }, [open, mounted]);
 
-  if (!open) return null;
+  if (!open || !mounted) return null;
 
   const dialog = (
     <div
@@ -119,7 +153,6 @@ export function ModalShell({
   );
 
   // Portaled so page chrome (z-40 nav) cannot cover the panel while it opens.
-  if (typeof document === 'undefined') return null;
   return createPortal(dialog, document.body);
 }
 
