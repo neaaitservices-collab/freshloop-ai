@@ -2,7 +2,7 @@ import { Role } from '@prisma/client';
 import { prisma } from '@/lib/domains/inventory/ledger';
 import { hashPassword } from '@/lib/auth/password';
 import { findLatestStoreSetting } from '@/lib/domains/stats/storeSettingSelect';
-import type { RoleName } from '@/lib/utils/roles';
+import { LEAST_PRIVILEGED_ROLE, type RoleName } from '@/lib/utils/roles';
 import { positionForRole } from '@/lib/utils/positions';
 
 const MIN_PASSWORD_LENGTH = 8;
@@ -18,7 +18,8 @@ export async function registerStaffUser(input: {
   name: string;
   email: string;
   password: string;
-  role: RoleName;
+  /** Ignored. Callers cannot choose a privileged role on this path. */
+  role?: RoleName;
   position?: string;
 }) {
   if (!isPublicSignupEnabled()) {
@@ -28,9 +29,9 @@ export async function registerStaffUser(input: {
   const name = input.name.trim();
   const email = input.email.trim().toLowerCase();
   const password = input.password;
-  const role = input.role as Role;
-  const position =
-    input.position?.trim() || positionForRole(input.role).label;
+  // No first-user Owner bootstrap exists; every public signup is least privileged.
+  const role = LEAST_PRIVILEGED_ROLE as Role;
+  const position = input.position?.trim() || positionForRole(role).label;
 
   if (!name || !email) {
     throw new Error('Name and email are required.');

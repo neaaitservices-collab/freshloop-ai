@@ -4,6 +4,7 @@ import { apiError, apiErrorFromUnknown } from '@/lib/domains/ai/apiError';
 import { parseJsonBody } from '@/lib/security/parseJsonBody';
 import { signupBodySchema } from '@/lib/security/schemas/auth';
 import { assertMutationRateLimit, clientIpKey } from '@/lib/security/rateLimit';
+import { LEAST_PRIVILEGED_ROLE } from '@/lib/utils/roles';
 
 export const dynamic = 'force-dynamic';
 
@@ -18,7 +19,8 @@ export async function POST(req: NextRequest) {
       name: body.name,
       email: body.email,
       password: body.password,
-      role: body.role,
+      // Client role is ignored. There is no empty-database Owner bootstrap.
+      role: LEAST_PRIVILEGED_ROLE,
       position: body.position,
     });
 

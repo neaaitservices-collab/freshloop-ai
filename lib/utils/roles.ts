@@ -10,6 +10,12 @@ export const ROLES = [
 
 export type RoleName = (typeof ROLES)[number];
 
+/**
+ * Narrowest existing role: floor inventory only.
+ * Public signup assigns this and never a client-supplied role.
+ */
+export const LEAST_PRIVILEGED_ROLE: RoleName = 'FLOOR_STAFF';
+
 export const ROLE_LABELS: Record<RoleName, string> = {
   ADMIN: 'Admin',
   STORE_MANAGER: 'Store manager',
