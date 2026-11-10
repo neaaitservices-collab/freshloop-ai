@@ -17,12 +17,15 @@ export function WasteSemaphoreCard({
   goalPct,
   refreshing = false,
   className,
+  retailLost = null,
 }: {
   wasteKpi: WasteKpiReport | null;
   /** From store settings when KPI still loading */
   goalPct?: number;
   refreshing?: boolean;
   className?: string;
+  /** Shelf-price floor discards, labeled apart from the cost waste total. */
+  retailLost?: number | null;
 }) {
   const [scrapModalOpen, setScrapModalOpen] = useState(false);
   const target = wasteKpi?.targetWastePct ?? goalPct ?? 2.5;
@@ -196,6 +199,7 @@ export function WasteSemaphoreCard({
           sales={sales}
           bucketCount={bucketCount}
           scrapInputs={wasteKpi?.scrapBucketInputs ?? null}
+          retailLost={retailLost}
         />
 
         {legacySalesNote ? (

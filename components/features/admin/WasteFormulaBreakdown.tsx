@@ -4,6 +4,10 @@ import React from 'react';
 import { ChevronDown } from 'lucide-react';
 import { formatCurrency } from '@/lib/domains/receiving/yieldPricing';
 import {
+  COST_WASTE_TOTAL_DETAIL,
+  COST_WASTE_TOTAL_LABEL,
+} from '@/lib/domains/stats/wasteDollarLabels';
+import {
   computeScrapBucketEconomics,
   scrapBucketInputsFromSettings,
   type ScrapBucketInputs,
@@ -17,6 +21,7 @@ export function WasteFormulaBreakdown({
   bucketCount = 0,
   scrapInputs,
   layout = 'inline',
+  retailLost = null,
 }: {
   discard: number;
   scrap: number;
@@ -32,6 +37,8 @@ export function WasteFormulaBreakdown({
     | null;
   /** Stacked rows avoid cramped wrapping in narrow dashboard columns. */
   layout?: 'inline' | 'stacked';
+  /** Shelf-price value lost, shown so it is not read as this cost total. */
+  retailLost?: number | null;
 }) {
   const inputs =
     scrapInputs && 'volumeL' in scrapInputs
@@ -68,12 +75,18 @@ export function WasteFormulaBreakdown({
       <div className="rounded-xl border border-slate-800/80 bg-slate-950/50 p-3.5">
         <div className="flex items-center justify-between border-b border-slate-800/80 pb-2.5">
           <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
-            Total Waste (30d)
+            {COST_WASTE_TOTAL_LABEL}
           </span>
           <span className="font-mono text-sm font-black tabular-nums text-white">
             {formatCurrency(totalWaste)}
           </span>
         </div>
+        <p className="mt-2 text-[11px] leading-snug text-slate-500">
+          {COST_WASTE_TOTAL_DETAIL}
+          {retailLost != null && Number.isFinite(retailLost)
+            ? ` Value lost (30d) is ${formatCurrency(retailLost)} at shelf price.`
+            : ''}
+        </p>
 
         <div className="mt-2.5 grid grid-cols-3 gap-2">
           <div className="rounded-lg border border-slate-800/70 bg-slate-900/50 px-2.5 py-2">
