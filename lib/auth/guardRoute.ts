@@ -11,6 +11,13 @@ function receivingStaffTestAuth(): ReceivingStaffTestAuth | null {
   return typeof hook === 'function' ? hook : null;
 }
 
+function operationalStaffTestAuth(): ReceivingStaffTestAuth | null {
+  if (process.env.NODE_ENV === 'production') return null;
+  const hook = (globalThis as { __freshloopOperationalStaffTestAuth?: ReceivingStaffTestAuth })
+    .__freshloopOperationalStaffTestAuth;
+  return typeof hook === 'function' ? hook : null;
+}
+
 /** Any authenticated staff member (middleware already enforces login on /api). */
 export async function requireAuthenticatedStaff() {
   return requireSessionUser();
@@ -45,6 +52,8 @@ export async function requireKitchenStaff() {
 }
 
 export async function requireOperationalStaff() {
+  const testAuth = operationalStaffTestAuth();
+  if (testAuth) return testAuth();
   return requireRoles([
     'ADMIN',
     'STORE_MANAGER',

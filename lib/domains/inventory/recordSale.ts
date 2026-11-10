@@ -4,7 +4,7 @@ import { invalidateInventoryCaches } from '@/lib/domains/inventory/inventoryCach
 import { consumeLotsFifo, lockProductInventory } from '@/lib/domains/inventory/lots';
 import { isLedgerIdempotencyConflict } from '@/lib/domains/inventory/idempotencyConflict';
 import { priceProductSale } from '@/lib/domains/inventory/saleRevenue';
-import { replayProductSale } from '@/lib/domains/inventory/saleIdempotency';
+import { claimProductSaleReplay } from '@/lib/domains/inventory/saleIdempotency';
 
 export type SaleLocation = 'floor' | 'deli';
 
@@ -12,6 +12,13 @@ const LOC: Record<SaleLocation, InventoryLocation> = {
   floor: InventoryLocation.Retail_Floor,
   deli: InventoryLocation.Deli_Grab_N_Go,
 };
+
+export function resolveSaleLocation(
+  product: { isManufactured: boolean },
+  location?: SaleLocation
+): InventoryLocation {
+  return LOC[location ?? (product.isManufactured ? 'deli' : 'floor')];
+}
 
 export interface RecordSaleResult {
   transactionId: string;
@@ -35,7 +42,7 @@ export async function recordProductSale(input: {
   location?: SaleLocation;
   unitPriceOverride?: number;
   referenceId?: string;
-  /** `sale:<storeId>:<clientMutationId>`. Inserted in the same transaction as the sale row. */
+  /** `sale:staff:<clientMutationId>`. Inserted in the same transaction as the sale row. */
   idempotencyKey?: string;
   /** Join a caller-owned transaction (POS webhook batch). Caller invalidates caches after commit. */
   db?: Prisma.TransactionClient;
@@ -49,7 +56,7 @@ export async function recordProductSale(input: {
   const product = await client.product.findUnique({ where: { id: input.productId } });
   if (!product) throw new Error('Product not found.');
 
-  const location = LOC[input.location ?? (product.isManufactured ? 'deli' : 'floor')];
+  const location = resolveSaleLocation(product, input.location);
 
   const priced = priceProductSale({
     quantity: qty,
@@ -61,19 +68,21 @@ export async function recordProductSale(input: {
 
   const referenceId = input.referenceId ?? input.idempotencyKey ?? `SALE-${Date.now()}`;
 
-  const replay = async (db: Prisma.TransactionClient | typeof prisma) => {
-    if (!input.idempotencyKey && !input.referenceId) return null;
-    return replayProductSale(db, input.referenceId ?? input.idempotencyKey ?? referenceId);
-  };
+  const claimReplay = () =>
+    claimProductSaleReplay(prisma, {
+      referenceId,
+      idempotencyKey: input.idempotencyKey,
+      productId: product.id,
+      quantity: qty,
+      location,
+      unitPrice: input.unitPriceOverride == null ? null : priced.unitPrice,
+    });
 
   if (!input.db && input.idempotencyKey) {
     const prior = await prisma.ledgerIdempotencyKey.findUnique({
       where: { key: input.idempotencyKey },
     });
-    if (prior) {
-      const existing = await replay(prisma);
-      if (existing) return existing;
-    }
+    if (prior) return claimReplay();
   }
 
   const writeSale = async (db: Prisma.TransactionClient) => {
@@ -113,9 +122,8 @@ export async function recordProductSale(input: {
   try {
     tx = input.db ? await writeSale(input.db) : await prisma.$transaction(writeSale);
   } catch (error) {
-    if (input.idempotencyKey && isLedgerIdempotencyConflict(error)) {
-      const existing = await replay(input.db ?? prisma);
-      if (existing) return existing;
+    if (input.idempotencyKey && !input.db && isLedgerIdempotencyConflict(error)) {
+      return claimReplay();
     }
     throw error;
   }

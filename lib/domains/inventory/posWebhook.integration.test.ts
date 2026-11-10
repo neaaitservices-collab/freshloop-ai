@@ -3,6 +3,7 @@ import test from 'node:test';
 import { InventoryLocation, TransactionType } from '@prisma/client';
 import { POST } from '@/app/api/pos/webhook/route';
 import { getCurrentStock, prisma } from '@/lib/domains/inventory/ledger';
+import { posSaleIdempotencyKey } from '@/lib/domains/inventory/saleIdempotency';
 import { postProductReceipt } from '@/lib/domains/inventory/stock';
 import { rebuildLotsFromLedger } from '@/lib/domains/inventory/rebuildLots';
 import {
@@ -181,5 +182,79 @@ test('POS webhook sale ingestion and idempotency (requires DATABASE_URL)', { ski
       },
     });
     assert.equal(saleCountAfterDup, 1);
+  });
+});
+
+test('POS webhook rejects a different payload and an empty replay', { skip: !hasDb }, async (t) => {
+  try {
+    await prisma.$connect();
+  } catch {
+    t.skip('Database unreachable.');
+    return;
+  }
+  await withPosSecret(async () => {
+    const stamp = `pos-mismatch-${Date.now()}`;
+    const externalRef = `POS-MIS-${stamp}`;
+    const emptyRef = `POS-EMPTY-${stamp}`;
+    const product = await prisma.product.create({
+      data: {
+        name: `POS Mismatch ${stamp}`,
+        department: 'PRODUCE',
+        standardCost: 2,
+        retailPrice: 4.5,
+        shelfLifeDays: 7,
+      },
+    });
+    t.after(async () => {
+      await prisma.ledgerIdempotencyKey.deleteMany({
+        where: { key: { in: [posSaleIdempotencyKey(externalRef), posSaleIdempotencyKey(emptyRef)] } },
+      });
+      await prisma.inventoryLot.deleteMany({ where: { productId: product.id } });
+      await prisma.inventoryTransaction.deleteMany({ where: { productId: product.id } });
+      await prisma.product.delete({ where: { id: product.id } });
+    });
+    await postProductReceipt({
+      productId: product.id,
+      quantityUnits: 8,
+      unitCostAtTime: 2,
+      staffId: 'test-staff',
+      referenceId: `TEST-RCV-${stamp}`,
+    });
+    await rebuildLotsFromLedger({ productIds: [product.id] });
+    const first = await readJsonResponse(
+      await POST(
+        posWebhookJsonRequest(
+          { externalRef, lines: [{ productId: product.id, quantity: 2, location: 'floor' }] },
+          { clientIp: `${stamp}-a` }
+        )
+      )
+    );
+    assert.equal(first.status, 200);
+    assert.equal(first.body.idempotent, false);
+    const mismatch = await readJsonResponse(
+      await POST(
+        posWebhookJsonRequest(
+          { externalRef, lines: [{ productId: product.id, quantity: 5, location: 'floor' }] },
+          { clientIp: `${stamp}-b` }
+        )
+      )
+    );
+    assert.equal(mismatch.status, 409);
+    assert.equal(mismatch.body.success, false);
+    assert.equal(await getCurrentStock(product.id, InventoryLocation.Retail_Floor), 6);
+
+    await prisma.ledgerIdempotencyKey.create({ data: { key: posSaleIdempotencyKey(emptyRef) } });
+    const empty = await readJsonResponse(
+      await POST(
+        posWebhookJsonRequest(
+          { externalRef: emptyRef, lines: [{ productId: product.id, quantity: 1, location: 'floor' }] },
+          { clientIp: `${stamp}-c` }
+        )
+      )
+    );
+    assert.equal(empty.status, 503);
+    assert.equal(empty.body.success, false);
+    assert.notEqual(empty.body.idempotent, true);
+    assert.equal(await getCurrentStock(product.id, InventoryLocation.Retail_Floor), 6);
   });
 });
