@@ -29,7 +29,7 @@ export function WasteVsRescueChart({
         <h2 className="text-base font-black text-slate-100">Rescue versus discard</h2>
         <p className="mt-1 text-sm text-slate-400">Daily production &amp; waste breakdown</p>
         <p className="mt-0.5 text-xs text-slate-500">
-          Product units only — volumetric scrap buckets feed the waste semáforo above.
+          Product units only — volumetric scrap buckets feed the waste traffic light above.
         </p>
       </header>
 
