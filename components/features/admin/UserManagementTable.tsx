@@ -33,7 +33,7 @@ const EMPTY_FORM: StaffEmployeeFormValues = {
 };
 
 export function UserManagementTable({ embedded = false }: { embedded?: boolean }) {
-  const { users, activeUser, loading, refresh } = useRole();
+  const { users, activeUser, loading, refresh, rosterError } = useRole();
   const canManage = Boolean(activeUser && canManageStaff(activeUser.role));
   const canRemove = Boolean(activeUser && canRemoveStaff(activeUser.role));
   const canManageWage = canManage;
@@ -184,10 +184,20 @@ export function UserManagementTable({ embedded = false }: { embedded?: boolean }
         </p>
       ) : null}
 
-      {loading && users.length === 0 ? (
+      {rosterError ? (
+        <p
+          role="alert"
+          className="mt-3 rounded-xl border border-rose-500/40 bg-rose-950/40 px-3 py-2 text-xs font-semibold text-rose-100"
+        >
+          {rosterError}
+        </p>
+      ) : null}
+
+      {loading && users.length === 0 && !rosterError ? (
         <p className="mt-4 text-sm text-slate-500">Loading staff…</p>
       ) : null}
 
+      {users.length === 0 && rosterError ? null : (
       <div className="mt-4 min-w-0 overflow-hidden rounded-2xl border border-slate-800/90 bg-slate-950/40">
         <ScrollTable>
         <table className="w-full min-w-[640px] border-collapse text-left text-sm">
@@ -271,6 +281,7 @@ export function UserManagementTable({ embedded = false }: { embedded?: boolean }
         </table>
         </ScrollTable>
       </div>
+      )}
 
       <StaffEmployeeModal
         open={modalMode !== 'closed'}

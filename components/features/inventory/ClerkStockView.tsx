@@ -7,6 +7,11 @@ import { Card, CardBody, CardDescription, CardHeader, CardTitle } from '@/compon
 import { Input } from '@/components/ui/Input';
 import { Badge } from '@/components/ui/Badge';
 import { PageMain } from '@/components/ui/layout';
+import {
+  STOCK_REFRESH_ERROR,
+  STOCK_REFRESH_NETWORK_ERROR,
+  listLoadFailure,
+} from '@/lib/domains/http/clientLoadFailure';
 import type { StockLevel } from '@/lib/domains/inventory/stock';
 import { formatCurrency, formatUnits, stockUnitLabel } from '@/lib/domains/receiving/yieldPricing';
 import { cn } from '@/lib/utils/cn';
@@ -22,6 +27,7 @@ export function ClerkStockView({
   const loading = initialLevels === null;
   const [levels, setLevels] = useState<StockLevel[]>(() => initialLevels ?? []);
   const [query, setQuery] = useState('');
+  const [refreshError, setRefreshError] = useState<string | null>(null);
 
   useEffect(() => {
     if (initialLevels) setLevels(initialLevels);
@@ -30,11 +36,22 @@ export function ClerkStockView({
   useEffect(() => {
     const sync = () => {
       void fetch('/api/inventory/levels', { cache: 'no-store' })
-        .then((r) => r.json())
-        .then((json) => {
-          if (json.success && Array.isArray(json.levels)) {
-            setLevels(json.levels as StockLevel[]);
+        .then(async (response) => {
+          const json = (await response.json().catch(() => null)) as {
+            success?: boolean;
+            error?: string;
+            levels?: StockLevel[];
+          } | null;
+          const failure = listLoadFailure(response.ok, json, 'levels', STOCK_REFRESH_ERROR);
+          if (failure || !json || !Array.isArray(json.levels)) {
+            setRefreshError(failure ?? STOCK_REFRESH_ERROR);
+            return;
           }
+          setRefreshError(null);
+          setLevels(json.levels);
+        })
+        .catch(() => {
+          setRefreshError(STOCK_REFRESH_NETWORK_ERROR);
         });
     };
     window.addEventListener('freshloop-inventory-updated', sync);
@@ -95,6 +112,15 @@ export function ClerkStockView({
         <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search item…" className="pl-9" />
       </label>
 
+      {refreshError ? (
+        <p
+          role="alert"
+          className="mb-4 rounded-xl border border-rose-500/40 bg-rose-950/40 px-3 py-2 text-sm font-semibold text-rose-100"
+        >
+          {refreshError}
+        </p>
+      ) : null}
+
       {loading ? (
         <Card>
           <CardBody className="space-y-2 py-6">
@@ -103,7 +129,7 @@ export function ClerkStockView({
             ))}
           </CardBody>
         </Card>
-      ) : rows.length === 0 ? (
+      ) : refreshError && rows.length === 0 ? null : rows.length === 0 ? (
         <Card className="border-dashed">
           <CardBody className="py-12 text-center">
             <p className="text-sm font-bold text-slate-200">No stock on hand yet</p>

@@ -11,6 +11,7 @@ import React, {
 } from 'react';
 import type { Session } from 'next-auth';
 import { SessionProvider, signOut, useSession } from 'next-auth/react';
+import { STAFF_ROSTER_LOAD_ERROR } from '@/lib/domains/http/clientLoadFailure';
 import type { StaffUser } from '@/lib/utils/roles';
 import { isManager, isRoleName } from '@/lib/utils/roles';
 
@@ -24,6 +25,7 @@ interface RoleContextValue {
   applyServerUser: (user: StaffUser | null) => void;
   refresh: () => Promise<void>;
   signOutUser: () => Promise<void>;
+  rosterError: string | null;
 }
 
 const RoleContext = createContext<RoleContextValue | null>(null);
@@ -99,29 +101,34 @@ function RoleContextInner({ children }: { children: React.ReactNode }) {
   const activeUser = serverUser !== undefined ? serverUser : sessionUser;
 
   const [users, setUsers] = useState<StaffUser[]>([]);
+  const [rosterError, setRosterError] = useState<string | null>(null);
   const loadedForUserIdRef = useRef<string | null>(null);
 
   const loadStaffDirectory = useCallback(async () => {
     if (!activeUser || !isManager(activeUser.role)) {
+      setRosterError(null);
       setUsers(activeUser ? [activeUser] : []);
       return;
     }
     const list = await fetchUsersCoalesced();
     if (list) {
+      setRosterError(null);
       setUsers(list);
     } else {
-      setUsers([activeUser]);
+      setRosterError(STAFF_ROSTER_LOAD_ERROR);
     }
   }, [activeUser]);
 
   useEffect(() => {
     if (!activeUser) {
       loadedForUserIdRef.current = null;
+      setRosterError(null);
       setUsers([]);
       return;
     }
     if (!isManager(activeUser.role)) {
       loadedForUserIdRef.current = activeUser.id;
+      setRosterError(null);
       setUsers([activeUser]);
       return;
     }
@@ -156,8 +163,9 @@ function RoleContextInner({ children }: { children: React.ReactNode }) {
       applyServerUser,
       refresh,
       signOutUser,
+      rosterError,
     }),
-    [users, activeUser, loading, setActiveUserId, applyServerUser, refresh, signOutUser]
+    [users, activeUser, loading, setActiveUserId, applyServerUser, refresh, signOutUser, rosterError]
   );
 
   return <RoleContext.Provider value={value}>{children}</RoleContext.Provider>;
