@@ -27,6 +27,11 @@ export async function postJsonOrQueue<T>(input: {
   const allowQueue = input.allowOfflineQueue !== false;
   const body = { ...input.body };
 
+  const queuedId =
+    typeof body.clientMutationId === 'string' && body.clientMutationId.trim().length >= 8
+      ? body.clientMutationId.trim()
+      : undefined;
+
   if (allowQueue && typeof navigator !== 'undefined' && !navigator.onLine) {
     const record = await enqueueOfflineMutation({
       kind: input.kind,
@@ -34,6 +39,7 @@ export async function postJsonOrQueue<T>(input: {
       method: 'POST',
       body,
       label: input.label,
+      clientMutationId: queuedId,
     });
     requestOfflineFlush();
     return { ok: true, offline: true, queuedId: record.id };
@@ -63,6 +69,7 @@ export async function postJsonOrQueue<T>(input: {
         method: 'POST',
         body,
         label: input.label,
+        clientMutationId: queuedId,
       });
       requestOfflineFlush();
       return { ok: true, offline: true, queuedId: record.id };

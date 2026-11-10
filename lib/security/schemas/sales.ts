@@ -10,6 +10,8 @@ export const salesPostBodySchema = z
     bundleId: optionalSafeText(128),
     bundleSku: optionalSafeText(128),
     externalRef: optionalSafeText(128),
+    /** When set, must be the session store. Products themselves are not store-keyed. */
+    storeId: z.string().trim().min(1).max(128).optional(),
     clientMutationId: z.string().trim().min(8).max(128),
   })
   .strict()

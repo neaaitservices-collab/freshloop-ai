@@ -54,6 +54,50 @@ export function stockLevelToTransferRow(level: StockLevel): SubInventoryTransfer
   };
 }
 
+const SALE_QTY_MAX = 1_000_000;
+
+async function postFloorSale(input: {
+  productId: string;
+  quantity: number;
+  clientMutationId: string;
+  label?: string;
+  broadcast?: boolean;
+}): Promise<InventoryMoveResult & { queuedOffline?: boolean }> {
+  const result = await postJsonOrQueue<{
+    success?: boolean;
+    error?: string;
+    level?: StockLevel;
+    units?: number;
+    sale?: { quantitySold?: number };
+  }>({
+    kind: OFFLINE_MUTATION_KIND.INVENTORY_MOVE,
+    url: '/api/sales',
+    label: input.label ?? 'Record sale',
+    body: {
+      productId: input.productId,
+      quantity: input.quantity,
+      location: 'floor',
+      clientMutationId: input.clientMutationId,
+    },
+  });
+  if (result.ok && result.offline) {
+    if (input.broadcast !== false) notifyInventoryUpdated({ productId: input.productId });
+    return { success: true, action: 'sale', queuedOffline: true };
+  }
+  if (!result.ok) {
+    return { success: false, action: 'sale', error: result.error };
+  }
+  const level = result.data.level;
+  if (!result.data.success || !level) {
+    return { success: false, action: 'sale', error: result.data.error ?? 'The sale could not be saved.' };
+  }
+  const units = result.data.units ?? result.data.sale?.quantitySold ?? input.quantity;
+  if (input.broadcast !== false) {
+    notifyInventoryUpdated({ level, productId: input.productId });
+  }
+  return { success: true, action: 'sale', level, units };
+}
+
 export async function executeInventoryMove(input: {
   productId: string;
   action: InventoryMoveAction;
@@ -61,10 +105,29 @@ export async function executeInventoryMove(input: {
   staffId?: string;
   discountPct?: number;
   label?: string;
+  /** Stable for this user action. Retries and the offline queue must send the same id. */
+  clientMutationId?: string;
   /** When false, caller owns `freshloop-inventory-updated` (avoids double UI patches). */
   broadcast?: boolean;
 }): Promise<InventoryMoveResult & { queuedOffline?: boolean }> {
-  const clientMutationId = createClientMutationId();
+  const clientMutationId = input.clientMutationId ?? createClientMutationId();
+  if (input.action === 'sale') {
+    const quantity = Number(input.quantity);
+    if (!Number.isFinite(quantity) || quantity <= 0 || quantity > SALE_QTY_MAX) {
+      return {
+        success: false,
+        action: 'sale',
+        error: 'Sale quantity must be greater than 0 and at most 1,000,000.',
+      };
+    }
+    return postFloorSale({
+      productId: input.productId,
+      quantity,
+      clientMutationId,
+      label: input.label,
+      broadcast: input.broadcast,
+    });
+  }
   const result = await postJsonOrQueue<InventoryMoveResult & { level?: StockLevel }>({
     kind: OFFLINE_MUTATION_KIND.INVENTORY_MOVE,
     url: '/api/inventory/move',

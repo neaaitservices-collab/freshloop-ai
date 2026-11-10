@@ -14,6 +14,7 @@ import {
   type SubInventoryTransferRow,
   transferSuccessMessage,
 } from '@/lib/domains/inventory/inventoryMoveClient';
+import { createClientMutationId } from '@/lib/offline/queue';
 import type { StockLevel } from '@/lib/domains/inventory/stock';
 import { formatUnits, stockUnitLabel } from '@/lib/domains/receiving/yieldPricing';
 
@@ -25,6 +26,7 @@ export type PerformInventoryMove = (input: {
   quantity?: number;
   staffId?: string;
   discountPct?: number;
+  clientMutationId?: string;
   row: SubInventoryTransferRow;
 }) => Promise<
   | { success: true; level: StockLevel; message: string }
@@ -267,44 +269,51 @@ export function SubInventoryTransferBar({
       onError?.('Enter a quantity greater than zero.');
       return;
     }
+    if (busy) return;
 
-    if (performMove) {
-      const outcome = await performMove({
+    const clientMutationId = action === 'sale' ? createClientMutationId() : undefined;
+    setBusy(true);
+    try {
+      if (performMove) {
+        const outcome = await performMove({
+          productId: row.productId,
+          action,
+          quantity,
+          staffId,
+          clientMutationId,
+          row,
+        });
+        if (outcome.success) {
+          onSuccess?.({
+            action,
+            level: outcome.level,
+            message: outcome.message,
+          });
+        } else {
+          onError?.(outcome.error);
+        }
+        return;
+      }
+
+      const result = await executeInventoryMove({
         productId: row.productId,
         action,
         quantity,
         staffId,
-        row,
+        clientMutationId,
       });
-      if (outcome.success) {
-        onSuccess?.({
-          action,
-          level: outcome.level,
-          message: outcome.message,
-        });
-      } else {
-        onError?.(outcome.error);
+      if (!result.success || !result.level) {
+        onError?.(result.error ?? 'Transfer failed.');
+        return;
       }
-      return;
+      onSuccess?.({
+        action,
+        level: result.level,
+        message: transferSuccessMessage(action, row, result.level, result.units),
+      });
+    } finally {
+      setBusy(false);
     }
-
-    setBusy(true);
-    const result = await executeInventoryMove({
-      productId: row.productId,
-      action,
-      quantity,
-      staffId,
-    });
-    setBusy(false);
-    if (!result.success || !result.level) {
-      onError?.(result.error ?? 'Transfer failed.');
-      return;
-    }
-    onSuccess?.({
-      action,
-      level: result.level,
-      message: transferSuccessMessage(action, row, result.level, result.units),
-    });
   };
 
   const showFloor = variant === 'floor' || variant === 'both';
@@ -371,6 +380,14 @@ export function SubInventoryTransferBar({
                 <button
                   type="button"
                   disabled={busy || floorQty <= 0}
+                  onClick={() => void run('sale', floorQty)}
+                  className={`${secondaryBtn} min-w-[8.5rem] border-blue-800/60 bg-blue-950/40 text-blue-100 hover:bg-blue-900/50`}
+                >
+                  Record sale
+                </button>
+                <button
+                  type="button"
+                  disabled={busy || floorQty <= 0}
                   onClick={() => void run('waste', floorQty)}
                   className={`${secondaryBtn} min-w-[8.5rem] border-slate-700 bg-slate-900/50 text-slate-400 hover:border-rose-900/50 hover:bg-rose-950/30 hover:text-rose-300`}
                 >
@@ -402,6 +419,14 @@ export function SubInventoryTransferBar({
               >
                 {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ArrowRightLeft className="h-3.5 w-3.5" />}
                 To production
+              </button>
+              <button
+                type="button"
+                disabled={busy || floorQty <= 0}
+                onClick={() => void run('sale', floorQty)}
+                className={`${compact ? compactBtn : btnClass} bg-blue-900/40 text-blue-100`}
+              >
+                Record sale
               </button>
               <button
                 type="button"
