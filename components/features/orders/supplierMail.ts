@@ -17,16 +17,9 @@ export interface PoDraft {
   productIds: string[];
 }
 
-const SKIPPED_WORDS = new Set(['and', 'the', 'at', 'of', 'sons', 'inc', 'co', 'llc']);
-
-export function supplierEmail(supplier: string): string {
-  const words = supplier
-    .toLowerCase()
-    .replace(/&/g, ' ')
-    .split(/[^a-z0-9]+/)
-    .filter((word) => word && !SKIPPED_WORDS.has(word));
-  const domain = words[0] ?? 'supplier';
-  return `orders@${domain}.com`;
+/** A stored contact address, or blank so the buyer types one. Never invent a domain. */
+export function storedSupplierRecipient(email: string | null | undefined): string {
+  return typeof email === 'string' ? email.trim() : '';
 }
 
 export function caseWord(count: number): string {
@@ -48,25 +41,34 @@ export function approvedOrderRows(rows: StockLevel[], marks: Record<string, Line
   return openOrderRows(rows, marks).filter((row) => marks[row.productId] === 'approved');
 }
 
-export function draftForRows(supplier: string, rows: StockLevel[]): PoDraft {
+export function draftForRows(
+  supplier: string,
+  rows: StockLevel[],
+  storedEmail?: string | null
+): PoDraft {
   const lines = rows.map(orderLine);
   return {
     supplier,
-    to: supplierEmail(supplier),
+    to: storedSupplierRecipient(storedEmail),
     subject: `Supermarket Purchase Order - ${supplier}`,
     body: lines.join('\n'),
     productIds: rows.map((row) => row.productId),
   };
 }
 
-export function draftForAll(groups: Array<{ supplier: string; rows: StockLevel[] }>): PoDraft {
+export function draftForAll(
+  groups: Array<{ supplier: string; rows: StockLevel[]; email?: string | null }>
+): PoDraft {
   const blocks = groups
     .filter((group) => group.rows.length > 0)
     .map((group) => `${group.supplier}\n${group.rows.map(orderLine).join('\n')}`);
   const suppliers = groups.map((group) => group.supplier);
+  const recipients = [
+    ...new Set(groups.map((group) => storedSupplierRecipient(group.email)).filter((email) => email.length > 0)),
+  ];
   return {
     supplier: suppliers.length === 1 ? suppliers[0] : 'all suppliers',
-    to: groups.map((group) => supplierEmail(group.supplier)).join(', '),
+    to: recipients.join(', '),
     subject: 'Supermarket Purchase Order - All suppliers',
     body: blocks.join('\n\n'),
     productIds: groups.flatMap((group) => group.rows.map((row) => row.productId)),
