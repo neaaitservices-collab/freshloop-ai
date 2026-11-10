@@ -94,11 +94,11 @@ openssl rand -base64 32
 ### 3. Database Setup & Migration
 ```bash
 npx prisma migrate dev    # local development
-# Production (after deploy): npm run db:push:prod   → prisma migrate deploy
-# Optional seed:            npm run db:seed:prod
+# Production: npm run db:push:prod   → prisma migrate deploy (manual; see docs/DEPLOYMENT.md)
+# Never run db:seed:prod or set FRESHLOOP_ALLOW_DEMO_SEED=1 against production.
 ```
 
-Full Vercel checklist: **[docs/DEPLOYMENT.md](./docs/DEPLOYMENT.md)** (includes GitHub Actions migrate on `main`).
+Full Vercel checklist: **[docs/DEPLOYMENT.md](./docs/DEPLOYMENT.md)**. Production migrations are `workflow_dispatch` only; Vercel auto-deploys `main`.
 
 ### 4. Run Development Server
 ```bash
