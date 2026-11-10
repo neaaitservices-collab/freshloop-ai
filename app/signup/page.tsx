@@ -1,16 +1,14 @@
 'use client';
 
-import React, { Suspense, useMemo, useState } from 'react';
+import React, { Suspense, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { signIn } from 'next-auth/react';
 import { waitForClientSession } from '@/lib/auth/waitForClientSession';
 import { Loader2, UserPlus } from 'lucide-react';
-import { Input, Select } from '@/components/ui/Input';
+import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
 import { AuthPageShell } from '@/components/ui/layout';
-import { STAFF_POSITIONS } from '@/lib/utils/positions';
-import type { RoleName } from '@/lib/utils/roles';
 
 function SignupForm() {
   const searchParams = useSearchParams();
@@ -20,16 +18,10 @@ function SignupForm() {
     callbackUrl.startsWith('/') && !callbackUrl.startsWith('//') ? callbackUrl : '/';
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
-  const [role, setRole] = useState<RoleName>('FLOOR_STAFF');
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-
-  const selectedPosition = useMemo(
-    () => STAFF_POSITIONS.find((p) => p.role === role) ?? STAFF_POSITIONS[3],
-    [role]
-  );
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -52,7 +44,6 @@ function SignupForm() {
         body: JSON.stringify({
           name,
           email: email.trim().toLowerCase(),
-          role,
           password,
         }),
       });
@@ -129,29 +120,6 @@ function SignupForm() {
               autoComplete="email"
             />
           </label>
-          <div>
-            <label className="block text-xs font-semibold text-slate-400" htmlFor="signup-position">
-              Your position
-            </label>
-            <Select
-              id="signup-position"
-              required
-              value={role}
-              onChange={(e) => setRole(e.target.value as RoleName)}
-              className="mt-1.5"
-            >
-              {STAFF_POSITIONS.map((position) => (
-                <option key={position.role} value={position.role}>
-                  {position.label}
-                </option>
-              ))}
-            </Select>
-            <p className="mt-2 rounded-xl border border-slate-800 bg-slate-950/80 px-3 py-2 text-[11px] leading-relaxed text-slate-400">
-              <span className="font-bold text-slate-300">{selectedPosition.label}</span>
-              {' — '}
-              {selectedPosition.access}
-            </p>
-          </div>
           <label className="block text-xs font-semibold text-slate-400">
             Password (min 8 characters)
             <Input
@@ -194,8 +162,7 @@ function SignupForm() {
         </form>
 
         <p className="mt-4 text-center text-xs text-slate-400">
-          Your position sets app access immediately. A manager can adjust your role later in Admin
-          if needed.
+          Access is assigned by the store. A manager can adjust your role later in Admin if needed.
         </p>
         <p className="mt-3 text-center text-sm">
           <Link href="/login" className="font-bold text-emerald-400 hover:text-emerald-300">

@@ -113,14 +113,14 @@ describe('security schemas', () => {
     assert.equal(parsed.lines[0]?.quantity, 2);
   });
 
-  it('sanitizes signup name control chars', () => {
+  it('sanitizes signup name control chars and drops a client role', () => {
     const parsed = signupBodySchema.parse({
       name: 'Chef\x00One',
       email: 'chef@freshloop.test',
       password: 'freshloop1',
-      role: 'DELI_CHEF',
+      role: 'Owner',
     });
     assert.equal(parsed.name, 'ChefOne');
-    assert.equal(parsed.role, 'DELI_CHEF');
+    assert.equal('role' in parsed, false);
   });
 });
