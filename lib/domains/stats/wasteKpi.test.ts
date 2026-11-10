@@ -5,6 +5,7 @@ import {
   DEFAULT_KPI_LOOKBACK_DAYS,
   kpiLookbackRange,
   MIN_GROSS_SALES_FOR_WASTE_RATIO,
+  officialWastePctLabel,
 } from '@/lib/domains/stats/wasteKpi';
 
 test('computeWastePct returns null when gross sales are below the floor', () => {
@@ -21,6 +22,14 @@ test('computeWastePct matches waste dollars over gross sales', () => {
 
 test('computeWastePct caps extreme ratios', () => {
   assert.equal(computeWastePct(50_000, 100), 999.99);
+});
+
+test('official waste label stays a dash when the ratio is withheld', () => {
+  assert.equal(computeWastePct(40, MIN_GROSS_SALES_FOR_WASTE_RATIO - 1), null);
+  assert.equal(officialWastePctLabel(null), '—');
+  assert.equal(officialWastePctLabel(0), '0.0%');
+  assert.equal(officialWastePctLabel(2.5), '2.5%');
+  assert.equal(officialWastePctLabel(150), '>100%');
 });
 
 test('kpiLookbackRange spans DEFAULT_KPI_LOOKBACK_DAYS inclusive', () => {
