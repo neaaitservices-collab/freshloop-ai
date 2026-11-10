@@ -3,7 +3,6 @@
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { useRole } from '@/components/auth/RoleProvider';
 import { notifyInventoryUpdated } from '@/lib/domains/inventory/inventoryMoveClient';
-import { resolveManufacturingRecipeId } from '@/lib/domains/manufacturing/fallbackRecipes';
 import type {
   KitchenRecipeDefinition,
   ProductionBatchExecutedSummary,
@@ -51,146 +50,6 @@ interface RecipeProductionModalProps {
   onBatchFailed?: (message: string) => void;
 }
 
-const KITCHEN_RECIPES_CATALOG: KitchenRecipeDefinition[] = [
-  {
-    recipeId: 'rec-panzanella-001',
-    recipeName: 'Roasted Hot House Tomato & Sourdough Panzanella',
-    category: 'Salad / Panzanella',
-    outputProductId: 'prod-deli-panzanella',
-    outputProductName: 'Roasted Tomato & Sourdough Panzanella (12 oz)',
-    standardBatchYield: 20,
-    outputUnit: 'TUB',
-    targetRetailPrice: 8.99,
-    prepTimeMinutes: 25,
-    laborHours: 0.75,
-    laborRatePerHour: 17.6,
-    packagingCostPerUnit: 1,
-    bom: [
-      {
-        ingredientProductId: 'prod-tomato-hothouse',
-        name: 'Hot House Tomatoes (Ontario)',
-        standardQtyPerBatch: 15,
-        unit: 'LBS / KG',
-        movingAvgUnitCost: 2.5,
-        allowVariance: true,
-        availableKitchenStock: 15,
-      },
-      {
-        ingredientProductId: 'prod-sourdough-boule',
-        name: 'Artisanal Sourdough Boule',
-        standardQtyPerBatch: 8,
-        unit: 'LOAF',
-        movingAvgUnitCost: 2.1,
-        allowVariance: true,
-        availableKitchenStock: 8,
-      },
-      {
-        ingredientProductId: 'prod-evoo-5l',
-        name: 'Extra Virgin Olive Oil (Bulk Kitchen)',
-        standardQtyPerBatch: 0.5,
-        unit: 'LITER',
-        movingAvgUnitCost: 5.7,
-        allowVariance: false,
-        availableKitchenStock: 19.5,
-      },
-    ],
-  },
-  {
-    recipeId: 'rec-guacamole-003',
-    recipeName: 'Avocado & Ontario Tomato Guacamole Cups',
-    category: 'Prepared Grab-n-Go',
-    outputProductId: 'prod-deli-guacamole',
-    outputProductName: 'Fresh Kitchen Rescue Guacamole Cup (6 oz)',
-    standardBatchYield: 30,
-    outputUnit: 'TUB',
-    targetRetailPrice: 4.99,
-    prepTimeMinutes: 20,
-    laborHours: 0.5,
-    laborRatePerHour: 17.6,
-    packagingCostPerUnit: 0.85,
-    bom: [
-      {
-        ingredientProductId: 'prod-avocado-hass',
-        name: 'Avocados Hass (Mexico)',
-        standardQtyPerBatch: 18,
-        unit: 'UNIT / KG',
-        movingAvgUnitCost: 1.81,
-        allowVariance: true,
-        availableKitchenStock: 36,
-      },
-      {
-        ingredientProductId: 'prod-tomato-cocktail',
-        name: 'Cocktail Tomatoes',
-        standardQtyPerBatch: 2,
-        unit: 'LBS / KG',
-        movingAvgUnitCost: 3.5,
-        allowVariance: true,
-        availableKitchenStock: 4,
-      },
-      {
-        ingredientProductId: 'prod-cilantro',
-        name: 'Fresh Cilantro Bunch',
-        standardQtyPerBatch: 6,
-        unit: 'BUNCH',
-        movingAvgUnitCost: 1.38,
-        allowVariance: true,
-        availableKitchenStock: 6,
-      },
-      {
-        ingredientProductId: 'prod-jalapeno',
-        name: 'Jalapeno Peppers',
-        standardQtyPerBatch: 4,
-        unit: 'LBS / KG',
-        movingAvgUnitCost: 1.9,
-        allowVariance: true,
-        availableKitchenStock: 4,
-      },
-    ],
-  },
-  {
-    recipeId: 'rec-parfait-002',
-    recipeName: 'Honeycrisp & Spiced Cream Bakery Parfait',
-    category: 'Parfait / Dessert',
-    outputProductId: 'prod-deli-parfait',
-    outputProductName: 'Honeycrisp & Spiced Cream Parfait (10 oz)',
-    standardBatchYield: 28,
-    outputUnit: 'TUB',
-    targetRetailPrice: 6.49,
-    prepTimeMinutes: 30,
-    laborHours: 1,
-    laborRatePerHour: 17.6,
-    packagingCostPerUnit: 1.1,
-    bom: [
-      {
-        ingredientProductId: 'prod-apple-honeycrisp',
-        name: 'Honey Crisp Apples',
-        standardQtyPerBatch: 20,
-        unit: 'LBS / KG',
-        movingAvgUnitCost: 2.62,
-        allowVariance: true,
-        availableKitchenStock: 20,
-      },
-      {
-        ingredientProductId: 'prod-heavy-cream',
-        name: 'Whole Heavy Cream 40%',
-        standardQtyPerBatch: 6,
-        unit: 'LITER',
-        movingAvgUnitCost: 3.8,
-        allowVariance: true,
-        availableKitchenStock: 6,
-      },
-      {
-        ingredientProductId: 'prod-greek-yogurt',
-        name: 'Greek Whole Milk Yogurt (750g)',
-        standardQtyPerBatch: 8,
-        unit: 'TUB',
-        movingAvgUnitCost: 2.2,
-        allowVariance: false,
-        availableKitchenStock: 24,
-      },
-    ],
-  },
-];
 
 export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
   isOpen,
@@ -201,16 +60,11 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
 }) => {
   const { activeUser, loading: sessionLoading } = useRole();
   const staffRole = manufacturingRoleForApi(activeUser?.role);
-  const [catalog, setCatalog] = useState<KitchenRecipeDefinition[]>(
-    KITCHEN_RECIPES_CATALOG
-  );
+  const [catalog, setCatalog] = useState<KitchenRecipeDefinition[]>([]);
   const [catalogLoading, setCatalogLoading] = useState(false);
-  const [selectedRecipeId, setSelectedRecipeId] = useState<string>(
-    KITCHEN_RECIPES_CATALOG[0].recipeId
-  );
-  const [batchOutputQty, setBatchOutputQty] = useState<number>(
-    KITCHEN_RECIPES_CATALOG[0].standardBatchYield
-  );
+  const [catalogUnavailable, setCatalogUnavailable] = useState(false);
+  const [selectedRecipeId, setSelectedRecipeId] = useState<string>('');
+  const [batchOutputQty, setBatchOutputQty] = useState<number>(1);
   const [varianceEnabled, setVarianceEnabled] = useState<boolean>(false);
   const [customWeights, setCustomWeights] = useState<Record<string, number>>({});
   const [submitting, setSubmitting] = useState<boolean>(false);
@@ -222,12 +76,27 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
     setCatalogLoading(true);
     try {
       const res = await fetch('/api/manufacturing', { cache: 'no-store' });
-      const json = await res.json();
-      if (json.success && Array.isArray(json.recipes) && json.recipes.length > 0) {
-        setCatalog(json.recipes as KitchenRecipeDefinition[]);
+      const json = (await res.json().catch(() => null)) as {
+        success?: boolean;
+        fallback?: boolean;
+        readOnly?: boolean;
+        recipes?: KitchenRecipeDefinition[];
+      } | null;
+      const recipes = Array.isArray(json?.recipes) ? json.recipes : [];
+      const flagged =
+        json?.fallback === true ||
+        json?.readOnly === true ||
+        recipes.some((recipe) => recipe.fallback === true || recipe.readOnly === true);
+      if (!res.ok || !json?.success || flagged) {
+        setCatalog([]);
+        setCatalogUnavailable(true);
+        return;
       }
+      setCatalogUnavailable(false);
+      setCatalog(recipes);
     } catch {
-      /* keep seeded fallback */
+      setCatalog([]);
+      setCatalogUnavailable(true);
     } finally {
       setCatalogLoading(false);
     }
@@ -242,31 +111,28 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
 
   useEffect(() => {
     if (!isOpen || catalog.length === 0) return;
-    const resolved = initialRecipeId
-      ? resolveManufacturingRecipeId(initialRecipeId)
-      : catalog[0].recipeId;
     const found =
-      catalog.find((r) => r.recipeId === resolved) ??
       catalog.find((r) => r.recipeId === initialRecipeId) ??
       catalog[0];
+    if (!found) return;
     setSelectedRecipeId(found.recipeId);
     setBatchOutputQty(found.standardBatchYield);
     setCustomWeights({});
   }, [isOpen, initialRecipeId, catalog]);
 
   const selectedRecipe = useMemo(
-    () =>
-      catalog.find((r) => r.recipeId === selectedRecipeId) || catalog[0],
+    () => catalog.find((r) => r.recipeId === selectedRecipeId) ?? catalog[0],
     [catalog, selectedRecipeId]
   );
 
   const scaleRatio =
-    selectedRecipe.standardBatchYield > 0
+    selectedRecipe && selectedRecipe.standardBatchYield > 0
       ? batchOutputQty / selectedRecipe.standardBatchYield
       : 1;
 
   // Dynamic BOM breakdown & real-time Moving Average Cost batch calculation
   const computedBomRows = useMemo(() => {
+    if (!selectedRecipe) return [];
     return selectedRecipe.bom.map((ing) => {
       const scaledStandardQty = Number(
         (ing.standardQtyPerBatch * scaleRatio).toFixed(2)
@@ -295,9 +161,9 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
     () =>
       resolveLaborRatePerHour({
         staffHourlyRate: activeUser?.hourlyRate ?? null,
-        recipeLaborRate: selectedRecipe.laborRatePerHour ?? null,
+        recipeLaborRate: selectedRecipe?.laborRatePerHour ?? null,
       }),
-    [activeUser?.hourlyRate, selectedRecipe.laborRatePerHour]
+    [activeUser?.hourlyRate, selectedRecipe?.laborRatePerHour]
   );
 
   const totalBatchCost = useMemo(() => {
@@ -328,7 +194,7 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
   );
 
   const projectedMarginPct = useMemo(() => {
-    if (selectedRecipe.targetRetailPrice <= 0) return 0;
+    if (!selectedRecipe || selectedRecipe.targetRetailPrice <= 0) return 0;
     return Number(
       (
         ((selectedRecipe.targetRetailPrice - unitOutputCost) /
@@ -336,17 +202,7 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
         100
       ).toFixed(1)
     );
-  }, [selectedRecipe.targetRetailPrice, unitOutputCost]);
-
-  if (!selectedRecipe) {
-    return (
-      <ModalShell open={isOpen} onClose={onClose} width="sm">
-        <ModalBody>
-          <p className="text-sm text-slate-300">No BOM recipes are available.</p>
-        </ModalBody>
-      </ModalShell>
-    );
-  }
+  }, [selectedRecipe, unitOutputCost]);
 
   const handleRecipeChange = (newRecipeId: string) => {
     const found = catalog.find((r) => r.recipeId === newRecipeId);
@@ -522,7 +378,22 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
             </div>
           )}
 
-          {!completedBatch ? (
+          {catalogUnavailable ? (
+            <div className="space-y-3 rounded-2xl border border-slate-800 bg-slate-950/70 p-4">
+              <p className="text-sm font-bold text-slate-100">Recipes unavailable, retry</p>
+              <button
+                type="button"
+                onClick={() => void loadCatalog()}
+                className="inline-flex min-h-11 items-center rounded-xl bg-slate-800 px-4 text-sm font-bold text-white hover:bg-slate-700"
+              >
+                Retry
+              </button>
+            </div>
+          ) : catalogLoading && !selectedRecipe ? (
+            <p className="text-sm text-slate-300">Loading recipes…</p>
+          ) : !selectedRecipe ? (
+            <p className="text-sm text-slate-300">No saved recipes to run.</p>
+          ) : !completedBatch ? (
             <>
               {/* Recipe Selector + Batch Output + RBAC Role Selector */}
               <div className="grid grid-cols-1 sm:grid-cols-12 gap-4">
@@ -758,7 +629,7 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
             {completedBatch ? 'Close' : 'Cancel'}
           </button>
 
-          {!completedBatch ? (
+          {!catalogUnavailable && selectedRecipe && !completedBatch ? (
             <button
               type="button"
               onClick={handleExecuteProduction}

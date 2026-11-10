@@ -22,6 +22,9 @@ export interface KitchenRecipeDefinition {
   laborRatePerHour: number;
   packagingCostPerUnit: number;
   bom: KitchenRecipeBOMIngredient[];
+  /** True only when the database could not be reached and this row is display-only. */
+  fallback?: boolean;
+  readOnly?: boolean;
 }
 
 export interface ProductionBatchExecutedSummary {

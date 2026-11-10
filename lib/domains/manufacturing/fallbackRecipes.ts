@@ -37,6 +37,33 @@ export function resolveManufacturingRecipeId(recipeId: string): string {
   return MANUFACTURING_RECIPE_ALIASES[recipeId] ?? recipeId;
 }
 
+/** Ids and aliases that exist only in the display catalog, never as a posted batch. */
+export function isFallbackRecipeId(recipeId: string): boolean {
+  const id = recipeId.trim();
+  if (!id) return false;
+  if (id in MANUFACTURING_RECIPE_ALIASES) return true;
+  if (Object.values(MANUFACTURING_RECIPE_ALIASES).includes(id)) return true;
+  return FALLBACK_RECIPES.some((recipe) => recipe.id === id || recipe.aliases.includes(id));
+}
+
+export function manufacturingCatalogIsReadOnly(
+  recipes: Array<{ fallback?: boolean; readOnly?: boolean }> | null | undefined
+): boolean {
+  return (recipes ?? []).some((recipe) => recipe.fallback === true || recipe.readOnly === true);
+}
+
+/** Connection failures only. A missing row or an empty list is a successful read. */
+export function isDatabaseUnreachableError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const record = error as { code?: string; errorCode?: string; message?: string };
+  const code = record.code ?? record.errorCode ?? '';
+  if (code === 'P1001' || code === 'P1002' || code === 'P1017') return true;
+  const message = error instanceof Error ? error.message : String(record.message ?? '');
+  return /can't reach database server|ECONNREFUSED|ETIMEDOUT|Server has closed the connection/i.test(
+    message
+  );
+}
+
 export const FALLBACK_RECIPES: FallbackRecipeCatalogEntry[] = [
   {
     id: 'rec-panzanella-001',

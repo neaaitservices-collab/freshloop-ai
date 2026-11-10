@@ -7,8 +7,7 @@ import { LotAllocationError, consumeLotsFifo, createLotOnReceive } from '@/lib/d
 import { resolveExecutionLaborRate } from '@/lib/auth/staffHourlyRate';
 import { computeScaledBatchCost } from '@/lib/domains/manufacturing/batchCost';
 import {
-  FALLBACK_RECIPES,
-  resolveManufacturingRecipeId,
+  isFallbackRecipeId,
   type FallbackRecipeCatalogEntry,
 } from '@/lib/domains/manufacturing/fallbackRecipes';
 import {
@@ -177,7 +176,7 @@ export async function executeManufacturingBatch(
 
   const payload = payloadFromInput({ ...input, operationId });
   const payloadHash = manufacturingPayloadHash(payload);
-  const recipeId = resolveManufacturingRecipeId(payload.recipe_id);
+  const recipeId = payload.recipe_id.trim();
   const batchOutput = payload.batch_output;
 
   if (!recipeId) {
@@ -188,68 +187,52 @@ export async function executeManufacturingBatch(
     );
   }
 
-  let resolvedRecipe: FallbackRecipeCatalogEntry | null = null;
-  let recipeLaborHours = 0;
-  let recipeLaborRateFromDb: number | null = null;
-  let recipePackagingPerUnit = 0;
-  try {
-    const dbRecipe = await prisma.recipe.findUnique({
-      where: { id: recipeId },
-      include: {
-        outputProduct: true,
-        bomLines: {
-          include: {
-            ingredientProduct: true,
-          },
+  if (isFallbackRecipeId(recipeId)) {
+    throw new ManufacturingRequestError('Recipe not found', 'RECIPE_NOT_FOUND', 404);
+  }
+
+  const dbRecipe = await prisma.recipe.findUnique({
+    where: { id: recipeId },
+    include: {
+      outputProduct: true,
+      bomLines: {
+        include: {
+          ingredientProduct: true,
         },
       },
-    });
-    if (dbRecipe) {
-      recipeLaborHours = Number(dbRecipe.laborHours ?? 0);
-      recipeLaborRateFromDb =
-        dbRecipe.laborRate != null && Number(dbRecipe.laborRate) > 0
-          ? Number(dbRecipe.laborRate)
-          : null;
-      recipePackagingPerUnit = Number(dbRecipe.packagingCostPerUnit ?? 0);
-      resolvedRecipe = {
-        id: dbRecipe.id,
-        aliases: [],
-        name: dbRecipe.name,
-        outputProductId: dbRecipe.outputProductId,
-        outputProductName: dbRecipe.outputProduct.name,
-        outputUnit: dbRecipe.outputProduct.unitType,
-        outputShelfLifeDays: dbRecipe.outputProduct.shelfLifeDays || 3,
-        batchYieldQty: Number(dbRecipe.yieldPortions ?? 0),
-        targetRetailPrice: Number(dbRecipe.targetRetailPrice ?? 0),
-        isActive: dbRecipe.status !== 'COMPLETED',
-        bomItems: dbRecipe.bomLines.map((bi) => ({
-          ingredientProductId: bi.ingredientProductId,
-          ingredientName: bi.ingredientProduct.name,
-          requiredQty: Number(bi.quantityRequired ?? 0),
-          unit: (bi.unit as UnitType) ?? ('UNIT' as UnitType),
-          allowVariance: bi.allowVariance,
-          defaultMacCost: bi.ingredientProduct.standardCost ?? 2.0,
-        })),
-      };
-    }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : '';
-    const offline = /can't reach database server|ECONNREFUSED|P1001/i.test(message);
-    if (!offline) throw error;
+    },
+  });
+
+  if (!dbRecipe) {
+    throw new ManufacturingRequestError('Recipe not found', 'RECIPE_NOT_FOUND', 404);
   }
 
-  if (!resolvedRecipe) {
-    resolvedRecipe =
-      FALLBACK_RECIPES.find((r) => r.id === recipeId || r.aliases.includes(recipeId)) || null;
-  }
-
-  if (!resolvedRecipe) {
-    throw new ManufacturingRequestError(
-      `Recipe "${recipeId}" was not found in the database.`,
-      'RECIPE_NOT_FOUND',
-      404
-    );
-  }
+  const recipeLaborHours = Number(dbRecipe.laborHours ?? 0);
+  const recipeLaborRateFromDb =
+    dbRecipe.laborRate != null && Number(dbRecipe.laborRate) > 0
+      ? Number(dbRecipe.laborRate)
+      : null;
+  const recipePackagingPerUnit = Number(dbRecipe.packagingCostPerUnit ?? 0);
+  const resolvedRecipe: FallbackRecipeCatalogEntry = {
+    id: dbRecipe.id,
+    aliases: [],
+    name: dbRecipe.name,
+    outputProductId: dbRecipe.outputProductId,
+    outputProductName: dbRecipe.outputProduct.name,
+    outputUnit: dbRecipe.outputProduct.unitType,
+    outputShelfLifeDays: dbRecipe.outputProduct.shelfLifeDays || 3,
+    batchYieldQty: Number(dbRecipe.yieldPortions ?? 0),
+    targetRetailPrice: Number(dbRecipe.targetRetailPrice ?? 0),
+    isActive: dbRecipe.status !== 'COMPLETED',
+    bomItems: dbRecipe.bomLines.map((bi) => ({
+      ingredientProductId: bi.ingredientProductId,
+      ingredientName: bi.ingredientProduct.name,
+      requiredQty: Number(bi.quantityRequired ?? 0),
+      unit: (bi.unit as UnitType) ?? ('UNIT' as UnitType),
+      allowVariance: bi.allowVariance,
+      defaultMacCost: bi.ingredientProduct.standardCost ?? 2.0,
+    })),
+  };
 
   if (!resolvedRecipe.isActive) {
     throw new ManufacturingRequestError(
