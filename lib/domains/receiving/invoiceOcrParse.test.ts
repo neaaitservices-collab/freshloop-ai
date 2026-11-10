@@ -36,6 +36,7 @@ test('a blank vendor or invoice number cannot commit', () => {
     {
       vendorName: ' ',
       invoiceNumber: 'INV-9',
+      invoiceDate: '2026-11-08',
       lines: [
         {
           product_id: 'p',
@@ -51,6 +52,26 @@ test('a blank vendor or invoice number cannot commit', () => {
     { actorIsManager: true, manualReviewOverride: true }
   );
   assert.ok(blockers.some((line) => line.includes('Vendor')));
+  const missingDate = draftPostingBlockers(
+    {
+      vendorName: 'North',
+      invoiceNumber: 'INV-9',
+      invoiceDate: ' ',
+      lines: [
+        {
+          product_id: 'p',
+          quantity: 1,
+          unit_cost: 1,
+          line_name: 'Apples',
+          line_confidence: 0.99,
+          requires_approval: false,
+          review_reasons: [],
+        },
+      ],
+    },
+    { actorIsManager: true, manualReviewOverride: true }
+  );
+  assert.deepEqual(missingDate, ['Invoice date was not read.']);
 });
 
 test('mixed draft keeps the unreadable line and blocks the whole commit', () => {
