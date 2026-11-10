@@ -1,5 +1,5 @@
 /**
- * What the receive screen shows under the Deliveries header.
+ * What the receive screen shows for the delivery list.
  * A positive row count always wins. Otherwise the screen is loading, an error, or empty — never blank.
  */
 export type DeliveryListPresentation = 'rows' | 'loading' | 'error' | 'empty';

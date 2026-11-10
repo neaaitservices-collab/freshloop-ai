@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useRef, useEffect, useMemo } from 'react';
+import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { DepartmentBadge } from '@/components/ui/DepartmentBadge';
 import { useRole } from '@/components/auth/RoleProvider';
 import { notifyInventoryUpdated } from '@/lib/domains/inventory/inventoryMoveClient';
@@ -182,13 +182,31 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
     };
   }, [catalogOptions]);
 
+  const resetClosedSession = useCallback(() => {
+    pttRecorderRef.current?.cancel();
+    pttRecorderRef.current = null;
+    setIsRecording(false);
+    setProcessingAudio(false);
+    setPipelinePhase('idle');
+    setRecordingSeconds(0);
+    setLastAudioBlob(null);
+    setParsing(false);
+    setStep('CAPTURE');
+    setIsEditMode(false);
+    setTranscript('');
+    setDraftItems([]);
+    setErrorMsg(null);
+    setSavedOffline(false);
+  }, []);
+
   useEffect(() => {
-    if (!isOpen) {
-      pttRecorderRef.current?.cancel();
-      pttRecorderRef.current = null;
-      setIsRecording(false);
-    }
-  }, [isOpen]);
+    if (!isOpen) resetClosedSession();
+  }, [isOpen, resetClosedSession]);
+
+  const dismiss = () => {
+    resetClosedSession();
+    onClose();
+  };
 
   if (!isOpen) return null;
 
@@ -448,7 +466,7 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
   return (
     <ModalShell
       open={isOpen}
-      onClose={onClose}
+      onClose={dismiss}
       width="md"
       panelClassName="max-w-2xl rounded-3xl border-zinc-800 bg-zinc-900"
     >
@@ -476,8 +494,8 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
 
           <button
             type="button"
-            onClick={onClose}
-            className="min-h-11 min-w-11 cursor-pointer rounded-xl p-2 text-zinc-400 transition-all hover:bg-zinc-800 hover:text-white"
+            onClick={dismiss}
+            className="relative z-30 pointer-events-auto min-h-11 min-w-11 cursor-pointer rounded-xl p-2 text-zinc-400 transition-all hover:bg-zinc-800 hover:text-white"
             aria-label="Close"
           >
             <X className="w-5 h-5" />
@@ -818,8 +836,8 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
             <>
               <button
                 type="button"
-                onClick={onClose}
-                className="inline-flex min-h-11 items-center rounded-xl px-4 py-2 text-xs font-bold text-zinc-400 hover:text-white cursor-pointer"
+                onClick={dismiss}
+                className="relative z-30 pointer-events-auto inline-flex min-h-11 items-center rounded-xl px-4 py-2 text-xs font-bold text-zinc-400 hover:text-white cursor-pointer"
               >
                 Cancel
               </button>
@@ -909,7 +927,7 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
               </button>
               <button
                 type="button"
-                onClick={onClose}
+                onClick={dismiss}
                 className="inline-flex min-h-11 items-center rounded-xl px-6 py-2.5 text-xs font-black bg-emerald-400 hover:bg-emerald-300 text-zinc-950 cursor-pointer"
               >
                 Close and refresh the floor

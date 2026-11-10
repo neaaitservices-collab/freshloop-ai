@@ -923,7 +923,6 @@ export function YieldPricingDashboard({
           <h1 className={`${embedded ? 'sr-only' : 'text-2xl font-black tracking-tight text-white'}`}>
             Yield &amp; Pricing
           </h1>
-          <p className="mt-1 text-xs text-slate-400">Deliveries</p>
         </div>
         <div className="flex gap-2">
           <Button variant="secondary" className="text-xs py-2" onClick={() => void loadLogs()}>
