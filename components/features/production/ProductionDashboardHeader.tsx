@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { BookOpen, ChefHat, Mic, Plus } from 'lucide-react';
 import { VOICE_UI_ENABLED } from '@/lib/features/voiceUiEnabled';
 import {
@@ -14,6 +14,7 @@ import { cn } from '@/lib/utils/cn';
 
 export type ProductionDashboardHeaderProps = {
   bomSummary: ProductionBomSummary;
+  statsReady?: boolean;
   mobileSection: ProductionMobileSection;
   onMobileSectionChange: (section: ProductionMobileSection) => void;
   canEditBom: boolean;
@@ -28,6 +29,7 @@ export type ProductionDashboardHeaderProps = {
 
 export function ProductionDashboardHeader({
   bomSummary,
+  statsReady = true,
   mobileSection,
   onMobileSectionChange,
   canEditBom,
@@ -39,24 +41,48 @@ export function ProductionDashboardHeader({
   wasteKpiRefreshError = null,
   onVoiceNote,
 }: ProductionDashboardHeaderProps) {
+  const [heroCollapsed, setHeroCollapsed] = useState(false);
+
+  useEffect(() => {
+    const onScroll = () => {
+      if (window.matchMedia('(min-width: 1024px)').matches) {
+        setHeroCollapsed(false);
+        return;
+      }
+      setHeroCollapsed(window.scrollY > 24);
+    };
+    onScroll();
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
+  }, []);
+
+  const changeSection = (section: ProductionMobileSection) => {
+    onMobileSectionChange(section);
+    if (window.matchMedia('(max-width: 1023px)').matches) {
+      window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+      setHeroCollapsed(false);
+    }
+  };
+
   return (
-    <div
-      className={cn(
-        'relative z-30 w-full',
-        'sticky top-0 -mx-3 space-y-3 border-b border-slate-800/80 bg-[#0b0f19]/95 px-3 pb-3 pt-1 backdrop-blur-md',
-        'sm:-mx-6 sm:px-6 lg:static lg:mx-0 lg:border-0 lg:bg-transparent lg:p-0 lg:backdrop-blur-none'
-      )}
-    >
-      <header className="relative overflow-hidden rounded-2xl border border-slate-800/90 bg-slate-900/60 p-4 lg:p-5">
+    <>
+      <header
+        className={cn(
+          'relative overflow-hidden rounded-2xl border border-slate-800/90 bg-slate-900/60 transition-[max-height,opacity,margin,padding] duration-200',
+          heroCollapsed
+            ? 'mb-0 max-h-0 border-transparent p-0 opacity-0 lg:mb-0 lg:max-h-none lg:border-slate-800/90 lg:p-5 lg:opacity-100'
+            : 'mb-3 max-h-[40rem] p-4 opacity-100 lg:p-5'
+        )}
+      >
         <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
           <div className="min-w-0 flex-1 space-y-2.5">
-            <p className="text-[10px] font-bold uppercase tracking-widest text-emerald-400">
+            <p className="text-xs font-bold uppercase tracking-widest text-emerald-200">
               Production Operations
             </p>
             <h1 className="text-xl font-black tracking-tight text-white sm:text-2xl lg:text-3xl">
               Production Dashboard
             </h1>
-            <ProductionBomKpiBadges summary={bomSummary} />
+            <ProductionBomKpiBadges summary={bomSummary} loading={!statsReady} />
           </div>
           <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap xl:max-w-md xl:justify-end">
             {canEditBom ? (
@@ -104,20 +130,22 @@ export function ProductionDashboardHeader({
           </div>
         </div>
         {syncing ? (
-          <p className="mt-2 text-[10px] text-slate-500">Syncing waste KPI…</p>
+          <p className="mt-2 text-xs text-slate-400">Syncing waste KPI…</p>
         ) : null}
         {wasteKpiRefreshError ? (
-          <p className="mt-2 rounded-xl border border-amber-900/50 bg-amber-950/30 px-3 py-2 text-[11px] font-semibold text-amber-200">
+          <p className="mt-2 rounded-xl border border-amber-900/50 bg-amber-950/30 px-3 py-2 text-xs font-semibold text-amber-200">
             {wasteKpiRefreshError}
           </p>
         ) : null}
       </header>
 
-      <ProductionMobileSectionNav
-        active={mobileSection}
-        onChange={onMobileSectionChange}
-        belowParCount={bomSummary.belowPar}
-      />
-    </div>
+      <div className="sticky top-14 z-30 -mx-3 border-b border-slate-800/80 bg-[#0b0f19]/95 px-3 pb-2 pt-1 backdrop-blur-md sm:-mx-6 sm:px-6 lg:static lg:mx-0 lg:border-0 lg:bg-transparent lg:p-0 lg:backdrop-blur-none">
+        <ProductionMobileSectionNav
+          active={mobileSection}
+          onChange={changeSection}
+          belowParCount={bomSummary.belowPar}
+        />
+      </div>
+    </>
   );
 }

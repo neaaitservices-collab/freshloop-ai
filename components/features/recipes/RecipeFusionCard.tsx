@@ -39,7 +39,7 @@ export function RecipeFusionCard({
           </span>
           {recipe.grossMarginPct > 0 ? (
             <div className="shrink-0 text-right">
-              <span className="block text-[9px] font-bold uppercase tracking-wider text-slate-500">
+              <span className="block text-xs font-bold uppercase tracking-wider text-slate-300">
                 Gross margin
               </span>
               <span className="font-mono text-lg font-black tabular-nums text-emerald-400 sm:text-xl">
@@ -73,7 +73,7 @@ export function RecipeFusionCard({
 
         <dl className="grid grid-cols-1 gap-3 rounded-xl border border-slate-800/80 bg-slate-950/50 p-3 text-xs sm:grid-cols-3 sm:gap-4 sm:p-4">
           <div className="min-w-0 sm:border-r sm:border-slate-800/80 sm:pr-3">
-            <dt className="text-[9px] font-bold uppercase tracking-wider text-slate-500">
+            <dt className="text-xs font-bold uppercase tracking-wider text-slate-300">
               Target retail
             </dt>
             <dd className="font-mono text-base font-black tabular-nums text-slate-100 sm:text-lg">
@@ -81,7 +81,7 @@ export function RecipeFusionCard({
             </dd>
           </div>
           <div className="min-w-0 sm:border-r sm:border-slate-800/80 sm:px-3">
-            <dt className="text-[9px] font-bold uppercase tracking-wider text-slate-500">Yield</dt>
+            <dt className="text-xs font-bold uppercase tracking-wider text-slate-300">Yield</dt>
             <dd
               className="truncate text-sm font-bold text-slate-300"
               title={recipe.estimatedYield}
@@ -90,7 +90,7 @@ export function RecipeFusionCard({
             </dd>
           </div>
           <div className="min-w-0 sm:pl-1">
-            <dt className="text-[9px] font-bold uppercase tracking-wider text-slate-500">
+            <dt className="text-xs font-bold uppercase tracking-wider text-slate-300">
               Batch food cost
             </dt>
             <dd className="font-mono text-base font-bold tabular-nums text-slate-400 sm:text-lg">
@@ -161,8 +161,8 @@ export function RecipeFusionCard({
           {onExecuteBatch ? (
             <Button
               type="button"
-              variant="primary"
-              className="min-h-11 w-full border-amber-800/40 bg-amber-500/90 text-xs text-slate-950"
+              variant="secondary"
+              className="min-h-11 w-full text-xs"
               onClick={() => onExecuteBatch(recipe)}
             >
               <ChefHat className="h-4 w-4" />

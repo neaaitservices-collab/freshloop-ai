@@ -431,7 +431,7 @@ export function ManualRecipeCreatorModal({
               <button
                 type="button"
                 onClick={handleAddLine}
-                className="inline-flex items-center gap-1 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-xs font-bold text-emerald-300 hover:bg-emerald-500/20"
+                className="inline-flex min-h-11 items-center gap-1 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 text-xs font-bold text-emerald-200 hover:bg-emerald-500/20"
               >
                 <Plus className="h-3.5 w-3.5" />
                 Add Ingredient
@@ -450,13 +450,15 @@ export function ManualRecipeCreatorModal({
                   return (
                     <div
                       key={index}
-                      className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-800 bg-slate-950/70 p-2 sm:flex-nowrap"
+                      className="grid grid-cols-1 gap-2 rounded-lg border border-slate-800 bg-slate-950/70 p-3 sm:grid-cols-[minmax(0,1fr)_7rem_5rem_2.75rem] sm:items-end"
                     >
-                      <div className="flex-1 min-w-[200px]">
+                      <label className="grid gap-1 text-xs font-bold text-slate-300">
+                        Ingredient
                         <select
                           value={line.productId}
+                          aria-label={`Ingredient ${index + 1}`}
                           onChange={(e) => handleLineProductChange(index, e.target.value)}
-                          className="w-full rounded-lg border border-slate-800 bg-slate-900 px-2.5 py-1.5 text-xs text-slate-200 focus:border-emerald-500/50"
+                          className="min-h-11 w-full rounded-lg border border-slate-800 bg-slate-900 px-2.5 text-xs font-medium text-slate-200 focus:border-emerald-500/50"
                         >
                           {products.map((p) => (
                             <option key={p.id} value={p.id}>
@@ -464,29 +466,35 @@ export function ManualRecipeCreatorModal({
                             </option>
                           ))}
                         </select>
-                      </div>
+                      </label>
 
-                      <div className="w-24">
+                      <label className="grid gap-1 text-xs font-bold text-slate-300">
+                        Quantity
                         <Input
                           type="number"
                           step="0.01"
                           min="0.01"
                           placeholder="Qty"
+                          aria-label={`Quantity ${index + 1}`}
                           value={line.quantity}
                           onChange={(e) => handleLineQtyChange(index, e.target.value)}
-                          className="h-8 text-xs py-1"
+                          className="min-h-11 text-xs"
                         />
-                      </div>
+                      </label>
 
-                      <div className="w-20 text-[11px] font-mono font-bold text-slate-400">
-                        {chosen?.unitType ?? line.unit}
+                      <div className="grid gap-1">
+                        <span className="text-xs font-bold text-slate-300">Unit</span>
+                        <p className="flex min-h-11 items-center font-mono text-xs font-bold text-slate-200">
+                          {chosen?.unitType ?? line.unit}
+                        </p>
                       </div>
 
                       <button
                         type="button"
                         onClick={() => handleRemoveLine(index)}
                         disabled={lines.length <= 1}
-                        className="rounded-lg p-1.5 text-slate-500 hover:bg-rose-500/20 hover:text-rose-400 disabled:opacity-30"
+                        aria-label={`Remove ingredient ${index + 1}`}
+                        className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg text-slate-300 hover:bg-rose-500/20 hover:text-rose-200 disabled:opacity-30"
                       >
                         <Trash2 className="h-3.5 w-3.5" />
                       </button>

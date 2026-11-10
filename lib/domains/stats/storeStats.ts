@@ -1,12 +1,20 @@
-import { InventoryLocation, TransactionType } from '@prisma/client';
+import { TransactionType } from '@prisma/client';
 import { prisma, VOLUMETRIC_SCRAP_REF_PREFIX } from '@/lib/domains/inventory/ledger';
 import type { WasteKpiReport } from '@/lib/domains/inventory/ledger';
 import { calculateRealTimeWastePct } from '@/lib/domains/inventory/ledger';
+import { isInboundProductionTransfer } from '@/lib/domains/inventory/kitchenInbox';
 import { belowParSkus, isBelowPar, outOfStockSkus } from '@/lib/domains/inventory/lowStock';
 import { getStockLevels } from '@/lib/domains/inventory/stock';
 import type { DepartmentAlert, StoreStats } from '@/lib/domains/stats/storeStatsTypes';
 import { findLatestStoreSetting } from '@/lib/domains/stats/storeSettingSelect';
 import { DEFAULT_KPI_LOOKBACK_DAYS, kpiLookbackRange } from '@/lib/domains/stats/wasteKpi';
+import {
+  enumerateYmd,
+  formatBucketLabel,
+  formatRangeLabel,
+  torontoYmd,
+  type StoreInstantRange,
+} from '@/lib/domains/stats/storeTime';
 
 export type {
   DepartmentAlert,
@@ -49,7 +57,8 @@ export function invalidateStoreStats(): void {
   cachedStats = null;
 }
 
-export function getStoreStats(): Promise<StoreStats> {
+export function getStoreStats(transferRange?: StoreInstantRange | null): Promise<StoreStats> {
+  if (transferRange) return loadStoreStats(transferRange);
   const now = Date.now();
   if (cachedStats && now - cachedStats.at < CACHE_MS) return cachedStats.value;
   const value = loadStoreStats().catch((error: unknown) => {
@@ -72,15 +81,20 @@ export function applyWasteKpiToStoreStats(stats: StoreStats, wasteKpi: WasteKpiR
 }
 
 /** Admin dashboard: inventory/chart stats + live waste KPI in one round-trip. */
-export async function getAdminStoreStatsBundle(): Promise<{
+export async function getAdminStoreStatsBundle(
+  transferRange?: StoreInstantRange | null
+): Promise<{
   stats: StoreStats;
   wasteKpi: WasteKpiReport;
 }> {
-  const [baseStats, wasteKpi] = await Promise.all([getStoreStats(), calculateRealTimeWastePct()]);
+  const [baseStats, wasteKpi] = await Promise.all([
+    getStoreStats(transferRange),
+    calculateRealTimeWastePct(),
+  ]);
   return { stats: applyWasteKpiToStoreStats(baseStats, wasteKpi), wasteKpi };
 }
 
-async function loadStoreStats(): Promise<StoreStats> {
+async function loadStoreStats(transferRange?: StoreInstantRange | null): Promise<StoreStats> {
   const now = new Date();
   const horizon = new Date(now.getTime() + 48 * 60 * 60 * 1000);
   const weekStart = new Date(now);
@@ -91,7 +105,8 @@ async function loadStoreStats(): Promise<StoreStats> {
     now
   );
 
-  const [products, stockLevels, expirations, movements, setting, pendingCredits] = await Promise.all([
+  const [products, stockLevels, expirations, movements, setting, pendingCredits, chartWindow] =
+    await Promise.all([
     prisma.product.findMany({
       where: { isManufactured: false, catalogActive: true },
       select: {
@@ -132,6 +147,24 @@ async function loadStoreStats(): Promise<StoreStats> {
     prisma.receivingDisposition.count({
       where: { reason: 'NOT_RECEIVED', status: 'PENDING_CREDIT' },
     }),
+    transferRange
+      ? prisma.inventoryTransaction.findMany({
+          where: {
+            transactionType: { in: [TransactionType.Rescue, TransactionType.Waste] },
+            timestamp: { gte: transferRange.startUtc, lt: transferRange.endUtc },
+          },
+          select: {
+            timestamp: true,
+            qtyChange: true,
+            unitCostAtTime: true,
+            transactionType: true,
+            toLocation: true,
+            notes: true,
+            referenceId: true,
+            product: { select: { retailPrice: true } },
+          },
+        })
+      : Promise.resolve(null),
   ]);
 
   const levelById = new Map(stockLevels.map((row) => [row.productId, row]));
@@ -187,54 +220,86 @@ async function loadStoreStats(): Promise<StoreStats> {
   let discardValue = 0;
   let rescuedUnits = 0;
   let discardedUnits = 0;
-  const days = Array.from({ length: 7 }, (_, index) => {
+  const chartMovements = transferRange ? (chartWindow ?? []) : movements;
+  const blankDay = () => ({
+    lost: 0,
+    recovered: 0,
+    rescueUnits: 0,
+    discardUnits: 0,
+  });
+  const legacyDays = Array.from({ length: 7 }, (_, index) => {
     const date = new Date(weekStart);
     date.setDate(weekStart.getDate() + index);
     return {
       key: dayKey(date),
       label: date.toLocaleDateString(undefined, { weekday: 'short' }),
-      lost: 0,
-      recovered: 0,
-      rescueUnits: 0,
-      discardUnits: 0,
+      ...blankDay(),
     };
   });
-  const dayIndex = new Map(days.map((day, index) => [day.key, index]));
+  const rangeDays = transferRange
+    ? enumerateYmd(transferRange.from, transferRange.to).map((ymd) => ({
+        key: ymd,
+        label: formatBucketLabel(ymd),
+        ...blankDay(),
+      }))
+    : legacyDays;
+  const legacyIndex = new Map(legacyDays.map((day, index) => [day.key, index]));
+  const rangeIndex = new Map(rangeDays.map((day, index) => [day.key, index]));
 
-  for (const movement of movements) {
+  const scoreMovement = (movement: (typeof movements)[number]) => {
     const units = Math.abs(movement.qtyChange);
-    if (!(units > 0)) continue;
+    if (!(units > 0)) return null;
     const retail = unitRetail(movement.product.retailPrice, movement.unitCostAtTime);
     const amount = units * retail;
-    const isRescue =
-      movement.transactionType === TransactionType.Rescue &&
-      movement.toLocation === InventoryLocation.Kitchen_Prep &&
-      movement.qtyChange > 0;
+    const isRescue = isInboundProductionTransfer(movement);
     const isDiscard =
       movement.transactionType === TransactionType.Waste &&
       !movement.referenceId?.startsWith(VOLUMETRIC_SCRAP_REF_PREFIX) &&
       !movement.notes?.toLowerCase().includes('volumetric scrap') &&
       !movement.notes?.toLowerCase().includes('cubeta');
+    if (!isRescue && !isDiscard) return null;
+    return { units, amount, isRescue, isDiscard };
+  };
 
-    if (isRescue) {
-      rescuedValue += amount;
-      rescuedUnits += units;
-    } else if (isDiscard) {
-      discardValue += amount;
-      discardedUnits += units;
-    } else {
-      continue;
+  for (const movement of movements) {
+    const scored = scoreMovement(movement);
+    if (!scored) continue;
+    if (scored.isRescue) {
+      rescuedValue += scored.amount;
+      rescuedUnits += scored.units;
+    } else if (scored.isDiscard) {
+      discardValue += scored.amount;
+      discardedUnits += scored.units;
     }
+  }
 
-    const index = dayIndex.get(dayKey(movement.timestamp));
-    if (index === undefined) continue;
-    if (isRescue) {
-      days[index].recovered += amount;
-      days[index].rescueUnits += units;
+  const addToDay = (
+    days: typeof legacyDays,
+    index: number | undefined,
+    scored: NonNullable<ReturnType<typeof scoreMovement>>
+  ) => {
+    if (index === undefined) return;
+    if (scored.isRescue) {
+      days[index].recovered += scored.amount;
+      days[index].rescueUnits += scored.units;
     }
-    if (isDiscard) {
-      days[index].lost += amount;
-      days[index].discardUnits += units;
+    if (scored.isDiscard) {
+      days[index].lost += scored.amount;
+      days[index].discardUnits += scored.units;
+    }
+  };
+
+  for (const movement of chartMovements) {
+    const scored = scoreMovement(movement);
+    if (!scored) continue;
+    const key = transferRange ? torontoYmd(movement.timestamp) : dayKey(movement.timestamp);
+    addToDay(rangeDays, rangeIndex.get(key), scored);
+  }
+  if (transferRange) {
+    for (const movement of movements) {
+      const scored = scoreMovement(movement);
+      if (!scored) continue;
+      addToDay(legacyDays, legacyIndex.get(dayKey(movement.timestamp)), scored);
     }
   }
 
@@ -257,15 +322,15 @@ async function loadStoreStats(): Promise<StoreStats> {
     outOfStockCount: outOfStockSkus(stockLevels).length,
     pendingApprovalsCount: pendingCredits,
     rescueVsDiscard: [
-      { name: 'Kitchen rescue', units: Number(rescuedUnits.toFixed(2)) },
+      { name: 'Production transfers', units: Number(rescuedUnits.toFixed(2)) },
       { name: 'Discard', units: Number(discardedUnits.toFixed(2)) },
     ],
-    revenueDays: days.map((day) => ({
+    revenueDays: legacyDays.map((day) => ({
       label: day.label,
       lost: money(day.lost),
       recovered: money(day.recovered),
     })),
-    outcomeDays: days.map((day) => ({
+    outcomeDays: rangeDays.map((day) => ({
       label: day.label,
       recoveredUsd: money(day.recovered),
       lostUsd: money(day.lost),
@@ -273,5 +338,6 @@ async function loadStoreStats(): Promise<StoreStats> {
       discardUnits: Number(day.discardUnits.toFixed(2)),
     })),
     departmentAlerts: Array.from(alerts.values()),
+    transferRangeLabel: transferRange ? formatRangeLabel(transferRange.from, transferRange.to) : null,
   };
 }

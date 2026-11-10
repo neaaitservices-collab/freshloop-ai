@@ -15,8 +15,7 @@ import {
   readSettingsUpdatedEvent,
 } from '@/lib/domains/stats/settingsEvents';
 import type { PlatformSettings } from '@/lib/domains/stats/platformSettings';
-import { OperationsLiveTransfers } from '@/components/features/operations/OperationsLiveTransfers';
-import type { StockLevel } from '@/lib/domains/inventory/stock';
+import { locationLabel } from '@/lib/domains/inventory/locationLabel';
 import {
   Activity,
   DollarSign,
@@ -25,12 +24,7 @@ import {
   RefreshCw,
 } from 'lucide-react';
 
-export default function OperationsCenter({
-  initialLevels,
-}: {
-  /** Ledger rows from the server. Null means that read failed and the client should retry. */
-  initialLevels: StockLevel[] | null;
-}) {
+export default function OperationsCenter() {
   const router = useRouter();
   const [pullSensitivityDays, setPullSensitivityDays] = useState<2 | 3 | 4>(3);
   const [settingsLoading, setSettingsLoading] = useState(false);
@@ -83,17 +77,12 @@ export default function OperationsCenter({
               <h1 className="text-2xl sm:text-3xl lg:text-4xl font-black tracking-tight text-white">
                 FreshLoop AI{' '}
                 <span className="text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 via-teal-300 to-cyan-400">
-                  Floor &amp; rescue transfers
+                  Store operations
                 </span>
               </h1>
-              <p className="text-xs sm:text-sm text-slate-400 max-w-2xl">
-                Live pulls between <code className="text-emerald-300 font-mono">Retail_Floor</code>{' '}
-                and <code className="text-amber-300 font-mono">Production_Prep</code>. BOM batches,
-                volumetric scrap, and deli labels live on{' '}
-                <Link href="/production" className="font-semibold text-emerald-400 hover:text-emerald-300">
-                  Production
-                </Link>
-                .
+              <p className="text-xs sm:text-sm text-slate-300 max-w-2xl">
+                Receiving, invoices, and voice notes stay here. Transfers between{' '}
+                {locationLabel('Retail_Floor')} and {locationLabel('Kitchen_Prep')} are on Production.
               </p>
             </div>
 
@@ -141,12 +130,20 @@ export default function OperationsCenter({
           </div>
         </div>
 
-        <div className="min-w-0 max-w-full">
-          <OperationsLiveTransfers
-            pullDays={pullSensitivityDays}
-            initialLevels={initialLevels}
-          />
-        </div>
+        <section className="rounded-3xl border border-slate-800 bg-slate-900/70 p-5">
+          <h2 className="text-lg font-black text-white">Floor and prep transfers</h2>
+          <p className="mt-1 max-w-xl text-sm text-slate-300">
+            Send stock to production, log waste, record a sale, or open the From floor inbox.
+            Those actions live on Production so this page does not repeat them. Pull window:{' '}
+            {pullSensitivityDays} days.
+          </p>
+          <Link
+            href="/production"
+            className="mt-4 inline-flex min-h-11 items-center rounded-2xl bg-amber-400 px-4 text-sm font-black text-slate-950 hover:bg-amber-300"
+          >
+            Open production transfers
+          </Link>
+        </section>
       </PageMain>
 
       {VOICE_UI_ENABLED ? (

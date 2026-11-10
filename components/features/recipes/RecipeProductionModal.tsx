@@ -8,6 +8,7 @@ import type {
   ProductionBatchExecutedSummary,
 } from '@/lib/domains/manufacturing/types';
 import type { RoleName } from '@/lib/utils/roles';
+import { batchActionLabel } from '@/lib/domains/manufacturing/batchActionLabel';
 import { computeScaledBatchCost } from '@/lib/domains/manufacturing/batchCost';
 import { manufacturingPayloadKey } from '@/lib/domains/manufacturing/manufacturingPayload';
 import {
@@ -343,7 +344,7 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
                 <h3 className="font-black text-base sm:text-lg text-white">
                   Production manufacturing and BOM
                 </h3>
-                <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-full bg-amber-950 text-amber-300 border border-amber-500/30">
+                <span className="text-xs font-extrabold uppercase px-2 py-0.5 rounded-full bg-amber-950 text-amber-300 border border-amber-500/30">
                   RBAC: Production only
                 </span>
               </div>
@@ -398,7 +399,7 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
               {/* Recipe Selector + Batch Output + RBAC Role Selector */}
               <div className="grid grid-cols-1 sm:grid-cols-12 gap-4">
                 <div className="sm:col-span-6">
-                  <label className="font-bold text-zinc-400 uppercase text-[10px] tracking-wider block mb-1.5">
+                  <label className="font-bold text-zinc-400 uppercase text-xs tracking-wider block mb-1.5">
                     Rescue recipe (BOM)
                   </label>
                   <select
@@ -415,7 +416,7 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
                 </div>
 
                 <div className="sm:col-span-6">
-                  <label className="font-bold text-zinc-400 uppercase text-[10px] tracking-wider block mb-1.5">
+                  <label className="font-bold text-zinc-400 uppercase text-xs tracking-wider block mb-1.5">
                     Portions produced
                   </label>
                   <input
@@ -450,12 +451,12 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
                         Actual weight used
                       </h4>
                       {varianceEnabled && (
-                        <span className="px-2 py-0.5 rounded-full bg-amber-400 text-zinc-950 text-[10px] font-black uppercase">
+                        <span className="px-2 py-0.5 rounded-full bg-amber-400 text-zinc-950 text-xs font-black uppercase">
                           Manual adjustment on
                         </span>
                       )}
                     </div>
-                    <p className="text-zinc-400 text-[11px] mt-0.5">
+                    <p className="text-zinc-400 text-xs mt-0.5">
                       Cooks can enter the real kg or lb used (for trim or cleaning loss) when it differs from the standard BOM.
                     </p>
                   </div>
@@ -479,12 +480,65 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
                 </button>
               </div>
 
+              <ul className="space-y-2 sm:hidden">
+                {computedBomRows.map((row) => (
+                  <li key={row.ingredientProductId} className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-3">
+                    <p className="text-sm font-bold text-white">{row.name}</p>
+                    <p className="mt-1 text-xs text-zinc-300">
+                      In production: {row.availableKitchenStock} {row.unit} · ${row.movingAvgUnitCost.toFixed(2)}/unit
+                    </p>
+                    <dl className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                      <div>
+                        <dt className="font-bold text-zinc-400">Standard</dt>
+                        <dd className="font-mono text-zinc-100">{row.scaledStandardQty} {row.unit}</dd>
+                      </div>
+                      <div>
+                        <dt className="font-bold text-zinc-400">Actual weight</dt>
+                        <dd>
+                          {varianceEnabled && row.allowVariance ? (
+                            <input
+                              type="number"
+                              min={0.1}
+                              step={0.25}
+                              value={row.actualQty}
+                              aria-label={`Actual weight for ${row.name}`}
+                              onChange={(e) =>
+                                setCustomWeights((prev) => ({
+                                  ...prev,
+                                  [row.ingredientProductId]: Math.max(0, Number(e.target.value) || 0),
+                                }))
+                              }
+                              className="mt-1 min-h-11 w-full rounded-lg border border-amber-400/70 bg-zinc-950 px-2.5 py-2 text-right font-mono font-bold text-amber-200 focus:outline-none"
+                            />
+                          ) : (
+                            <span className="font-mono font-bold text-white">
+                              {row.actualQty} {row.unit}
+                            </span>
+                          )}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt className="font-bold text-zinc-400">Variance</dt>
+                        <dd className="font-mono text-zinc-100">
+                          {row.varianceDelta > 0 ? '+' : ''}
+                          {row.varianceDelta} {row.unit}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt className="font-bold text-zinc-400">Cost</dt>
+                        <dd className="font-mono font-bold text-white">${row.lineCost.toFixed(2)}</dd>
+                      </div>
+                    </dl>
+                  </li>
+                ))}
+              </ul>
+
               {/* BOM Ingredients Table */}
-              <ScrollTable className="overflow-hidden rounded-2xl border border-zinc-800">
-                <table className="w-full min-w-[520px] border-collapse text-left">
+              <ScrollTable className="hidden overflow-hidden rounded-2xl border border-zinc-800 sm:block">
+                <table className="w-full border-collapse text-left">
                   <thead>
-                    <tr className="bg-zinc-950 text-[10px] font-bold uppercase tracking-wider text-zinc-400 border-b border-zinc-800">
-                      <th className="py-3 px-4">Ingrediente (production prep)</th>
+                    <tr className="bg-zinc-950 text-xs font-bold uppercase tracking-wider text-zinc-300 border-b border-zinc-800">
+                      <th className="py-3 px-4">Ingredient (production prep)</th>
                       <th className="py-3 px-3 text-right">Standard BOM</th>
                       <th className="py-3 px-3 text-right">
                         Actual weight used (kg/lb)
@@ -498,7 +552,7 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
                       <tr key={row.ingredientProductId} className="bg-zinc-900/50">
                         <td className="py-3 px-4">
                           <div className="font-bold text-white">{row.name}</div>
-                          <div className="text-[10px] text-zinc-500 font-mono">
+                          <div className="text-xs text-zinc-300 font-mono">
                             In production: {row.availableKitchenStock}{' '}
                             {row.unit} • ${row.movingAvgUnitCost.toFixed(2)}/unit
                           </div>
@@ -562,7 +616,7 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
               {/* Financial Batch Cost & Yield Summary */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-4 rounded-2xl bg-zinc-950 border border-zinc-800">
                 <div>
-                  <span className="text-[10px] text-zinc-500 uppercase font-bold block">
+                  <span className="text-xs text-zinc-500 uppercase font-bold block">
                     Total batch cost
                   </span>
                   <strong className="font-mono text-base font-black tabular-nums text-white">
@@ -570,7 +624,7 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
                   </strong>
                 </div>
                 <div>
-                  <span className="text-[10px] text-zinc-500 uppercase font-bold block">
+                  <span className="text-xs text-zinc-500 uppercase font-bold block">
                     Unit output cost
                   </span>
                   <strong className="font-mono text-base font-black tabular-nums text-amber-300">
@@ -578,7 +632,7 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
                   </strong>
                 </div>
                 <div>
-                  <span className="text-[10px] text-zinc-500 uppercase font-bold block">
+                  <span className="text-xs text-zinc-500 uppercase font-bold block">
                     Suggested deli price
                   </span>
                   <strong className="font-mono text-base font-black tabular-nums text-emerald-400">
@@ -586,7 +640,7 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
                   </strong>
                 </div>
                 <div>
-                  <span className="text-[10px] text-zinc-500 uppercase font-bold block">
+                  <span className="text-xs text-zinc-500 uppercase font-bold block">
                     Gross margin
                   </span>
                   <strong className="font-mono text-base font-black tabular-nums text-emerald-400">
@@ -620,11 +674,11 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
           )}
         </ModalBody>
 
-        <ModalFooter className="flex items-center justify-between gap-3 border-zinc-800 bg-zinc-950/90 px-5 py-4 sm:px-6">
+        <ModalFooter className="flex flex-col-reverse gap-2 border-zinc-800 bg-zinc-950/90 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-6">
           <button
             type="button"
             onClick={onClose}
-            className="inline-flex min-h-11 items-center rounded-xl px-4 py-2 text-xs font-bold text-zinc-400 hover:text-white cursor-pointer"
+            className="inline-flex min-h-11 w-full items-center justify-center rounded-xl px-4 py-2 text-xs font-bold text-zinc-300 hover:text-white cursor-pointer sm:w-auto"
           >
             {completedBatch ? 'Close' : 'Cancel'}
           </button>
@@ -634,7 +688,7 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
               type="button"
               onClick={handleExecuteProduction}
               disabled={submitting}
-              className="flex min-h-12 cursor-pointer items-center gap-2 rounded-xl bg-gradient-to-r from-amber-400 to-emerald-400 px-6 py-3 text-xs font-black text-slate-950 shadow-lg shadow-amber-500/20 transition-all hover:from-amber-300 hover:to-emerald-300 active:scale-95"
+              className="flex min-h-11 w-full cursor-pointer items-center justify-center gap-2 rounded-xl bg-amber-400 px-6 py-3 text-sm font-black text-slate-950 shadow-lg shadow-amber-500/20 transition-all hover:bg-amber-300 active:scale-95 sm:w-auto"
             >
               {submitting ? (
                 <>
@@ -644,10 +698,7 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
               ) : (
                 <>
                   <Sparkles className="w-4 h-4 fill-slate-950" />
-                  <span>
-                    Execute batch (+{batchOutputQty}{' '}
-                    {selectedRecipe.outputUnit})
-                  </span>
+                  <span>{batchActionLabel(batchOutputQty, selectedRecipe.outputUnit)}</span>
                 </>
               )}
             </button>
@@ -655,9 +706,9 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
             <button
               type="button"
               onClick={() => setCompletedBatch(null)}
-              className="inline-flex min-h-11 items-center rounded-xl px-5 py-2.5 text-xs font-black bg-amber-400 hover:bg-amber-300 text-zinc-950 cursor-pointer"
+              className="inline-flex min-h-11 w-full items-center justify-center rounded-xl px-5 py-2.5 text-sm font-black bg-amber-400 hover:bg-amber-300 text-zinc-950 cursor-pointer sm:w-auto"
             >
-              Producir Otro Lote
+              Make another batch
             </button>
           )}
         </ModalFooter>

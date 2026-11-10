@@ -33,6 +33,7 @@ interface ProductionActiveBomPanelProps {
   layout?: 'wide' | 'compact';
   onCreateBom?: () => void;
   loadError?: string | null;
+  summaryLoading?: boolean;
   onManufacturingReadOnlyChange?: (readOnly: boolean) => void;
 }
 
@@ -100,7 +101,7 @@ function StatusBadge({ status }: { status: BomRowStatus }) {
   return (
     <span
       className={cn(
-        'inline-flex items-center rounded-full border px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wide',
+        'inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-bold uppercase tracking-wide',
         status === 'ready' &&
           'border-emerald-500/40 bg-emerald-950/80 text-emerald-300',
         status === 'below_par' &&
@@ -170,6 +171,7 @@ export function ProductionActiveBomPanel({
   initialManufacturingCatalog = null,
   onCreateBom,
   loadError = null,
+  summaryLoading = false,
   onManufacturingReadOnlyChange,
 }: ProductionActiveBomPanelProps) {
   const isCompactLayout = layout === 'compact' || dense;
@@ -431,11 +433,11 @@ export function ProductionActiveBomPanel({
                 <Button
                   type="button"
                   variant="secondary"
-                  className="min-h-11 border-amber-500/40 bg-amber-400/90 text-xs font-black text-slate-950 hover:bg-amber-300"
+                  className="min-h-11 text-xs font-bold"
                   onClick={onExecuteProduction}
                 >
                   <ChefHat className="h-3.5 w-3.5" />
-                  Execute BOM
+                  Execute batch
                 </Button>
               ) : null}
               {onBrowseAll ? (
@@ -463,7 +465,7 @@ export function ProductionActiveBomPanel({
       ) : null}
 
       {!hideExecutiveSummary ? (
-        <div className="grid grid-cols-2 gap-px border-b border-slate-800/90 bg-slate-800/90 sm:grid-cols-4">
+        <div className="grid grid-cols-2 gap-px border-b border-slate-800/90 bg-slate-800/90 lg:grid-cols-4">
           {[
             { label: 'Total recipes', value: String(summary.totalRecipes), tone: 'text-white' },
             {
@@ -482,13 +484,17 @@ export function ProductionActiveBomPanel({
               tone: 'text-emerald-400',
             },
           ].map((item) => (
-            <div key={item.label} className="bg-slate-950/90 px-4 py-3 sm:px-5 sm:py-4">
-              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+            <div key={item.label} className="min-w-0 bg-slate-950/90 px-4 py-3 sm:px-5 sm:py-4">
+              <p className="text-xs font-bold uppercase tracking-wider text-slate-300">
                 {item.label}
               </p>
-              <p className={cn('mt-1 font-mono text-lg font-black tabular-nums', item.tone)}>
-                {item.value}
-              </p>
+              {summaryLoading ? (
+                <div className="mt-2 h-6 w-16 animate-pulse rounded bg-slate-800" />
+              ) : (
+                <p className={cn('mt-1 font-mono text-lg font-black tabular-nums', item.tone)}>
+                  {item.value}
+                </p>
+              )}
             </div>
           ))}
         </div>
@@ -532,7 +538,7 @@ export function ProductionActiveBomPanel({
         <ul
           className={cn(
             'divide-y divide-slate-800/80',
-            isCompactLayout ? 'block' : 'md:hidden'
+            isCompactLayout ? 'block' : 'lg:hidden'
           )}
         >
           {rows.map(({ recipe, portions, status, retailTotal }) => (
@@ -549,7 +555,7 @@ export function ProductionActiveBomPanel({
                   checked={selectedIds.has(recipe.id)}
                   onChange={() => toggleOne(recipe.id)}
                   aria-label={`Select ${recipe.recipeName}`}
-                  className="h-4 w-4 rounded border-slate-600 bg-slate-900 text-emerald-500"
+                  className="h-5 w-5 rounded border-slate-600 bg-slate-900 text-emerald-500"
                 />
               </div>
               <div
@@ -571,7 +577,7 @@ export function ProductionActiveBomPanel({
                 <div className="flex flex-wrap items-center gap-2">
                   <span
                     className={cn(
-                      'rounded-md border px-1.5 py-0.5 text-[9px] font-bold uppercase',
+                      'rounded-md border px-1.5 py-0.5 text-xs font-bold uppercase',
                       categoryTone(recipe.category)
                     )}
                   >
@@ -580,7 +586,7 @@ export function ProductionActiveBomPanel({
                   <StatusBadge status={status} />
                 </div>
                 <p className="mt-1 text-sm font-bold leading-snug text-white">{recipe.recipeName}</p>
-                <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-slate-400">
+                <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-300">
                   <span>
                     <span className="font-mono font-bold text-emerald-400">
                       {recipe.grossMarginPct.toFixed(1)}%
@@ -612,8 +618,8 @@ export function ProductionActiveBomPanel({
             </li>
           ))}
         </ul>
-        <ScrollTable className={cn(isCompactLayout ? 'hidden' : 'hidden md:block')}>
-          <table className="w-full min-w-[640px] border-collapse text-left">
+        <ScrollTable className={cn(isCompactLayout ? 'hidden' : 'hidden lg:block')}>
+          <table className="w-full border-collapse text-left">
             <thead>
               <tr className="border-b border-slate-800 bg-slate-950/80 text-[10px] font-bold uppercase tracking-wider text-slate-500">
                 <th className="w-12 px-4 py-4 sm:px-6">
@@ -622,7 +628,7 @@ export function ProductionActiveBomPanel({
                     checked={allVisibleSelected}
                     onChange={toggleAll}
                     aria-label="Select all recipes"
-                    className="h-4 w-4 rounded border-slate-600 bg-slate-900 text-emerald-500 focus:ring-emerald-500/40"
+                    className="h-5 w-5 rounded border-slate-600 bg-slate-900 text-emerald-500 focus:ring-emerald-500/40"
                   />
                 </th>
                 <BomSortHeader
@@ -690,7 +696,7 @@ export function ProductionActiveBomPanel({
                       checked={selectedIds.has(recipe.id)}
                       onChange={() => toggleOne(recipe.id)}
                       aria-label={`Select ${recipe.recipeName}`}
-                      className="h-4 w-4 rounded border-slate-600 bg-slate-900 text-emerald-500 focus:ring-emerald-500/40"
+                      className="h-5 w-5 rounded border-slate-600 bg-slate-900 text-emerald-500 focus:ring-emerald-500/40"
                     />
                   </td>
                   <td
@@ -702,7 +708,7 @@ export function ProductionActiveBomPanel({
                     <div className="flex flex-col gap-1">
                       <span
                         className={cn(
-                          'w-fit rounded-md border px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide',
+                          'w-fit rounded-md border px-1.5 py-0.5 text-xs font-bold uppercase tracking-wide',
                           categoryTone(recipe.category)
                         )}
                       >

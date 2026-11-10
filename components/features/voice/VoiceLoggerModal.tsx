@@ -4,6 +4,7 @@ import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react'
 import { DepartmentBadge } from '@/components/ui/DepartmentBadge';
 import { useRole } from '@/components/auth/RoleProvider';
 import { notifyInventoryUpdated } from '@/lib/domains/inventory/inventoryMoveClient';
+import { locationLabel } from '@/lib/domains/inventory/locationLabel';
 import { OfflineSyncBadge } from '@/components/ui/OfflineSyncBadge';
 import { postJsonOrQueue } from '@/lib/offline/mutationClient';
 import { createClientMutationId } from '@/lib/offline/queue';
@@ -95,7 +96,7 @@ const FALLBACK_CATALOG_OPTIONS: Array<{
   { id: 'prod-heavy-cream', name: 'Whole Heavy Cream 40%', department: 'DAIRY' },
   { id: 'prod-greek-yogurt', name: 'Greek Whole Milk Yogurt (750g)', department: 'DAIRY' },
   { id: 'prod-sourdough-boule', name: 'Artisanal Sourdough Boule', department: 'BAKERY' },
-  { id: 'prod-evoo-5l', name: 'Extra Virgin Olive Oil (Bulk Kitchen)', department: 'PANTRY' },
+  { id: 'prod-evoo-5l', name: 'Extra Virgin Olive Oil (Bulk Production)', department: 'PANTRY' },
 ];
 
 export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
@@ -112,7 +113,7 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [lastAudioBlob, setLastAudioBlob] = useState<Blob | null>(null);
   const [spokenText, setSpokenText] = useState(
-    'Pull 12 very ripe Hass avocados for kitchen rescue and discard 3 lbs of crushed tomatoes'
+    'Pull 12 very ripe Hass avocados for production rescue and discard 3 lbs of crushed tomatoes'
   );
   const [parsing, setParsing] = useState(false);
   const [committing, setCommitting] = useState(false);
@@ -595,7 +596,7 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
                   rows={2}
                   value={spokenText}
                   onChange={(e) => setSpokenText(e.target.value)}
-                  placeholder="Example: Pull 15 lbs of ripe tomatoes for the kitchen and discard 2 moldy sourdough loaves..."
+                  placeholder="Example: Pull 15 lbs of ripe tomatoes for production and discard 2 moldy sourdough loaves..."
                   className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-teal-500/60"
                 />
               </div>
@@ -683,7 +684,7 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
                         ) : (
                           <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-rose-950 text-rose-300 border border-rose-500/40 text-[11px] font-extrabold">
                             <Trash2 className="w-3.5 h-3.5" />
-                            DISCARD (Retail → Waste_Bin)
+                            DISCARD (Sales floor → {locationLabel('Waste_Bin')})
                           </span>
                         )}
                       </div>
@@ -715,7 +716,7 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
                           <strong className="text-emerald-300 font-mono">
                             {item.target_action === 'PULL_RESCUE'
                               ? 'Production prep'
-                              : 'Waste_Bin'}
+                              : locationLabel('Waste_Bin')}
                           </strong>
                         </div>
                       </div>
@@ -786,7 +787,7 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
                             className="min-h-11 w-full rounded-xl border border-zinc-700 bg-zinc-900 px-2.5 py-2 text-xs font-bold text-white"
                           >
                             <option value="PULL_RESCUE">
-                              PULL_RESCUE (Kitchen)
+                              PULL_RESCUE (Production)
                             </option>
                             <option value="DISCARD">
                               DISCARD (Waste)

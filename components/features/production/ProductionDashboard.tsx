@@ -105,6 +105,7 @@ function ProductionDashboardContent() {
     avgMargin: 0,
   });
   const [mobileSection, setMobileSection] = useState<ProductionMobileSection>('bom');
+  const [statsReady, setStatsReady] = useState(false);
   const [voiceRecorderOpen, setVoiceRecorderOpen] = useState(false);
 
   const openVoiceRecorder = useCallback(() => setVoiceRecorderOpen(true), []);
@@ -166,11 +167,16 @@ function ProductionDashboardContent() {
             wasteKpi: json.wasteKpi,
             storeSettings: json.storeSettings,
           });
+          setStatsReady(true);
           return;
         }
         setRecipeLoadError(RECIPE_LOAD_ERROR);
+        setStatsReady(true);
       } catch {
-        if (!cancelled) setRecipeLoadError(RECIPE_LOAD_NETWORK_ERROR);
+        if (!cancelled) {
+          setRecipeLoadError(RECIPE_LOAD_NETWORK_ERROR);
+          setStatsReady(true);
+        }
       }
       if (cancelled) return;
       void fetchRecipes();
@@ -214,6 +220,7 @@ function ProductionDashboardContent() {
       <PageMain width="wide" className="relative w-full py-3 sm:py-5 sm:pb-8">
         <ProductionDashboardHeader
           bomSummary={bomSummary}
+          statsReady={statsReady}
           mobileSection={mobileSection}
           onMobileSectionChange={setMobileSection}
           canEditBom={canEditBom}
@@ -269,6 +276,7 @@ function ProductionDashboardContent() {
                 : {})}
               onBrowseAll={scrollToCatalog}
               loadError={recipeLoadError}
+              summaryLoading={!statsReady}
               onManufacturingReadOnlyChange={setManufacturingReadOnly}
               onCreateBom={
                 canEditBom
