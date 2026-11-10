@@ -9,6 +9,11 @@ import {
 } from '@/lib/domains/receiving/invoiceOcrCommit';
 import { generateContentWithFallback, tryParseModelJson } from '@/lib/domains/ai/gemini';
 import { invoiceOcrModelCandidates } from '@/lib/domains/ai/geminiModels';
+import {
+  downscaleInvoicePhoto,
+  INVOICE_OCR_ATTEMPT_TIMEOUT_MS,
+  INVOICE_OCR_TOTAL_BUDGET_MS,
+} from '@/lib/domains/ai/invoiceScan';
 import { handleApiRouteError, logServerError } from '@/lib/domains/ai/apiError';
 import { invoiceOcrErrorResponse } from '@/lib/domains/receiving/invoiceOcrErrors';
 import { authErrorResponse } from '@/lib/auth/http';
@@ -397,39 +402,24 @@ async function extractInvoiceWithGemini15FlashVision(
 Rules: unitCost/totalCost per case when unit is cases; caseRetailPrice = printed case list price or null; product names only (no pack codes in name). extractionConfidence = your certainty for that row (0.0-1.0).`;
 
   const cleanBase64 = imageBase64.includes(',') ? imageBase64.split(',')[1] : imageBase64;
-  const ocrModels = invoiceOcrModelCandidates();
-  /** REST-first + short retry list keeps median latency low; fallback widens search only on failure. */
-  const ocrOpts = {
-    skipModelDiscovery: true as const,
-    maxModelsToTry: 3,
-    preferRestApi: true as const,
-    generationConfig: {
-      temperature: 0,
-      maxOutputTokens: 8192,
-    },
-  };
-  let text: string;
-  let modelUsed: string;
-  try {
-    ({ text, modelUsed } = await generateContentWithFallback(
-      visionPrompt,
-      { data: cleanBase64, mimeType: mimeType || 'image/jpeg' },
-      ocrModels,
-      ocrOpts
-    ));
-  } catch {
-    ({ text, modelUsed } = await generateContentWithFallback(
-      visionPrompt,
-      { data: cleanBase64, mimeType: mimeType || 'image/jpeg' },
-      ocrModels,
-      {
-        skipModelDiscovery: false,
-        maxModelsToTry: 5,
-        preferRestApi: true,
-        generationConfig: { temperature: 0, maxOutputTokens: 8192 },
-      }
-    ));
-  }
+  const prepared = await downscaleInvoicePhoto(cleanBase64, mimeType || 'image/jpeg');
+  const scanStartedAt = Date.now();
+  const { text, modelUsed } = await generateContentWithFallback(
+    visionPrompt,
+    prepared,
+    invoiceOcrModelCandidates(),
+    {
+      skipModelDiscovery: true,
+      maxModelsToTry: 1,
+      preferRestApi: true,
+      attemptTimeoutMs: INVOICE_OCR_ATTEMPT_TIMEOUT_MS,
+      deadlineAtMs: scanStartedAt + INVOICE_OCR_TOTAL_BUDGET_MS,
+      generationConfig: {
+        temperature: 0,
+        maxOutputTokens: 8192,
+      },
+    }
+  );
 
   const parsed = tryParseModelJson<Record<string, unknown>>(text);
   if (!parsed || !Array.isArray(parsed.lineItems) || parsed.lineItems.length === 0) {

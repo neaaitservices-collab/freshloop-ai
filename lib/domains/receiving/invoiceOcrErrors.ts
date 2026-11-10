@@ -35,5 +35,9 @@ export function invoiceOcrErrorResponse(error: unknown): NextResponse | null {
     return apiError(msg, 400);
   }
 
+  if (/invoice reader timed out/i.test(msg)) {
+    return apiError(msg, 504);
+  }
+
   return null;
 }
