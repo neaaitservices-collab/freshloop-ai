@@ -251,7 +251,7 @@ export function SubInventoryTransferList({
                     <Trash2 className="h-3.5 w-3.5 text-rose-500/80" aria-hidden />
                   </div>
                 ) : (
-                  <p className="mt-3 text-[10px] font-semibold uppercase tracking-wide text-emerald-500/80">
+                  <p className="mt-3 text-xs font-semibold uppercase tracking-wide text-emerald-200">
                     Tap to transfer · waste
                     {showBundleTools ? ' · bundle calc (owner / manager)' : ''}
                   </p>
@@ -264,7 +264,7 @@ export function SubInventoryTransferList({
                 aria-hidden
               />
             ) : queueModalActions ? (
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-emerald-500/80 md:self-center">
+              <p className="text-xs font-semibold uppercase tracking-wide text-emerald-200 md:self-center">
                 Tap row to transfer or log waste
               </p>
             ) : (

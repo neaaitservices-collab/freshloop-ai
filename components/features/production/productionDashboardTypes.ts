@@ -71,6 +71,7 @@ export type ProductionBomRailProps = {
   onBrowseAll: () => void;
   onCreateBom?: () => void;
   loadError?: string | null;
+  summaryLoading?: boolean;
 };
 
 export type ProductionScrapRailProps = {

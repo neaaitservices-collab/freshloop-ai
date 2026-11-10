@@ -180,7 +180,7 @@ export const VolumetricScrapForm: React.FC<VolumetricScrapFormProps> = ({
                 onClick={() => void triggerOneClickLog(bucketPreset)}
                 className={
                   compact
-                    ? 'rounded-lg border border-emerald-500/20 bg-slate-950/90 px-2 py-1.5 text-left text-[10px] font-bold text-white hover:border-emerald-400/50 disabled:opacity-60'
+                    ? 'flex min-h-11 flex-col justify-center rounded-xl border border-emerald-500/20 bg-slate-950/90 px-2 py-2 text-left text-xs font-bold text-white hover:border-emerald-400/50 disabled:opacity-60'
                     : 'group flex min-h-[4.5rem] flex-col justify-between rounded-2xl border border-emerald-500/20 bg-slate-950/90 p-3 text-left transition-all hover:border-emerald-400/50 hover:bg-emerald-950/40 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60'
                 }
               >
@@ -194,7 +194,7 @@ export const VolumetricScrapForm: React.FC<VolumetricScrapFormProps> = ({
                     <strong className="text-rose-300">+${presetCost} scrap</strong>
                   </div>
                 ) : (
-                  <span className="font-mono text-[9px] text-rose-300">+${presetCost}</span>
+                  <span className="font-mono text-xs text-rose-200">+${presetCost}</span>
                 )}
               </button>
             );
