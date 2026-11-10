@@ -10,14 +10,9 @@ export {
 /**
  * Receiving delivery identity.
  *
- * Google Sheets is read with the values API only. This app does not write the
- * sheet, so it cannot store a UUID it invents on each read. A delivery id is
- * valid only when the source already persisted one:
- * - Sheet column "Delivery ID", "Line ID", or "External ID"
- * - A numbered invoice line, whose UUID v5 is derived from the invoice number and line slot
- *
- * Row numbers and content hashes are not identities. `sheet-row-N` keys already
- * in the ledger stay there and are not reused for new posts.
+ * A delivery id is valid only when it was already persisted (invoice line UUID
+ * or `receiving_deliveries`). Row numbers and content hashes are not identities.
+ * `sheet-row-N` keys already in the ledger stay there and are not reused.
  */
 
 export const DELIVERY_ID_HEADERS = new Set([

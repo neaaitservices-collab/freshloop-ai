@@ -5,7 +5,7 @@ import test from 'node:test';
 /** Guard must appear before the sensitive call inside the same async function. */
 const boundaries: Array<[string, string]> = [
   ['app/orders/page.tsx', 'loadOrdersBuyList('],
-  ['app/receive/page.tsx', 'loadReceivingLogs('],
+  ['app/receive/page.tsx', 'listReceivingDeliveryLogs('],
   ['app/inventory/page.tsx', 'getStockLevels('],
   ['app/inventory/floor/page.tsx', 'getStockLevels('],
   ['app/admin/page.tsx', 'getAdminStoreStatsBundle('],

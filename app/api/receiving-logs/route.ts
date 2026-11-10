@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { loadReceivingLogs, RECEIVING_SHEET_NAME } from '@/lib/domains/receiving/receivingSheet';
+import { listReceivingDeliveryLogs } from '@/lib/domains/receiving/receivingDeliveries';
+import { RECEIVING_SHEET_NAME } from '@/lib/domains/receiving/receivingSheet';
 import {
   buildSavedPackRecord,
   postReceivingLogToInventory,
@@ -37,7 +38,7 @@ const savedPacks: SavedPack[] = [];
 export async function GET() {
   try {
     await requireReceivingStaff();
-    const result = await loadReceivingLogs();
+    const result = await listReceivingDeliveryLogs();
     return NextResponse.json(result);
   } catch (error) {
     const authRes = authErrorResponse(error);

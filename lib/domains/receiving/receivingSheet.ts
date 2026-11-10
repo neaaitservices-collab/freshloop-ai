@@ -24,9 +24,6 @@ const COUNT_HEADERS = new Set([
 ]);
 const COST_HEADERS = new Set(['new case cost', 'case cost', 'casecost', 'cost']);
 
-export const MISSING_DELIVERY_ID_WARNING =
-  'Some receiving rows cannot be posted. Each delivery needs its own UUID in Delivery ID, Line ID, or External ID. A repeated UUID blocks every row that uses it. FreshLoop only reads the sheet.';
-
 function normalizeHeader(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 }
@@ -94,104 +91,4 @@ export function parseReceivingSheetValues(values: unknown[][]): ReceivingLog[] {
   }
 
   return logs;
-}
-
-export type ReceivingLogSource = 'google_sheets' | 'unconfigured' | 'unavailable';
-
-export interface ReceivingLogsResult {
-  success: boolean;
-  source: ReceivingLogSource;
-  sheetName: string;
-  logs: ReceivingLog[];
-  warning: string | null;
-}
-
-export const UNCONFIGURED_RECEIVING_WARNING =
-  'The receiving sheet is not connected. Set GOOGLE_SHEETS_SPREADSHEET_ID and GOOGLE_SHEETS_API_KEY on the server, and use a tab named Receiving_logs. Sample rows are not shown and cannot be saved as inventory. Scan an invoice to receive a delivery until the sheet is connected.';
-
-/** Sheet is not configured. Sample fixture rows are not returned. */
-export function unconfiguredReceivingLogs(): ReceivingLogsResult {
-  return {
-    success: true,
-    source: 'unconfigured',
-    sheetName: RECEIVING_SHEET_NAME,
-    logs: [],
-    warning: UNCONFIGURED_RECEIVING_WARNING,
-  };
-}
-
-/** Status line next to the sheet badge. Unconfigured and unread sheets keep their real warning. */
-export function receivingStatusDetail(
-  source: ReceivingLogSource | 'sample',
-  warning: string | null
-): string | null {
-  if (source === 'google_sheets' || source === 'unconfigured' || source === 'unavailable') {
-    return warning;
-  }
-  if (!warning) return null;
-  return 'Sample rows are not a delivery and are not saved.';
-}
-
-/** Sheet was configured but could not be read. Sample rows are not substituted. */
-export function unavailableReceivingLogs(detail: string): ReceivingLogsResult {
-  return {
-    success: true,
-    source: 'unavailable',
-    sheetName: RECEIVING_SHEET_NAME,
-    logs: [],
-    warning: `The receiving sheet could not be read. Nothing was substituted. ${detail}`.slice(0, 280),
-  };
-}
-
-export async function loadReceivingLogs(deps?: {
-  fetch?: typeof fetch;
-}): Promise<ReceivingLogsResult> {
-  const spreadsheetId = process.env.GOOGLE_SHEETS_SPREADSHEET_ID?.trim();
-  const apiKey = process.env.GOOGLE_SHEETS_API_KEY?.trim();
-  const fetchImpl = deps?.fetch ?? fetch;
-
-  if (!spreadsheetId || !apiKey) {
-    return unconfiguredReceivingLogs();
-  }
-
-  const range = encodeURIComponent(RECEIVING_SHEET_NAME);
-  const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${range}?key=${apiKey}`;
-
-  try {
-    const response = await fetchImpl(url, { cache: 'no-store' });
-    if (!response.ok) {
-      const detail = await response.text();
-      return unavailableReceivingLogs(
-        `Google Sheets returned ${response.status}. ${detail.slice(0, 160)}`
-      );
-    }
-
-    const payload = (await response.json()) as { values?: unknown[][] };
-    const logs = parseReceivingSheetValues(payload.values ?? []);
-    if (logs.length === 0) {
-      return {
-        success: true,
-        source: 'google_sheets',
-        sheetName: RECEIVING_SHEET_NAME,
-        logs: [],
-        warning:
-          'Receiving_logs was found, but no rows matched Select Item, New Inventory Count, and New Case Cost.',
-      };
-    }
-
-    const missingIdentity = logs.some((log) => log.canPost === false);
-    return {
-      success: true,
-      source: 'google_sheets',
-      sheetName: RECEIVING_SHEET_NAME,
-      logs,
-      warning: missingIdentity ? MISSING_DELIVERY_ID_WARNING : null,
-    };
-  } catch (error) {
-    return unavailableReceivingLogs(
-      error instanceof Error
-        ? `Could not reach Google Sheets (${error.message}).`
-        : 'Could not reach Google Sheets.'
-    );
-  }
 }

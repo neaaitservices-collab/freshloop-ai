@@ -153,7 +153,7 @@ Saving pack, yield, or price calls `updateCase` and does not receive more produc
 
 Step 1. “Price the delivery.”
 
-`ReceiveScreen` loads receiving logs through `loadReceivingLogs()` (`lib/receivingSheet.ts`, sheet name `Receiving_logs`, with sample logs when the sheet is empty). **Scan invoice** opens `InvoiceUploadModal`. A confirmed scan becomes extra cases on the pricing board: vendor, invoice number, and a count of cases ready to price.
+`ReceiveScreen` lists posted deliveries from `receiving_deliveries` (`listReceivingDeliveryLogs`). The list is empty when none have been posted. **Scan invoice** opens `InvoiceUploadModal`. A confirmed scan becomes extra cases on the pricing board: vendor, invoice number, and a count of cases ready to price.
 
 `YieldPricingDashboard` is the board. Pick a case and set:
 
