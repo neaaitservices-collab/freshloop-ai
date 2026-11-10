@@ -153,7 +153,7 @@ All handlers use `export const dynamic = 'force-dynamic'` unless noted. Errors o
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| `GET` | `/api/receiving-logs` | `listReceivingDeliveryLogs()` — `receiving_deliveries` rows. Empty when none are posted. |
+| `GET` | `/api/receiving-logs` | `listReceivingDeliveryLogs()` — newest 100 posted `receiving_deliveries` rows, read-only. Empty when none have been posted. A missing table returns a warning, not a 500. |
 | `POST` | `/api/receiving-logs` | Save one delivery UUID → `postReceipt()`. Same UUID and payload is a no-op. A different payload is 409. |
 | `POST` | `/api/receiving-invoices/identity` | Assign or reuse supplier, number, and exact-date line UUIDs. Conflicts do not post. |
 | `POST` | `/api/receiving-invoices/reconcile` | Record a confirmed date, spelling, missing-line, rename, or legacy-receipt decision. |

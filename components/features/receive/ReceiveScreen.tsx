@@ -9,7 +9,7 @@ import { SupplierSelect } from '@/components/features/suppliers/SupplierSelect';
 import { PageMain } from '@/components/ui/layout';
 import { Button } from '@/components/ui/Button';
 import { Card, CardBody } from '@/components/ui/Card';
-import type { RecordedReceivingLogs } from '@/lib/domains/receiving/receivingDeliveries';
+import type { ReceivingDeliveryListResult } from '@/lib/domains/receiving/receivingDeliveries';
 import type { InvoiceOcrResult } from '@/lib/types';
 import { consumeStashedReceivingScan, receivingLogsFromInvoice } from '@/lib/domains/receiving/receivingBridge';
 import { SUPPLIER_REQUIRED_ERROR } from '@/lib/domains/receiving/invoiceDeliveryId';
@@ -23,7 +23,7 @@ import {
 import type { ReceivingLog } from '@/lib/domains/receiving/yieldPricing';
 import type { SupplierRecord } from '@/lib/domains/suppliers/suppliers';
 
-export function ReceiveScreen({ initial }: { initial: RecordedReceivingLogs }) {
+export function ReceiveScreen({ initial }: { initial: ReceivingDeliveryListResult }) {
   const [invoiceOpen, setInvoiceOpen] = useState(false);
   const [scannedLogs, setScannedLogs] = useState<ReceivingLog[]>([]);
   const [scanNote, setScanNote] = useState<string | null>(null);
@@ -286,6 +286,7 @@ export function ReceiveScreen({ initial }: { initial: RecordedReceivingLogs }) {
             embedded
             extraLogs={scannedLogs}
             initialLogs={initial.logs}
+            initialWarning={initial.warning}
             supplierId={selectedSupplierId || undefined}
             onScanNext={() => setInvoiceOpen(true)}
             onLogDisposition={(logId) =>

@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { listReceivingDeliveryLogs } from '@/lib/domains/receiving/receivingDeliveries';
-import { RECEIVING_SHEET_NAME } from '@/lib/domains/receiving/receivingSheet';
 import {
   buildSavedPackRecord,
   postReceivingLogToInventory,
@@ -83,7 +82,6 @@ export async function POST(req: NextRequest) {
       {
         success: status === 200,
         destination: stock.posted ? 'ledger' : 'session',
-        sheetName: RECEIVING_SHEET_NAME,
         record,
         stock,
         savedCount: savedPacks.length,

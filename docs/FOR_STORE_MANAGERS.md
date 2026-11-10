@@ -42,7 +42,7 @@ Use it to:
 
 **What happens:**
 
-1. Clerk **scans the vendor invoice** (photo) or works from the connected receiving sheet.
+1. Clerk **scans the vendor invoice** (photo). Posted receipts are listed on this screen and are not saved again.
 2. For each case line, they set **yield** (how much is sellable), **unit type**, and **floor price** / margin.
 3. They **Save & update inventory**—product enters the ledger (typically through receiving into storage/floor logic your store uses).
 4. If product **did not arrive**, they choose **Not received** → line leaves the active list and goes to **Pending vendor credit** until you mark it credited.

@@ -4,8 +4,6 @@ import {
 } from '@/lib/domains/receiving/deliveryIdentity';
 import type { ReceivingLog } from '@/lib/domains/receiving/yieldPricing';
 
-export const RECEIVING_SHEET_NAME = 'Receiving_logs';
-
 export const SAMPLE_RECEIVING_LOGS: ReceivingLog[] = [
   { id: 'sample-avocado', itemName: 'Hass Avocados (Mexico)', casesReceived: 4, caseCost: 84.5 },
   { id: 'sample-tomato', itemName: 'Hot House Tomatoes (Ontario)', casesReceived: 3, caseCost: 42 },

@@ -39,6 +39,7 @@ interface LogsResponse {
   success?: boolean;
   logs?: ReceivingLog[];
   error?: string;
+  warning?: string | null;
 }
 
 const POSTED_RECEIVING_KEY = 'freshloop-posted-receiving';
@@ -289,6 +290,7 @@ export function YieldPricingDashboard({
   embedded = false,
   extraLogs = [],
   initialLogs,
+  initialWarning = null,
   onScanNext,
   onLogDisposition,
   supplierId,
@@ -297,6 +299,8 @@ export function YieldPricingDashboard({
   embedded?: boolean;
   extraLogs?: ReceivingLog[];
   initialLogs?: ReceivingLog[];
+  /** Set when the delivery table could not be read. The page stays up. */
+  initialWarning?: string | null;
   onScanNext?: () => void;
   /** Drop scanned invoice lines from the parent list when removed / not received. */
   onLogDisposition?: (logId: string) => void;
@@ -305,7 +309,7 @@ export function YieldPricingDashboard({
 }) {
   const seeded = initialLogs !== undefined;
   const [logs, setLogs] = useState<ReceivingLog[]>(initialLogs ?? []);
-  const [warning, setWarning] = useState<string | null>(null);
+  const [warning, setWarning] = useState<string | null>(initialWarning);
   const [loading, setLoading] = useState(!seeded);
   const [selectedId, setSelectedId] = useState<string | null>(initialLogs?.[0]?.id ?? null);
 
@@ -365,7 +369,7 @@ export function YieldPricingDashboard({
       const response = await fetch('/api/receiving-logs', { cache: 'no-store' });
       const json = (await response.json()) as LogsResponse;
       if (!response.ok || json.success === false) {
-        setWarning(json.error || 'Deliveries could not be loaded.');
+        setWarning(json.warning || json.error || 'Deliveries could not be loaded.');
         setLogs([]);
         return;
       }
@@ -756,7 +760,7 @@ export function YieldPricingDashboard({
       setErrorMessage(
         selected.invoiceNumber
           ? 'This invoice line does not have a server delivery id yet. Choose a saved supplier and wait for the lines to be identified.'
-          : 'This sheet row has no Delivery ID, so it was not posted. Add a UUID in the Delivery ID column and keep it with that delivery.'
+          : 'This delivery is already recorded. It is shown for reference and was not posted again.'
       );
       return;
     }
@@ -797,8 +801,11 @@ export function YieldPricingDashboard({
     const targets = bulkLogs.filter((log) => !animatingOutIds.has(log.id) && log.canPost !== false);
     if (saving || savingAll) return;
     if (targets.length === 0) {
+      const waitingOnSupplier = bulkLogs.some((log) => log.canPost === false && log.invoiceNumber);
       setErrorMessage(
-        'None of these rows have a Delivery ID, so nothing was posted. Add a UUID on each delivery before saving.'
+        waitingOnSupplier
+          ? 'None of these invoice lines have a server delivery id yet.'
+          : 'These deliveries are already recorded, so nothing was posted again.'
       );
       return;
     }
@@ -927,10 +934,10 @@ export function YieldPricingDashboard({
           <CardBody className="flex flex-col items-center px-6 py-16 text-center">
             <Receipt className="h-16 w-16 text-slate-600" strokeWidth={1.1} aria-hidden />
             <p className="mt-6 max-w-md text-lg font-black tracking-tight text-slate-100">
-              No deliveries
+              No deliveries recorded
             </p>
             <p className="mt-2 max-w-sm text-sm text-slate-400">
-              Nothing is waiting to be received.
+              Nothing has been posted yet. A receipt shows up here after it is saved.
             </p>
             <Button
               variant="success"
@@ -1030,6 +1037,7 @@ export function YieldPricingDashboard({
             stockOnHand={stockOnHand}
             stockMatched={stockMatched}
             alreadyInInventory={postedIds.has(selected.id)}
+            readOnly={selected.canPost === false && !selected.invoiceNumber}
             dispositionBusy={dispositionBusy}
             saveAllLabel={bulkLogs.length > 1 ? saveAllLabel : null}
             saveAllProgress={saveAllProgress}

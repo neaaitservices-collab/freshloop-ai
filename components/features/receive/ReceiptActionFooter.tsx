@@ -11,6 +11,7 @@ export function ReceiptActionFooter({
   saving,
   dispositionBusy,
   alreadyInInventory,
+  readOnly = false,
   saveDisabled,
   saveAllLabel,
   saveAllProgress,
@@ -25,6 +26,7 @@ export function ReceiptActionFooter({
   saving: boolean;
   dispositionBusy: boolean;
   alreadyInInventory: boolean;
+  readOnly?: boolean;
   saveDisabled: boolean;
   saveAllLabel: string | null;
   saveAllProgress: string | null;
@@ -42,7 +44,12 @@ export function ReceiptActionFooter({
         </p>
       ) : null}
       {errorMessage ? <p className="px-1 text-xs font-bold text-orange-300">{errorMessage}</p> : null}
-      {!alreadyInInventory && !savedMessage ? (
+      {readOnly ? (
+        <p className="px-1 text-xs font-semibold text-slate-400">
+          Already recorded. This receipt is not posted again.
+        </p>
+      ) : null}
+      {!readOnly && !alreadyInInventory && !savedMessage ? (
         <div className="grid grid-cols-2 gap-2">
           <button
             type="button"
@@ -68,27 +75,31 @@ export function ReceiptActionFooter({
           </button>
         </div>
       ) : null}
-      <button
-        type="button"
-        onClick={onSave}
-        disabled={saving || alreadyInInventory || dispositionBusy || saveDisabled}
-        className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-emerald-400 px-4 py-3 text-sm font-black text-slate-950 transition hover:bg-emerald-300 active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400"
-      >
-        {saving && !saveAllProgress ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-        {alreadyInInventory ? 'In inventory' : 'Save this item'}
-      </button>
-      {onSaveAll && saveAllLabel ? (
-        <button
-          type="button"
-          onClick={onSaveAll}
-          disabled={saving || dispositionBusy}
-          title="Other lines use saved pack defaults or 40% target; the selected line keeps the prices on screen."
-          className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl border border-emerald-400/40 bg-emerald-400/10 px-4 py-3 text-sm font-black text-emerald-200 transition hover:bg-emerald-400/20 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {saveAllProgress ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-          {saveAllProgress ? `Saving ${saveAllProgress}` : saveAllLabel}
-        </button>
-      ) : null}
+      {readOnly ? null : (
+        <>
+          <button
+            type="button"
+            onClick={onSave}
+            disabled={saving || alreadyInInventory || dispositionBusy || saveDisabled}
+            className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-emerald-400 px-4 py-3 text-sm font-black text-slate-950 transition hover:bg-emerald-300 active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400"
+          >
+            {saving && !saveAllProgress ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+            {alreadyInInventory ? 'In inventory' : 'Save this item'}
+          </button>
+          {onSaveAll && saveAllLabel ? (
+            <button
+              type="button"
+              onClick={onSaveAll}
+              disabled={saving || dispositionBusy}
+              title="Other lines use saved pack defaults or 40% target; the selected line keeps the prices on screen."
+              className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl border border-emerald-400/40 bg-emerald-400/10 px-4 py-3 text-sm font-black text-emerald-200 transition hover:bg-emerald-400/20 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {saveAllProgress ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+              {saveAllProgress ? `Saving ${saveAllProgress}` : saveAllLabel}
+            </button>
+          ) : null}
+        </>
+      )}
     </div>
   );
 }
