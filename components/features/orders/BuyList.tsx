@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, Check, ChevronDown, Mail, Plus, Printer, Search } from 'lucide-react';
 import { PoEmailPanel } from '@/components/features/orders/PoEmailPanel';
 import {
+  acknowledgePurchaseOrderDraft,
   approvedOrderRows,
   caseWord,
   draftForAll,
@@ -79,7 +80,6 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
   const [savingId, setSavingId] = useState<string | null>(null);
   const [marks, setMarks] = useState<Record<string, LineMark>>({});
   const [draft, setDraft] = useState<PoDraft | null>(null);
-  const [sending, setSending] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [manualIds, setManualIds] = useState<string[]>([]);
@@ -293,19 +293,10 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
     setDraft(next);
   };
 
-  const sendDraft = async () => {
-    if (!draft || sending) return;
-    setSending(true);
-    await new Promise((resolve) => window.setTimeout(resolve, 700));
-    const ids = draft.productIds;
-    setMarks((current) => {
-      const next = { ...current };
-      for (const id of ids) next[id] = 'sent';
-      return next;
-    });
-    setToast('Order Sent Successfully');
+  const prepareDraft = () => {
+    if (!draft) return;
+    setToast(acknowledgePurchaseOrderDraft().notice);
     setDraft(null);
-    setSending(false);
   };
 
   const needle = query.trim().toLowerCase();
@@ -470,7 +461,7 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
               onClick={() => openDraft(draftForRows(supplier, groupSend))}
             >
               <Mail className="h-3.5 w-3.5" />
-              Send group email
+              Draft group email
             </Button>
           </div>
         </CardHeader>
@@ -570,7 +561,7 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
               }
             >
               <Mail className="h-3.5 w-3.5" />
-              Send bulk email
+              Draft bulk email
             </Button>
             </div>
             </CardBody>
@@ -679,8 +670,8 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
                   <CardTitle>Active purchase orders</CardTitle>
                   <CardDescription>
                     {approvedCount > 0
-                      ? `${approvedCount} approved ${approvedCount === 1 ? 'line' : 'lines'} ready to send.`
-                      : 'Approve a supplier group, then send the order.'}
+                      ? `${approvedCount} approved ${approvedCount === 1 ? 'line' : 'lines'} ready to draft.`
+                      : 'Approve a supplier group, then draft the order.'}
                   </CardDescription>
                 </CardHeader>
                 <CardBody className="pt-0">
@@ -716,7 +707,7 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
                           onClick={() => openDraft(draftForRows(group.supplier, poRows))}
                         >
                           <Mail className="h-3.5 w-3.5" />
-                          {group.approved.length > 0 ? 'Send PO email' : 'Send group email'}
+                          {group.approved.length > 0 ? 'Draft PO email' : 'Draft group email'}
                         </Button>
                       </li>
                     );
@@ -727,10 +718,9 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
               {draft ? (
                 <PoEmailPanel
                   draft={draft}
-                  sending={sending}
                   onChange={setDraft}
                   onClose={() => setDraft(null)}
-                  onSend={() => void sendDraft()}
+                  onPrepare={prepareDraft}
                 />
               ) : null}
             </aside>
@@ -943,7 +933,7 @@ function LineActions({
         onClick={onEmail}
       >
         <Mail className="h-3 w-3" />
-        Send email
+        Draft email
       </Button>
       <Button
         variant={mark === 'approved' || mark === 'sent' ? 'success' : 'secondary'}

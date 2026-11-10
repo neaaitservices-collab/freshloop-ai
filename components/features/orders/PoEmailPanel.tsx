@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { Loader2, Mail, X } from 'lucide-react';
+import { Mail, X } from 'lucide-react';
 import type { PoDraft } from '@/components/features/orders/supplierMail';
 import { Button } from '@/components/ui/Button';
 import { Card, CardBody, CardHeader, CardTitle } from '@/components/ui/Card';
@@ -9,16 +9,14 @@ import { Input } from '@/components/ui/Input';
 
 export function PoEmailPanel({
   draft,
-  sending,
   onChange,
   onClose,
-  onSend,
+  onPrepare,
 }: {
   draft: PoDraft;
-  sending: boolean;
   onChange: (next: PoDraft) => void;
   onClose: () => void;
-  onSend: () => void;
+  onPrepare: () => void;
 }) {
   return (
     <div id="po-email">
@@ -26,7 +24,7 @@ export function PoEmailPanel({
       <CardHeader className="flex flex-row items-center justify-between gap-2 py-3">
         <CardTitle className="flex items-center gap-2 text-sm">
           <Mail className="h-4 w-4 text-blue-300/90" />
-          Send PO email
+          PO draft
           <span className="font-normal text-slate-400">· {draft.supplier}</span>
         </CardTitle>
         <button
@@ -67,11 +65,11 @@ export function PoEmailPanel({
         <Button
           variant="success"
           className="w-full py-3"
-          disabled={sending || draft.productIds.length === 0 || !draft.to.trim()}
-          onClick={onSend}
+          disabled={draft.productIds.length === 0 || !draft.to.trim()}
+          onClick={onPrepare}
         >
-          {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4" />}
-          {sending ? 'Sending…' : 'Send PO email'}
+          <Mail className="h-4 w-4" />
+          Prepare draft
         </Button>
       </CardBody>
     </Card>

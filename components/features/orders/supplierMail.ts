@@ -2,6 +2,13 @@ import type { StockLevel } from '@/lib/domains/inventory/stock';
 
 export type LineMark = 'approved' | 'sent';
 
+/** No mail transport is wired. A prepared draft must not claim the order was sent. */
+export const PO_DRAFT_PREPARED_NOTICE = 'Draft prepared - not sent';
+
+export function acknowledgePurchaseOrderDraft(): { notice: string; markSent: false } {
+  return { notice: PO_DRAFT_PREPARED_NOTICE, markSent: false };
+}
+
 export interface PoDraft {
   supplier: string;
   to: string;
