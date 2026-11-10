@@ -16,6 +16,7 @@ interface InboxMeta {
   productId: string;
   qtyReceived: number;
   lastReceivedAt: string;
+  staffName?: string;
 }
 
 export interface KitchenIncomingRescueQueueProps {
@@ -51,7 +52,9 @@ export function KitchenIncomingRescueQueue({
       } else {
         setLevels([]);
       }
-      if (inboxJson.success && Array.isArray(inboxJson.items)) {
+      if (inboxJson.success && Array.isArray(inboxJson.productTotals)) {
+        setInbox(inboxJson.productTotals as InboxMeta[]);
+      } else if (inboxJson.success && Array.isArray(inboxJson.items)) {
         setInbox(
           sumInboxByProduct(
             inboxJson.items as {

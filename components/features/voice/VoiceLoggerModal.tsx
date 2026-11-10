@@ -679,7 +679,7 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
                         {item.target_action === 'PULL_RESCUE' ? (
                           <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-500/40 text-xs font-extrabold">
                             <ArrowRightLeft className="w-3.5 h-3.5" />
-                            PULL_RESCUE (Retail → Production prep)
+                            PULL_RESCUE ({locationLabel('Retail_Floor')} → {locationLabel('Kitchen_Prep')})
                           </span>
                         ) : (
                           <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-rose-950 text-rose-300 border border-rose-500/40 text-xs font-extrabold">
@@ -715,7 +715,7 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
                           </span>
                           <strong className="text-emerald-300 font-mono">
                             {item.target_action === 'PULL_RESCUE'
-                              ? 'Production prep'
+                              ? locationLabel('Kitchen_Prep')
                               : locationLabel('Waste_Bin')}
                           </strong>
                         </div>

@@ -31,13 +31,17 @@ export async function GET(req: NextRequest) {
         ? { from: parsed.data.from, to: parsed.data.to }
         : null;
     const range = bounds ? torontoRange(bounds.from, bounds.to) : null;
-    const items = await getKitchenInbox(sinceHours, range);
+    const page = await getKitchenInbox(sinceHours, range);
     return NextResponse.json({
       success: true,
       sinceHours,
       range: range ? { from: range.from, to: range.to } : null,
-      count: items.length,
-      items,
+      count: page.totalCount,
+      items: page.items,
+      limit: page.limit,
+      truncated: page.truncated,
+      totalQty: page.totalQty,
+      productTotals: page.productTotals,
     });
   } catch (error) {
     const authRes = authErrorResponse(error);

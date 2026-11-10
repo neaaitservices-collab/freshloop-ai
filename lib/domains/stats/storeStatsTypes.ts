@@ -55,4 +55,7 @@ export interface StoreStats {
   departmentAlerts: DepartmentAlert[];
   /** Toronto dates for the production-transfer chart. Null keeps the default 7-day window. */
   transferRangeLabel: string | null;
+  /** True when the range has more ledger rows than the list cap. Chart totals still cover the full range. */
+  transferRangeTruncated: boolean;
+  transferRangeRowLimit: number | null;
 }

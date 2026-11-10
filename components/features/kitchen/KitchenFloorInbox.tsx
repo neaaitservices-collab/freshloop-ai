@@ -13,6 +13,7 @@ import {
   productionInboxQuery,
 } from '@/lib/domains/inventory/productionInboxQuery';
 import { formatUnits, stockUnitLabel } from '@/lib/domains/receiving/yieldPricing';
+import { showingLatestLabel } from '@/lib/domains/stats/rangeLimit';
 import { formatTorontoDateTime } from '@/lib/domains/stats/storeTime';
 import { cn } from '@/lib/utils/cn';
 
@@ -35,6 +36,7 @@ export function KitchenFloorInbox({
 }) {
   const search = useSearchParams();
   const [items, setItems] = useState<InboxItem[]>([]);
+  const [limitHint, setLimitHint] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const ref = useRef<HTMLElement>(null);
   const query = defaultPreset === 'day' ? productionInboxQuery(search) : 'hours=24';
@@ -46,8 +48,14 @@ export function KitchenFloorInbox({
       const json = await res.json();
       if (json.success && Array.isArray(json.items)) {
         setItems(json.items as InboxItem[]);
+        setLimitHint(
+          json.truncated === true && typeof json.limit === 'number'
+            ? showingLatestLabel(json.limit)
+            : null
+        );
       } else {
         setItems([]);
+        setLimitHint(null);
       }
     } catch {
       setItems([]);
@@ -104,6 +112,7 @@ export function KitchenFloorInbox({
                 <CardTitle>{PRODUCTION_INBOX_TITLE}</CardTitle>
                 <CardDescription>
                   {items.length} item{items.length === 1 ? '' : 's'} moved to production
+                  {limitHint ? ` · ${limitHint}` : ''}
                 </CardDescription>
               </div>
             </div>
