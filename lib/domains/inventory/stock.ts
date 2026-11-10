@@ -98,6 +98,11 @@ export interface StockLevel {
   suggestedParCases?: number;
   /** True when forecast raised order qty or flagged low ahead of static par. */
   forecastDriven?: boolean;
+  /**
+   * At least one InventoryTransaction exists for this SKU.
+   * Computed in the stock aggregate (`COUNT(t.id) > 0`), not a per-SKU query.
+   */
+  hasStockHistory?: boolean;
 }
 
 export interface PostedReceipt {
@@ -497,6 +502,7 @@ interface StockLevelRow {
   expirationDate: Date | null;
   onHand: number;
   kitchenPrepQty: number;
+  hasStockHistory: boolean;
   posSoldInWindow?: number | null;
 }
 
@@ -530,6 +536,7 @@ function stockLevelFromRow(
     }),
     pullSensitivityDays: pullOverride,
     pullDays,
+    hasStockHistory: row.hasStockHistory === true,
   };
 }
 
@@ -600,7 +607,8 @@ async function queryStockLevelRows(
             WHEN t."From_Location" = 'Kitchen_Prep'::"InventoryLocation" AND t."Qty_Change" < 0 THEN t."Qty_Change"
             ELSE 0
           END
-        ), 0)::float8 AS "kitchenPrepQty"
+        ), 0)::float8 AS "kitchenPrepQty",
+        (COUNT(t.id) > 0) AS "hasStockHistory"
       FROM products p
       LEFT JOIN "Inventory_Transactions" t ON t."Product_ID" = p.id
       WHERE p.id = ${productId}
@@ -648,9 +656,10 @@ async function queryStockLevelRows(
         CASE
           WHEN t."To_Location" = 'Kitchen_Prep'::"InventoryLocation" AND t."Qty_Change" > 0 THEN t."Qty_Change"
           WHEN t."From_Location" = 'Kitchen_Prep'::"InventoryLocation" AND t."Qty_Change" < 0 THEN t."Qty_Change"
-          ELSE 0
-        END
-      ), 0)::float8 AS "kitchenPrepQty",
+            ELSE 0
+          END
+        ), 0)::float8 AS "kitchenPrepQty",
+        (COUNT(t.id) > 0) AS "hasStockHistory",
       ${posCol} AS "posSoldInWindow"
     FROM products p
     LEFT JOIN "Inventory_Transactions" t ON t."Product_ID" = p.id

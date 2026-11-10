@@ -2,13 +2,18 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   belowParSkus,
-  forecastSuggestedSkus,
+  forecastApprovalLines,
+  listedForecastLines,
   outOfStockSkus,
   stockAlertCounts,
 } from '@/lib/domains/inventory/lowStock';
 import { DEFAULT_PAR_CASES, resolveParCases, stockFromPar } from '@/lib/domains/inventory/parLevel';
 
-function rated(onHand: number, parCases: number | null, forecastDriven = false) {
+function rated(
+  onHand: number,
+  parCases: number | null,
+  extra: { forecastDriven?: boolean; low?: boolean; hasStockHistory?: boolean } = {}
+) {
   const par = resolveParCases(parCases, DEFAULT_PAR_CASES);
   const stock = stockFromPar({
     onHand,
@@ -19,7 +24,9 @@ function rated(onHand: number, parCases: number | null, forecastDriven = false) 
   return {
     onHand: Number(onHand.toFixed(2)),
     parUnits: stock.parUnits,
-    forecastDriven,
+    low: stock.low,
+    hasStockHistory: true,
+    ...extra,
   };
 }
 
@@ -50,22 +57,45 @@ test('null and zero par use the store default before the below-par check', () =>
   assert.equal(outOfStockSkus([unset, zeroPar]).length, 0);
 });
 
-test('admin below-par count matches the orders below-par count for the same levels', () => {
-  const levels = [
-    rated(1, 4),
-    rated(4, 4),
-    rated(0, 4),
-    rated(8, 2, true),
-    rated(1, 3, true),
-  ];
-  const adminLowCount = belowParSkus(levels).length;
+test('never-stocked empty shelves are excluded and previously stocked ones are out of stock', () => {
+  const neverStocked = rated(0, 4, { hasStockHistory: false });
+  const previouslyStocked = rated(0, 4);
+  assert.deepEqual(outOfStockSkus([neverStocked, previouslyStocked]), [previouslyStocked]);
+});
+
+test('forecast banner count matches the listed forecast lines', () => {
+  const below = rated(1, 4);
+  const atPar = rated(4, 4);
+  const previouslyStocked = rated(0, 4);
+  const forecastAbovePar = rated(8, 2, { forecastDriven: true, low: true });
+  const forecastNotLow = rated(9, 2, { forecastDriven: true });
+  const belowAndForecast = rated(1, 3, { forecastDriven: true, low: true });
+  const levels = [below, atPar, previouslyStocked, forecastAbovePar, forecastNotLow, belowAndForecast];
+  const listed = listedForecastLines(levels);
   const orders = stockAlertCounts(levels);
-  assert.equal(adminLowCount, orders.belowPar);
-  assert.equal(orders.belowPar, 2);
+  assert.equal(belowParSkus(levels).length, orders.belowPar);
+  assert.equal(orders.forecastSuggested, listed.length);
+  assert.deepEqual(listed, [forecastAbovePar]);
+  assert.equal(forecastNotLow.low, false);
+  assert.equal(forecastNotLow.forecastDriven, true);
   assert.equal(orders.outOfStock, 1);
-  assert.equal(orders.forecastSuggested, 1);
-  assert.equal(forecastSuggestedSkus(levels).length, 1);
-  const tagged = belowParSkus(levels).length + outOfStockSkus(levels).length + forecastSuggestedSkus(levels).length;
-  assert.equal(tagged, 4);
-  assert.equal(levels.length - tagged, 1);
+  assert.equal(orders.belowPar, 2);
+});
+
+test('bulk approve still includes below-par and out-of-stock forecast rows', () => {
+  const belowParForecast = rated(1, 4, { forecastDriven: true, low: true });
+  const outOfStockForecast = rated(0, 4, { forecastDriven: true, low: true });
+  const bannerOnly = rated(8, 2, { forecastDriven: true, low: true });
+  const forecastNotLow = rated(9, 2, { forecastDriven: true });
+  const levels = [belowParForecast, outOfStockForecast, bannerOnly, forecastNotLow];
+  const approved = forecastApprovalLines(levels);
+  const banner = listedForecastLines(levels);
+  assert.deepEqual(approved, [belowParForecast, outOfStockForecast, bannerOnly]);
+  assert.deepEqual(banner, [bannerOnly]);
+  assert.equal(stockAlertCounts(levels).forecastSuggested, banner.length);
+  const sent = new Set([belowParForecast]);
+  assert.deepEqual(
+    forecastApprovalLines(levels, (row) => sent.has(row)),
+    [outOfStockForecast, bannerOnly]
+  );
 });
