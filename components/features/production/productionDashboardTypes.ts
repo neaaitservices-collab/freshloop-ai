@@ -72,6 +72,7 @@ export type ProductionBomRailProps = {
   onCreateBom?: () => void;
   loadError?: string | null;
   summaryLoading?: boolean;
+  onManufacturingReadOnlyChange?: (readOnly: boolean) => void;
 };
 
 export type ProductionScrapRailProps = {

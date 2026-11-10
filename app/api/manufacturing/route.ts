@@ -18,7 +18,8 @@ export async function GET() {
   try {
     await requireRoles(MANUFACTURING_ROLES);
     const recipes = await buildManufacturingRecipeCatalog();
-    return NextResponse.json({ success: true, recipes });
+    const readOnly = recipes.some((recipe) => recipe.fallback === true || recipe.readOnly === true);
+    return NextResponse.json({ success: true, recipes, fallback: readOnly, readOnly });
   } catch (error: unknown) {
     const authRes = authErrorResponse(error);
     if (authRes) return authRes;

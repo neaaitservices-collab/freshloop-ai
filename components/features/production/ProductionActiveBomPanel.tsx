@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ArrowDown, ArrowUp, ChefHat, Printer, Search, UtensilsCrossed } from 'lucide-react';
 import type { RecipeFusionResult } from '@/lib/types';
 import type { KitchenRecipeDefinition } from '@/lib/domains/manufacturing/types';
+import { manufacturingCatalogIsReadOnly } from '@/lib/domains/manufacturing/fallbackRecipes';
 import { Button } from '@/components/ui/Button';
 import { ScrollTable } from '@/components/ui/layout';
 import { subscribeInventoryUpdated } from '@/lib/domains/inventory/inventoryMoveClient';
@@ -33,6 +34,7 @@ interface ProductionActiveBomPanelProps {
   onCreateBom?: () => void;
   loadError?: string | null;
   summaryLoading?: boolean;
+  onManufacturingReadOnlyChange?: (readOnly: boolean) => void;
 }
 
 function categoryTone(category: string): string {
@@ -170,15 +172,19 @@ export function ProductionActiveBomPanel({
   onCreateBom,
   loadError = null,
   summaryLoading = false,
+  onManufacturingReadOnlyChange,
 }: ProductionActiveBomPanelProps) {
   const isCompactLayout = layout === 'compact' || dense;
   const [search, setSearch] = useState('');
   const [sortKey, setSortKey] = useState<BomSortKey>('status');
   const [sortDir, setSortDir] = useState<SortDir>('asc');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [catalogReadOnly, setCatalogReadOnly] = useState(() =>
+    manufacturingCatalogIsReadOnly(initialManufacturingCatalog)
+  );
   const [catalogById, setCatalogById] = useState<Map<string, KitchenRecipeDefinition>>(() => {
     const map = new Map<string, KitchenRecipeDefinition>();
-    if (Array.isArray(initialManufacturingCatalog)) {
+    if (Array.isArray(initialManufacturingCatalog) && !manufacturingCatalogIsReadOnly(initialManufacturingCatalog)) {
       for (const r of initialManufacturingCatalog) {
         map.set(r.recipeId, r);
       }
@@ -188,27 +194,46 @@ export function ProductionActiveBomPanel({
 
   useEffect(() => {
     if (!Array.isArray(initialManufacturingCatalog)) return;
+    const readOnly = manufacturingCatalogIsReadOnly(initialManufacturingCatalog);
+    setCatalogReadOnly(readOnly);
+    onManufacturingReadOnlyChange?.(readOnly);
+    if (readOnly) {
+      setCatalogById(new Map());
+      return;
+    }
     const map = new Map<string, KitchenRecipeDefinition>();
     for (const r of initialManufacturingCatalog) {
       map.set(r.recipeId, r);
     }
     setCatalogById(map);
-  }, [initialManufacturingCatalog]);
+  }, [initialManufacturingCatalog, onManufacturingReadOnlyChange]);
 
   const loadManufacturingCatalog = useCallback(async () => {
     try {
       const res = await fetch('/api/manufacturing', { cache: 'no-store' });
       const json = await res.json();
-      if (!json.success || !Array.isArray(json.recipes)) return;
+      const recipes = Array.isArray(json.recipes) ? (json.recipes as KitchenRecipeDefinition[]) : [];
+      const readOnly =
+        json.fallback === true ||
+        json.readOnly === true ||
+        manufacturingCatalogIsReadOnly(recipes);
+      setCatalogReadOnly(readOnly);
+      onManufacturingReadOnlyChange?.(readOnly);
+      if (!json.success || readOnly) {
+        setCatalogById(new Map());
+        return;
+      }
       const map = new Map<string, KitchenRecipeDefinition>();
-      for (const r of json.recipes as KitchenRecipeDefinition[]) {
+      for (const r of recipes) {
         map.set(r.recipeId, r);
       }
       setCatalogById(map);
     } catch {
-      /* table still works from fusion cards data */
+      setCatalogReadOnly(true);
+      onManufacturingReadOnlyChange?.(true);
+      setCatalogById(new Map());
     }
-  }, []);
+  }, [onManufacturingReadOnlyChange]);
 
   useEffect(() => {
     if (initialManufacturingCatalog === null) {
@@ -404,7 +429,7 @@ export function ProductionActiveBomPanel({
             ) : null}
 
             <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:justify-end">
-              {canExecuteBatch ? (
+              {canExecuteBatch && !catalogReadOnly ? (
                 <Button
                   type="button"
                   variant="secondary"
@@ -429,6 +454,15 @@ export function ProductionActiveBomPanel({
           </div>
         </div>
       </div>
+
+      {catalogReadOnly ? (
+        <div className="flex flex-col gap-3 border-b border-slate-800 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-sm font-bold text-slate-100">Recipes unavailable, retry</p>
+          <Button type="button" variant="secondary" className="min-h-11 text-xs font-bold" onClick={() => void loadManufacturingCatalog()}>
+            Retry
+          </Button>
+        </div>
+      ) : null}
 
       {!hideExecutiveSummary ? (
         <div className="grid grid-cols-2 gap-px border-b border-slate-800/90 bg-slate-800/90 lg:grid-cols-4">

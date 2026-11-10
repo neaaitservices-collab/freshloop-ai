@@ -37,6 +37,7 @@ import {
   listLoadFailure,
 } from '@/lib/domains/http/clientLoadFailure';
 import { mapDbRecipeToFusionResult } from '@/lib/domains/manufacturing/mapDbRecipeToFusion';
+import { manufacturingCatalogIsReadOnly } from '@/lib/domains/manufacturing/fallbackRecipes';
 import type { KitchenRecipeDefinition } from '@/lib/domains/manufacturing/types';
 import type { ProductionBootstrapData } from '@/lib/domains/manufacturing/productionBootstrap';
 import type { StockLevel } from '@/lib/domains/inventory/stock';
@@ -60,8 +61,10 @@ function ProductionDashboardContent() {
   const catalogRef = useRef<HTMLDetailsElement>(null);
 
   const { activeUser } = useRole();
+  const [manufacturingReadOnly, setManufacturingReadOnly] = useState(false);
   const canEditBom = canEditProductionBom(activeUser?.role);
-  const canExecuteBom = canExecuteProductionBatch(activeUser?.role);
+  const canExecuteBom =
+    canExecuteProductionBatch(activeUser?.role) && !manufacturingReadOnly;
   const {
     wasteKpi,
     scrapStoreConfig,
@@ -150,9 +153,11 @@ function ProductionDashboardContent() {
                 ? json.recipes.length
                 : 0
           );
-          setManufacturingCatalog(
-            Array.isArray(json.manufacturingRecipes) ? json.manufacturingRecipes : []
-          );
+          const nextCatalog = Array.isArray(json.manufacturingRecipes)
+            ? json.manufacturingRecipes
+            : [];
+          setManufacturingCatalog(nextCatalog);
+          setManufacturingReadOnly(manufacturingCatalogIsReadOnly(nextCatalog));
           setInitialTransferLevels(
             Array.isArray(json.levelsSummary) ? json.levelsSummary : []
           );
@@ -272,6 +277,7 @@ function ProductionDashboardContent() {
               onBrowseAll={scrollToCatalog}
               loadError={recipeLoadError}
               summaryLoading={!statsReady}
+              onManufacturingReadOnlyChange={setManufacturingReadOnly}
               onCreateBom={
                 canEditBom
                   ? () => {

@@ -5,6 +5,7 @@ import { InventoryLocation } from '@prisma/client';
 import { InventoryLedgerError, getCurrentStock, prisma } from '@/lib/domains/inventory/ledger';
 import {
   ManufacturingOperationConflictError,
+  ManufacturingRequestError,
   executeManufacturingBatch,
   manufacturingBatchReferenceId,
 } from '@/lib/domains/manufacturing/executeBatch';
@@ -118,6 +119,34 @@ function runBatch(
     enforceStockCheck: true,
   });
 }
+
+async function assertNoBatchWrites(operationId: string, run: () => Promise<unknown>) {
+  const referenceId = manufacturingBatchReferenceId(operationId);
+  await assert.rejects(run, (error: unknown) => {
+    assert.ok(error instanceof ManufacturingRequestError);
+    assert.equal(error.statusCode, 404);
+    assert.equal(error.message, 'Recipe not found');
+    return true;
+  });
+  assert.equal(await prisma.inventoryTransaction.count({ where: { referenceId } }), 0);
+  assert.equal(await prisma.manufacturingOperation.count({ where: { id: operationId } }), 0);
+}
+
+test('a missing recipe id returns 404 and writes no stock', { skip: !hasDb }, async (t) => {
+  if (!(await connectOrSkip(t))) return;
+  const operationId = randomUUID();
+  await assertNoBatchWrites(operationId, () =>
+    runBatch(`missing-${operationId}`, operationId, 1)
+  );
+});
+
+test('a fallback recipe id is rejected before any stock write', { skip: !hasDb }, async (t) => {
+  if (!(await connectOrSkip(t))) return;
+  for (const recipeId of ['rec-panzanella-001', 'rec-001', 'rec-guacamole-003']) {
+    const operationId = randomUUID();
+    await assertNoBatchWrites(operationId, () => runBatch(recipeId, operationId, 20));
+  }
+});
 
 test('same manufacturing operation replays one batch', { skip: !hasDb }, async (t) => {
   if (!(await connectOrSkip(t))) return;
