@@ -1,4 +1,5 @@
 import type { RoleName } from '@/lib/utils/roles';
+import { canEditDepartments, canViewDepartments } from '@/lib/auth/staffCapabilities';
 import { AuthError, requireRoles, requireSessionUser } from '@/lib/auth/session';
 import type { AuthSessionUser } from '@/lib/auth/staffSnapshot';
 
@@ -27,6 +28,24 @@ const OWNER_OR_STORE_MANAGER: RoleName[] = ['ADMIN', 'STORE_MANAGER'];
 
 export async function requireManagerStaff() {
   return requireRoles(OWNER_OR_STORE_MANAGER);
+}
+
+/** Read the department reference list. Admin and store manager only. */
+export async function requireDepartmentViewer() {
+  const user = await requireSessionUser();
+  if (!canViewDepartments(user.role)) {
+    throw new AuthError('Forbidden — your role cannot view departments.', 403);
+  }
+  return user;
+}
+
+/** Change the department reference list. Admin only. */
+export async function requireDepartmentEditor() {
+  const user = await requireSessionUser();
+  if (!canEditDepartments(user.role)) {
+    throw new AuthError('Only an admin can change departments.', 403);
+  }
+  return user;
 }
 
 /** Set bundles + bundle calculator — owner (ADMIN) and store managers only. */

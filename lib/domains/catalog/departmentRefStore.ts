@@ -15,6 +15,12 @@ const CODE_MAP_TTL_MS = 60_000;
 let readyCache: { at: number; ready: boolean } | null = null;
 let codeMapCache: { at: number; map: Map<string, string> } | null = null;
 
+/** Drop readiness and code-map caches after an admin write. */
+export function invalidateDepartmentRefCaches(): void {
+  readyCache = null;
+  codeMapCache = null;
+}
+
 function asBool(value: unknown): boolean {
   return value === true || value === 't' || value === 'true';
 }

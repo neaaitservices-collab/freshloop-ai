@@ -6,6 +6,16 @@ export function canAdminPlatform(role: RoleName | null | undefined): boolean {
   return role != null && isAdmin(role);
 }
 
+/** Department reference list — admin and store manager. Other roles have no access. */
+export function canViewDepartments(role: RoleName | null | undefined): boolean {
+  return role === 'ADMIN' || role === 'STORE_MANAGER';
+}
+
+/** Add, rename, and activate departments. Store managers are read-only. */
+export function canEditDepartments(role: RoleName | null | undefined): boolean {
+  return role === 'ADMIN';
+}
+
 /** Manager or admin — staff roster, wages, invoice approval. */
 export function canManageStaff(role: RoleName | null | undefined): boolean {
   return role != null && isManager(role);
