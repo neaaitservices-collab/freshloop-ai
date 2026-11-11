@@ -180,7 +180,10 @@ export function purchaseOrderLineKey(draft: {
 }
 
 export const GMAIL_COMPOSE_URL_LIMIT = 8000;
+/** Mailto URLs past this length are dropped by some mail apps and browsers. */
+export const MAILTO_URL_LIMIT = 2000;
 export const ORDER_TRUNCATED_NOTE = '\n…(order truncated, see attached/full list)';
+export const PURCHASE_ORDER_GROUP_SUBJECT = 'Supermarket Purchase Order';
 
 export function purchaseOrderOpenedWarning(openedAt: string): string {
   const time = new Date(openedAt);
@@ -200,29 +203,52 @@ function composeHref(to: string, subject: string, body: string): { gmailUrl: str
   };
 }
 
-/** Shorten the body until the Gmail URL fits. The note stays in the shortened text. */
+function mailHrefFits(to: string, subject: string, body: string): boolean {
+  const hrefs = composeHref(to, subject, body);
+  return hrefs.mailtoUrl.length <= MAILTO_URL_LIMIT && hrefs.gmailUrl.length <= GMAIL_COMPOSE_URL_LIMIT;
+}
+
+/** Shorten the body until the mailto URL fits. The note stays in the shortened text. */
 export function fitPurchaseOrderBody(input: {
   to: string;
   subject: string;
   body: string;
-}): { body: string; truncated: boolean } {
+}): { subject: string; body: string; truncated: boolean } {
   const to = singleSupplierEmail(input.to) ?? input.to.trim();
-  const lengthOf = (body: string) => composeHref(to, input.subject, body).gmailUrl.length;
-  if (lengthOf(input.body) <= GMAIL_COMPOSE_URL_LIMIT) return { body: input.body, truncated: false };
+  if (mailHrefFits(to, input.subject, input.body)) {
+    return { subject: input.subject, body: input.body, truncated: false };
+  }
   let low = 0;
   let high = input.body.length;
   let best = ORDER_TRUNCATED_NOTE.trim();
   while (low <= high) {
     const mid = Math.floor((low + high) / 2);
     const candidate = `${input.body.slice(0, mid).trimEnd()}${ORDER_TRUNCATED_NOTE}`;
-    if (lengthOf(candidate) <= GMAIL_COMPOSE_URL_LIMIT) {
+    if (mailHrefFits(to, input.subject, candidate)) {
       best = candidate;
       low = mid + 1;
     } else {
       high = mid - 1;
     }
   }
-  return { body: best, truncated: true };
+  if (mailHrefFits(to, input.subject, best)) {
+    return { subject: input.subject, body: best, truncated: true };
+  }
+  const note = ORDER_TRUNCATED_NOTE.trim();
+  low = 0;
+  high = input.subject.length;
+  let bestSubject = '';
+  while (low <= high) {
+    const mid = Math.floor((low + high) / 2);
+    const candidate = input.subject.slice(0, mid).trimEnd();
+    if (mailHrefFits(to, candidate, note)) {
+      bestSubject = candidate;
+      low = mid + 1;
+    } else {
+      high = mid - 1;
+    }
+  }
+  return { subject: bestSubject, body: note, truncated: true };
 }
 
 export function purchaseOrderCompose(input: {
@@ -233,8 +259,53 @@ export function purchaseOrderCompose(input: {
   const to = singleSupplierEmail(input.to);
   if (!to) return null;
   const fitted = fitPurchaseOrderBody({ to, subject: input.subject, body: input.body });
-  const hrefs = composeHref(to, input.subject, fitted.body);
+  const hrefs = composeHref(to, fitted.subject, fitted.body);
   return { to, body: fitted.body, truncated: fitted.truncated, ...hrefs };
+}
+
+/** One heading per supplier, then that supplier's lines. Addresses stay out of the text. */
+export function purchaseOrderGroupBody(
+  drafts: readonly Pick<PoDraft, 'supplier' | 'body'>[]
+): string {
+  return drafts
+    .map((draft) => {
+      const heading = draft.supplier.replace(/[\r\n]+/g, ' ').trim();
+      const lines = draft.body.replace(/\r\n/g, '\n').trim();
+      if (!heading && !lines) return '';
+      if (!lines) return heading;
+      if (!heading) return lines;
+      return `${heading}\n${lines}`;
+    })
+    .filter((section) => section.length > 0)
+    .join('\n\n');
+}
+
+/** One mailto for every supplier. To stays empty so the buyer fills it in the mail app. */
+export function purchaseOrderGroupCompose(
+  drafts: readonly Pick<PoDraft, 'supplier' | 'body'>[]
+): {
+  to: '';
+  subject: string;
+  body: string;
+  fullBody: string;
+  truncated: boolean;
+  mailtoUrl: string;
+} | null {
+  const fullBody = purchaseOrderGroupBody(drafts);
+  if (!fullBody) return null;
+  const fitted = fitPurchaseOrderBody({
+    to: '',
+    subject: PURCHASE_ORDER_GROUP_SUBJECT,
+    body: fullBody,
+  });
+  return {
+    to: '',
+    subject: fitted.subject,
+    body: fitted.body,
+    fullBody,
+    truncated: fitted.truncated,
+    mailtoUrl: composeHref('', fitted.subject, fitted.body).mailtoUrl,
+  };
 }
 
 export type PurchaseOrderRecordResult =
@@ -256,7 +327,7 @@ export function openPurchaseOrderWindow(
   return popup;
 }
 
-/** Point the blank tab at Gmail only after the log succeeds. Close it on a repeat or a failure. */
+/** Point the blank tab at the mail URL only after the log succeeds. Close it on a repeat or a failure. */
 export async function settlePurchaseOrderWindow(
   popup: PurchaseOrderPopup,
   gmailUrl: string,

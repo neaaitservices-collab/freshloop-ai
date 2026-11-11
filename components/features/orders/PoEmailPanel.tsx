@@ -6,11 +6,13 @@ import { Mail, X } from 'lucide-react';
 import {
   openPurchaseOrderWindow,
   purchaseOrderCompose,
+  purchaseOrderGroupCompose,
   purchaseOrderOpenedWarning,
   purchaseOrderSendAllConfirm,
   purchaseOrderSendPlan,
   purchaseOrderSkipMessage,
   settlePurchaseOrderWindow,
+  singleSupplierEmail,
   supplierRecipientHint,
   type PoDraft,
   type PurchaseOrderPopup,
@@ -28,7 +30,6 @@ interface OpenResult {
   message: string;
   truncated?: boolean;
   fullBody?: string;
-  gmailUrl?: string;
   mailtoUrl?: string;
 }
 
@@ -77,7 +78,7 @@ export function PoEmailPanel({
   const [busy, setBusy] = useState(false);
   const [confirmAll, setConfirmAll] = useState(false);
   const [showOpens, setShowOpens] = useState(false);
-  const [reopen, setReopen] = useState<{ draft: PoDraft; openedAt: string } | null>(null);
+  const [reopen, setReopen] = useState<{ openedAt: string; draft?: PoDraft; group?: boolean } | null>(null);
   const [results, setResults] = useState<OpenResult[]>([]);
   const index =
     drafts.length === 0 ? 0 : Math.min(Math.max(activeIndex, 0), drafts.length - 1);
@@ -100,10 +101,10 @@ export function PoEmailPanel({
         {
           supplier: item.supplier,
           outcome: 'failed',
-          message: 'The compose window was blocked. Open it from the link.',
-          gmailUrl: compose.gmailUrl,
+          message: 'The mail window was blocked. Open it from the link.',
           mailtoUrl: compose.mailtoUrl,
           fullBody: item.body,
+          truncated: compose.truncated,
         },
       ]);
       return;
@@ -119,7 +120,7 @@ export function PoEmailPanel({
   ) => {
     setBusy(true);
     try {
-      const settled = await settlePurchaseOrderWindow(popup, compose.gmailUrl, () => recordOpen(item, again));
+      const settled = await settlePurchaseOrderWindow(popup, compose.mailtoUrl, () => recordOpen(item, again));
       if (settled.outcome === 'repeat') {
         setReopen({ draft: item, openedAt: settled.openedAt });
         return;
@@ -134,8 +135,8 @@ export function PoEmailPanel({
           supplier: item.supplier,
           outcome: 'opened',
           message: compose.truncated
-            ? 'Compose opened. The order text was shortened to fit.'
-            : 'Compose opened.',
+            ? 'Mail opened. The order text was shortened to fit.'
+            : 'Mail opened.',
           truncated: compose.truncated,
           fullBody: item.body,
         },
@@ -150,15 +151,85 @@ export function PoEmailPanel({
       await navigator.clipboard.writeText(fullBody);
       setResults((current) =>
         current.map((item) =>
-          item.truncated ? { ...item, message: 'Compose opened. Full order copied.' } : item
+          item.truncated ? { ...item, message: 'Mail opened. Full text copied.' } : item
         )
       );
     } catch {
       setResults((current) =>
         current.map((item) =>
-          item.truncated ? { ...item, message: 'Compose opened. The full order could not be copied.' } : item
+          item.truncated ? { ...item, message: 'Mail opened. The full text could not be copied.' } : item
         )
       );
+    }
+  };
+
+  const openGroup = (again = false) => {
+    const compose = purchaseOrderGroupCompose(drafts);
+    if (!compose) {
+      setResults([{ supplier: 'Group', outcome: 'skipped', message: 'Nothing to include.' }]);
+      return;
+    }
+    const popup = openPurchaseOrderWindow((url, target) => window.open(url, target));
+    if (!popup) {
+      setResults([
+        {
+          supplier: 'Group',
+          outcome: 'failed',
+          message: 'The mail window was blocked. Open it from the link.',
+          mailtoUrl: compose.mailtoUrl,
+          fullBody: compose.fullBody,
+          truncated: compose.truncated,
+        },
+      ]);
+      return;
+    }
+    void finishGroup(again, compose, popup);
+  };
+
+  const finishGroup = async (
+    again: boolean,
+    compose: NonNullable<ReturnType<typeof purchaseOrderGroupCompose>>,
+    popup: PurchaseOrderPopup
+  ) => {
+    setBusy(true);
+    try {
+      for (const item of drafts) {
+        if (!singleSupplierEmail(item.to)) continue;
+        let recorded: Awaited<ReturnType<typeof recordOpen>>;
+        try {
+          recorded = await recordOpen(item, again);
+        } catch {
+          popup.close();
+          setResults([
+            { supplier: item.supplier, outcome: 'failed', message: 'The order could not be recorded.' },
+          ]);
+          return;
+        }
+        if (!recorded.ok) {
+          popup.close();
+          if (recorded.status === 409) {
+            setReopen({ openedAt: recorded.openedAt ?? '', group: true });
+            return;
+          }
+          setResults([{ supplier: item.supplier, outcome: 'failed', message: recorded.message }]);
+          return;
+        }
+      }
+      popup.location.href = compose.mailtoUrl;
+      setReopen(null);
+      setResults([
+        {
+          supplier: 'Group',
+          outcome: 'opened',
+          message: compose.truncated
+            ? 'Mail opened. The order text was shortened to fit.'
+            : 'Mail opened.',
+          truncated: compose.truncated,
+          fullBody: compose.fullBody,
+        },
+      ]);
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -303,14 +374,15 @@ export function PoEmailPanel({
                 Send all
               </Button>
             </div>
-            {activeCompose ? (
-              <a
-                href={activeCompose.mailtoUrl}
-                className="inline-block text-xs font-semibold text-blue-300 underline underline-offset-2"
-              >
-                Email app
-              </a>
-            ) : null}
+            <Button
+              type="button"
+              variant="secondary"
+              className="w-full py-3"
+              disabled={busy}
+              onClick={() => void openGroup()}
+            >
+              Send group
+            </Button>
             {confirmAll ? (
               <div className="space-y-2 rounded-xl border border-slate-700 bg-slate-950/70 p-3">
                 <p className="text-sm text-slate-100">{purchaseOrderSendAllConfirm(plan.ready.length)}</p>
@@ -338,33 +410,31 @@ export function PoEmailPanel({
               </div>
             ) : null}
             {showOpens ? (
-              <ul aria-label="Open each supplier in Gmail" className="space-y-2">
-                {plan.ready.map((item) => {
-                  const compose = purchaseOrderCompose(item);
-                  return (
-                    <li key={`${item.supplier}-${item.to}`} className="flex flex-wrap items-center gap-2">
-                      <span className="min-w-0 flex-1 truncate text-xs text-slate-200">{item.supplier}</span>
-                      <Button type="button" variant="primary" disabled={busy} onClick={() => void openCompose(item)}>
-                        Open in Gmail
-                      </Button>
-                      {compose ? (
-                        <a
-                          href={compose.mailtoUrl}
-                          className="text-xs font-semibold text-blue-300 underline underline-offset-2"
-                        >
-                          Email app
-                        </a>
-                      ) : null}
-                    </li>
-                  );
-                })}
+              <ul aria-label="Send each supplier" className="space-y-2">
+                {plan.ready.map((item) => (
+                  <li key={`${item.supplier}-${item.to}`} className="flex flex-wrap items-center gap-2">
+                    <span className="min-w-0 flex-1 truncate text-xs text-slate-200">{item.supplier}</span>
+                    <Button type="button" variant="primary" disabled={busy} onClick={() => void openCompose(item)}>
+                      Send
+                    </Button>
+                  </li>
+                ))}
               </ul>
             ) : null}
             {reopen ? (
               <div className="space-y-2 rounded-xl border border-amber-800/60 bg-amber-950/30 p-3">
                 <p className="text-sm text-amber-100">{purchaseOrderOpenedWarning(reopen.openedAt)}</p>
                 <div className="grid grid-cols-2 gap-2">
-                  <Button type="button" variant="primary" disabled={busy} onClick={() => void openCompose(reopen.draft, true)}>
+                  <Button
+                    type="button"
+                    variant="primary"
+                    disabled={busy}
+                    onClick={() => {
+                      if (!reopen) return;
+                      if (reopen.group) void openGroup(true);
+                      else if (reopen.draft) void openCompose(reopen.draft, true);
+                    }}
+                  >
                     Open again
                   </Button>
                   <Button type="button" variant="secondary" onClick={() => setReopen(null)}>
@@ -380,28 +450,18 @@ export function PoEmailPanel({
                     <span>
                       {result.supplier}: {result.message}
                     </span>
-                    {result.gmailUrl ? (
-                      <a
-                        href={result.gmailUrl}
-                        target="_blank"
-                        rel="noopener"
-                        className="ml-2 font-semibold text-blue-300 underline underline-offset-2"
-                      >
-                        Open in Gmail
-                      </a>
-                    ) : null}
                     {result.mailtoUrl ? (
                       <a href={result.mailtoUrl} className="ml-2 font-semibold text-blue-300 underline underline-offset-2">
-                        Email app
+                        Open mail
                       </a>
                     ) : null}
-                    {result.fullBody && (result.truncated || result.mailtoUrl) ? (
+                    {result.truncated && result.fullBody ? (
                       <button
                         type="button"
                         className="ml-2 font-semibold text-blue-300 underline underline-offset-2"
                         onClick={() => void copyFullOrder(result.fullBody ?? '')}
                       >
-                        Copy full order
+                        Copy full text
                       </button>
                     ) : null}
                   </li>

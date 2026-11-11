@@ -4,14 +4,18 @@ import test from 'node:test';
 import {
   AMBIGUOUS_SUPPLIER_EMAIL_HINT,
   GMAIL_COMPOSE_URL_LIMIT,
+  MAILTO_URL_LIMIT,
   MISSING_SUPPLIER_EMAIL_HINT,
   ORDER_TRUNCATED_NOTE,
+  PURCHASE_ORDER_GROUP_SUBJECT,
   draftForRows,
   draftForSupplier,
   draftsForSuppliers,
   matchSupplierRecipient,
   openPurchaseOrderWindow,
   purchaseOrderCompose,
+  purchaseOrderGroupBody,
+  purchaseOrderGroupCompose,
   settlePurchaseOrderWindow,
   purchaseOrderLineKey,
   purchaseOrderMailto,
@@ -165,12 +169,17 @@ test('purchase order panel sends one supplier at a time and falls back to mail',
   assert.match(panel, /Prepare draft/);
   assert.match(panel, />\s*Send\s*</);
   assert.match(panel, /Send all/);
-  assert.match(panel, /Open in Gmail/);
+  assert.match(panel, /Send group/);
   assert.match(panel, /purchaseOrderSendPlan/);
   assert.match(panel, /purchaseOrderSendAllConfirm/);
   assert.match(panel, /purchaseOrderCompose/);
+  assert.match(panel, /purchaseOrderGroupCompose/);
   assert.match(panel, /purchaseOrderOpenedWarning/);
-  assert.match(panel, /Copy full order/);
+  assert.match(panel, /Copy full text/);
+  assert.match(panel, /compose\.mailtoUrl/);
+  assert.equal(panel.includes('Open in Gmail'), false);
+  assert.equal(panel.includes('Email app'), false);
+  assert.equal(panel.includes('mail.google.com'), false);
   assert.match(mail, /mail\.google\.com/);
   assert.equal(panel.includes('drafts.map((draft) => draft.to).join'), false);
   assert.equal(/resend/i.test(panel), false);
@@ -263,12 +272,68 @@ test('Gmail compose encodes each part and shortens a long order', () => {
   assert.ok(long);
   assert.equal(long?.truncated, true);
   assert.ok((long?.gmailUrl.length ?? 0) <= GMAIL_COMPOSE_URL_LIMIT);
+  assert.ok((long?.mailtoUrl.length ?? 0) <= MAILTO_URL_LIMIT);
   assert.match(long?.body ?? '', /order truncated, see attached\/full list/);
   assert.equal(long?.body.endsWith(ORDER_TRUNCATED_NOTE), true);
   assert.match(purchaseOrderOpenedWarning('2026-11-11T15:04:00.000Z'), /Already opened for this order on .+ open again\?/);
 });
 
-test('a blank compose tab is opened in the click, then pointed at Gmail only after the log succeeds', async () => {
+test('group mailto joins each supplier under a heading, caps the URL, and keeps extra headers out', () => {
+  const farm = draftForSupplier('Farm & Sons', [row('Farm & Sons', 'Bananas', 'farm-banana')], [
+    { name: 'Farm & Sons', contactEmail: 'buyer@farm.test' },
+  ]);
+  const dairy = draftForSupplier('Dairy Co', [row('Dairy Co', 'Milk', 'dairy-milk')], [
+    { name: 'Dairy Co', contactEmail: 'desk@dairy.test' },
+  ]);
+  const body = purchaseOrderGroupBody([farm, dairy]);
+  assert.equal(body, 'Farm & Sons\n2 cases - Bananas\n\nDairy Co\n2 cases - Milk');
+  assert.equal(body.includes('buyer@farm.test'), false);
+  assert.equal(body.includes('desk@dairy.test'), false);
+
+  const opened = purchaseOrderGroupCompose([farm, dairy]);
+  assert.ok(opened);
+  assert.equal(opened?.to, '');
+  assert.equal(opened?.truncated, false);
+  assert.equal(opened?.subject, PURCHASE_ORDER_GROUP_SUBJECT);
+  assert.match(opened?.mailtoUrl ?? '', /^mailto:\?subject=/);
+  const openedParams = new URLSearchParams((opened?.mailtoUrl ?? '').split('?')[1]);
+  assert.deepEqual([...openedParams.keys()], ['subject', 'body']);
+  assert.equal(openedParams.get('body'), body);
+  assert.equal(openedParams.get('to'), null);
+  assert.equal(openedParams.get('bcc'), null);
+
+  const injected = purchaseOrderGroupCompose([
+    { supplier: 'Farm\r\nBcc: spy@evil.com', body: 'line&bcc=spy@evil.com' },
+    { supplier: 'Dairy?to=spy@evil.com', body: '2 cases - Milk' },
+  ]);
+  assert.ok(injected);
+  assert.match(injected?.mailtoUrl ?? '', /^mailto:\?subject=/);
+  const injectedParams = new URLSearchParams((injected?.mailtoUrl ?? '').split('?')[1]);
+  assert.deepEqual([...injectedParams.keys()], ['subject', 'body']);
+  assert.equal(injectedParams.get('bcc'), null);
+  assert.equal(injectedParams.get('to'), null);
+  assert.match(injectedParams.get('body') ?? '', /Farm Bcc: spy@evil.com/);
+  assert.match(injectedParams.get('body') ?? '', /Dairy\?to=spy@evil.com/);
+  assert.equal((injected?.mailtoUrl ?? '').includes('&bcc='), false);
+  assert.equal((injected?.mailtoUrl ?? '').includes('?bcc='), false);
+  assert.equal(singleSupplierEmail('x?bcc=spy%40evil.com&z=@b.co'), null);
+
+  const long = purchaseOrderGroupCompose([
+    { supplier: 'Farm & Sons', body: 'x'.repeat(4000) },
+    { supplier: 'Dairy Co', body: 'y'.repeat(4000) },
+  ]);
+  assert.ok(long);
+  assert.equal(long?.truncated, true);
+  assert.ok((long?.mailtoUrl.length ?? 0) <= MAILTO_URL_LIMIT);
+  assert.match(long?.body ?? '', /order truncated, see attached\/full list/);
+  assert.equal(long?.body.endsWith(ORDER_TRUNCATED_NOTE), true);
+  assert.match(long?.fullBody ?? '', /Farm & Sons/);
+  assert.match(long?.fullBody ?? '', /Dairy Co/);
+  assert.match(long?.fullBody ?? '', /y{10}/);
+  assert.ok((long?.fullBody.length ?? 0) > (long?.body.length ?? 0));
+});
+
+test('a blank compose tab is opened in the click, then pointed at the mail URL only after the log succeeds', async () => {
   assert.equal(openPurchaseOrderWindow(() => null), null);
 
   const openedCalls: string[] = [];
