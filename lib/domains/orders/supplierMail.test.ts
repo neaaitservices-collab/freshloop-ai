@@ -20,6 +20,8 @@ import {
   purchaseOrderLineKey,
   purchaseOrderMailto,
   purchaseOrderOpenedWarning,
+  purchaseOrderRepeatGate,
+  purchaseOrderRepeatWarning,
   purchaseOrderSendPlan,
   purchaseOrderSkippedNoEmail,
   singleSupplierEmail,
@@ -176,18 +178,23 @@ test('purchase order panel opens mailto directly and logs in the background', ()
   assert.match(panel, /singleSupplierEmail\(item\.to\)/);
   assert.equal(panel.includes('keepalive'), false);
   assert.equal(panel.includes('onPrepare'), false);
-  assert.match(panel, /<a href=\{href\} className=\{className\} onClick=\{onOpen\}>/);
+  assert.match(
+    panel,
+    /<a\s+ref=\{anchorRef\}\s+href=\{href\}\s+target="_blank"\s+rel="noopener noreferrer"\s+className=\{className\}\s+onClick=\{onOpen\}\s*>/
+  );
   assert.match(panel, /activeCompose\?\.truncated && sendHref \?/);
   assert.match(panel, /groupCompose\?\.truncated \?/);
   assert.match(panel, /Copy full text/);
   assert.equal(panel.includes('Prepare draft'), false);
   assert.equal(panel.includes('Send all'), false);
   assert.equal(panel.includes('Open mail'), false);
-  assert.equal(panel.includes('Open again'), false);
+  assert.match(panel, />\s*Open again\s*</);
   assert.equal(panel.includes('Already opened'), false);
-  assert.equal(panel.includes('target='), false);
-  assert.equal(panel.includes('await fetch'), false);
-  assert.equal(panel.includes('checkOnly'), false);
+  assert.match(panel, /target="_blank"/);
+  assert.match(panel, /rel="noopener noreferrer"/);
+  assert.match(panel, /event\.preventDefault\(\)/);
+  assert.match(panel, /checkOnly: true/);
+  assert.match(panel, /reopen: true/);
   assert.equal(panel.includes('activateMailLink'), false);
   assert.equal(panel.includes('settlePurchaseOrderGroup'), false);
   assert.equal(panel.includes('window.location.href'), false);
@@ -202,7 +209,7 @@ test('purchase order panel opens mailto directly and logs in the background', ()
   assert.equal(mail.includes('activateMailLink'), false);
   assert.equal(mail.includes('settlePurchaseOrderGroup'), false);
   assert.equal(mail.includes('Open a separate email'), false);
-  assert.equal(mail.includes('Already opened'), false);
+  assert.match(mail, /Already opened at \$\{label\} \(Toronto\)\. Open again\?/);
   assert.equal(panel.includes('drafts.map((draft) => draft.to).join'), false);
   assert.equal(/resend/i.test(panel), false);
   assert.equal(/\bsent\b/i.test(panel), false);
@@ -432,7 +439,35 @@ test('a failed open log appears in the issues list and names the supplier', () =
 
   const panel = readFileSync('components/features/orders/PoEmailPanel.tsx', 'utf8');
   assert.match(panel, /setIssues\(\(current\) => \[\.\.\.current, \.\.\.next\.issues\]\)/);
-  assert.match(panel, /\.catch\(\(\) => \{\s*publish\(\{ network: true \}\);\s*\}\)/);
+  assert.match(panel, /\.catch\(\(\) => \{\s*showLog\(item, grouped, \{ network: true \}, generation\);\s*\}\)/);
+  assert.equal(panel.includes('keepalive'), false);
+});
+
+test('mailto anchors open in a new tab and a repeat waits for confirm', () => {
+  assert.equal(
+    purchaseOrderRepeatWarning('2026-11-11T15:04:00.000Z'),
+    'Already opened at 10:04 AM (Toronto). Open again?'
+  );
+  assert.equal(
+    purchaseOrderRepeatWarning('2026-11-11T22:15:00.000Z'),
+    'Already opened at 5:15 PM (Toronto). Open again?'
+  );
+  assert.equal(purchaseOrderRepeatWarning('not-a-date'), 'Already opened at not-a-date (Toronto). Open again?');
+  assert.equal(purchaseOrderRepeatGate(409), 'confirm');
+  assert.equal(purchaseOrderRepeatGate(200), 'open');
+  assert.equal(purchaseOrderRepeatGate(400), 'issue');
+
+  const panel = readFileSync('components/features/orders/PoEmailPanel.tsx', 'utf8');
+  const anchors = panel.match(/target="_blank"/g) ?? [];
+  assert.equal(anchors.length, 1);
+  assert.match(panel, /rel="noopener noreferrer"/);
+  assert.match(panel, /holdClick\(event, \[draft\], false, sendAnchor\.current, null\)/);
+  assert.match(panel, /holdClick\(\s*event,\s*loggable,\s*true,\s*groupAnchor\.current,/);
+  assert.match(panel, /if \(gate === 'confirm'\)/);
+  assert.match(panel, /if \(repeats\.length > 0\)/);
+  assert.match(panel, /logOpened\(item, grouped, false\)/);
+  assert.match(panel, /logOpened\(item, pending\.grouped, true\)/);
+  assert.match(panel, /reopen \? \{ reopen: true \} : \{\}/);
   assert.equal(panel.includes('keepalive'), false);
 });
 

@@ -185,11 +185,10 @@ export const MAILTO_URL_LIMIT = 2000;
 export const ORDER_TRUNCATED_NOTE = '\n…(order truncated, see attached/full list)';
 export const PURCHASE_ORDER_GROUP_SUBJECT = 'Supermarket Purchase Order';
 
-/** One line for when this order was opened, in America/Toronto. The mail link still opens. */
-export function purchaseOrderOpenedWarning(openedAt: string): string {
+function torontoClock(openedAt: string): string | null {
   const time = new Date(openedAt);
-  if (Number.isNaN(time.getTime())) return `Opened ${openedAt}`;
-  const label = time
+  if (Number.isNaN(time.getTime())) return null;
+  return time
     .toLocaleTimeString('en-US', {
       timeZone: 'America/Toronto',
       hour: 'numeric',
@@ -197,7 +196,25 @@ export function purchaseOrderOpenedWarning(openedAt: string): string {
       hour12: true,
     })
     .replace(/[\u202f\u00a0]/g, ' ');
-  return `Opened ${label}`;
+}
+
+/** One line for when this order was opened, in America/Toronto. */
+export function purchaseOrderOpenedWarning(openedAt: string): string {
+  const label = torontoClock(openedAt);
+  return label ? `Opened ${label}` : `Opened ${openedAt}`;
+}
+
+/** Ask before opening a purchase order that was already opened. */
+export function purchaseOrderRepeatWarning(openedAt: string): string {
+  const label = torontoClock(openedAt) ?? (openedAt.trim() || 'unknown time');
+  return `Already opened at ${label} (Toronto). Open again?`;
+}
+
+/** 409 holds the mailto until the buyer confirms. Other failures stay in the issues list. */
+export function purchaseOrderRepeatGate(status: number): 'open' | 'confirm' | 'issue' {
+  if (status === 409) return 'confirm';
+  if (status >= 200 && status < 300) return 'open';
+  return 'issue';
 }
 
 export type PurchaseOrderLogState = { notes: string[]; issues: string[] };
@@ -206,7 +223,7 @@ export type PurchaseOrderLogResult =
   | { network: true }
   | { status: number; error?: string; openedAt?: string };
 
-/** A 409 keeps the first open time. Any other failure is an issue named for that supplier. */
+/** A logged 409 keeps the first open time. Any other failure is an issue named for that supplier. */
 export function applyPurchaseOrderLog(
   state: PurchaseOrderLogState,
   input: { supplier: string; grouped: boolean; result: PurchaseOrderLogResult }

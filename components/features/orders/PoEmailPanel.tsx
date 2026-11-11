@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState, type ReactNode } from 'react';
+import { useRef, useState, type MouseEvent, type ReactNode, type RefObject } from 'react';
 import Link from 'next/link';
 import { Mail, X } from 'lucide-react';
 import {
@@ -8,6 +8,8 @@ import {
   purchaseOrderCompose,
   purchaseOrderCopiedMessage,
   purchaseOrderGroupCompose,
+  purchaseOrderRepeatGate,
+  purchaseOrderRepeatWarning,
   purchaseOrderSendPlan,
   purchaseOrderSkippedNoEmail,
   singleSupplierEmail,
@@ -20,6 +22,21 @@ import { Input } from '@/components/ui/Input';
 import { cn } from '@/lib/utils/cn';
 
 type OpenLogJson = { error?: string; openedAt?: string } | null;
+
+type RepeatPrompt = {
+  lines: string[];
+  items: PoDraft[];
+  grouped: boolean;
+  anchor: HTMLAnchorElement | null;
+};
+
+async function readOpenLog(response: Response): Promise<OpenLogJson> {
+  try {
+    return (await response.json()) as OpenLogJson;
+  } catch {
+    return null;
+  }
+}
 
 export function PoEmailPanel({
   drafts,
@@ -38,7 +55,11 @@ export function PoEmailPanel({
   const [issues, setIssues] = useState<string[]>([]);
   const [skipNote, setSkipNote] = useState<string | null>(null);
   const [copyMessage, setCopyMessage] = useState<string | null>(null);
+  const [repeat, setRepeat] = useState<RepeatPrompt | null>(null);
   const requestId = useRef(0);
+  const passThrough = useRef(false);
+  const sendAnchor = useRef<HTMLAnchorElement | null>(null);
+  const groupAnchor = useRef<HTMLAnchorElement | null>(null);
   const index =
     drafts.length === 0 ? 0 : Math.min(Math.max(activeIndex, 0), drafts.length - 1);
   const draft = drafts[index];
@@ -58,20 +79,22 @@ export function PoEmailPanel({
     setIssues([]);
     setCopyMessage(null);
     setSkipNote(skipped);
+    setRepeat(null);
   };
 
-  const logOpened = (item: PoDraft, grouped: boolean) => {
+  const showLog = (item: PoDraft, grouped: boolean, result: PurchaseOrderLogResult, generation: number) => {
+    if (generation !== requestId.current) return;
+    const next = applyPurchaseOrderLog(
+      { notes: [], issues: [] },
+      { supplier: item.supplier, grouped, result }
+    );
+    if (next.notes.length > 0) setNotes((current) => [...current, ...next.notes]);
+    if (next.issues.length > 0) setIssues((current) => [...current, ...next.issues]);
+  };
+
+  const logOpened = (item: PoDraft, grouped: boolean, reopen: boolean) => {
     if (!singleSupplierEmail(item.to)) return;
     const generation = requestId.current;
-    const publish = (result: PurchaseOrderLogResult) => {
-      if (generation !== requestId.current) return;
-      const next = applyPurchaseOrderLog(
-        { notes: [], issues: [] },
-        { supplier: item.supplier, grouped, result }
-      );
-      if (next.notes.length > 0) setNotes((current) => [...current, ...next.notes]);
-      if (next.issues.length > 0) setIssues((current) => [...current, ...next.issues]);
-    };
     fetch('/api/orders/purchase-order-email', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -82,20 +105,102 @@ export function PoEmailPanel({
         subject: item.subject,
         body: item.body,
         productIds: item.productIds,
+        ...(reopen ? { reopen: true } : {}),
       }),
     })
       .then(async (response) => {
-        let json: OpenLogJson = null;
-        try {
-          json = (await response.json()) as OpenLogJson;
-        } catch {
-          json = null;
-        }
-        publish({ status: response.status, error: json?.error, openedAt: json?.openedAt });
+        const json = await readOpenLog(response);
+        showLog(item, grouped, { status: response.status, error: json?.error, openedAt: json?.openedAt }, generation);
       })
       .catch(() => {
-        publish({ network: true });
+        showLog(item, grouped, { network: true }, generation);
       });
+  };
+
+  const followAnchor = (anchor: HTMLAnchorElement | null) => {
+    if (!anchor) return;
+    passThrough.current = true;
+    anchor.click();
+  };
+
+  const guardOpen = async (items: PoDraft[], grouped: boolean, anchor: HTMLAnchorElement | null) => {
+    const generation = requestId.current;
+    const repeats: { supplier: string; openedAt?: string }[] = [];
+    let blocked = false;
+    for (const item of items) {
+      if (!singleSupplierEmail(item.to)) continue;
+      let response: Response;
+      try {
+        response = await fetch('/api/orders/purchase-order-email', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            supplierId: item.supplierId ?? null,
+            supplierName: item.supplier,
+            to: item.to,
+            subject: item.subject,
+            body: item.body,
+            productIds: item.productIds,
+            checkOnly: true,
+          }),
+        });
+      } catch {
+        showLog(item, grouped, { network: true }, generation);
+        blocked = true;
+        continue;
+      }
+      if (generation !== requestId.current) return;
+      const json = await readOpenLog(response);
+      const gate = purchaseOrderRepeatGate(response.status);
+      if (gate === 'confirm') {
+        repeats.push({ supplier: item.supplier, openedAt: json?.openedAt });
+        continue;
+      }
+      if (gate === 'issue') {
+        showLog(item, grouped, { status: response.status, error: json?.error, openedAt: json?.openedAt }, generation);
+        blocked = true;
+      }
+    }
+    if (generation !== requestId.current) return;
+    if (repeats.length > 0) {
+      setRepeat({
+        lines: repeats.map((item) => {
+          const sentence = purchaseOrderRepeatWarning(item.openedAt ?? '');
+          return grouped ? `${item.supplier}: ${sentence}` : sentence;
+        }),
+        items,
+        grouped,
+        anchor,
+      });
+      return;
+    }
+    if (blocked) return;
+    for (const item of items) logOpened(item, grouped, false);
+    followAnchor(anchor);
+  };
+
+  const holdClick = (
+    event: MouseEvent<HTMLAnchorElement>,
+    items: PoDraft[],
+    grouped: boolean,
+    anchor: HTMLAnchorElement | null,
+    skipped: string | null
+  ) => {
+    if (passThrough.current) {
+      passThrough.current = false;
+      return;
+    }
+    event.preventDefault();
+    beginSend(skipped);
+    void guardOpen(items, grouped, anchor);
+  };
+
+  const confirmRepeat = () => {
+    if (!repeat) return;
+    const pending = repeat;
+    setRepeat(null);
+    for (const item of pending.items) logOpened(item, pending.grouped, true);
+    followAnchor(pending.anchor);
   };
 
   const copyFullOrder = async (fullBody: string) => {
@@ -213,20 +318,24 @@ export function PoEmailPanel({
               <MailLink
                 href={sendHref}
                 variant="primary"
-                onOpen={() => {
-                  beginSend(null);
-                  logOpened(draft, false);
-                }}
+                anchorRef={sendAnchor}
+                onOpen={(event) => holdClick(event, [draft], false, sendAnchor.current, null)}
               >
                 Send
               </MailLink>
               <MailLink
                 href={groupCompose?.mailtoUrl ?? null}
                 variant="secondary"
-                onOpen={() => {
-                  beginSend(purchaseOrderSkippedNoEmail(skippedNoEmail));
-                  for (const item of loggable) logOpened(item, true);
-                }}
+                anchorRef={groupAnchor}
+                onOpen={(event) =>
+                  holdClick(
+                    event,
+                    loggable,
+                    true,
+                    groupAnchor.current,
+                    purchaseOrderSkippedNoEmail(skippedNoEmail)
+                  )
+                }
               >
                 Send group
               </MailLink>
@@ -248,6 +357,31 @@ export function PoEmailPanel({
               >
                 Copy full text
               </button>
+            ) : null}
+            {repeat ? (
+              <div className="space-y-2 rounded-xl border border-amber-800/60 bg-amber-950/30 p-3">
+                {repeat.lines.map((line) => (
+                  <p key={line} className="text-sm text-amber-100">
+                    {line}
+                  </p>
+                ))}
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    className="rounded-xl border border-slate-700 bg-slate-800 px-4 py-3 text-sm font-bold text-slate-100"
+                    onClick={confirmRepeat}
+                  >
+                    Open again
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-xl border border-slate-800 bg-slate-900/60 px-4 py-3 text-sm font-bold text-slate-300"
+                    onClick={() => setRepeat(null)}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
             ) : null}
             {skipNote ? <p className="text-sm text-slate-100">{skipNote}</p> : null}
             {copyMessage ? <p className="text-xs text-slate-300">{copyMessage}</p> : null}
@@ -277,11 +411,13 @@ function MailLink({
   onOpen,
   children,
   variant,
+  anchorRef,
 }: {
   href: string | null;
-  onOpen: () => void;
+  onOpen: (event: MouseEvent<HTMLAnchorElement>) => void;
   children: ReactNode;
   variant: 'primary' | 'secondary';
+  anchorRef: RefObject<HTMLAnchorElement | null>;
 }) {
   const className = cn(
     'inline-flex min-h-[44px] w-full items-center justify-center rounded-xl px-4 py-3 text-center text-sm font-bold focus-visible:outline-none focus-visible:ring-1 sm:min-h-[48px]',
@@ -298,7 +434,14 @@ function MailLink({
     );
   }
   return (
-    <a href={href} className={className} onClick={onOpen}>
+    <a
+      ref={anchorRef}
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className={className}
+      onClick={onOpen}
+    >
       {children}
     </a>
   );
