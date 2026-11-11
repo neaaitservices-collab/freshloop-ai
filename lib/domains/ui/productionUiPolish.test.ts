@@ -92,6 +92,7 @@ test('operations links to production and does not mount a second transfer panel'
     'components/features/production/ProductionFloorTransfersSection.tsx',
     'utf8'
   );
-  assert.match(production, /KitchenFloorInbox/);
+  assert.equal(production.includes('KitchenFloorInbox'), false);
+  assert.match(production, /Live floor & prep transfers/);
   assert.match(production, /LiveSubInventoryTransfers/);
 });

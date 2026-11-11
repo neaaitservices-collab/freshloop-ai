@@ -55,4 +55,6 @@ export interface StoreStats {
   departmentAlerts: DepartmentAlert[];
   /** Toronto dates for the production-transfer chart. Null keeps the default 7-day window. */
   transferRangeLabel: string | null;
+  /** Range shown on the rescued, lost, and rescue-rate cards. */
+  cardRangeLabel: string;
 }

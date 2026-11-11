@@ -133,7 +133,7 @@ export default function OperationsCenter() {
         <section className="rounded-3xl border border-slate-800 bg-slate-900/70 p-5">
           <h2 className="text-lg font-black text-white">Floor and prep transfers</h2>
           <p className="mt-1 max-w-xl text-sm text-slate-300">
-            Send stock to production, log waste, record a sale, or open the From floor inbox.
+            Send stock to production, log waste, or record a sale.
             Those actions live on Production so this page does not repeat them. Pull window:{' '}
             {pullSensitivityDays} days.
           </p>

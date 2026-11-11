@@ -2,6 +2,7 @@
 
 import React from 'react';
 import { AdminMetricGrid } from '@/components/features/admin/AdminStats';
+import { StatsDateFilter } from '@/components/features/admin/StatsDateFilter';
 import { LazyRescueOutcomeChart } from '@/components/charts/lazyCharts';
 import { WasteSemaphoreCard } from '@/components/features/admin/WasteSemaphoreCard';
 import { AdminActionCenter } from '@/components/features/admin/AdminActionCenter';
@@ -39,7 +40,7 @@ export function AdminDashboard({
       aria-busy={refreshing || undefined}
     >
       <header className="border-b border-slate-800/80 pb-4">
-        <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-emerald-400/90">
+        <p className="text-xs font-bold uppercase tracking-[0.16em] text-emerald-400/90">
           Executive overview
         </p>
         <h2 className="mt-1 text-2xl font-black tracking-tight text-white sm:text-3xl">
@@ -55,7 +56,15 @@ export function AdminDashboard({
         showLoadingPlaceholders={showActionLoadingPlaceholders}
       />
 
-      <AdminMetricGrid stats={stats} />
+      <div className="space-y-3">
+        <div className="lg:hidden">
+          <StatsDateFilter />
+        </div>
+        <div className="hidden lg:flex lg:items-center lg:justify-end">
+          <StatsDateFilter compact />
+        </div>
+        <AdminMetricGrid stats={stats} rangeLabel={stats?.cardRangeLabel} />
+      </div>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-12 lg:gap-6">
         <div className="lg:col-span-5">
