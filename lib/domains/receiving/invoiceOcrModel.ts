@@ -157,6 +157,8 @@ export interface InterpretedInvoiceModel {
   subtotalGap: string | null;
   gaps: string[];
   identity: ParsedInvoiceIdentity;
+  invoiceDateNeedsConfirm: boolean;
+  invoiceDateConfirmReason: string | null;
 }
 
 function cappedString(value: unknown, max: number): { text: string; missing: boolean; truncated: boolean } {
@@ -387,6 +389,8 @@ export function interpretInvoiceOcrModel(
   }
   if (subtotalGap) gaps.push(subtotalGap);
   for (const line of classified) gaps.push(...line.gaps);
+  const ambiguousGap = identity.gaps.find((gap) => /is ambiguous/i.test(gap)) ?? null;
+  const invoiceDateNeedsConfirm = Boolean(identity.invoiceDate && ambiguousGap);
 
   return {
     vendorName: identity.vendorName,
@@ -398,5 +402,7 @@ export function interpretInvoiceOcrModel(
     subtotalGap,
     gaps,
     identity,
+    invoiceDateNeedsConfirm,
+    invoiceDateConfirmReason: invoiceDateNeedsConfirm ? ambiguousGap : null,
   };
 }

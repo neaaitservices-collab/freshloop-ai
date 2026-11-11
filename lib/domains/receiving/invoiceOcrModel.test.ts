@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { tryParseModelJson } from '@/lib/domains/ai/gemini';
-import { buildAuthoritativeOcrDraft } from '@/lib/domains/receiving/invoiceOcrDraft';
+import {
+  applyOcrDraftResolutions,
+  buildAuthoritativeOcrDraft,
+  draftPostingBlockers,
+} from '@/lib/domains/receiving/invoiceOcrDraft';
 import {
   interpretInvoiceOcrModel,
   invoiceOcrModelSchema,
@@ -209,6 +213,40 @@ test('an order date on the model confirms one reading and stays flagged', () => 
   assert.equal(settled.invoiceDate, '2026-05-11');
   assert.match(settled.gaps.join(' '), /ambiguous/);
   assert.match(settled.gaps.join(' '), /matches the order date/);
+  assert.equal(settled.invoiceDateNeedsConfirm, true);
+  assert.match(settled.invoiceDateConfirmReason ?? '', /order date/);
+  const draft = buildAuthoritativeOcrDraft({
+    vendorName: settled.vendorName,
+    invoiceNumber: settled.invoiceNumber,
+    invoiceDate: settled.invoiceDate,
+    invoiceDateNeedsConfirm: settled.invoiceDateNeedsConfirm,
+    invoiceDateConfirmReason: settled.invoiceDateConfirmReason,
+    totalAmount: 2,
+    departmentBreakdown: { PRODUCE: 2 },
+    lines: settled.lineItems.map((line) => ({
+      item_name: line.name,
+      product_id: 'apples',
+      quantity: line.quantity,
+      unit: line.unit,
+      unit_cost: line.unitCost,
+      department: line.department,
+      case_pack_size: 1,
+      line_confidence: 0.99,
+      requires_approval: false,
+    })),
+  });
+  assert.equal(draft.invoiceDateNeedsConfirm, true);
+  assert.equal(draft.invoiceDateConfirmReason, settled.invoiceDateConfirmReason);
+  const blocked = draftPostingBlockers(draft, { actorIsManager: true, manualReviewOverride: true });
+  assert.ok(blocked.some((line) => line.includes('order date')));
+  const confirmed = applyOcrDraftResolutions(draft, { invoiceDate: '2026-05-11' });
+  assert.equal(confirmed.invoiceDate, '2026-05-11');
+  assert.equal(confirmed.invoiceDateNeedsConfirm, false);
+  assert.equal(confirmed.invoiceDateConfirmReason, undefined);
+  assert.equal(
+    draftPostingBlockers(confirmed, { actorIsManager: false, manualReviewOverride: false }).length,
+    0
+  );
   assert.equal(
     invoiceOcrModelSchema.safeParse({
       vendorName: 'North Market',
