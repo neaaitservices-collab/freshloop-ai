@@ -196,7 +196,7 @@ function composeHref(to: string, subject: string, body: string): { gmailUrl: str
   const encodedBody = encodeURIComponent(body);
   return {
     gmailUrl: `https://mail.google.com/mail/?view=cm&fs=1&to=${encodedTo}&su=${encodedSubject}&body=${encodedBody}`,
-    mailtoUrl: `mailto:${encodeURIComponent(to)}?subject=${encodedSubject}&body=${encodedBody}`,
+    mailtoUrl: `mailto:${to}?subject=${encodedSubject}&body=${encodedBody}`,
   };
 }
 
@@ -235,6 +235,50 @@ export function purchaseOrderCompose(input: {
   const fitted = fitPurchaseOrderBody({ to, subject: input.subject, body: input.body });
   const hrefs = composeHref(to, input.subject, fitted.body);
   return { to, body: fitted.body, truncated: fitted.truncated, ...hrefs };
+}
+
+export type PurchaseOrderRecordResult =
+  | { ok: true }
+  | { ok: false; status: number; openedAt?: string; message: string };
+
+export type PurchaseOrderPopup = {
+  opener: Window | null;
+  location: { href: string };
+  close: () => void;
+};
+
+/** Open a blank tab during the click. `noopener` in window.open features always returns null. */
+export function openPurchaseOrderWindow(
+  open: (url: string, target: string) => PurchaseOrderPopup | null
+): PurchaseOrderPopup | null {
+  const popup = open('about:blank', '_blank');
+  if (popup) popup.opener = null;
+  return popup;
+}
+
+/** Point the blank tab at Gmail only after the log succeeds. Close it on a repeat or a failure. */
+export async function settlePurchaseOrderWindow(
+  popup: PurchaseOrderPopup,
+  gmailUrl: string,
+  record: () => Promise<PurchaseOrderRecordResult>
+): Promise<
+  | { outcome: 'opened' }
+  | { outcome: 'repeat'; openedAt: string }
+  | { outcome: 'failed'; message: string }
+> {
+  try {
+    const recorded = await record();
+    if (!recorded.ok) {
+      popup.close();
+      if (recorded.status === 409) return { outcome: 'repeat', openedAt: recorded.openedAt ?? '' };
+      return { outcome: 'failed', message: recorded.message };
+    }
+    popup.location.href = gmailUrl;
+    return { outcome: 'opened' };
+  } catch {
+    popup.close();
+    return { outcome: 'failed', message: 'The order could not be recorded.' };
+  }
 }
 
 export function purchaseOrderMailto(

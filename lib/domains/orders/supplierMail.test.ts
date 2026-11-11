@@ -10,7 +10,9 @@ import {
   draftForSupplier,
   draftsForSuppliers,
   matchSupplierRecipient,
+  openPurchaseOrderWindow,
   purchaseOrderCompose,
+  settlePurchaseOrderWindow,
   purchaseOrderLineKey,
   purchaseOrderMailto,
   purchaseOrderOpenedWarning,
@@ -209,7 +211,7 @@ test('send all keeps each supplier separate and skips a blank address', () => {
   assert.equal(purchaseOrderSendAllConfirm(2), 'Open a separate email for 2 suppliers?');
 
   const mailto = purchaseOrderMailto(farm);
-  assert.match(mailto ?? '', /^mailto:buyer%40farm\.test\?/);
+  assert.match(mailto ?? '', /^mailto:buyer@farm\.test\?/);
   assert.equal(purchaseOrderMailto(greens), null);
   assert.equal(purchaseOrderMailto({ ...farm, to: 'buyer@farm.test, other@farm.test' }), null);
 
@@ -251,7 +253,7 @@ test('Gmail compose encodes each part and shortens a long order', () => {
   assert.equal(injectedParams.get('su'), 'Hi&bcc=spy@evil.com');
   const mailtoParams = new URLSearchParams((injected?.mailtoUrl ?? '').split('?')[1]);
   assert.deepEqual([...mailtoParams.keys()], ['subject', 'body']);
-  assert.match(injected?.mailtoUrl ?? '', /^mailto:buyer%40farm\.test\?/);
+  assert.match(injected?.mailtoUrl ?? '', /^mailto:buyer@farm\.test\?/);
 
   const long = purchaseOrderCompose({
     to: 'buyer@farm.test',
@@ -264,4 +266,54 @@ test('Gmail compose encodes each part and shortens a long order', () => {
   assert.match(long?.body ?? '', /order truncated, see attached\/full list/);
   assert.equal(long?.body.endsWith(ORDER_TRUNCATED_NOTE), true);
   assert.match(purchaseOrderOpenedWarning('2026-11-11T15:04:00.000Z'), /Already opened for this order on .+ open again\?/);
+});
+
+test('a blank compose tab is opened in the click, then pointed at Gmail only after the log succeeds', async () => {
+  assert.equal(openPurchaseOrderWindow(() => null), null);
+
+  const openedCalls: string[] = [];
+  const popup = {
+    opener: {} as Window | null,
+    location: { href: '' },
+    close() {
+      this.location.href = 'closed';
+    },
+  };
+  const opened = openPurchaseOrderWindow((url, target) => {
+    openedCalls.push(`${url}|${target}`);
+    return popup;
+  });
+  assert.deepEqual(openedCalls, ['about:blank|_blank']);
+  assert.equal(opened?.opener, null);
+
+  const success = await settlePurchaseOrderWindow(popup, 'https://mail.google.com/compose', async () => ({ ok: true }));
+  assert.equal(success.outcome, 'opened');
+  assert.equal(popup.location.href, 'https://mail.google.com/compose');
+
+  const repeat = await settlePurchaseOrderWindow(popup, 'https://mail.google.com/again', async () => ({
+    ok: false,
+    status: 409,
+    openedAt: '2026-11-11T16:00:00.000Z',
+    message: 'Already opened for this order.',
+  }));
+  assert.equal(repeat.outcome, 'repeat');
+  if (repeat.outcome === 'repeat') assert.equal(repeat.openedAt, '2026-11-11T16:00:00.000Z');
+  assert.equal(popup.location.href, 'closed');
+
+  popup.location.href = 'still-blank';
+  const failed = await settlePurchaseOrderWindow(popup, 'https://mail.google.com/fail', async () => ({
+    ok: false,
+    status: 500,
+    message: 'The order could not be recorded.',
+  }));
+  assert.equal(failed.outcome, 'failed');
+  if (failed.outcome === 'failed') assert.equal(failed.message, 'The order could not be recorded.');
+  assert.equal(popup.location.href, 'closed');
+
+  popup.location.href = 'still-blank';
+  const thrown = await settlePurchaseOrderWindow(popup, 'https://mail.google.com/throw', async () => {
+    throw new Error('network');
+  });
+  assert.equal(thrown.outcome, 'failed');
+  assert.equal(popup.location.href, 'closed');
 });

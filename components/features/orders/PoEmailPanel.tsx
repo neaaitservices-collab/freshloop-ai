@@ -4,13 +4,16 @@ import React, { useState } from 'react';
 import Link from 'next/link';
 import { Mail, X } from 'lucide-react';
 import {
+  openPurchaseOrderWindow,
   purchaseOrderCompose,
   purchaseOrderOpenedWarning,
   purchaseOrderSendAllConfirm,
   purchaseOrderSendPlan,
   purchaseOrderSkipMessage,
+  settlePurchaseOrderWindow,
   supplierRecipientHint,
   type PoDraft,
+  type PurchaseOrderPopup,
 } from '@/components/features/orders/supplierMail';
 import { Button } from '@/components/ui/Button';
 import { Card, CardBody, CardHeader, CardTitle } from '@/components/ui/Card';
@@ -26,6 +29,7 @@ interface OpenResult {
   truncated?: boolean;
   fullBody?: string;
   gmailUrl?: string;
+  mailtoUrl?: string;
 }
 
 async function recordOpen(draft: PoDraft, reopen: boolean): Promise<
@@ -90,7 +94,20 @@ export function PoEmailPanel({
       setResults([{ supplier: item.supplier, outcome: 'skipped', message: purchaseOrderSkipMessage(item.to) }]);
       return;
     }
-    const popup = window.open(compose.gmailUrl, '_blank', 'noopener,noreferrer');
+    const popup = openPurchaseOrderWindow((url, target) => window.open(url, target));
+    if (!popup) {
+      setResults([
+        {
+          supplier: item.supplier,
+          outcome: 'failed',
+          message: 'The compose window was blocked. Open it from the link.',
+          gmailUrl: compose.gmailUrl,
+          mailtoUrl: compose.mailtoUrl,
+          fullBody: item.body,
+        },
+      ]);
+      return;
+    }
     void finishOpen(item, again, compose, popup);
   };
 
@@ -98,35 +115,20 @@ export function PoEmailPanel({
     item: PoDraft,
     again: boolean,
     compose: NonNullable<ReturnType<typeof purchaseOrderCompose>>,
-    popup: Window | null
+    popup: PurchaseOrderPopup
   ) => {
     setBusy(true);
     try {
-      const recorded = await recordOpen(item, again);
-      if (!recorded.ok && recorded.status === 409 && !again) {
-        popup?.close();
-        setReopen({ draft: item, openedAt: recorded.openedAt ?? '' });
+      const settled = await settlePurchaseOrderWindow(popup, compose.gmailUrl, () => recordOpen(item, again));
+      if (settled.outcome === 'repeat') {
+        setReopen({ draft: item, openedAt: settled.openedAt });
         return;
       }
-      if (!recorded.ok) {
-        popup?.close();
-        setResults([{ supplier: item.supplier, outcome: 'failed', message: recorded.message }]);
+      if (settled.outcome === 'failed') {
+        setResults([{ supplier: item.supplier, outcome: 'failed', message: settled.message }]);
         return;
       }
       setReopen(null);
-      if (!popup) {
-        setResults([
-          {
-            supplier: item.supplier,
-            outcome: 'failed',
-            message: 'The compose window was blocked. Open it from the link.',
-            gmailUrl: compose.gmailUrl,
-            truncated: compose.truncated,
-            fullBody: item.body,
-          },
-        ]);
-        return;
-      }
       setResults([
         {
           supplier: item.supplier,
@@ -138,9 +140,6 @@ export function PoEmailPanel({
           fullBody: item.body,
         },
       ]);
-    } catch {
-      popup?.close();
-      setResults([{ supplier: item.supplier, outcome: 'failed', message: 'The order could not be recorded.' }]);
     } finally {
       setBusy(false);
     }
@@ -391,7 +390,12 @@ export function PoEmailPanel({
                         Open in Gmail
                       </a>
                     ) : null}
-                    {result.truncated && result.fullBody ? (
+                    {result.mailtoUrl ? (
+                      <a href={result.mailtoUrl} className="ml-2 font-semibold text-blue-300 underline underline-offset-2">
+                        Email app
+                      </a>
+                    ) : null}
+                    {result.fullBody && (result.truncated || result.mailtoUrl) ? (
                       <button
                         type="button"
                         className="ml-2 font-semibold text-blue-300 underline underline-offset-2"
