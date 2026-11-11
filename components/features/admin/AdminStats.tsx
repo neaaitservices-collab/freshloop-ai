@@ -4,6 +4,7 @@ import React from 'react';
 import { DollarSign, Leaf, Percent, TrendingDown } from 'lucide-react';
 import { Card, CardBody } from '@/components/ui/Card';
 import { formatCurrency } from '@/lib/domains/receiving/yieldPricing';
+import { ADMIN_DASHBOARD_WINDOW_LABEL } from '@/lib/domains/stats/adminDashboardWindow';
 import { RETAIL_VALUE_LOST_DETAIL } from '@/lib/domains/stats/wasteDollarLabels';
 import { rescueRateLabel } from '@/lib/domains/stats/rescueCards';
 import type { StoreStats } from '@/lib/domains/stats/storeStatsTypes';
@@ -14,12 +15,14 @@ function Metric({
   detail,
   icon: Icon,
   accent = 'text-slate-100',
+  windowLabel = null,
 }: {
   label: string;
   value: string;
   detail: string;
   icon: React.ComponentType<{ className?: string }>;
   accent?: string;
+  windowLabel?: string | null;
 }) {
   return (
     <Card>
@@ -33,6 +36,11 @@ function Metric({
         >
           {value}
         </p>
+        {windowLabel ? (
+          <p className="mt-1 text-[11px] font-semibold leading-none tracking-wide text-slate-400">
+            {windowLabel}
+          </p>
+        ) : null}
         <p className="mt-0.5 line-clamp-2 text-xs leading-snug text-slate-500">{detail}</p>
       </CardBody>
     </Card>
@@ -59,18 +67,20 @@ export function AdminMetricGrid({
     );
   }
 
-  const range = rangeLabel || stats.cardRangeLabel;
+  const windowLabel = rangeLabel || ADMIN_DASHBOARD_WINDOW_LABEL;
   return (
     <div className="grid grid-cols-2 gap-3 lg:grid-cols-4 lg:gap-4">
       <Metric
-        label={`Value rescued (${range})`}
+        label="Value rescued"
+        windowLabel={windowLabel}
         value={formatCurrency(stats.rescuedValue)}
-        detail={`Retail $ sent from the floor to production (${range}).`}
+        detail="Retail $ sent from the floor to production."
         icon={DollarSign}
         accent="text-emerald-400"
       />
       <Metric
-        label={`Value lost (${range})`}
+        label="Value lost"
+        windowLabel={windowLabel}
         value={formatCurrency(stats.lostValue)}
         detail={RETAIL_VALUE_LOST_DETAIL}
         icon={TrendingDown}
@@ -85,8 +95,9 @@ export function AdminMetricGrid({
       />
       <Metric
         label="Rescue rate"
+        windowLabel={windowLabel}
         value={rescueRateLabel(stats.wasteReductionPct)}
-        detail={`Share of handled retail $ rescued versus discard (${range}).`}
+        detail="Share of handled retail $ rescued versus discard."
         icon={Percent}
         accent="text-emerald-400"
       />

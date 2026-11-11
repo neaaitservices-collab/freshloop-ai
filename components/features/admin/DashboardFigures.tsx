@@ -7,8 +7,10 @@ import { DashboardCard } from '@/components/features/admin/DashboardCard';
 import type { StoreStats } from '@/lib/domains/stats/storeStatsTypes';
 import type { WasteKpiReport } from '@/lib/domains/inventory/ledger';
 import { subscribeInventoryUpdated } from '@/lib/domains/inventory/inventoryMoveClient';
+import { adminDashboardWindow } from '@/lib/domains/stats/adminDashboardWindow';
 import { subscribeKpiUpdated } from '@/lib/domains/stats/kpiEvents';
 import { FRESHLOOP_SETTINGS_UPDATED } from '@/lib/domains/stats/settingsEvents';
+
 const inflightAdminStats = new Map<
   string,
   Promise<{
@@ -54,12 +56,10 @@ export function DashboardFiguresSkeleton() {
 export function DashboardFigures({
   stats: initialStats,
   initialWasteKpi = null,
-  statsQuery = '',
   rangeError = null,
 }: {
   stats: StoreStats | null;
   initialWasteKpi?: WasteKpiReport | null;
-  statsQuery?: string;
   rangeError?: string | null;
 }) {
   const expectsServerStats = initialStats !== null;
@@ -80,7 +80,7 @@ export function DashboardFigures({
     if (!opts?.silent) setStatsRefreshing(true);
     setStatsError(null);
     try {
-      const result = await fetchAdminStats(statsQuery);
+      const result = await fetchAdminStats(adminDashboardWindow().statsQuery);
       if (result.error) {
         setStatsError(result.error);
         return;
@@ -94,7 +94,7 @@ export function DashboardFigures({
     } finally {
       if (!opts?.silent) setStatsRefreshing(false);
     }
-  }, [statsQuery]);
+  }, []);
 
   useEffect(() => {
     if (initialStats !== null) return;
@@ -150,7 +150,6 @@ export function DashboardFigures({
         wasteKpi={wasteKpi}
         refreshing={statsRefreshing}
         showActionLoadingPlaceholders={!expectsServerStats && stats === null}
-        rangeLabel={stats?.transferRangeLabel}
         chartLoading={statsRefreshing}
       />
 

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { InventoryLocation, TransactionType } from '@prisma/client';
 import { prisma } from '@/lib/domains/inventory/ledger';
+import { adminDashboardWindow } from '@/lib/domains/stats/adminDashboardWindow';
 import { getStoreStats } from '@/lib/domains/stats/storeStats';
 import { formatCardRangeLabel, last30StoreDays, torontoRange } from '@/lib/domains/stats/storeTime';
 
@@ -92,6 +93,21 @@ test('card totals follow the Toronto range, including DST edges and an empty win
   const fallback = await getStoreStats();
   assert.equal(fallback.cardRangeLabel, formatCardRangeLabel(rolling.from, rolling.to));
   assert.equal(fallback.inventoryValue >= 0, true);
+});
+
+test('the admin dashboard window has one outcome day per Toronto date', { skip: !hasDb }, async (t) => {
+  try {
+    await prisma.$connect();
+  } catch {
+    t.skip('Database unreachable.');
+    return;
+  }
+  const fixed = adminDashboardWindow(new Date('2026-06-15T16:00:00.000Z'));
+  const stats = await getStoreStats(fixed.range);
+  assert.equal(stats.outcomeDays.length, fixed.dayCount);
+  assert.equal(stats.outcomeDays.length, 30);
+  assert.equal(stats.cardRangeLabel, formatCardRangeLabel(fixed.from, fixed.to));
+  assert.equal(Number.isFinite(stats.inventoryValue), true);
 });
 
 test('an old custom range does not replace the last 7 revenue days', { skip: !hasDb }, async (t) => {
