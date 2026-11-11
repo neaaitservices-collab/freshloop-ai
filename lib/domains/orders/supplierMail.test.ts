@@ -16,6 +16,10 @@ import {
   purchaseOrderCompose,
   purchaseOrderGroupBody,
   purchaseOrderGroupCompose,
+  purchaseOrderGroupOpenedWarning,
+  purchaseOrderLoggedFailureMessage,
+  purchaseOrderSkippedLabel,
+  settlePurchaseOrderGroup,
   settlePurchaseOrderWindow,
   purchaseOrderLineKey,
   purchaseOrderMailto,
@@ -173,10 +177,16 @@ test('purchase order panel sends one supplier at a time and falls back to mail',
   assert.match(panel, /purchaseOrderSendPlan/);
   assert.match(panel, /purchaseOrderSendAllConfirm/);
   assert.match(panel, /purchaseOrderCompose/);
-  assert.match(panel, /purchaseOrderGroupCompose/);
+  assert.match(panel, /purchaseOrderGroupCompose\(plan\.ready\)/);
   assert.match(panel, /purchaseOrderOpenedWarning/);
+  assert.match(panel, /purchaseOrderGroupOpenedWarning/);
+  assert.match(panel, /purchaseOrderSkippedLabel/);
+  assert.match(panel, /settlePurchaseOrderGroup/);
+  assert.match(panel, /checkOnly/);
+  assert.match(panel, /window\.location\.href = compose\.mailtoUrl/);
   assert.match(panel, /Copy full text/);
-  assert.match(panel, /compose\.mailtoUrl/);
+  assert.equal(panel.includes('about:blank'), false);
+  assert.equal(panel.includes('window.open'), false);
   assert.equal(panel.includes('Open in Gmail'), false);
   assert.equal(panel.includes('Email app'), false);
   assert.equal(panel.includes('mail.google.com'), false);
@@ -331,6 +341,91 @@ test('group mailto joins each supplier under a heading, caps the URL, and keeps 
   assert.match(long?.fullBody ?? '', /Dairy Co/);
   assert.match(long?.fullBody ?? '', /y{10}/);
   assert.ok((long?.fullBody.length ?? 0) > (long?.body.length ?? 0));
+});
+
+test('group mailto uses ready suppliers, checks repeats before any write, and names partial logs', async () => {
+  const farm = draftForSupplier('Farm & Sons', [row('Farm & Sons', 'Bananas', 'farm-banana')], [
+    { name: 'Farm & Sons', contactEmail: 'buyer@farm.test' },
+  ]);
+  const dairy = draftForSupplier('Dairy Co', [row('Dairy Co', 'Milk', 'dairy-milk')], [
+    { name: 'Dairy Co', contactEmail: 'desk@dairy.test' },
+  ]);
+  const greens = draftForSupplier('Greens', [row('Greens', 'Kale', 'greens-kale')], []);
+  const plan = purchaseOrderSendPlan([farm, dairy, greens]);
+  const body = purchaseOrderGroupBody(plan.ready);
+  assert.equal(body.includes('Bananas'), true);
+  assert.equal(body.includes('Milk'), true);
+  assert.equal(body.includes('Kale'), false);
+  assert.equal(purchaseOrderSkippedLabel(plan.skipped.map((item) => item.supplier)), 'Skipped, no valid email: Greens');
+  assert.equal(
+    purchaseOrderGroupOpenedWarning(['Farm & Sons', 'Dairy Co']),
+    'Already opened for Farm & Sons, Dairy Co, open again?'
+  );
+
+  const writes: string[] = [];
+  const repeat = await settlePurchaseOrderGroup({
+    items: plan.ready,
+    name: (item) => item.supplier,
+    confirmed: false,
+    check: async (item) =>
+      item.supplier === 'Dairy Co'
+        ? { ok: false, status: 409, openedAt: '2026-11-11T16:00:00.000Z', message: 'Already opened for this order.' }
+        : { ok: true },
+    write: async (item) => {
+      writes.push(item.supplier);
+      return { ok: true };
+    },
+  });
+  assert.equal(repeat.outcome, 'repeat');
+  if (repeat.outcome === 'repeat') assert.deepEqual(repeat.suppliers, ['Dairy Co']);
+  assert.deepEqual(writes, []);
+
+  const calls: string[] = [];
+  const opened = await settlePurchaseOrderGroup({
+    items: plan.ready,
+    name: (item) => item.supplier,
+    confirmed: false,
+    check: async (item) => {
+      calls.push(`check:${item.supplier}`);
+      return { ok: true };
+    },
+    write: async (item) => {
+      calls.push(`write:${item.supplier}`);
+      return { ok: true };
+    },
+  });
+  assert.equal(opened.outcome, 'opened');
+  assert.deepEqual(calls, ['check:Farm & Sons', 'check:Dairy Co', 'write:Farm & Sons', 'write:Dairy Co']);
+
+  const partial = await settlePurchaseOrderGroup({
+    items: [farm, dairy],
+    name: (item) => item.supplier,
+    confirmed: true,
+    check: async () => {
+      throw new Error('confirmed group must not pre-check');
+    },
+    write: async (item) => {
+      if (item.supplier === 'Dairy Co') {
+        return { ok: false, status: 500, message: 'The order could not be recorded.' };
+      }
+      return { ok: true };
+    },
+  });
+  assert.equal(partial.outcome, 'failed');
+  if (partial.outcome === 'failed') {
+    assert.deepEqual(partial.logged, ['Farm & Sons']);
+    assert.equal(partial.supplier, 'Dairy Co');
+    assert.equal(
+      purchaseOrderLoggedFailureMessage(partial.message, partial.logged),
+      'The order could not be recorded. Logged: Farm & Sons.'
+    );
+  }
+
+  const route = readFileSync('app/api/orders/purchase-order-email/route.ts', 'utf8');
+  const checkAt = route.indexOf('input.checkOnly === true');
+  const recordAt = route.indexOf('await recordPurchaseOrderOpen');
+  assert.ok(checkAt !== -1 && recordAt !== -1 && checkAt < recordAt);
+  assert.equal(route.includes('$transaction'), false);
 });
 
 test('a blank compose tab is opened in the click, then pointed at the mail URL only after the log succeeds', async () => {

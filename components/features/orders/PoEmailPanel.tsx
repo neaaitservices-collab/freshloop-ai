@@ -4,18 +4,18 @@ import React, { useState } from 'react';
 import Link from 'next/link';
 import { Mail, X } from 'lucide-react';
 import {
-  openPurchaseOrderWindow,
   purchaseOrderCompose,
   purchaseOrderGroupCompose,
+  purchaseOrderGroupOpenedWarning,
+  purchaseOrderLoggedFailureMessage,
   purchaseOrderOpenedWarning,
   purchaseOrderSendAllConfirm,
   purchaseOrderSendPlan,
   purchaseOrderSkipMessage,
-  settlePurchaseOrderWindow,
-  singleSupplierEmail,
+  purchaseOrderSkippedLabel,
+  settlePurchaseOrderGroup,
   supplierRecipientHint,
   type PoDraft,
-  type PurchaseOrderPopup,
 } from '@/components/features/orders/supplierMail';
 import { Button } from '@/components/ui/Button';
 import { Card, CardBody, CardHeader, CardTitle } from '@/components/ui/Card';
@@ -30,10 +30,9 @@ interface OpenResult {
   message: string;
   truncated?: boolean;
   fullBody?: string;
-  mailtoUrl?: string;
 }
 
-async function recordOpen(draft: PoDraft, reopen: boolean): Promise<
+async function recordOpen(draft: PoDraft, reopen: boolean, checkOnly = false): Promise<
   | { ok: true }
   | { ok: false; status: number; openedAt?: string; message: string }
 > {
@@ -48,6 +47,7 @@ async function recordOpen(draft: PoDraft, reopen: boolean): Promise<
       body: draft.body,
       productIds: draft.productIds,
       reopen,
+      checkOnly,
     }),
   });
   const json = (await response.json().catch(() => null)) as { error?: string; openedAt?: string } | null;
@@ -78,7 +78,12 @@ export function PoEmailPanel({
   const [busy, setBusy] = useState(false);
   const [confirmAll, setConfirmAll] = useState(false);
   const [showOpens, setShowOpens] = useState(false);
-  const [reopen, setReopen] = useState<{ openedAt: string; draft?: PoDraft; group?: boolean } | null>(null);
+  const [reopen, setReopen] = useState<{
+    openedAt: string;
+    draft?: PoDraft;
+    group?: boolean;
+    suppliers?: string[];
+  } | null>(null);
   const [results, setResults] = useState<OpenResult[]>([]);
   const index =
     drafts.length === 0 ? 0 : Math.min(Math.max(activeIndex, 0), drafts.length - 1);
@@ -95,38 +100,23 @@ export function PoEmailPanel({
       setResults([{ supplier: item.supplier, outcome: 'skipped', message: purchaseOrderSkipMessage(item.to) }]);
       return;
     }
-    const popup = openPurchaseOrderWindow((url, target) => window.open(url, target));
-    if (!popup) {
-      setResults([
-        {
-          supplier: item.supplier,
-          outcome: 'failed',
-          message: 'The mail window was blocked. Open it from the link.',
-          mailtoUrl: compose.mailtoUrl,
-          fullBody: item.body,
-          truncated: compose.truncated,
-        },
-      ]);
-      return;
-    }
-    void finishOpen(item, again, compose, popup);
+    void finishOpen(item, again, compose);
   };
 
   const finishOpen = async (
     item: PoDraft,
     again: boolean,
-    compose: NonNullable<ReturnType<typeof purchaseOrderCompose>>,
-    popup: PurchaseOrderPopup
+    compose: NonNullable<ReturnType<typeof purchaseOrderCompose>>
   ) => {
     setBusy(true);
     try {
-      const settled = await settlePurchaseOrderWindow(popup, compose.mailtoUrl, () => recordOpen(item, again));
-      if (settled.outcome === 'repeat') {
-        setReopen({ draft: item, openedAt: settled.openedAt });
+      const recorded = await recordOpen(item, again);
+      if (!recorded.ok && recorded.status === 409) {
+        setReopen({ draft: item, openedAt: recorded.openedAt ?? '' });
         return;
       }
-      if (settled.outcome === 'failed') {
-        setResults([{ supplier: item.supplier, outcome: 'failed', message: settled.message }]);
+      if (!recorded.ok) {
+        setResults([{ supplier: item.supplier, outcome: 'failed', message: recorded.message }]);
         return;
       }
       setReopen(null);
@@ -141,6 +131,9 @@ export function PoEmailPanel({
           fullBody: item.body,
         },
       ]);
+      window.location.href = compose.mailtoUrl;
+    } catch {
+      setResults([{ supplier: item.supplier, outcome: 'failed', message: 'The order could not be recorded.' }]);
     } finally {
       setBusy(false);
     }
@@ -164,58 +157,51 @@ export function PoEmailPanel({
   };
 
   const openGroup = (again = false) => {
-    const compose = purchaseOrderGroupCompose(drafts);
+    const compose = purchaseOrderGroupCompose(plan.ready);
     if (!compose) {
-      setResults([{ supplier: 'Group', outcome: 'skipped', message: 'Nothing to include.' }]);
+      setResults(
+        plan.skipped.length > 0
+          ? plan.skipped.map((item) => ({
+              supplier: item.supplier,
+              outcome: 'skipped' as const,
+              message: purchaseOrderSkipMessage(item.to),
+            }))
+          : [{ supplier: 'Group', outcome: 'skipped', message: 'Nothing to include.' }]
+      );
       return;
     }
-    const popup = openPurchaseOrderWindow((url, target) => window.open(url, target));
-    if (!popup) {
-      setResults([
-        {
-          supplier: 'Group',
-          outcome: 'failed',
-          message: 'The mail window was blocked. Open it from the link.',
-          mailtoUrl: compose.mailtoUrl,
-          fullBody: compose.fullBody,
-          truncated: compose.truncated,
-        },
-      ]);
-      return;
-    }
-    void finishGroup(again, compose, popup);
+    void finishGroup(again, compose, plan.ready);
   };
 
   const finishGroup = async (
     again: boolean,
     compose: NonNullable<ReturnType<typeof purchaseOrderGroupCompose>>,
-    popup: PurchaseOrderPopup
+    ready: PoDraft[]
   ) => {
     setBusy(true);
     try {
-      for (const item of drafts) {
-        if (!singleSupplierEmail(item.to)) continue;
-        let recorded: Awaited<ReturnType<typeof recordOpen>>;
-        try {
-          recorded = await recordOpen(item, again);
-        } catch {
-          popup.close();
-          setResults([
-            { supplier: item.supplier, outcome: 'failed', message: 'The order could not be recorded.' },
-          ]);
-          return;
-        }
-        if (!recorded.ok) {
-          popup.close();
-          if (recorded.status === 409) {
-            setReopen({ openedAt: recorded.openedAt ?? '', group: true });
-            return;
-          }
-          setResults([{ supplier: item.supplier, outcome: 'failed', message: recorded.message }]);
-          return;
-        }
+      const settled = await settlePurchaseOrderGroup({
+        items: ready,
+        name: (item) => item.supplier,
+        confirmed: again,
+        check: (item) => recordOpen(item, false, true),
+        write: (item) => recordOpen(item, again),
+      });
+      if (settled.outcome === 'repeat') {
+        setReopen({ openedAt: '', group: true, suppliers: settled.suppliers });
+        return;
       }
-      popup.location.href = compose.mailtoUrl;
+      if (settled.outcome === 'failed') {
+        setReopen(null);
+        setResults([
+          {
+            supplier: settled.supplier,
+            outcome: 'failed',
+            message: purchaseOrderLoggedFailureMessage(settled.message, settled.logged),
+          },
+        ]);
+        return;
+      }
       setReopen(null);
       setResults([
         {
@@ -228,6 +214,7 @@ export function PoEmailPanel({
           fullBody: compose.fullBody,
         },
       ]);
+      window.location.href = compose.mailtoUrl;
     } finally {
       setBusy(false);
     }
@@ -383,12 +370,17 @@ export function PoEmailPanel({
             >
               Send group
             </Button>
+            {plan.skipped.length > 0 ? (
+              <p className="text-xs text-slate-400">
+                {purchaseOrderSkippedLabel(plan.skipped.map((item) => item.supplier))}
+              </p>
+            ) : null}
             {confirmAll ? (
               <div className="space-y-2 rounded-xl border border-slate-700 bg-slate-950/70 p-3">
                 <p className="text-sm text-slate-100">{purchaseOrderSendAllConfirm(plan.ready.length)}</p>
                 {plan.skipped.length > 0 ? (
                   <p className="text-xs text-slate-400">
-                    Skipped, no valid email: {plan.skipped.map((item) => item.supplier).join(', ')}
+                    {purchaseOrderSkippedLabel(plan.skipped.map((item) => item.supplier))}
                   </p>
                 ) : null}
                 <div className="grid grid-cols-2 gap-2">
@@ -423,7 +415,11 @@ export function PoEmailPanel({
             ) : null}
             {reopen ? (
               <div className="space-y-2 rounded-xl border border-amber-800/60 bg-amber-950/30 p-3">
-                <p className="text-sm text-amber-100">{purchaseOrderOpenedWarning(reopen.openedAt)}</p>
+                <p className="text-sm text-amber-100">
+                  {reopen.group
+                    ? purchaseOrderGroupOpenedWarning(reopen.suppliers ?? [])
+                    : purchaseOrderOpenedWarning(reopen.openedAt)}
+                </p>
                 <div className="grid grid-cols-2 gap-2">
                   <Button
                     type="button"
@@ -450,11 +446,6 @@ export function PoEmailPanel({
                     <span>
                       {result.supplier}: {result.message}
                     </span>
-                    {result.mailtoUrl ? (
-                      <a href={result.mailtoUrl} className="ml-2 font-semibold text-blue-300 underline underline-offset-2">
-                        Open mail
-                      </a>
-                    ) : null}
                     {result.truncated && result.fullBody ? (
                       <button
                         type="button"

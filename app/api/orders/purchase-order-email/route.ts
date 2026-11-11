@@ -20,6 +20,8 @@ const purchaseOrderEmailSchema = z
     body: z.string().max(20_000),
     productIds: z.array(z.string().trim().min(1).max(128)).max(200),
     reopen: z.boolean().optional(),
+    /** Look up an existing open without inserting a row. */
+    checkOnly: z.boolean().optional(),
   })
   .strict();
 
@@ -58,6 +60,32 @@ export async function POST(req: NextRequest) {
       return apiError('A saved supplier is required before opening.', 400);
     }
 
+    const lineKey = purchaseOrderLineKey({
+      supplier: input.supplierName,
+      productIds: input.productIds,
+      body: input.body,
+    });
+
+    if (input.checkOnly === true) {
+      const existing = await prisma.purchaseOrderEmail.findFirst({
+        where: { supplierId, lineKey },
+        select: { createdAt: true },
+      });
+      if (existing) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: 'Already opened for this order.',
+            message: 'Already opened for this order.',
+            openedAt: existing.createdAt.toISOString(),
+            status: 'OPENED',
+          },
+          { status: 409 }
+        );
+      }
+      return NextResponse.json({ success: true, status: 'READY' });
+    }
+
     const recorded = await recordPurchaseOrderOpen(
       {
         supplierId,
@@ -65,11 +93,7 @@ export async function POST(req: NextRequest) {
         toEmail,
         subject: input.subject,
         body: input.body,
-        lineKey: purchaseOrderLineKey({
-          supplier: input.supplierName,
-          productIds: input.productIds,
-          body: input.body,
-        }),
+        lineKey,
         actorId: actor.id,
       },
       input.reopen === true
