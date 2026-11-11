@@ -32,7 +32,7 @@ test('malformed model JSON is rejected and a bad line is flagged', () => {
     ],
   });
   assert.equal(flagged.invoiceDate, '');
-  assert.match(flagged.gaps.join(' '), /not a real calendar date/);
+  assert.match(flagged.gaps.join(' '), /ambiguous/);
   assert.equal(flagged.lineItems[0]?.department, 'PRODUCE');
   assert.equal(flagged.lineItems[0]?.departmentAssumed, true);
   assert.equal(flagged.lineItems[0]?.quantity, 0);
@@ -183,4 +183,63 @@ test('a mismatched line total is flagged and the unit cost is kept', () => {
   });
   assert.equal(close.lineItems[0]?.lineTotalMismatch, false);
   assert.equal(close.lineItems[0]?.unitCost, 1.11);
+});
+
+test('a hand-written invoice fixture keeps stock math and drops non-stock lines', () => {
+  const fixture = {
+    vendorName: 'North Market',
+    invoiceNumber: 'INV-55',
+    invoiceDate: '05-11-2026',
+    subtotal: 169.5,
+    lineItems: [
+      {
+        name: 'Old Bananas',
+        quantity: 0,
+        unit: 'cases',
+        unitCost: 0,
+        totalCost: 0,
+        struckThrough: true,
+      },
+      {
+        name: 'Mixed Greens',
+        quantity: 2,
+        unit: 'FLAT',
+        unitCost: 84.75,
+        totalCost: 169.5,
+      },
+      {
+        name: 'FUEL SURCHARGE',
+        quantity: 1,
+        unit: 'CHRG',
+        unitCost: 0,
+        totalCost: 0,
+      },
+    ],
+  };
+  const model = interpretInvoiceOcrModel(fixture);
+  assert.equal(model.invoiceDate, '');
+  assert.match(model.gaps.join(' '), /05-11-2026/);
+  assert.match(model.gaps.join(' '), /ambiguous/);
+  assert.equal(model.lineItems.length, 1);
+  const flat = model.lineItems[0];
+  assert.ok(flat);
+  assert.equal(flat.name, 'Mixed Greens');
+  assert.equal(flat.quantity, 2);
+  assert.equal(flat.unit, 'FLAT');
+  assert.equal(flat.unitCost, 84.75);
+  assert.equal(flat.totalCost, 169.5);
+  assert.equal(flat.lineTotalMismatch, false);
+  assert.equal(flat.postsStock, true);
+  assert.equal(model.excludedLines.length, 2);
+  assert.equal(model.excludedLines[0]?.lineKind, 'zero');
+  assert.equal(model.excludedLines[0]?.quantity, 0);
+  assert.equal(model.excludedLines[0]?.postsStock, false);
+  assert.equal(model.excludedLines[1]?.lineKind, 'charge');
+  assert.equal(model.excludedLines[1]?.postsStock, false);
+  assert.match(model.excludedLines[1]?.gaps.join(' ') ?? '', /charge/);
+  assert.equal(model.subtotal, 169.5);
+  assert.equal(model.subtotalGap, null);
+
+  const off = interpretInvoiceOcrModel({ ...fixture, subtotal: 200 });
+  assert.match(off.subtotalGap ?? '', /does not match the line sum 169.50/);
 });

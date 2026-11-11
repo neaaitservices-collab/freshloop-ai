@@ -7,6 +7,8 @@ export const INVOICE_PHOTO_JPEG_QUALITY = 72;
 export const INVOICE_PHOTO_MAX_BYTES = 8 * 1024 * 1024;
 /** Reject decompression bombs. A 48MP phone photo still fits. */
 export const INVOICE_PHOTO_MAX_PIXELS = 50_000_000;
+/** Invoice PDFs longer than this are rejected before they are sent. */
+export const INVOICE_PDF_MAX_PAGES = 8;
 
 export type InvoicePhotoKind = 'jpeg' | 'png' | 'webp' | 'pdf' | 'unknown';
 
@@ -41,12 +43,28 @@ export function invoicePhotoWithinPixelCap(width: number, height: number): boole
   return width * height <= INVOICE_PHOTO_MAX_PIXELS;
 }
 
+/** Counts uncompressed page objects. Returns null when the file does not list them in clear text. */
+export function invoicePdfPageCount(input: Buffer): number | null {
+  const pages = input.toString('latin1').match(/\/Type\s*\/Page(?!s)/g);
+  if (!pages || pages.length === 0) return null;
+  return pages.length;
+}
+
+function assertInvoicePdf(input: Buffer): void {
+  if (input.length > INVOICE_PHOTO_MAX_BYTES) {
+    throw new Error('This PDF is too large. Send a smaller file.');
+  }
+  const pages = invoicePdfPageCount(input);
+  if (pages != null && pages > INVOICE_PDF_MAX_PAGES) {
+    throw new Error(`This PDF has too many pages. Send ${INVOICE_PDF_MAX_PAGES} pages or fewer.`);
+  }
+}
+
 function assertInvoicePhotoBytes(input: Buffer): void {
   if (input.length > INVOICE_PHOTO_MAX_BYTES) {
     throw new Error('Could not prepare the photo. The upload is too large.');
   }
   const kind = invoicePhotoKind(input);
-  if (kind === 'pdf') throw new Error('PDF not supported yet');
   if (kind !== 'jpeg' && kind !== 'png' && kind !== 'webp') {
     throw new Error('Could not prepare the photo. The upload is not a JPEG, PNG, or WebP image.');
   }
@@ -91,15 +109,19 @@ export function geminiFailureDetail(error: unknown): string {
   return 'request failed';
 }
 
-/** Always resize and re-encode before the photo is sent to Gemini. */
+/** Resize a photo. A PDF is size-checked and sent through unchanged. */
 export async function downscaleInvoicePhoto(
   base64: string,
   _mimeType: string
-): Promise<{ data: string; mimeType: 'image/jpeg' }> {
+): Promise<{ data: string; mimeType: 'image/jpeg' | 'application/pdf' }> {
   const payload = base64.includes(',') ? (base64.split(',')[1] ?? '') : base64;
   const input = Buffer.from(payload, 'base64');
   if (input.length === 0) {
     throw new Error('Could not prepare the photo. The upload was empty.');
+  }
+  if (invoicePhotoKind(input) === 'pdf') {
+    assertInvoicePdf(input);
+    return { data: payload, mimeType: 'application/pdf' };
   }
   assertInvoicePhotoBytes(input);
 
@@ -131,7 +153,7 @@ export async function downscaleInvoicePhoto(
     if (error instanceof Error && error.message.startsWith('Could not prepare the photo')) {
       throw error;
     }
-    if (error instanceof Error && error.message.startsWith('PDF not supported yet')) {
+    if (error instanceof Error && error.message.startsWith('This PDF')) {
       throw error;
     }
     if (error instanceof Error && /pixel limit/i.test(error.message)) {

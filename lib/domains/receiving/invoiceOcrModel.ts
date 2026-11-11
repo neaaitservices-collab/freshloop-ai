@@ -128,6 +128,8 @@ export interface InterpretedInvoiceLine {
   unitInvalid: boolean;
   lineTotalMismatch: boolean;
   lineTotalNote: string | null;
+  postsStock: boolean;
+  lineKind: 'stock' | 'charge' | 'zero';
   gaps: string[];
 }
 
@@ -136,6 +138,9 @@ export interface InterpretedInvoiceModel {
   invoiceNumber: string;
   invoiceDate: string;
   lineItems: InterpretedInvoiceLine[];
+  excludedLines: InterpretedInvoiceLine[];
+  subtotal: number | null;
+  subtotalGap: string | null;
   gaps: string[];
   identity: ParsedInvoiceIdentity;
 }
@@ -263,8 +268,53 @@ function readLine(raw: unknown, lineNumber: number): InterpretedInvoiceLine {
     unitInvalid: false,
     lineTotalMismatch,
     lineTotalNote,
+    postsStock: true,
+    lineKind: 'stock',
     gaps,
   };
+}
+
+const CHARGE_UNITS = new Set(['chrg', 'charge']);
+
+function isExplicitZero(value: unknown): boolean {
+  return coerceInvoiceNumber(value) === 0;
+}
+
+function isStruckLine(record: Record<string, unknown>): boolean {
+  const flag = record.struckThrough ?? record.struck ?? record.struck_through;
+  return flag === true || flag === 'true';
+}
+
+function isChargeLine(record: Record<string, unknown>, unit: string): boolean {
+  if (record.charge === true || record.lineKind === 'charge') return true;
+  return CHARGE_UNITS.has(unit.trim().toLowerCase());
+}
+
+function classifyInvoiceLine(line: InterpretedInvoiceLine, raw: unknown): InterpretedInvoiceLine {
+  const record = raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
+  const printedTotal = pick(record, 'totalCost', 'total_cost');
+  const printedQty = pick(record, 'quantity', 'shipped');
+  if (isChargeLine(record, line.unit)) {
+    return {
+      ...line,
+      postsStock: false,
+      lineKind: 'charge',
+      quantityUnreadable: false,
+      gaps: [`Line ${line.name} is a charge and is not received into stock.`],
+    };
+  }
+  if ((isStruckLine(record) || isExplicitZero(printedQty)) && isExplicitZero(printedTotal)) {
+    return {
+      ...line,
+      quantity: 0,
+      totalCost: 0,
+      postsStock: false,
+      lineKind: 'zero',
+      quantityUnreadable: false,
+      gaps: [`${line.name} shipped 0 at $0.00 and is not received.`],
+    };
+  }
+  return line;
 }
 
 export function interpretInvoiceOcrModel(raw: unknown): InterpretedInvoiceModel {
@@ -293,14 +343,35 @@ export function interpretInvoiceOcrModel(raw: unknown): InterpretedInvoiceModel 
     gaps.push(`Invoice number was longer than ${INVOICE_OCR_TEXT_LIMITS.invoiceNumber} characters.`);
   }
 
-  const lineItems = lines.map((line, index) => readLine(line, index + 1));
-  for (const line of lineItems) gaps.push(...line.gaps);
+  const classified = lines.map((line, index) => classifyInvoiceLine(readLine(line, index + 1), line));
+  const lineItems = classified.filter((line) => line.postsStock);
+  const excludedLines = classified.filter((line) => !line.postsStock);
+  const lineSum = Number(classified.reduce((sum, line) => sum + line.totalCost, 0).toFixed(2));
+  const printedSubtotal = pick(record, 'subtotal', 'subTotal');
+  let subtotal: number | null = null;
+  let subtotalGap: string | null = null;
+  if (printedSubtotal !== undefined) {
+    const parsedSubtotal = invoiceOcrMoneySchema.safeParse(printedSubtotal);
+    if (!parsedSubtotal.success) {
+      subtotalGap = 'Invoice subtotal was not a number.';
+    } else {
+      subtotal = parsedSubtotal.data;
+      if (Math.abs(moneyCents(subtotal) - moneyCents(lineSum)) > Math.round(INVOICE_LINE_TOTAL_TOLERANCE * 100)) {
+        subtotalGap = `Invoice subtotal ${subtotal.toFixed(2)} does not match the line sum ${lineSum.toFixed(2)}.`;
+      }
+    }
+  }
+  if (subtotalGap) gaps.push(subtotalGap);
+  for (const line of classified) gaps.push(...line.gaps);
 
   return {
     vendorName: identity.vendorName,
     invoiceNumber: identity.invoiceNumber,
     invoiceDate: identity.invoiceDate,
     lineItems,
+    excludedLines,
+    subtotal,
+    subtotalGap,
     gaps,
     identity,
   };

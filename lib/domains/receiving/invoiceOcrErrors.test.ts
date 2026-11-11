@@ -21,12 +21,12 @@ describe('invoiceOcrErrorResponse', () => {
     assert.equal(res.status, 422);
   });
 
-  it('names an unsupported PDF', async () => {
-    const res = invoiceOcrErrorResponse(new Error('PDF not supported yet'));
+  it('names a PDF that is too large', async () => {
+    const res = invoiceOcrErrorResponse(new Error('This PDF is too large. Send a smaller file.'));
     assert.ok(res);
     assert.equal(res.status, 400);
     const body = await res.json();
-    assert.match(body.error, /PDF not supported yet/);
+    assert.match(body.error, /too large/);
   });
 
   it('returns null for unknown errors', () => {

@@ -31,7 +31,7 @@ export function invoiceOcrErrorResponse(error: unknown): NextResponse | null {
     return apiError(msg, 422);
   }
 
-  if (/PDF not supported yet/i.test(msg)) {
+  if (/This PDF is too large|This PDF has too many pages/i.test(msg)) {
     return apiError(msg, 400);
   }
 

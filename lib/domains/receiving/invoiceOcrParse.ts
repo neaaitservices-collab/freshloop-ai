@@ -101,6 +101,9 @@ export function parseOcrInvoiceDate(raw: unknown): { invoiceDate: string; gap: s
   const written = writtenInvoiceDate(text);
   if (written) return { invoiceDate: written, gap: null };
   const shown = text.length > 40 ? `${text.slice(0, 40)}…` : text;
+  if (/^\d{1,2}[./-]\d{1,2}[./-]\d{4}$/.test(text)) {
+    return { invoiceDate: '', gap: `Invoice date "${shown}" is ambiguous. Use a year-first date.` };
+  }
   return { invoiceDate: '', gap: `Invoice date "${shown}" is not a real calendar date.` };
 }
 

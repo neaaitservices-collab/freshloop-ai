@@ -65,7 +65,10 @@ test('written invoice dates are kept and ambiguous dates are flagged', () => {
   assert.equal(parseOcrInvoiceDate('2026-11-08').invoiceDate, '2026-11-08');
   const ambiguous = parseOcrInvoiceDate('01/02/2026');
   assert.equal(ambiguous.invoiceDate, '');
-  assert.match(ambiguous.gap ?? '', /not a real calendar date/);
+  assert.match(ambiguous.gap ?? '', /ambiguous/);
+  const monthDay = parseOcrInvoiceDate('05-11-2026');
+  assert.equal(monthDay.invoiceDate, '');
+  assert.match(monthDay.gap ?? '', /ambiguous/);
   const impossible = parseInvoiceIdentity({ invoiceDate: '2026-02-31' });
   assert.equal(impossible.invoiceDate, '');
   assert.match(impossible.gaps.join(' '), /not a real calendar date/);

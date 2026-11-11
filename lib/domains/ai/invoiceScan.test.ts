@@ -10,6 +10,7 @@ import {
   geminiFailureDetail,
   INVOICE_OCR_ATTEMPT_TIMEOUT_MS,
   INVOICE_OCR_TOTAL_BUDGET_MS,
+  INVOICE_PDF_MAX_PAGES,
   INVOICE_PHOTO_MAX_BYTES,
   INVOICE_PHOTO_MAX_EDGE,
   invoicePhotoWithinPixelCap,
@@ -82,10 +83,23 @@ test('unreadable invoice bytes fail before a model call', async () => {
   );
 });
 
-test('a non-image upload is rejected and a PDF is named', async () => {
+test('a PDF is sent through and a non-image is rejected', async () => {
+  const pdf = Buffer.from('%PDF-1.4\n1 0 obj\n/Type /Page\nendobj\n%%EOF');
+  const preparedPdf = await downscaleInvoicePhoto(pdf.toString('base64'), 'application/pdf');
+  assert.equal(preparedPdf.mimeType, 'application/pdf');
+  assert.equal(preparedPdf.data, pdf.toString('base64'));
+  const manyPages = Buffer.from(
+    `%PDF-1.4\n${Array.from({ length: INVOICE_PDF_MAX_PAGES + 1 }, () => '/Type /Page').join('\n')}\n%%EOF`
+  );
   await assert.rejects(
-    () => downscaleInvoicePhoto(Buffer.from('%PDF-1.4\n').toString('base64'), 'application/pdf'),
-    /PDF not supported yet/
+    () => downscaleInvoicePhoto(manyPages.toString('base64'), 'application/pdf'),
+    /too many pages/
+  );
+  const hugePdf = Buffer.alloc(INVOICE_PHOTO_MAX_BYTES + 1);
+  hugePdf.write('%PDF');
+  await assert.rejects(
+    () => downscaleInvoicePhoto(hugePdf.toString('base64'), 'application/pdf'),
+    /This PDF is too large/
   );
   await assert.rejects(
     () => downscaleInvoicePhoto(Buffer.from('GIF89a not an invoice').toString('base64'), 'image/gif'),
