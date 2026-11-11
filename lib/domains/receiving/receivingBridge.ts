@@ -59,6 +59,8 @@ export function stashInvoiceForReceiving(result: InvoiceOcrResult): void {
       note: logs.length
         ? `${result.vendorName} · ${result.invoiceNumber} · ${logs.length} cases ready to price`
         : null,
+      vendorName: result.vendorName,
+      supplierId: result.supplierId ?? '',
     })
   );
 }
@@ -66,15 +68,27 @@ export function stashInvoiceForReceiving(result: InvoiceOcrResult): void {
 export function consumeStashedReceivingScan(): {
   logs: ReceivingLog[];
   note: string | null;
+  vendorName: string;
+  supplierId: string;
 } | null {
   if (typeof window === 'undefined') return null;
   const raw = sessionStorage.getItem(RECEIVING_SCAN_STORAGE_KEY);
   if (!raw) return null;
   sessionStorage.removeItem(RECEIVING_SCAN_STORAGE_KEY);
   try {
-    const parsed = JSON.parse(raw) as { logs?: ReceivingLog[]; note?: string | null };
+    const parsed = JSON.parse(raw) as {
+      logs?: ReceivingLog[];
+      note?: string | null;
+      vendorName?: string;
+      supplierId?: string;
+    };
     if (!Array.isArray(parsed.logs) || parsed.logs.length === 0) return null;
-    return { logs: parsed.logs, note: parsed.note ?? null };
+    return {
+      logs: parsed.logs,
+      note: parsed.note ?? null,
+      vendorName: parsed.vendorName?.trim() ?? '',
+      supplierId: parsed.supplierId?.trim() ?? '',
+    };
   } catch {
     return null;
   }

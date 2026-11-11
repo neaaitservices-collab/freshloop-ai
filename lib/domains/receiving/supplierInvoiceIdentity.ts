@@ -18,6 +18,7 @@ import {
   type ReceivingLogPostResult,
 } from '@/lib/domains/receiving/receivingLogPost';
 import { getSupplierNameById } from '@/lib/domains/suppliers/suppliers';
+import { matchPrintedSlots } from '@/lib/domains/receiving/invoiceReceiveSave';
 
 export const INVOICE_NUMBER_REQUIRED_ERROR =
   'This scan has no invoice number, so it was not given a delivery id. Enter the number from the paper and scan again.';
@@ -78,6 +79,8 @@ export interface InvoiceIdentityDetails {
   newPrintedNames?: string[];
   unmatchedStored?: string[];
   unmatchedStoredLines?: { id: string; printedKey: string }[];
+  /** Lines that already matched. A rename or extra line does not withhold these ids. */
+  identifiedLines?: ResolvedInvoiceLine[];
 }
 
 export type ResolveSupplierInvoiceResult =
@@ -175,51 +178,39 @@ function documentMatchesDate(document: DocumentGraph, dateKey: string): boolean 
 }
 
 function toLines(document: DocumentGraph, slots: { printedKey: string; occurrence: number }[]): ResolveSupplierInvoiceResult {
-  const unused = document.lines.map((line) => ({
-    line,
-    aliases: document.lineAliases.filter((alias) => alias.lineId === line.id),
-  }));
-  const resolved: ResolvedInvoiceLine[] = [];
-  const unmatchedScan: string[] = [];
-  for (const [ordinal, slot] of slots.entries()) {
-    const exact = unused.findIndex(
-      (entry) => entry.line.printedKey === slot.printedKey && entry.line.occurrence === slot.occurrence
-    );
-    const alias = unused.findIndex((entry) =>
-      entry.aliases.some((item) => item.printedKey === slot.printedKey && item.occurrence === slot.occurrence)
-    );
-    const index = exact >= 0 ? exact : alias;
-    if (index < 0) {
-      unmatchedScan.push(slot.printedKey);
-      continue;
-    }
-    const chosen = unused.splice(index, 1)[0]!;
-    resolved.push({
-      deliveryId: chosen.line.id,
-      printedKey: slot.printedKey,
-      occurrence: slot.occurrence,
-      ordinal,
-      alreadyReceived: chosen.line.heldByLegacy,
-    });
-  }
-  if (unmatchedScan.length === 0) {
+  const matched = matchPrintedSlots(
+    document.lines.map((line) => ({
+      id: line.id,
+      printedKey: line.printedKey,
+      occurrence: line.occurrence,
+      heldByLegacy: line.heldByLegacy,
+      aliases: document.lineAliases
+        .filter((alias) => alias.lineId === line.id)
+        .map((alias) => ({ printedKey: alias.printedKey, occurrence: alias.occurrence })),
+    })),
+    slots
+  );
+  if (matched.unmatchedScan.length === 0) {
     return {
       ok: true,
       created: false,
       invoiceKey: document.invoiceKey,
       documentId: document.id,
-      lines: resolved,
+      lines: matched.matched,
     };
   }
-  if (unused.length > 0) {
+  const identifiedLines = matched.matched.length > 0 ? matched.matched : undefined;
+  if (matched.unused.length > 0) {
     return fail('RENAME_AMBIGUOUS', RENAME_AMBIGUOUS_ERROR, {
-      newPrintedNames: unmatchedScan,
-      unmatchedStored: unused.map((entry) => entry.line.printedKey),
-      unmatchedStoredLines: unused.map((entry) => ({ id: entry.line.id, printedKey: entry.line.printedKey })),
+      newPrintedNames: matched.unmatchedScan,
+      unmatchedStored: matched.unused.map((entry) => entry.printedKey),
+      unmatchedStoredLines: matched.unused.map((entry) => ({ id: entry.id, printedKey: entry.printedKey })),
+      ...(identifiedLines ? { identifiedLines } : {}),
     });
   }
   return fail('LINES_NEED_CONFIRMATION', LINES_NEED_CONFIRMATION_ERROR, {
-    newPrintedNames: unmatchedScan,
+    newPrintedNames: matched.unmatchedScan,
+    ...(identifiedLines ? { identifiedLines } : {}),
   });
 }
 
