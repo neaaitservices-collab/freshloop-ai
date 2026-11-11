@@ -140,6 +140,28 @@ export function resolveDepartmentCatalog(input: {
   return { source: 'table', departments };
 }
 
+/**
+ * Catalogue stock row. The enum column is cast to text in SQL. A driver value that
+ * is not text still becomes a string here, so callers can trim it.
+ * departmentId wins when the ref row is present.
+ */
+export function stockRowDepartmentCode(input: {
+  department: unknown;
+  departmentId?: string | null;
+  rows?: readonly DepartmentRefRecord[] | null;
+  unavailable?: boolean;
+}): string {
+  const refsById = new Map(
+    (input.unavailable ? [] : (input.rows ?? [])).map((row) => [row.id, row])
+  );
+  return resolveItemDepartment({
+    departmentId: input.departmentId,
+    enumCode: typeof input.department === 'string' ? input.department : '',
+    refsById,
+    unavailable: Boolean(input.unavailable),
+  }).code;
+}
+
 /** Item read. departmentId wins when the ref row is present; otherwise the enum column. */
 export function resolveItemDepartment(input: {
   departmentId?: string | null;

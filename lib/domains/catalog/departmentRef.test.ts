@@ -4,6 +4,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { Department } from '@prisma/client';
 import { DEPARTMENT_LABELS } from '@/lib/domains/inventory/inventoryCatalog';
+import { buildStockLevel } from '@/lib/domains/inventory/stock';
 import {
   DEPARTMENT_BACKFILL_TABLES,
   DEPARTMENT_REF_BACKFILL_SCRIPT,
@@ -18,6 +19,7 @@ import {
   planDepartmentIdBackfill,
   resolveDepartmentCatalog,
   resolveItemDepartment,
+  stockRowDepartmentCode,
 } from '@/lib/domains/catalog/departmentRef';
 
 const produceId = DEPARTMENT_REF_SEED.find((row) => row.code === 'PRODUCE')?.id ?? '';
@@ -146,6 +148,40 @@ test('backfill fills null department ids once and leaves existing ids alone', ()
   assert.deepEqual(planDepartmentIdBackfill(filled, codeToId), []);
 });
 
+test('stock department is text before trim, including a non-string driver value', () => {
+  const source = fs.readFileSync(path.join(process.cwd(), 'lib/domains/inventory/stock.ts'), 'utf8');
+  assert.match(source, /p\.department::text AS department/);
+  assert.equal(source.includes('SELECT dr.code FROM department_refs'), false);
+
+  const fromEnum = stockRowDepartmentCode({
+    department: 'DAIRY',
+    departmentId: null,
+    unavailable: true,
+  });
+  assert.equal(fromEnum.trim(), 'DAIRY');
+  assert.equal(
+    buildStockLevel({
+      productId: 'p',
+      name: 'Milk',
+      supplier: null,
+      department: fromEnum,
+      unitType: 'UNIT',
+      casePackSize: 1,
+      unitCost: 1,
+      onHand: 1,
+    }).department,
+    'DAIRY'
+  );
+
+  const fromTable = stockRowDepartmentCode({
+    department: { value: 'PRODUCE' },
+    departmentId: groceryId,
+    rows: DEPARTMENT_REF_SEED,
+  });
+  assert.equal(typeof fromTable, 'string');
+  assert.equal(fromTable.trim(), 'GROCERY');
+});
+
 test('writes set departmentId when the table is readable and omit it when it is not', () => {
   const codeToId = new Map([['PRODUCE', produceId]]);
   assert.deepEqual(departmentIdColumns('PRODUCE', codeToId), { departmentId: produceId });
@@ -170,4 +206,6 @@ test('migration and backfill script contain the idempotent seed and updates', ()
   }
   assert.match(migration, /NELSON-APPROVED/);
   assert.match(script, /without Nelson's approval/);
+  assert.match(script, /BEGIN;\n\nINSERT INTO "department_refs"/);
+  assert.match(script, /::text;\n\nCOMMIT;\n?$/);
 });

@@ -12,6 +12,9 @@
 --
 -- Statements below are verbatim copies of departmentRefSeedSql() and
 -- departmentBackfillSql() in lib/domains/catalog/departmentRef.ts.
+-- One transaction: a failed statement rolls the seed and the three updates back together.
+
+BEGIN;
 
 INSERT INTO "department_refs" ("id", "code", "name", "active", "sort_order")
 VALUES
@@ -40,3 +43,5 @@ SET "department_id" = ref."id"
 FROM "department_refs" AS ref
 WHERE item."department_id" IS NULL
   AND ref."code" = item."department"::text;
+
+COMMIT;
