@@ -1,6 +1,7 @@
 import { CATALOG_DEPARTMENTS } from '@/lib/domains/inventory/inventoryCatalog';
 import type { DepartmentType } from '@/lib/types';
 import { canonicalInvoiceDate } from '@/lib/domains/receiving/invoiceDeliveryId';
+import { torontoToday } from '@/lib/domains/stats/storeTime';
 
 export interface ParsedInvoiceIdentity {
   vendorName: string;
@@ -78,11 +79,155 @@ function writtenInvoiceDate(text: string): string | null {
   return null;
 }
 
+export interface OcrInvoiceDateOptions {
+  /** YYYY-MM-DD day the delivery is received. Defaults to the store's today. */
+  receivedOn?: string | null;
+  /** Another printed date, such as an order date, that can confirm one reading. */
+  orderDate?: unknown;
+}
+
+type DateOrder = 'DD-MM' | 'MM-DD';
+
+interface DateReading {
+  iso: string;
+  order: DateOrder;
+}
+
+function fullYear(year: number, digits: number): number {
+  if (digits === 4) return year;
+  return year >= 70 ? 1900 + year : 2000 + year;
+}
+
+function numericReadings(text: string): DateReading[] {
+  const match = /^(\d{1,2})[./-](\d{1,2})[./-](\d{2}|\d{4})$/.exec(text);
+  if (!match) return [];
+  const first = Number(match[1]);
+  const second = Number(match[2]);
+  const year = fullYear(Number(match[3]), match[3].length);
+  const readings: DateReading[] = [];
+  const dayFirst = calendarDate(year, second, first);
+  const monthFirst = calendarDate(year, first, second);
+  if (dayFirst) readings.push({ iso: dayFirst, order: 'DD-MM' });
+  if (monthFirst && monthFirst !== dayFirst) readings.push({ iso: monthFirst, order: 'MM-DD' });
+  return readings;
+}
+
+function utcDay(iso: string): number {
+  const [year, month, day] = iso.split('-').map(Number);
+  return Math.round(Date.UTC(year, month - 1, day) / 86_400_000);
+}
+
+/** Every calendar date a second printed field could mean, including a short year. */
+function dateCandidates(raw: unknown): string[] {
+  if (typeof raw !== 'string') return [];
+  const text = raw.trim();
+  if (!text) return [];
+  const found = new Set<string>();
+  const iso = canonicalInvoiceDate(text);
+  if (iso) found.add(iso);
+  const prefixed = /^(\d{4}-\d{2}-\d{2})[T\s]/.exec(text);
+  if (prefixed) {
+    const dated = canonicalInvoiceDate(prefixed[1]);
+    if (dated) found.add(dated);
+  }
+  const written = writtenInvoiceDate(text);
+  if (written) found.add(written);
+  for (const reading of numericReadings(text)) found.add(reading.iso);
+  return [...found];
+}
+
+function receiveDay(receivedOn: string | null | undefined): string {
+  return canonicalInvoiceDate(receivedOn) ?? torontoToday();
+}
+
+function readingNote(reading: DateReading): string {
+  return `${reading.iso} (${reading.order})`;
+}
+
+function chooseAmbiguousReading(
+  readings: DateReading[],
+  remaining: DateReading[],
+  receive: string,
+  orderDate: unknown
+): { iso: string; note: string } {
+  const only = remaining.length === 1 ? remaining[0] : undefined;
+  if (only) {
+    const dropped = readings.find((reading) => reading.iso !== only.iso);
+    const because = dropped
+      ? `${readingNote(dropped)} is after the receive date ${receive}`
+      : `the other reading is after the receive date ${receive}`;
+    return { iso: only.iso, note: `Read as ${readingNote(only)} because ${because}.` };
+  }
+
+  const matched = remaining.filter((reading) => dateCandidates(orderDate).includes(reading.iso));
+  const confirmed = matched.length === 1 ? matched[0] : undefined;
+  if (confirmed) {
+    return {
+      iso: confirmed.iso,
+      note: `Read as ${readingNote(confirmed)} because it matches the order date.`,
+    };
+  }
+
+  const [first, second] = remaining;
+  if (!first || !second) {
+    return { iso: '', note: `Both readings are after the receive date ${receive}.` };
+  }
+  const firstDistance = Math.abs(utcDay(first.iso) - utcDay(receive));
+  const secondDistance = Math.abs(utcDay(second.iso) - utcDay(receive));
+  if (firstDistance === secondDistance) {
+    const dayFirst = first.order === 'DD-MM' ? first : second;
+    const monthFirst = first.order === 'MM-DD' ? first : second;
+    return {
+      iso: dayFirst.iso,
+      note: `Read as ${readingNote(dayFirst)}. ${readingNote(dayFirst)} and ${readingNote(monthFirst)} are equally close to the receive date ${receive}, so DD-MM was kept.`,
+    };
+  }
+  const closer = firstDistance < secondDistance ? first : second;
+  const farther = closer === first ? second : first;
+  return {
+    iso: closer.iso,
+    note: `Read as ${readingNote(closer)}, closer to the receive date ${receive} than ${readingNote(farther)}.`,
+  };
+}
+
+function resolveNumericInvoiceDate(
+  text: string,
+  shown: string,
+  options?: OcrInvoiceDateOptions
+): { invoiceDate: string; gap: string | null } {
+  const readings = numericReadings(text);
+  if (readings.length === 0) {
+    return { invoiceDate: '', gap: `Invoice date "${shown}" is not a real calendar date.` };
+  }
+  const only = readings.length === 1 ? readings[0] : undefined;
+  if (only) return { invoiceDate: only.iso, gap: null };
+
+  const receive = receiveDay(options?.receivedOn);
+  const receiveNumber = utcDay(receive);
+  const remaining = readings.filter((reading) => utcDay(reading.iso) <= receiveNumber);
+  if (remaining.length === 0) {
+    return {
+      invoiceDate: '',
+      gap: `Invoice date "${shown}" is ambiguous. Both readings are after the receive date ${receive}.`,
+    };
+  }
+  const choice = chooseAmbiguousReading(readings, remaining, receive, options?.orderDate);
+  return {
+    invoiceDate: choice.iso,
+    gap: `Invoice date "${shown}" is ambiguous. ${choice.note} Confirm this date.`,
+  };
+}
+
 /**
  * OCR dates only. Year-first values use the identity normalizer.
- * A written month is accepted. Ambiguous numeric dates such as 01/02/2026 are flagged.
+ * A written month is accepted. A numeric date with one valid reading is that date.
+ * When both the day and the month are 12 or under, both readings are considered,
+ * one is prefilled, and the clerk still has to confirm it.
  */
-export function parseOcrInvoiceDate(raw: unknown): { invoiceDate: string; gap: string | null } {
+export function parseOcrInvoiceDate(
+  raw: unknown,
+  options?: OcrInvoiceDateOptions
+): { invoiceDate: string; gap: string | null } {
   if (typeof raw !== 'string') {
     return {
       invoiceDate: '',
@@ -102,7 +247,7 @@ export function parseOcrInvoiceDate(raw: unknown): { invoiceDate: string; gap: s
   if (written) return { invoiceDate: written, gap: null };
   const shown = text.length > 40 ? `${text.slice(0, 40)}…` : text;
   if (/^\d{1,2}[./-]\d{1,2}[./-]\d{4}$/.test(text)) {
-    return { invoiceDate: '', gap: `Invoice date "${shown}" is ambiguous. Use a year-first date.` };
+    return resolveNumericInvoiceDate(text, shown, options);
   }
   return { invoiceDate: '', gap: `Invoice date "${shown}" is not a real calendar date.` };
 }
@@ -112,10 +257,15 @@ export function parseInvoiceIdentity(raw: {
   vendorName?: unknown;
   invoiceNumber?: unknown;
   invoiceDate?: unknown;
+  orderDate?: unknown;
+  receivedOn?: string | null;
 }): ParsedInvoiceIdentity {
   const vendorName = typeof raw.vendorName === 'string' ? raw.vendorName.trim() : '';
   const invoiceNumber = typeof raw.invoiceNumber === 'string' ? raw.invoiceNumber.trim() : '';
-  const date = parseOcrInvoiceDate(raw.invoiceDate);
+  const date = parseOcrInvoiceDate(raw.invoiceDate, {
+    receivedOn: raw.receivedOn,
+    orderDate: raw.orderDate,
+  });
   const gaps: string[] = [];
   if (!vendorName) gaps.push('Vendor name was not read.');
   if (!invoiceNumber) gaps.push('Invoice number was not read.');

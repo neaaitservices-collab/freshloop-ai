@@ -30,9 +30,10 @@ test('malformed model JSON is rejected and a bad line is flagged', () => {
         totalCost: 10,
       },
     ],
-  });
-  assert.equal(flagged.invoiceDate, '');
+  }, { receivedOn: '2026-11-11' });
+  assert.equal(flagged.invoiceDate, '2026-02-01');
   assert.match(flagged.gaps.join(' '), /ambiguous/);
+  assert.match(flagged.gaps.join(' '), /2026-02-01 \(DD-MM\)/);
   assert.equal(flagged.lineItems[0]?.department, 'PRODUCE');
   assert.equal(flagged.lineItems[0]?.departmentAssumed, true);
   assert.equal(flagged.lineItems[0]?.quantity, 0);
@@ -185,6 +186,49 @@ test('a mismatched line total is flagged and the unit cost is kept', () => {
   assert.equal(close.lineItems[0]?.unitCost, 1.11);
 });
 
+test('an order date on the model confirms one reading and stays flagged', () => {
+  const settled = interpretInvoiceOcrModel(
+    {
+      vendorName: 'North Market',
+      invoiceNumber: 'INV-9',
+      invoiceDate: '05-11-2026',
+      orderDate: 'May 11, 2026',
+      lineItems: [
+        {
+          name: 'Apples',
+          department: 'PRODUCE',
+          quantity: 1,
+          unit: 'cases',
+          unitCost: 2,
+          totalCost: 2,
+        },
+      ],
+    },
+    { receivedOn: '2026-11-11' }
+  );
+  assert.equal(settled.invoiceDate, '2026-05-11');
+  assert.match(settled.gaps.join(' '), /ambiguous/);
+  assert.match(settled.gaps.join(' '), /matches the order date/);
+  assert.equal(
+    invoiceOcrModelSchema.safeParse({
+      vendorName: 'North Market',
+      invoiceNumber: 'INV-9',
+      invoiceDate: '05-11-2026',
+      orderDate: '05-11-26',
+      lineItems: [
+        {
+          name: 'Apples',
+          department: 'PRODUCE',
+          unit: 'cases',
+          unitCost: 2,
+          totalCost: 2,
+        },
+      ],
+    }).success,
+    true
+  );
+});
+
 test('an invoice with only charges and zero lines is rejected before a draft', () => {
   assert.throws(
     () =>
@@ -246,10 +290,11 @@ test('a hand-written invoice fixture keeps stock math and drops non-stock lines'
       },
     ],
   };
-  const model = interpretInvoiceOcrModel(fixture);
-  assert.equal(model.invoiceDate, '');
+  const model = interpretInvoiceOcrModel(fixture, { receivedOn: '2026-11-11' });
+  assert.equal(model.invoiceDate, '2026-11-05');
   assert.match(model.gaps.join(' '), /05-11-2026/);
   assert.match(model.gaps.join(' '), /ambiguous/);
+  assert.match(model.gaps.join(' '), /2026-11-05 \(DD-MM\)/);
   assert.equal(model.lineItems.length, 1);
   const flat = model.lineItems[0];
   assert.ok(flat);

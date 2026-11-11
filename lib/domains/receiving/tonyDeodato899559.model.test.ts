@@ -13,7 +13,7 @@ const fixture = JSON.parse(fs.readFileSync(fixturePath, 'utf8')) as {
   invoiceNumber: string;
   lineItems: Array<{ name: string }>;
 };
-const model = interpretInvoiceOcrModel(fixture);
+const model = interpretInvoiceOcrModel(fixture, { receivedOn: '2026-11-11' });
 
 function stock(name: string) {
   return model.lineItems.find((line) => line.name === name);
@@ -29,11 +29,12 @@ test('invoice 899559 keeps the supplier name and invoice number', () => {
   assert.equal(JSON.stringify(fixture).includes('KING STREET'), false);
 });
 
-test('05-11-2026 is flagged as ambiguous and is not guessed', () => {
-  assert.equal(model.invoiceDate, '');
+test('05-11-2026 is prefilled from the closer reading and still flagged', () => {
+  assert.equal(model.invoiceDate, '2026-11-05');
   assert.match(model.gaps.join(' '), /05-11-2026/);
   assert.match(model.gaps.join(' '), /ambiguous/);
-  assert.doesNotMatch(model.gaps.join(' '), /2026-05-11|2026-11-05/);
+  assert.match(model.gaps.join(' '), /2026-11-05 \(DD-MM\)/);
+  assert.match(model.gaps.join(' '), /Confirm this date/);
 });
 
 test('struck red grapes shipped 0 add no stock', () => {
