@@ -1,13 +1,16 @@
 'use client';
 
-import { useRef, useState, type MouseEvent, type ReactNode, type RefObject } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { Mail, X } from 'lucide-react';
 import {
   applyPurchaseOrderLog,
+  purchaseOrderClickPlan,
   purchaseOrderCompose,
   purchaseOrderCopiedMessage,
   purchaseOrderGroupCompose,
+  purchaseOrderGroupOpenState,
+  purchaseOrderOpenIdentity,
   purchaseOrderRepeatGate,
   purchaseOrderRepeatWarning,
   purchaseOrderSendPlan,
@@ -23,12 +26,29 @@ import { cn } from '@/lib/utils/cn';
 
 type OpenLogJson = { error?: string; openedAt?: string } | null;
 
-type RepeatPrompt = {
-  lines: string[];
-  items: PoDraft[];
-  grouped: boolean;
-  anchor: HTMLAnchorElement | null;
+type KnownOpen = { state: 'checking' | 'ready' | 'opened'; openedAt?: string };
+
+type OpenCheck = {
+  id: string;
+  supplierId: string | null;
+  supplier: string;
+  to: string;
+  subject: string;
+  body: string;
+  productIds: string[];
 };
+
+function openCheck(item: PoDraft): OpenCheck {
+  return {
+    id: purchaseOrderOpenIdentity(item),
+    supplierId: item.supplierId ?? null,
+    supplier: item.supplier,
+    to: item.to,
+    subject: item.subject,
+    body: item.body,
+    productIds: item.productIds,
+  };
+}
 
 async function readOpenLog(response: Response): Promise<OpenLogJson> {
   try {
@@ -55,32 +75,94 @@ export function PoEmailPanel({
   const [issues, setIssues] = useState<string[]>([]);
   const [skipNote, setSkipNote] = useState<string | null>(null);
   const [copyMessage, setCopyMessage] = useState<string | null>(null);
-  const [repeat, setRepeat] = useState<RepeatPrompt | null>(null);
+  const [known, setKnown] = useState<Record<string, KnownOpen>>({});
   const requestId = useRef(0);
-  const passThrough = useRef(false);
-  const sendAnchor = useRef<HTMLAnchorElement | null>(null);
-  const groupAnchor = useRef<HTMLAnchorElement | null>(null);
   const index =
     drafts.length === 0 ? 0 : Math.min(Math.max(activeIndex, 0), drafts.length - 1);
+  const withLines = drafts.filter((item) => item.productIds.length > 0 || item.body.trim().length > 0);
+  const loggable = purchaseOrderSendPlan(withLines).ready;
+  const watchKey = JSON.stringify(loggable.map(openCheck));
+
+  useEffect(() => {
+    const items = JSON.parse(watchKey) as OpenCheck[];
+    requestId.current += 1;
+    if (items.length === 0) {
+      setKnown({});
+      return;
+    }
+    let cancelled = false;
+    setKnown(Object.fromEntries(items.map((item) => [item.id, { state: 'checking' }])));
+    for (const item of items) {
+      fetch('/api/orders/purchase-order-email', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          supplierId: item.supplierId,
+          supplierName: item.supplier,
+          to: item.to,
+          subject: item.subject,
+          body: item.body,
+          productIds: item.productIds,
+          checkOnly: true,
+        }),
+      })
+        .then(async (response) => {
+          if (cancelled) return;
+          const json = await readOpenLog(response);
+          if (cancelled) return;
+          const gate = purchaseOrderRepeatGate(response.status);
+          if (gate === 'confirm') {
+            setKnown((current) => ({ ...current, [item.id]: { state: 'opened', openedAt: json?.openedAt } }));
+            return;
+          }
+          setKnown((current) => ({ ...current, [item.id]: { state: 'ready' } }));
+          if (gate === 'issue') {
+            const next = applyPurchaseOrderLog(
+              { notes: [], issues: [] },
+              {
+                supplier: item.supplier,
+                grouped: false,
+                result: { status: response.status, error: json?.error, openedAt: json?.openedAt },
+              }
+            );
+            if (next.issues.length > 0) setIssues((current) => [...current, ...next.issues]);
+          }
+        })
+        .catch(() => {
+          if (cancelled) return;
+          setKnown((current) => ({ ...current, [item.id]: { state: 'ready' } }));
+          const next = applyPurchaseOrderLog(
+            { notes: [], issues: [] },
+            { supplier: item.supplier, grouped: false, result: { network: true } }
+          );
+          if (next.issues.length > 0) setIssues((current) => [...current, ...next.issues]);
+        });
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [watchKey]);
+
   const draft = drafts[index];
   if (!draft) return null;
   const hint = supplierRecipientHint(draft);
   const many = drafts.length > 1;
-  const withLines = drafts.filter((item) => item.productIds.length > 0 || item.body.trim().length > 0);
-  const loggable = purchaseOrderSendPlan(withLines).ready;
   const activeCompose = purchaseOrderCompose(draft);
   const groupCompose = purchaseOrderGroupCompose(withLines);
   const sendHref = draft.productIds.length > 0 ? (activeCompose?.mailtoUrl ?? null) : null;
   const skippedNoEmail = withLines.filter((item) => !item.to.trim()).map((item) => item.supplier);
-
-  const beginSend = (skipped: string | null) => {
-    requestId.current += 1;
-    setNotes([]);
-    setIssues([]);
-    setCopyMessage(null);
-    setSkipNote(skipped);
-    setRepeat(null);
-  };
+  const sendId = purchaseOrderOpenIdentity(draft);
+  const sendState = !sendHref ? 'unavailable' : (known[sendId]?.state ?? 'checking');
+  const groupStates = loggable.map((item) => known[purchaseOrderOpenIdentity(item)]?.state ?? 'checking');
+  const groupState = groupCompose ? purchaseOrderGroupOpenState(groupStates) : 'unavailable';
+  const sendWarning =
+    sendState === 'opened' ? purchaseOrderRepeatWarning(known[sendId]?.openedAt ?? '') : null;
+  const groupWarnings = loggable
+    .filter((item) => known[purchaseOrderOpenIdentity(item)]?.state === 'opened')
+    .map((item) => {
+      const sentence = purchaseOrderRepeatWarning(known[purchaseOrderOpenIdentity(item)]?.openedAt ?? '');
+      return loggable.length > 1 ? `${item.supplier}: ${sentence}` : sentence;
+    });
 
   const showLog = (item: PoDraft, grouped: boolean, result: PurchaseOrderLogResult, generation: number) => {
     if (generation !== requestId.current) return;
@@ -115,92 +197,6 @@ export function PoEmailPanel({
       .catch(() => {
         showLog(item, grouped, { network: true }, generation);
       });
-  };
-
-  const followAnchor = (anchor: HTMLAnchorElement | null) => {
-    if (!anchor) return;
-    passThrough.current = true;
-    anchor.click();
-  };
-
-  const guardOpen = async (items: PoDraft[], grouped: boolean, anchor: HTMLAnchorElement | null) => {
-    const generation = requestId.current;
-    const repeats: { supplier: string; openedAt?: string }[] = [];
-    let blocked = false;
-    for (const item of items) {
-      if (!singleSupplierEmail(item.to)) continue;
-      let response: Response;
-      try {
-        response = await fetch('/api/orders/purchase-order-email', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({
-            supplierId: item.supplierId ?? null,
-            supplierName: item.supplier,
-            to: item.to,
-            subject: item.subject,
-            body: item.body,
-            productIds: item.productIds,
-            checkOnly: true,
-          }),
-        });
-      } catch {
-        showLog(item, grouped, { network: true }, generation);
-        blocked = true;
-        continue;
-      }
-      if (generation !== requestId.current) return;
-      const json = await readOpenLog(response);
-      const gate = purchaseOrderRepeatGate(response.status);
-      if (gate === 'confirm') {
-        repeats.push({ supplier: item.supplier, openedAt: json?.openedAt });
-        continue;
-      }
-      if (gate === 'issue') {
-        showLog(item, grouped, { status: response.status, error: json?.error, openedAt: json?.openedAt }, generation);
-        blocked = true;
-      }
-    }
-    if (generation !== requestId.current) return;
-    if (repeats.length > 0) {
-      setRepeat({
-        lines: repeats.map((item) => {
-          const sentence = purchaseOrderRepeatWarning(item.openedAt ?? '');
-          return grouped ? `${item.supplier}: ${sentence}` : sentence;
-        }),
-        items,
-        grouped,
-        anchor,
-      });
-      return;
-    }
-    if (blocked) return;
-    for (const item of items) logOpened(item, grouped, false);
-    followAnchor(anchor);
-  };
-
-  const holdClick = (
-    event: MouseEvent<HTMLAnchorElement>,
-    items: PoDraft[],
-    grouped: boolean,
-    anchor: HTMLAnchorElement | null,
-    skipped: string | null
-  ) => {
-    if (passThrough.current) {
-      passThrough.current = false;
-      return;
-    }
-    event.preventDefault();
-    beginSend(skipped);
-    void guardOpen(items, grouped, anchor);
-  };
-
-  const confirmRepeat = () => {
-    if (!repeat) return;
-    const pending = repeat;
-    setRepeat(null);
-    for (const item of pending.items) logOpened(item, pending.grouped, true);
-    followAnchor(pending.anchor);
   };
 
   const copyFullOrder = async (fullBody: string) => {
@@ -249,10 +245,7 @@ export function PoEmailPanel({
                     id={`po-draft-tab-${itemIndex}`}
                     aria-selected={selected}
                     aria-controls="po-draft-panel"
-                    onClick={() => {
-                      beginSend(null);
-                      onActiveIndex(itemIndex);
-                    }}
+                    onClick={() => onActiveIndex(itemIndex)}
                     className={cn(
                       'min-h-11 max-w-full rounded-xl px-3 py-1.5 text-left text-xs font-bold',
                       selected
@@ -315,31 +308,34 @@ export function PoEmailPanel({
               />
             </label>
             <div className="grid grid-cols-2 gap-2">
-              <MailLink
+              <OrderLink
                 href={sendHref}
+                state={sendState}
                 variant="primary"
-                anchorRef={sendAnchor}
-                onOpen={(event) => holdClick(event, [draft], false, sendAnchor.current, null)}
+                onOpen={(reopen) => logOpened(draft, false, reopen)}
               >
                 Send
-              </MailLink>
-              <MailLink
+              </OrderLink>
+              <OrderLink
                 href={groupCompose?.mailtoUrl ?? null}
+                state={groupState}
                 variant="secondary"
-                anchorRef={groupAnchor}
-                onOpen={(event) =>
-                  holdClick(
-                    event,
-                    loggable,
-                    true,
-                    groupAnchor.current,
-                    purchaseOrderSkippedNoEmail(skippedNoEmail)
-                  )
-                }
+                onOpen={(reopen) => {
+                  setSkipNote(purchaseOrderSkippedNoEmail(skippedNoEmail));
+                  for (const item of loggable) logOpened(item, true, reopen);
+                }}
               >
                 Send group
-              </MailLink>
+              </OrderLink>
             </div>
+            {sendWarning ? <p className="text-sm text-amber-100">{sendWarning}</p> : null}
+            {groupState === 'opened'
+              ? groupWarnings.map((line) => (
+                  <p key={line} className="text-sm text-amber-100">
+                    {line}
+                  </p>
+                ))
+              : null}
             {activeCompose?.truncated && sendHref ? (
               <button
                 type="button"
@@ -357,31 +353,6 @@ export function PoEmailPanel({
               >
                 Copy full text
               </button>
-            ) : null}
-            {repeat ? (
-              <div className="space-y-2 rounded-xl border border-amber-800/60 bg-amber-950/30 p-3">
-                {repeat.lines.map((line) => (
-                  <p key={line} className="text-sm text-amber-100">
-                    {line}
-                  </p>
-                ))}
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    className="rounded-xl border border-slate-700 bg-slate-800 px-4 py-3 text-sm font-bold text-slate-100"
-                    onClick={confirmRepeat}
-                  >
-                    Open again
-                  </button>
-                  <button
-                    type="button"
-                    className="rounded-xl border border-slate-800 bg-slate-900/60 px-4 py-3 text-sm font-bold text-slate-300"
-                    onClick={() => setRepeat(null)}
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
             ) : null}
             {skipNote ? <p className="text-sm text-slate-100">{skipNote}</p> : null}
             {copyMessage ? <p className="text-xs text-slate-300">{copyMessage}</p> : null}
@@ -406,27 +377,28 @@ export function PoEmailPanel({
   );
 }
 
-function MailLink({
+function OrderLink({
   href,
+  state,
   onOpen,
   children,
   variant,
-  anchorRef,
 }: {
   href: string | null;
-  onOpen: (event: MouseEvent<HTMLAnchorElement>) => void;
+  state: 'checking' | 'ready' | 'opened' | 'unavailable';
+  onOpen: (reopen: boolean) => void;
   children: ReactNode;
   variant: 'primary' | 'secondary';
-  anchorRef: RefObject<HTMLAnchorElement | null>;
 }) {
+  const alreadyOpened = state === 'opened';
   const className = cn(
     'inline-flex min-h-[44px] w-full items-center justify-center rounded-xl px-4 py-3 text-center text-sm font-bold focus-visible:outline-none focus-visible:ring-1 sm:min-h-[48px]',
     variant === 'primary'
       ? 'border border-slate-700 bg-slate-800 text-slate-100 hover:bg-slate-700 focus-visible:ring-slate-600'
       : 'border border-slate-800 bg-slate-900/60 text-slate-300 hover:bg-slate-800/80 focus-visible:ring-slate-600',
-    !href && 'cursor-not-allowed opacity-50'
+    (!href || state === 'checking' || state === 'unavailable') && 'cursor-not-allowed opacity-50'
   );
-  if (!href) {
+  if (!href || state === 'checking' || state === 'unavailable') {
     return (
       <span aria-disabled="true" className={className}>
         {children}
@@ -435,14 +407,17 @@ function MailLink({
   }
   return (
     <a
-      ref={anchorRef}
       href={href}
       target="_blank"
       rel="noopener noreferrer"
       className={className}
-      onClick={onOpen}
+      onClick={() => {
+        const plan = purchaseOrderClickPlan({ alreadyOpened, clicked: true });
+        if (!plan.log) return;
+        onOpen(plan.log.reopen);
+      }}
     >
-      {children}
+      {alreadyOpened ? 'Open again' : children}
     </a>
   );
 }

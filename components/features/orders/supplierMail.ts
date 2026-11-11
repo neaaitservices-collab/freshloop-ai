@@ -2,13 +2,6 @@ import type { StockLevel } from '@/lib/domains/inventory/stock';
 
 export type LineMark = 'approved' | 'sent';
 
-/** Preparing a draft does not deliver it. */
-export const PO_DRAFT_PREPARED_NOTICE = 'Draft prepared';
-
-export function acknowledgePurchaseOrderDraft(): { notice: string; markSent: false } {
-  return { notice: PO_DRAFT_PREPARED_NOTICE, markSent: false };
-}
-
 export interface SupplierDirectoryEntry {
   id?: string | null;
   name: string;
@@ -215,6 +208,31 @@ export function purchaseOrderRepeatGate(status: number): 'open' | 'confirm' | 'i
   if (status === 409) return 'confirm';
   if (status >= 200 && status < 300) return 'open';
   return 'issue';
+}
+
+/** Stable id for one supplier order, including To so an edited address is checked again. */
+export function purchaseOrderOpenIdentity(
+  draft: Pick<PoDraft, 'supplier' | 'supplierId' | 'to' | 'subject' | 'body' | 'productIds'>
+): string {
+  const email = singleSupplierEmail(draft.to) ?? '';
+  return `${draft.supplierId ?? ''}\n${draft.supplier}\n${draft.subject}\n${email}\n${purchaseOrderLineKey(draft)}`;
+}
+
+export function purchaseOrderGroupOpenState(
+  states: readonly ('checking' | 'ready' | 'opened')[]
+): 'checking' | 'ready' | 'opened' {
+  if (states.some((state) => state === 'checking')) return 'checking';
+  if (states.some((state) => state === 'opened')) return 'opened';
+  return 'ready';
+}
+
+/** A mailto click is never cancelled. Nothing is logged until that click happens. */
+export function purchaseOrderClickPlan(input: {
+  alreadyOpened: boolean;
+  clicked: boolean;
+}): { preventDefault: false; log: false | { reopen: boolean } } {
+  if (!input.clicked) return { preventDefault: false, log: false };
+  return { preventDefault: false, log: { reopen: input.alreadyOpened } };
 }
 
 export type PurchaseOrderLogState = { notes: string[]; issues: string[] };

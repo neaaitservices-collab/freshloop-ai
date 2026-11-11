@@ -19,6 +19,8 @@ import {
   purchaseOrderGroupCompose,
   purchaseOrderLineKey,
   purchaseOrderMailto,
+  purchaseOrderClickPlan,
+  purchaseOrderGroupOpenState,
   purchaseOrderOpenedWarning,
   purchaseOrderRepeatGate,
   purchaseOrderRepeatWarning,
@@ -180,7 +182,7 @@ test('purchase order panel opens mailto directly and logs in the background', ()
   assert.equal(panel.includes('onPrepare'), false);
   assert.match(
     panel,
-    /<a\s+ref=\{anchorRef\}\s+href=\{href\}\s+target="_blank"\s+rel="noopener noreferrer"\s+className=\{className\}\s+onClick=\{onOpen\}\s*>/
+    /<a\s+href=\{href\}\s+target="_blank"\s+rel="noopener noreferrer"\s+className=\{className\}\s+onClick=\{\(\) => \{/
   );
   assert.match(panel, /activeCompose\?\.truncated && sendHref \?/);
   assert.match(panel, /groupCompose\?\.truncated \?/);
@@ -188,11 +190,12 @@ test('purchase order panel opens mailto directly and logs in the background', ()
   assert.equal(panel.includes('Prepare draft'), false);
   assert.equal(panel.includes('Send all'), false);
   assert.equal(panel.includes('Open mail'), false);
-  assert.match(panel, />\s*Open again\s*</);
+  assert.match(panel, /Open again/);
   assert.equal(panel.includes('Already opened'), false);
   assert.match(panel, /target="_blank"/);
   assert.match(panel, /rel="noopener noreferrer"/);
-  assert.match(panel, /event\.preventDefault\(\)/);
+  assert.equal(panel.includes('preventDefault'), false);
+  assert.equal(panel.includes('.click()'), false);
   assert.match(panel, /checkOnly: true/);
   assert.match(panel, /reopen: true/);
   assert.equal(panel.includes('activateMailLink'), false);
@@ -443,31 +446,41 @@ test('a failed open log appears in the issues list and names the supplier', () =
   assert.equal(panel.includes('keepalive'), false);
 });
 
-test('mailto anchors open in a new tab and a repeat waits for confirm', () => {
+test('a fresh mailto is not cancelled and nothing is logged before the click', () => {
   assert.equal(
     purchaseOrderRepeatWarning('2026-11-11T15:04:00.000Z'),
     'Already opened at 10:04 AM (Toronto). Open again?'
   );
-  assert.equal(
-    purchaseOrderRepeatWarning('2026-11-11T22:15:00.000Z'),
-    'Already opened at 5:15 PM (Toronto). Open again?'
-  );
-  assert.equal(purchaseOrderRepeatWarning('not-a-date'), 'Already opened at not-a-date (Toronto). Open again?');
   assert.equal(purchaseOrderRepeatGate(409), 'confirm');
   assert.equal(purchaseOrderRepeatGate(200), 'open');
-  assert.equal(purchaseOrderRepeatGate(400), 'issue');
+  assert.equal(purchaseOrderGroupOpenState([]), 'ready');
+  assert.equal(purchaseOrderGroupOpenState(['checking', 'ready']), 'checking');
+  assert.equal(purchaseOrderGroupOpenState(['ready', 'opened']), 'opened');
+  assert.equal(purchaseOrderGroupOpenState(['ready', 'ready']), 'ready');
+
+  const idle = purchaseOrderClickPlan({ alreadyOpened: false, clicked: false });
+  assert.equal(idle.preventDefault, false);
+  assert.equal(idle.log, false);
+  const repeatIdle = purchaseOrderClickPlan({ alreadyOpened: true, clicked: false });
+  assert.equal(repeatIdle.log, false);
+
+  const fresh = purchaseOrderClickPlan({ alreadyOpened: false, clicked: true });
+  assert.equal(fresh.preventDefault, false);
+  assert.deepEqual(fresh.log, { reopen: false });
+  const again = purchaseOrderClickPlan({ alreadyOpened: true, clicked: true });
+  assert.equal(again.preventDefault, false);
+  assert.deepEqual(again.log, { reopen: true });
 
   const panel = readFileSync('components/features/orders/PoEmailPanel.tsx', 'utf8');
-  const anchors = panel.match(/target="_blank"/g) ?? [];
-  assert.equal(anchors.length, 1);
-  assert.match(panel, /rel="noopener noreferrer"/);
-  assert.match(panel, /holdClick\(event, \[draft\], false, sendAnchor\.current, null\)/);
-  assert.match(panel, /holdClick\(\s*event,\s*loggable,\s*true,\s*groupAnchor\.current,/);
-  assert.match(panel, /if \(gate === 'confirm'\)/);
-  assert.match(panel, /if \(repeats\.length > 0\)/);
-  assert.match(panel, /logOpened\(item, grouped, false\)/);
-  assert.match(panel, /logOpened\(item, pending\.grouped, true\)/);
-  assert.match(panel, /reopen \? \{ reopen: true \} : \{\}/);
+  const effect = panel.slice(panel.indexOf('useEffect(() => {'), panel.indexOf('}, [watchKey]);'));
+  assert.match(effect, /checkOnly: true/);
+  assert.equal(effect.includes('logOpened'), false);
+  assert.equal(effect.includes('reopen'), false);
+  assert.equal(panel.includes('preventDefault'), false);
+  assert.equal(panel.includes('.click()'), false);
+  assert.match(panel, /purchaseOrderClickPlan\(\{ alreadyOpened, clicked: true \}\)/);
+  assert.match(panel, /if \(!plan\.log\) return;/);
+  assert.match(panel, /onOpen\(plan\.log\.reopen\)/);
   assert.equal(panel.includes('keepalive'), false);
 });
 
