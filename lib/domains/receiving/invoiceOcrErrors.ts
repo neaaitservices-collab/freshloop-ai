@@ -13,13 +13,6 @@ export function invoiceOcrErrorResponse(error: unknown): NextResponse | null {
     );
   }
 
-  if (/Gemini key on this store was rejected/i.test(msg)) {
-    return apiError(
-      'The Gemini API key for this store was rejected. Update GEMINI_API_KEY in Vercel and redeploy.',
-      503
-    );
-  }
-
   if (/invoice reader could not reach the model/i.test(msg)) {
     return apiError(
       'Could not reach Google Gemini to read the invoice. Try again shortly, or use “Use a sample invoice” to verify receiving.',
@@ -45,6 +38,17 @@ export function invoiceOcrErrorResponse(error: unknown): NextResponse | null {
 
   if (/This PDF is encrypted|This PDF is incomplete/i.test(msg)) {
     return apiError(msg, 400);
+  }
+
+  if (
+    /Gemini key on this store was rejected|API key rejected|invalid API key|API key not valid|API_KEY_INVALID/i.test(
+      msg
+    )
+  ) {
+    return apiError(
+      'The Gemini API key for this store was rejected. Update GEMINI_API_KEY in Vercel and redeploy.',
+      503
+    );
   }
 
   if (/INVALID_ARGUMENT/i.test(msg)) {

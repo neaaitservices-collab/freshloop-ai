@@ -39,6 +39,20 @@ describe('invoiceOcrErrorResponse', () => {
     assert.match(body.error, /ending marker/);
   });
 
+  it('maps an invalid API key that also says INVALID_ARGUMENT to the key message', async () => {
+    const res = invoiceOcrErrorResponse(
+      new Error(
+        'gemini-3.8-flash: key 400 {"error":{"status":"INVALID_ARGUMENT","message":"API key not valid. Please pass a valid API key.","reason":"API_KEY_INVALID"}}'
+      )
+    );
+    assert.ok(res);
+    assert.equal(res.status, 503);
+    const body = await res.json();
+    assert.match(body.error, /GEMINI_API_KEY/);
+    assert.match(body.error, /rejected/);
+    assert.doesNotMatch(body.error, /Couldn't read this file/);
+  });
+
   it('maps a model INVALID_ARGUMENT to 422', async () => {
     const res = invoiceOcrErrorResponse(
       new Error('gemini-3.8-flash: key 400 {"error":{"status":"INVALID_ARGUMENT"}}')
