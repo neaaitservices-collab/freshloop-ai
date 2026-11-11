@@ -18,7 +18,7 @@ import {
 } from 'lucide-react';
 import { useRole } from '@/components/auth/RoleProvider';
 import { navItemsForRole, type NavItem } from '@/lib/navigation/navItems';
-import { phoneBarGridClass, splitPhoneNav, visiblePhoneNavItems } from '@/lib/navigation/phoneNav';
+import { splitPhoneNav, visiblePhoneNavItems } from '@/lib/navigation/phoneNav';
 import { homePathForRole } from '@/lib/utils/roleRouting';
 import { isManager, ROLE_LABELS, type RoleName } from '@/lib/utils/roles';
 
@@ -46,9 +46,6 @@ function withIcon(item: NavItem, role: RoleName | null): ShownNavItem {
 function brandHref(role: RoleName | null): string {
   return homePathForRole(role ?? undefined);
 }
-
-const phoneTabFocus =
-  'focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-300';
 
 function isActive(pathname: string, href: string) {
   if (href === '/admin' && pathname.startsWith('/admin/executive')) return false;
@@ -223,9 +220,10 @@ export function Navigation({ onVoice }: { onVoice?: () => void } = {}) {
         aria-label="Primary"
       >
         <ul
-          className={`grid min-w-0 ${phoneBarGridClass(
-            phoneNav.bar.length + (phoneNav.more.length > 0 ? 1 : 0)
-          )}`}
+          className="grid"
+          style={{
+            gridTemplateColumns: `repeat(${phoneNav.bar.length + (phoneNav.more.length > 0 ? 1 : 0)}, minmax(0, 1fr))`,
+          }}
         >
           {phoneNav.bar.map((shown) => (
             <li key={shown.id} className="min-w-0">
@@ -243,12 +241,12 @@ export function Navigation({ onVoice }: { onVoice?: () => void } = {}) {
                 aria-expanded={moreOpen}
                 aria-pressed={moreActive}
                 onClick={() => setMoreOpen((open) => !open)}
-                className={`flex min-h-11 w-full flex-col items-center justify-center gap-0.5 px-1 py-1 text-xs font-bold ${phoneTabFocus} ${
+                className={`flex min-h-11 w-full flex-col items-center justify-center gap-0.5 px-1 py-1 text-xs font-bold ${
                   moreOpen || moreActive ? 'text-blue-300' : 'text-slate-400'
                 }`}
               >
                 <Ellipsis className="h-5 w-5" />
-                <span className="max-w-full text-center leading-tight break-words">More</span>
+                <span className="max-w-full truncate">More</span>
               </button>
             </li>
           ) : null}
@@ -274,10 +272,10 @@ function PhoneNavLink({
   const Icon = item.icon;
   const className =
     layout === 'row'
-      ? `flex min-h-11 w-full items-center gap-3 rounded-xl px-3 text-sm font-bold ${phoneTabFocus} ${
+      ? `flex min-h-11 w-full items-center gap-3 rounded-xl px-3 text-sm font-bold ${
           active ? 'bg-blue-900/40 text-slate-100' : 'text-slate-200'
         }`
-      : `flex min-h-11 w-full flex-col items-center justify-center gap-0.5 px-1 py-1 text-xs font-bold ${phoneTabFocus} ${
+      : `flex min-h-11 w-full flex-col items-center justify-center gap-0.5 px-1 py-1 text-xs font-bold ${
           active ? 'text-blue-300' : 'text-slate-400'
         }`;
   if (item.voice) {
@@ -292,9 +290,7 @@ function PhoneNavLink({
         className={className}
       >
         <Icon className="h-5 w-5 shrink-0" />
-        <span className={layout === 'stack' ? 'max-w-full text-center leading-tight break-words' : undefined}>
-          {item.label}
-        </span>
+        <span className="max-w-full truncate">Voice</span>
       </button>
     );
   }
@@ -304,13 +300,10 @@ function PhoneNavLink({
       prefetch={false}
       className={className}
       title={item.label}
-      aria-current={active ? 'page' : undefined}
       onClick={onNavigate}
     >
       <Icon className="h-5 w-5 shrink-0" />
-      <span className={layout === 'stack' ? 'max-w-full text-center leading-tight break-words' : undefined}>
-        {item.label}
-      </span>
+      <span className="max-w-full truncate">{item.label}</span>
     </Link>
   );
 }
