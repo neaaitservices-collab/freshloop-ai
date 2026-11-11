@@ -6,6 +6,10 @@ import {
   findLatestStoreSetting,
   storeSettingSafeSelect,
 } from '@/lib/domains/stats/storeSettingSelect';
+import {
+  getPriceChangeThresholdPct,
+  isMissingPriceChangeColumn,
+} from '@/lib/domains/suppliers/priceChangeThreshold';
 
 export interface PlatformSettings {
   storeName: string;
@@ -16,6 +20,8 @@ export interface PlatformSettings {
   defaultLaborRatePerHour: number;
   pullSensitivityDays: number;
   costGuardrailVariancePct: number;
+  /** Absolute percent that flags a supplier price change. */
+  priceChangeThresholdPct: number;
   /** Default minimum stock in cases (Orders par / low-stock alerts). */
   defaultParCases: number;
 }
@@ -29,6 +35,7 @@ export const PLATFORM_DEFAULTS: PlatformSettings = {
   defaultLaborRatePerHour: 17.6,
   pullSensitivityDays: 3,
   costGuardrailVariancePct: 20,
+  priceChangeThresholdPct: 8,
   defaultParCases: 2,
 };
 
@@ -49,6 +56,8 @@ export function parsePlatformSettings(body: unknown): { settings: PlatformSettin
   const defaultLaborRatePerHour = finite(source.defaultLaborRatePerHour);
   const pullSensitivityDays = finite(source.pullSensitivityDays);
   const costGuardrailVariancePct = finite(source.costGuardrailVariancePct);
+  const priceChangeThresholdPct =
+    source.priceChangeThresholdPct == null ? null : finite(source.priceChangeThresholdPct);
   const defaultParCases = finite(source.defaultParCases);
 
   if (!storeName) return { error: 'Store name is required.' };
@@ -73,6 +82,9 @@ export function parsePlatformSettings(body: unknown): { settings: PlatformSettin
   if (costGuardrailVariancePct === null || costGuardrailVariancePct < 0 || costGuardrailVariancePct > 100) {
     return { error: 'Invoice alert must be between 0 and 100.' };
   }
+  if (priceChangeThresholdPct === null || priceChangeThresholdPct < 0 || priceChangeThresholdPct > 100) {
+    return { error: 'Price change alert must be between 0 and 100.' };
+  }
   if (defaultParCases === null || defaultParCases < 0 || defaultParCases > 999) {
     return { error: 'Minimum stock must be between 0 and 999 cases.' };
   }
@@ -87,6 +99,7 @@ export function parsePlatformSettings(body: unknown): { settings: PlatformSettin
       defaultLaborRatePerHour,
       pullSensitivityDays,
       costGuardrailVariancePct,
+      priceChangeThresholdPct,
       defaultParCases: Math.round(defaultParCases),
     },
   };
@@ -99,8 +112,11 @@ const platformSettingsCache = new Map<
 const PLATFORM_SETTINGS_CACHE_MS = 30_000;
 
 async function loadPlatformSettings(): Promise<PlatformSettings> {
-  const row = await findLatestStoreSetting();
-  if (!row) return { ...PLATFORM_DEFAULTS };
+  const [row, priceChangeThresholdPct] = await Promise.all([
+    findLatestStoreSetting(),
+    getPriceChangeThresholdPct(),
+  ]);
+  if (!row) return { ...PLATFORM_DEFAULTS, priceChangeThresholdPct };
   return {
     storeName: row.storeName,
     targetWastePct: row.targetWastePct,
@@ -110,6 +126,7 @@ async function loadPlatformSettings(): Promise<PlatformSettings> {
     defaultLaborRatePerHour: row.defaultLaborRatePerHour ?? 17.6,
     pullSensitivityDays: row.pullSensitivityDays,
     costGuardrailVariancePct: row.costGuardrailVariancePct,
+    priceChangeThresholdPct,
     defaultParCases: row.defaultParCases ?? PLATFORM_DEFAULTS.defaultParCases,
   };
 }
@@ -139,13 +156,25 @@ export async function savePlatformSettings(settings: PlatformSettings): Promise<
     costGuardrailVariancePct: settings.costGuardrailVariancePct,
     defaultParCases: nextDefaultParCases,
   };
-  const saved = existing
-    ? await prisma.storeSetting.update({
-        where: { id: existing.id },
-        data,
-        select: storeSettingSafeSelect,
-      })
-    : await prisma.storeSetting.create({ data, select: storeSettingSafeSelect });
+  const withThreshold = {
+    ...data,
+    priceChangeThresholdPct: settings.priceChangeThresholdPct,
+  };
+  const write = (payload: typeof data | typeof withThreshold) =>
+    existing
+      ? prisma.storeSetting.update({
+          where: { id: existing.id },
+          data: payload,
+          select: storeSettingSafeSelect,
+        })
+      : prisma.storeSetting.create({ data: payload, select: storeSettingSafeSelect });
+  let saved;
+  try {
+    saved = await write(withThreshold);
+  } catch (error) {
+    if (!isMissingPriceChangeColumn(error)) throw error;
+    saved = await write(data);
+  }
 
   if (nextDefaultParCases !== previousDefaultParCases) {
     await prisma.product.updateMany({
@@ -168,6 +197,7 @@ export async function savePlatformSettings(settings: PlatformSettings): Promise<
     defaultLaborRatePerHour: saved.defaultLaborRatePerHour,
     pullSensitivityDays: saved.pullSensitivityDays,
     costGuardrailVariancePct: saved.costGuardrailVariancePct,
+    priceChangeThresholdPct: await getPriceChangeThresholdPct(),
     defaultParCases: saved.defaultParCases,
   };
 }

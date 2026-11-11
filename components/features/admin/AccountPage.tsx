@@ -230,21 +230,41 @@ export function SettingsForm({
             <legend className="px-1 text-xs font-black uppercase tracking-wider text-zinc-500">
               Receiving
             </legend>
-            <label className="mt-2 block text-xs font-bold text-zinc-400 sm:max-w-xs">
-              Invoice cost alert (%)
-              <input
-                required
-                type="number"
-                min="0"
-                max="100"
-                step="0.1"
-                value={draft.costGuardrailVariancePct}
-                onChange={(event) =>
-                  update({ costGuardrailVariancePct: Number(event.target.value) })
-                }
-                className={FIELD}
-              />
-            </label>
+            <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <label className="block text-xs font-bold text-zinc-400">
+                Invoice cost alert (%)
+                <input
+                  required
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="0.1"
+                  value={draft.costGuardrailVariancePct}
+                  onChange={(event) =>
+                    update({ costGuardrailVariancePct: Number(event.target.value) })
+                  }
+                  className={FIELD}
+                />
+              </label>
+              <label className="block text-xs font-bold text-zinc-400">
+                Price change alert (%)
+                <input
+                  required
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="0.1"
+                  value={draft.priceChangeThresholdPct}
+                  onChange={(event) =>
+                    update({ priceChangeThresholdPct: Number(event.target.value) })
+                  }
+                  className={FIELD}
+                />
+                <span className="mt-1 block text-[11px] font-normal text-zinc-500">
+                  Used when a confirmed invoice unit cost moves by at least this percent.
+                </span>
+              </label>
+            </div>
           </fieldset>
 
           <div className="flex flex-wrap items-center gap-3">

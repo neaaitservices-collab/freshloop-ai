@@ -25,9 +25,46 @@ export async function requireAuthenticatedStaff() {
 }
 
 const OWNER_OR_STORE_MANAGER: RoleName[] = ['ADMIN', 'STORE_MANAGER'];
+const RECEIVING_ROLES: RoleName[] = ['ADMIN', 'STORE_MANAGER', 'RECEIVING_CLERK'];
+const ADMIN_ONLY: RoleName[] = ['ADMIN'];
+
+function managerStaffTestAuth(): ReceivingStaffTestAuth | null {
+  if (process.env.NODE_ENV === 'production') return null;
+  const hook = (globalThis as { __freshloopManagerStaffTestAuth?: ReceivingStaffTestAuth })
+    .__freshloopManagerStaffTestAuth;
+  return typeof hook === 'function' ? hook : null;
+}
+
+function adminStaffTestAuth(): ReceivingStaffTestAuth | null {
+  if (process.env.NODE_ENV === 'production') return null;
+  const hook = (globalThis as { __freshloopAdminStaffTestAuth?: ReceivingStaffTestAuth })
+    .__freshloopAdminStaffTestAuth;
+  return typeof hook === 'function' ? hook : null;
+}
+
+async function userFromTestHook(
+  hook: ReceivingStaffTestAuth | null,
+  allowed: RoleName[]
+): Promise<AuthSessionUser | null> {
+  if (!hook) return null;
+  const user = await hook();
+  if (!allowed.includes(user.role)) {
+    throw new AuthError('Forbidden — your role cannot perform this action.', 403);
+  }
+  return user;
+}
 
 export async function requireManagerStaff() {
+  const hooked = await userFromTestHook(managerStaffTestAuth(), OWNER_OR_STORE_MANAGER);
+  if (hooked) return hooked;
   return requireRoles(OWNER_OR_STORE_MANAGER);
+}
+
+/** Void and other owner-only mutations. */
+export async function requireAdminStaff() {
+  const hooked = await userFromTestHook(adminStaffTestAuth(), ADMIN_ONLY);
+  if (hooked) return hooked;
+  return requireRoles(ADMIN_ONLY);
 }
 
 /** Read the department reference list. Admin and store manager only. */
@@ -61,9 +98,9 @@ export async function requireOwnerOrStoreManagerForBundles() {
 }
 
 export async function requireReceivingStaff() {
-  const testAuth = receivingStaffTestAuth();
-  if (testAuth) return testAuth();
-  return requireRoles(['ADMIN', 'STORE_MANAGER', 'RECEIVING_CLERK']);
+  const hooked = await userFromTestHook(receivingStaffTestAuth(), RECEIVING_ROLES);
+  if (hooked) return hooked;
+  return requireRoles(RECEIVING_ROLES);
 }
 
 export async function requireKitchenStaff() {

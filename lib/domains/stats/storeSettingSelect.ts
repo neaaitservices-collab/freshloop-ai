@@ -12,6 +12,7 @@ export const storeSettingSafeSelect = {
   defaultLaborRatePerHour: true,
   pullSensitivityDays: true,
   costGuardrailVariancePct: true,
+  // priceChangeThresholdPct is omitted so stats and settings reads work before that column exists.
   defaultParCases: true,
   updatedAt: true,
 } satisfies Prisma.StoreSettingSelect;
