@@ -46,6 +46,22 @@ const INVOICE_UNITS = new Set([
   'tub',
   'boxes',
   'box',
+  'ct',
+  'pk',
+  'pack',
+  'dz',
+  'dozen',
+  'bag',
+  'bx',
+  'pc',
+  'pcs',
+  'tray',
+  'flat',
+  'crate',
+  'sack',
+  'can',
+  'jar',
+  'bottle',
 ]);
 
 function enumTuple<T extends string>(values: readonly T[]): [T, ...T[]] {
@@ -54,8 +70,23 @@ function enumTuple<T extends string>(values: readonly T[]): [T, ...T[]] {
   return [first, ...rest];
 }
 
-export const invoiceOcrMoneySchema = z.number().finite().nonnegative();
-export const invoiceOcrQuantitySchema = z.number().finite().positive();
+/** Trimmed numeric text, optional leading $, and thousands commas. Other text stays invalid. */
+export function coerceInvoiceNumber(value: unknown): unknown {
+  if (typeof value === 'number') return value;
+  if (typeof value !== 'string') return value;
+  const text = value.trim().replace(/^\$/, '').trim();
+  if (!/^-?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?$/.test(text)) return value;
+  const numeric = Number(text.replace(/,/g, ''));
+  return Number.isFinite(numeric) ? numeric : value;
+}
+
+function invoiceNumberSchema<T extends z.ZodTypeAny>(check: T) {
+  return z.preprocess(coerceInvoiceNumber, check);
+}
+
+export const invoiceOcrMoneySchema = invoiceNumberSchema(z.number().finite().nonnegative());
+export const invoiceOcrQuantitySchema = invoiceNumberSchema(z.number().finite().positive());
+const invoiceOcrCasePackSchema = invoiceNumberSchema(z.number().finite().positive());
 export const invoiceOcrDepartmentSchema = z.enum(enumTuple(CATALOG_DEPARTMENTS));
 
 /**
@@ -161,9 +192,16 @@ function readLine(raw: unknown, lineNumber: number): InterpretedInvoiceLine {
   if (quantityUnreadable) gaps.push(`Line ${lineNumber} quantity was not read.`);
 
   const unitField = cappedString(pick(record, 'unit'), INVOICE_OCR_TEXT_LIMITS.unit);
-  const unitInvalid = unitField.missing || unitField.truncated || !isAllowedUnit(unitField.text);
   const unit = unitField.text;
-  if (unitInvalid) gaps.push(`Line ${lineNumber} unit was not an allowed unit.`);
+  const unitKnown = !unitField.missing && !unitField.truncated && isAllowedUnit(unit);
+  if (!unitKnown) {
+    const shown = unit || (typeof pick(record, 'unit') === 'string' ? String(pick(record, 'unit')).trim() : '');
+    gaps.push(
+      shown
+        ? `Line ${lineNumber} unit "${shown.slice(0, INVOICE_OCR_TEXT_LIMITS.unit)}" is not a known unit.`
+        : `Line ${lineNumber} unit was not read.`
+    );
+  }
 
   const costRaw = pick(record, 'unitCost', 'unit_cost');
   const costParsed = invoiceOcrMoneySchema.safeParse(costRaw);
@@ -172,7 +210,7 @@ function readLine(raw: unknown, lineNumber: number): InterpretedInvoiceLine {
   if (costUnreadable) gaps.push(`Line ${lineNumber} unit cost was not read.`);
 
   const packRaw = pick(record, 'casePackSize', 'case_pack_size');
-  const packParsed = packRaw === undefined ? null : z.number().finite().positive().safeParse(packRaw);
+  const packParsed = packRaw === undefined ? null : invoiceOcrCasePackSchema.safeParse(packRaw);
   let casePackSize = 1;
   if (packParsed?.success) casePackSize = packParsed.data;
   else if (packRaw !== undefined) gaps.push(`Line ${lineNumber} case pack was not read.`);
@@ -222,7 +260,7 @@ function readLine(raw: unknown, lineNumber: number): InterpretedInvoiceLine {
     departmentAssumed: departmentFields.departmentAssumed,
     quantityUnreadable,
     costUnreadable,
-    unitInvalid,
+    unitInvalid: false,
     lineTotalMismatch,
     lineTotalNote,
     gaps,

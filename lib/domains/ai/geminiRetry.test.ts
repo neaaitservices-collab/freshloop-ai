@@ -53,4 +53,8 @@ test('invoice OCR thinking is the lowest level the flash model accepts', () => {
     thinkingBudget: 0,
     includeThoughts: false,
   });
+  assert.deepEqual(invoiceOcrThinkingConfig('gemini-1.5-flash'), {
+    thinkingBudget: 0,
+    includeThoughts: false,
+  });
 });

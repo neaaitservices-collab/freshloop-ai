@@ -5,13 +5,14 @@ import { buildAuthoritativeOcrDraft } from '@/lib/domains/receiving/invoiceOcrDr
 import {
   interpretInvoiceOcrModel,
   invoiceOcrModelSchema,
+  invoiceOcrMoneySchema,
   invoiceOcrQuantitySchema,
 } from '@/lib/domains/receiving/invoiceOcrModel';
 
 test('malformed model JSON is rejected and a bad line is flagged', () => {
   assert.equal(tryParseModelJson('{"lineItems":'), null);
   assert.throws(() => interpretInvoiceOcrModel({ vendorName: 'North' }), /structured JSON/);
-  assert.equal(invoiceOcrQuantitySchema.safeParse('4').success, false);
+  assert.equal(invoiceOcrQuantitySchema.safeParse('lots').success, false);
   assert.equal(invoiceOcrQuantitySchema.safeParse(Number.POSITIVE_INFINITY).success, false);
   assert.equal(invoiceOcrModelSchema.safeParse({ lineItems: [] }).success, false);
 
@@ -23,7 +24,7 @@ test('malformed model JSON is rejected and a bad line is flagged', () => {
       {
         name: 'Apples',
         department: 'FROZEN',
-        quantity: '4',
+        quantity: 'lots',
         unit: 'pallets',
         unitCost: -1,
         totalCost: 10,
@@ -38,7 +39,8 @@ test('malformed model JSON is rejected and a bad line is flagged', () => {
   assert.equal(flagged.lineItems[0]?.quantityUnreadable, true);
   assert.equal(flagged.lineItems[0]?.unitCost, 0);
   assert.equal(flagged.lineItems[0]?.costUnreadable, true);
-  assert.equal(flagged.lineItems[0]?.unitInvalid, true);
+  assert.equal(flagged.lineItems[0]?.unitInvalid, false);
+  assert.match(flagged.lineItems[0]?.gaps.join(' ') ?? '', /unit "pallets" is not a known unit/);
   const draft = buildAuthoritativeOcrDraft({
     vendorName: flagged.vendorName,
     invoiceNumber: flagged.invoiceNumber,
@@ -65,7 +67,75 @@ test('malformed model JSON is rejected and a bad line is flagged', () => {
   assert.ok(draft.lines[0]?.review_reasons?.includes('department_assumed'));
   assert.ok(draft.lines[0]?.review_reasons?.includes('quantity_unreadable'));
   assert.ok(draft.lines[0]?.review_reasons?.includes('cost_unreadable'));
-  assert.ok(draft.lines[0]?.review_reasons?.includes('unit_invalid'));
+  assert.equal(draft.lines[0]?.review_reasons?.includes('unit_invalid'), false);
+});
+
+test('numeric strings are coerced and an unknown unit is only a note', () => {
+  assert.equal(invoiceOcrQuantitySchema.safeParse('4').data, 4);
+  assert.equal(invoiceOcrMoneySchema.safeParse('  $1,250.50 ').data, 1250.5);
+  assert.equal(invoiceOcrMoneySchema.safeParse('4.50').data, 4.5);
+  assert.equal(invoiceOcrQuantitySchema.safeParse('4 cases').success, false);
+  assert.equal(invoiceOcrMoneySchema.safeParse('$-2').success, false);
+
+  const model = interpretInvoiceOcrModel({
+    vendorName: 'North Market',
+    invoiceNumber: 'INV-4',
+    invoiceDate: '2026-11-08',
+    lineItems: [
+      {
+        name: 'Apples',
+        department: 'PRODUCE',
+        quantity: '2',
+        unit: 'Tray',
+        casePackSize: '12',
+        unitCost: '$4.50',
+        totalCost: '9.00',
+      },
+      {
+        name: 'Pears',
+        department: 'PRODUCE',
+        quantity: 1,
+        unit: 'pallets',
+        unitCost: 3,
+        totalCost: 3,
+      },
+    ],
+  });
+  const apples = model.lineItems[0];
+  assert.ok(apples);
+  assert.equal(apples.quantity, 2);
+  assert.equal(apples.quantityUnreadable, false);
+  assert.equal(apples.unitCost, 4.5);
+  assert.equal(apples.costUnreadable, false);
+  assert.equal(apples.totalCost, 9);
+  assert.equal(apples.casePackSize, 12);
+  assert.equal(apples.unit, 'Tray');
+  assert.equal(apples.lineTotalMismatch, false);
+  const pears = model.lineItems[1];
+  assert.ok(pears);
+  assert.equal(pears.unitInvalid, false);
+  assert.match(pears.gaps.join(' '), /not a known unit/);
+  const draft = buildAuthoritativeOcrDraft({
+    vendorName: model.vendorName,
+    invoiceNumber: model.invoiceNumber,
+    invoiceDate: model.invoiceDate,
+    totalAmount: 12,
+    departmentBreakdown: { PRODUCE: 12 },
+    lines: model.lineItems.map((line) => ({
+      item_name: line.name,
+      product_id: null,
+      quantity: line.quantity,
+      unit: line.unit,
+      unit_cost: line.unitCost,
+      department: line.department,
+      case_pack_size: line.casePackSize,
+      line_confidence: 0.99,
+      requires_approval: false,
+      quantity_unreadable: line.quantityUnreadable,
+      unit_invalid: line.unitInvalid,
+    })),
+  });
+  assert.equal(draft.lines[1]?.review_reasons?.includes('unit_invalid'), false);
 });
 
 test('a mismatched line total is flagged and the unit cost is kept', () => {
