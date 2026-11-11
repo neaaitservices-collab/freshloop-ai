@@ -314,7 +314,6 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
       settleManufacturingOperationId(operationStore, storageKey);
       onBatchProduced?.(summary);
       notifyInventoryUpdated();
-      window.dispatchEvent(new CustomEvent('freshloop-kitchen-inbox'));
       onClose();
     } catch {
       const msg =

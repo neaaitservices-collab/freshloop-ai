@@ -112,13 +112,6 @@ export function useOptimisticInventoryLevels(initialLevels: StockLevel[] | null)
           productId: input.productId,
           source: 'level-patch',
         });
-        if (input.action === 'rescue' && typeof window !== 'undefined') {
-          window.dispatchEvent(
-            new CustomEvent('freshloop-kitchen-inbox', {
-              detail: { productId: input.productId, units: result.units },
-            })
-          );
-        }
         return {
           success: true as const,
           level: result.level,
