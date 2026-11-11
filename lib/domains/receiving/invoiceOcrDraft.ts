@@ -184,6 +184,13 @@ export function draftPostingBlockers(
   const managerMayResolve = options.manualReviewOverride && options.actorIsManager;
   payload.lines.forEach((line, index) => {
     const reasons = unresolvedLineReasons(line, managerMayResolve);
+    if (line.pack_needs_manager && !line.pack_edited_by && !options.actorIsManager) {
+      const pack = line.case_pack_size ?? 1;
+      const split = line.split_factor ?? 1;
+      blockers.push(
+        `Line ${index + 1} pack is ${pack} and split is ${split}. A manager must confirm a pack change.`
+      );
+    }
     if (reasons.length === 0) return;
     blockers.push(`Line ${index + 1} is unresolved (${reasons.join(', ')}).`);
   });

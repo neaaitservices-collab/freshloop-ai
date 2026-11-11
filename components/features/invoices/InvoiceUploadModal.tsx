@@ -243,6 +243,7 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
     onInvoiceImported({
       ...ocrResult,
       supplierId,
+      ...(managerApprovedCosts && managerCanApprove ? { manualReviewOverride: true } : {}),
     });
     onClose();
   };

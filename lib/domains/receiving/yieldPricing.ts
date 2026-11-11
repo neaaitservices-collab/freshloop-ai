@@ -26,6 +26,12 @@ export interface ReceivingLog {
   printedName?: string;
   invoiceNumber?: string;
   invoiceDate?: string;
+  /** Server invoice scan. Stock quantity and cost are posted from this draft. */
+  draftId?: string;
+  /** Index of this row in the stored scan, including lines the board does not show. */
+  draftLineIndex?: number;
+  /** Manager confirmed low-confidence or cost-guardrail lines for this scan. */
+  manualReviewOverride?: boolean;
   /** Explicit invoice-line department. Ignored while departmentAssumed is set. */
   department?: string;
   departmentAssumed?: boolean;

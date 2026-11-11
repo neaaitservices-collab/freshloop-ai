@@ -14,6 +14,10 @@ import {
 import { handleApiRouteError } from '@/lib/domains/ai/apiError';
 import { authErrorResponse } from '@/lib/auth/http';
 import { requireReceivingStaff } from '@/lib/auth/guardRoute';
+import {
+  isInvoiceOcrReceiveRequest,
+  receiveAcceptedInvoiceOcr,
+} from '@/lib/domains/receiving/invoiceOcrReceive';
 
 export const dynamic = 'force-dynamic';
 
@@ -24,6 +28,35 @@ export async function POST(req: NextRequest) {
       supplierId?: string;
       items?: Array<Partial<ReceivingLogPostInput> & { externalLogId?: string }>;
     };
+
+    if (isInvoiceOcrReceiveRequest(body)) {
+      const outcome = await receiveAcceptedInvoiceOcr({
+        actorId: actor.id,
+        actorIsManager: actor.role === 'ADMIN' || actor.role === 'STORE_MANAGER',
+        body: body as Record<string, unknown>,
+      });
+      if (!outcome.ok) {
+        return NextResponse.json(
+          { success: false, error: outcome.error, code: outcome.code },
+          { status: outcome.status }
+        );
+      }
+      const results = outcome.results;
+      const savedCount = results.filter((row) => row.stock.posted).length;
+      const conflict = results.some((row) => row.stock.posted === false && row.stock.conflict === true);
+      return NextResponse.json(
+        {
+          success: !conflict,
+          savedCount,
+          failedCount: results.length - savedCount,
+          results,
+          ...(conflict
+            ? { error: 'A Delivery ID was reused with a different payload.', code: 'DELIVERY_CONFLICT' }
+            : {}),
+        },
+        { status: conflict ? 409 : 200 }
+      );
+    }
 
     const rawItems = body.items;
     if (!Array.isArray(rawItems) || rawItems.length === 0) {
