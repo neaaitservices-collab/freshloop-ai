@@ -1,4 +1,5 @@
-import { Prisma } from '@prisma/client';
+import { Department, Prisma } from '@prisma/client';
+import { z } from 'zod';
 import { InventoryLedgerError, prisma } from '@/lib/domains/inventory/ledger';
 import { invalidateInventoryCaches } from '@/lib/domains/inventory/inventoryCache';
 import { receivingDepartment } from '@/lib/domains/inventory/receivingDepartment';
@@ -19,8 +20,32 @@ import {
   type ReceivingLogPostResult,
 } from '@/lib/domains/receiving/receivingLogPost';
 import { gateStoredOcrDraft } from '@/lib/domains/receiving/sampleReceivingGuard';
-import { invoiceOcrResolutionsSchema } from '@/lib/security/schemas/invoiceOcr';
 import { getSupplierNameById } from '@/lib/domains/suppliers/suppliers';
+
+const receiveResolutionsSchema = z
+  .object({
+    vendorName: z.string().trim().min(1).max(256).optional(),
+    invoiceNumber: z.string().trim().min(1).max(128).optional(),
+    invoiceDate: z.string().trim().min(1).max(32).optional(),
+    lines: z
+      .array(
+        z
+          .object({
+            index: z.number().int().nonnegative().max(500),
+            line_name: z.string().trim().min(1).max(256).optional(),
+            quantity: z.number().finite().positive().max(1_000_000).optional(),
+            department: z.nativeEnum(Department).optional(),
+            packSize: z.number().finite().positive().max(1_000_000).optional(),
+            splitFactor: z.number().finite().positive().max(1_000_000).optional(),
+          })
+          .strict()
+      )
+      .max(500)
+      .optional(),
+  })
+  .strict();
+
+type ReceiveResolutions = z.infer<typeof receiveResolutionsSchema>;
 
 export const OCR_CLIENT_COPY_REJECTED =
   'Stock was not posted. There is no accepted invoice scan on the server. The browser copy of the scan cannot add stock.';
@@ -80,6 +105,31 @@ function failure(
   return { ok: false, status, error, code };
 }
 
+/** Expired, consumed, and sample drafts fail before any stock write. */
+export function draftReceiveBlock(draft: {
+  consumedAt: Date | null;
+  expiresAt: Date;
+  payload: { invoiceNumber?: string | null; vendorName?: string | null };
+}): InvoiceOcrReceiveFailure | null {
+  if (draft.consumedAt) {
+    return failure(409, 'This scan was already received.', 'DRAFT_ALREADY_RECEIVED');
+  }
+  const gate = gateStoredOcrDraft({ expiresAt: draft.expiresAt, payload: draft.payload });
+  if (gate.ok) return null;
+  const code = /expired/i.test(gate.error)
+    ? 'OCR_DRAFT_EXPIRED'
+    : gate.status === 404
+      ? 'OCR_DRAFT_MISSING'
+      : 'OCR_DRAFT_BLOCKED';
+  return failure(gate.status, gate.error, code);
+}
+
+function draftPackSize(line: OcrDraftLine): number {
+  const pack = Number(line.case_pack_size);
+  if (Number.isFinite(pack) && pack > 0 && pack <= 1_000_000) return pack;
+  return 1;
+}
+
 function readPayload(raw: unknown): OcrDraftPayload | null {
   if (!raw || typeof raw !== 'object') return null;
   const payload = raw as Partial<OcrDraftPayload>;
@@ -112,8 +162,6 @@ function requestItems(body: Record<string, unknown>): unknown[] {
 interface ClientReceiveLine {
   draftLineIndex?: number;
   externalLogId?: string;
-  packSize?: number;
-  splitFactor?: number;
   retailUnit?: string;
   marginMode?: string;
   customMarginPercent?: number;
@@ -132,8 +180,6 @@ function readClientLine(raw: unknown): ClientReceiveLine | null {
   return {
     draftLineIndex: typeof row.draftLineIndex === 'number' ? row.draftLineIndex : undefined,
     externalLogId: typeof row.externalLogId === 'string' ? row.externalLogId : undefined,
-    packSize: typeof row.packSize === 'number' ? row.packSize : undefined,
-    splitFactor: typeof row.splitFactor === 'number' ? row.splitFactor : undefined,
     retailUnit: typeof row.retailUnit === 'string' ? row.retailUnit : undefined,
     marginMode: margin === '35' || margin === '40' || margin === 'custom' ? margin : undefined,
     customMarginPercent: typeof row.customMarginPercent === 'number' ? row.customMarginPercent : undefined,
@@ -194,8 +240,10 @@ async function postDraftLines(input: {
 
   const results = await prisma.$transaction(
     async (tx) => {
-      const locked = await tx.$queryRaw<Array<{ payload: unknown }>>`
-        SELECT payload FROM invoice_ocr_drafts WHERE id = ${input.draft.id} FOR UPDATE
+      const locked = await tx.$queryRaw<
+        Array<{ payload: unknown; consumed_at: Date | null; expires_at: Date }>
+      >`
+        SELECT payload, consumed_at, expires_at FROM invoice_ocr_drafts WHERE id = ${input.draft.id} FOR UPDATE
       `;
       if (!locked[0]) {
         throw new InventoryLedgerError(
@@ -203,6 +251,22 @@ async function postDraftLines(input: {
           'OCR_DRAFT_MISSING',
           404
         );
+      }
+      const lockedPayload = readPayload(locked[0].payload);
+      if (!lockedPayload) {
+        throw new InventoryLedgerError(
+          'The saved invoice scan could not be read. Scan the invoice again.',
+          'OCR_DRAFT_UNREADABLE',
+          409
+        );
+      }
+      const blocked = draftReceiveBlock({
+        consumedAt: locked[0].consumed_at ? new Date(locked[0].consumed_at) : null,
+        expiresAt: new Date(locked[0].expires_at),
+        payload: lockedPayload ?? { invoiceNumber: '' },
+      });
+      if (blocked) {
+        throw new InventoryLedgerError(blocked.error, blocked.code, blocked.status);
       }
       const already = new Set(postedLineIndexes(locked[0].payload));
       const rows: ReceivingLogPostResult[] = [];
@@ -250,6 +314,7 @@ const defaultDeps: InvoiceOcrReceiveDeps = {
 /**
  * Posts an invoice scan from the stored draft.
  * Client quantities, costs, names, and product ids are not read.
+ * Pack size comes from the stored line. A pack or split change is accepted only as a resolution.
  * Explicit `resolutions` are the only user edits applied to the stored scan.
  */
 export async function receiveAcceptedInvoiceOcr(input: {
@@ -266,7 +331,7 @@ export async function receiveAcceptedInvoiceOcr(input: {
   }
 
   const draft = await deps.findDraft(draftId);
-  if (!draft || draft.staffId !== input.actorId) {
+  if (!draft) {
     return failure(404, 'Invoice scan was not found. Scan the invoice again.', 'OCR_DRAFT_MISSING');
   }
   if (body.acceptDraft !== true) {
@@ -277,22 +342,38 @@ export async function receiveAcceptedInvoiceOcr(input: {
   if (!stored) {
     return failure(409, 'The saved invoice scan could not be read. Scan the invoice again.', 'OCR_DRAFT_UNREADABLE');
   }
-  const gate = gateStoredOcrDraft({ expiresAt: draft.expiresAt, payload: stored });
-  if (!gate.ok) {
-    return failure(gate.status, gate.error, gate.status === 404 ? 'OCR_DRAFT_MISSING' : 'OCR_DRAFT_BLOCKED');
-  }
-  if (draft.consumedAt) {
-    return failure(409, 'This scan was already received.', 'DRAFT_ALREADY_RECEIVED');
-  }
+  const blocked = draftReceiveBlock({
+    consumedAt: draft.consumedAt,
+    expiresAt: draft.expiresAt,
+    payload: stored,
+  });
+  if (blocked) return blocked;
 
-  let resolutions: OcrDraftResolution = {};
+  let resolutions: ReceiveResolutions = {};
   if (body.resolutions !== undefined) {
-    const parsed = invoiceOcrResolutionsSchema.safeParse(body.resolutions);
+    const parsed = receiveResolutionsSchema.safeParse(body.resolutions);
     if (!parsed.success) {
       return failure(400, 'Those invoice corrections could not be read.', 'OCR_RESOLUTION_INVALID');
     }
     resolutions = parsed.data;
   }
+  const packEdits = new Map<number, { packSize?: number; splitFactor?: number }>();
+  for (const edit of resolutions.lines ?? []) {
+    if (edit.packSize !== undefined || edit.splitFactor !== undefined) {
+      packEdits.set(edit.index, { packSize: edit.packSize, splitFactor: edit.splitFactor });
+    }
+  }
+  const draftResolutions: OcrDraftResolution = {
+    vendorName: resolutions.vendorName,
+    invoiceNumber: resolutions.invoiceNumber,
+    invoiceDate: resolutions.invoiceDate,
+    lines: resolutions.lines?.map((edit) => ({
+      index: edit.index,
+      line_name: edit.line_name,
+      quantity: edit.quantity,
+      department: edit.department,
+    })),
+  };
 
   const rawItems = requestItems(body);
   if (rawItems.length === 0) {
@@ -304,10 +385,13 @@ export async function receiveAcceptedInvoiceOcr(input: {
     if (!line) return failure(400, 'One invoice line could not be read.', 'OCR_LINE_UNREADABLE');
     clientLines.push(line);
   }
-  const indexed = clientLines.map((line, position) => ({
-    ...line,
-    index: line.draftLineIndex ?? position,
-  }));
+  const indexed: Array<ClientReceiveLine & { index: number }> = [];
+  for (const line of clientLines) {
+    if (typeof line.draftLineIndex !== 'number' || !Number.isInteger(line.draftLineIndex)) {
+      return failure(400, 'A line in this request is not on the saved invoice scan.', 'OCR_LINE_NOT_ON_DRAFT');
+    }
+    indexed.push({ ...line, index: line.draftLineIndex });
+  }
   const seen = new Set<number>();
   for (const line of indexed) {
     if (!Number.isInteger(line.index) || line.index < 0 || line.index >= stored.lines.length) {
@@ -325,7 +409,7 @@ export async function receiveAcceptedInvoiceOcr(input: {
   };
   const resolved = applyOcrDraftResolutions(
     applyOcrDraftResolutions(stored, gapResolutions(stored, indexed), actor),
-    resolutions,
+    draftResolutions,
     actor
   );
   const blockers = draftPostingBlockers(resolved, actor);
@@ -352,13 +436,17 @@ export async function receiveAcceptedInvoiceOcr(input: {
     if (!Number.isFinite(line.unit_cost) || line.unit_cost < 0 || line.unit_cost > 1_000_000) {
       return failure(409, 'The saved invoice scan has a cost that cannot be posted.', 'OCR_DRAFT_BLOCKED');
     }
+    const packEdit = packEdits.get(client.index);
+    const packSize = packEdit?.packSize ?? draftPackSize(line);
+    const splitFactor = packEdit?.splitFactor ?? 1;
+    if (packEdit?.packSize !== undefined) line.case_pack_size = packEdit.packSize;
     const validated = validateReceivingLogPostInput({
       itemName: line.line_name?.trim() || 'Invoice line',
       productId: line.product_id?.trim() || undefined,
       casesReceived: line.quantity,
       caseCost: line.unit_cost,
-      packSize: client.packSize,
-      splitFactor: client.splitFactor,
+      packSize,
+      splitFactor,
       retailUnit: client.retailUnit as ReceivingLogPostInput['retailUnit'],
       marginMode: client.marginMode as ReceivingLogPostInput['marginMode'],
       customMarginPercent: client.customMarginPercent,

@@ -1,4 +1,5 @@
-import { OFFLINE_FLUSH_DEBOUNCE_MS } from '@/lib/offline/constants';
+import { MAX_OFFLINE_ATTEMPTS, OFFLINE_FLUSH_DEBOUNCE_MS } from '@/lib/offline/constants';
+import { offlineReplayDisposition } from '@/lib/offline/replayDisposition';
 import { countPendingOfflineMutations } from '@/lib/offline/idb';
 import { isBrowserOnline, subscribeNetworkStatus } from '@/lib/offline/network';
 import {
@@ -44,7 +45,7 @@ async function refreshPendingCount(): Promise<number> {
 
 async function executeMutation(
   row: Awaited<ReturnType<typeof listFlushableMutations>>[number]
-): Promise<'ok' | 'retry' | 'drop'> {
+): Promise<{ action: 'ok' | 'retry' | 'drop'; message?: string }> {
   await markMutationProcessing(row.id);
   try {
     const res = await fetch(row.url, {
@@ -56,20 +57,27 @@ async function executeMutation(
     const json = (await res.json()) as { success?: boolean; error?: string; deduped?: boolean };
     if (res.ok && (json.success || json.deduped)) {
       await completeMutation(row.id);
-      return 'ok';
+      return { action: 'ok' };
     }
     const message = json.error ?? `Sync failed (${res.status}).`;
-    if (res.status === 400 || res.status === 403) {
-      await markMutationFailed(row.id, message);
-      if (row.attempts + 1 >= 5) return 'drop';
-      return 'retry';
+    if (offlineReplayDisposition(res.status) === 'drop') {
+      await completeMutation(row.id);
+      return { action: 'drop', message };
     }
     await markMutationFailed(row.id, message);
-    return 'retry';
+    if (row.attempts + 1 >= MAX_OFFLINE_ATTEMPTS) {
+      await completeMutation(row.id);
+      return { action: 'drop', message };
+    }
+    return { action: 'retry', message };
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Network error during sync.';
     await markMutationFailed(row.id, message);
-    return 'retry';
+    if (row.attempts + 1 >= MAX_OFFLINE_ATTEMPTS) {
+      await completeMutation(row.id);
+      return { action: 'drop', message };
+    }
+    return { action: 'retry', message };
   }
 }
 
@@ -82,25 +90,37 @@ export async function flushOfflineQueue(): Promise<void> {
     const queue = await listFlushableMutations();
     emitSnapshot({ pendingCount: queue.length });
     let hadError = false;
+    let terminalMessage: string | null = null;
     for (const row of queue) {
       if (!isBrowserOnline()) break;
       const outcome = await executeMutation(row);
-      if (outcome === 'retry') hadError = true;
+      if (outcome.action === 'retry') hadError = true;
+      if (outcome.action === 'drop') {
+        hadError = true;
+        if (outcome.message) terminalMessage = outcome.message;
+      }
     }
     const remaining = await refreshPendingCount();
+    const lastError =
+      terminalMessage ??
+      (hadError
+        ? remaining === 0
+          ? 'Some items need attention — will retry when online.'
+          : 'Could not sync all queued changes yet.'
+        : null);
     if (remaining === 0) {
       notifyInventoryUpdated();
       emitSnapshot({
-        phase: 'idle',
+        phase: hadError ? 'error' : 'idle',
         pendingCount: 0,
         lastSyncedAt: Date.now(),
-        lastError: hadError ? 'Some items need attention — will retry when online.' : null,
+        lastError,
       });
     } else {
       emitSnapshot({
         phase: hadError ? 'error' : 'idle',
         pendingCount: remaining,
-        lastError: hadError ? 'Could not sync all queued changes yet.' : null,
+        lastError,
       });
     }
   } finally {

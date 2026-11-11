@@ -4,6 +4,7 @@ import { NextRequest } from 'next/server';
 import { POST as postReceivingBatch } from '@/app/api/receiving-logs/batch/route';
 import { setReceivingStaffTestAuth } from '@/lib/auth/receivingStaffTestAuth';
 import {
+  draftReceiveBlock,
   OCR_CLIENT_COPY_REJECTED,
   OCR_DRAFT_NOT_ACCEPTED,
   receiveAcceptedInvoiceOcr,
@@ -136,6 +137,167 @@ test('client-only invoice data is rejected', async () => {
   assert.equal(outcome.status, 400);
   assert.equal(outcome.error, OCR_CLIENT_COPY_REJECTED);
   assert.equal(lookedUp, false);
+  assert.equal(wrote, false);
+});
+
+test('a client packSize of 1000 does not change the posted quantity', async () => {
+  const posted: InvoiceOcrPostEntry[] = [];
+  const outcome = await receiveAcceptedInvoiceOcr({
+    actorId: 'someone-else',
+    actorIsManager: false,
+    body: {
+      invoiceOcr: true,
+      draftId: 'draft-1',
+      acceptDraft: true,
+      supplierId: 'sup-1',
+      items: [browserCopy({ packSize: 1000, splitFactor: 0.001 })],
+    },
+    deps: deps(storedDraft(), posted),
+  });
+  assert.equal(outcome.ok, true);
+  if (!outcome.ok) return;
+  const line = posted[0]?.line;
+  assert.equal(line?.packSize, 40);
+  assert.equal(line?.splitFactor, 1);
+  assert.equal(line?.casesReceived, 3);
+  assert.equal((line?.casesReceived ?? 0) * ((line?.packSize ?? 0) / (line?.splitFactor ?? 1)), 120);
+});
+
+test('a pack change is posted only when it is a checked resolution', async () => {
+  const posted: InvoiceOcrPostEntry[] = [];
+  const accepted = await receiveAcceptedInvoiceOcr({
+    actorId: 'clerk-1',
+    actorIsManager: false,
+    body: {
+      invoiceOcr: true,
+      draftId: 'draft-1',
+      acceptDraft: true,
+      supplierId: 'sup-1',
+      resolutions: { lines: [{ index: 0, packSize: 10, splitFactor: 2 }] },
+      items: [browserCopy({ packSize: 1000 })],
+    },
+    deps: deps(storedDraft(), posted),
+  });
+  assert.equal(accepted.ok, true);
+  if (!accepted.ok) return;
+  assert.equal(posted[0]?.line.packSize, 10);
+  assert.equal(posted[0]?.line.splitFactor, 2);
+  assert.equal(posted[0]?.line.casesReceived * (10 / 2), 15);
+
+  let wrote = false;
+  const rejected = await receiveAcceptedInvoiceOcr({
+    actorId: 'clerk-1',
+    actorIsManager: false,
+    body: {
+      invoiceOcr: true,
+      draftId: 'draft-1',
+      acceptDraft: true,
+      resolutions: { lines: [{ index: 0, packSize: 1_000_001 }] },
+      items: [browserCopy()],
+    },
+    deps: {
+      findDraft: async () => storedDraft(),
+      postLines: async () => {
+        wrote = true;
+        return [];
+      },
+    },
+  });
+  assert.equal(rejected.ok, false);
+  if (rejected.ok) return;
+  assert.equal(rejected.status, 400);
+  assert.equal(rejected.code, 'OCR_RESOLUTION_INVALID');
+  assert.equal(wrote, false);
+});
+
+test('a missing draft line index is rejected', async () => {
+  let wrote = false;
+  const { draftLineIndex: _ignored, ...item } = browserCopy();
+  void _ignored;
+  const outcome = await receiveAcceptedInvoiceOcr({
+    actorId: 'clerk-1',
+    actorIsManager: false,
+    body: {
+      invoiceOcr: true,
+      draftId: 'draft-1',
+      acceptDraft: true,
+      supplierId: 'sup-1',
+      items: [item],
+    },
+    deps: {
+      findDraft: async () => storedDraft(),
+      postLines: async () => {
+        wrote = true;
+        return [];
+      },
+    },
+  });
+  assert.equal(outcome.ok, false);
+  if (outcome.ok) return;
+  assert.equal(outcome.status, 400);
+  assert.equal(outcome.code, 'OCR_LINE_NOT_ON_DRAFT');
+  assert.equal(wrote, false);
+});
+
+test('an expired draft fails once and does not post', async () => {
+  let wrote = false;
+  const draft = storedDraft();
+  draft.expiresAt = new Date(Date.now() - 1_000);
+  const outcome = await receiveAcceptedInvoiceOcr({
+    actorId: 'clerk-1',
+    actorIsManager: false,
+    body: {
+      invoiceOcr: true,
+      draftId: 'draft-1',
+      acceptDraft: true,
+      items: [browserCopy()],
+    },
+    deps: {
+      findDraft: async () => draft,
+      postLines: async () => {
+        wrote = true;
+        return [];
+      },
+    },
+  });
+  assert.equal(outcome.ok, false);
+  if (outcome.ok) return;
+  assert.equal(outcome.status, 409);
+  assert.equal(outcome.code, 'OCR_DRAFT_EXPIRED');
+  assert.match(outcome.error, /expired/i);
+  assert.equal(wrote, false);
+  const again = draftReceiveBlock({
+    consumedAt: draft.consumedAt,
+    expiresAt: draft.expiresAt,
+    payload: { invoiceNumber: 'INV-100' },
+  });
+  assert.equal(again?.code, 'OCR_DRAFT_EXPIRED');
+});
+
+test('a consumed draft is blocked before stock is written', async () => {
+  const draft = storedDraft();
+  draft.consumedAt = new Date();
+  const block = draftReceiveBlock({
+    consumedAt: draft.consumedAt,
+    expiresAt: draft.expiresAt,
+    payload: { invoiceNumber: 'INV-100' },
+  });
+  assert.equal(block?.status, 409);
+  assert.equal(block?.code, 'DRAFT_ALREADY_RECEIVED');
+  let wrote = false;
+  const outcome = await receiveAcceptedInvoiceOcr({
+    actorId: 'clerk-1',
+    actorIsManager: false,
+    body: { invoiceOcr: true, draftId: 'draft-1', acceptDraft: true, items: [browserCopy()] },
+    deps: {
+      findDraft: async () => draft,
+      postLines: async () => {
+        wrote = true;
+        return [];
+      },
+    },
+  });
+  assert.equal(outcome.ok, false);
   assert.equal(wrote, false);
 });
 
