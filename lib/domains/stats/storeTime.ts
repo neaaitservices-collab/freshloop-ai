@@ -196,6 +196,32 @@ export function enumerateYmd(from: string, to: string): string[] {
   return days;
 }
 
+/** Inclusive Toronto dates for the rolling admin card window (today and the previous 29 days). */
+export function last30StoreDays(now = new Date(), days = 30): { from: string; to: string } {
+  const to = torontoToday(now);
+  return { from: addCalendarDays(to, -(days - 1)), to };
+}
+
+/** Card caption such as Nov 1–10. Same-month ranges drop the repeated month. */
+export function formatCardRangeLabel(from: string, to: string): string {
+  const monthDay = (ymd: string) =>
+    new Intl.DateTimeFormat('en-US', {
+      timeZone: STORE_TIME_ZONE,
+      month: 'short',
+      day: 'numeric',
+    }).format(zonedTimeToUtc(ymd, 12, 0, 0));
+  if (from === to) return monthDay(from);
+  const start = monthDay(from);
+  const end = monthDay(to);
+  const startMonth = start.slice(0, start.lastIndexOf(' '));
+  const endMonth = end.slice(0, end.lastIndexOf(' '));
+  if (from.slice(0, 4) === to.slice(0, 4) && startMonth === endMonth) {
+    return `${start}–${end.slice(end.lastIndexOf(' ') + 1)}`;
+  }
+  if (from.slice(0, 4) === to.slice(0, 4)) return `${start}–${end}`;
+  return `${formatRangeLabel(from, to)}`;
+}
+
 export function formatRangeLabel(from: string, to: string): string {
   const label = (ymd: string) =>
     new Intl.DateTimeFormat('en-US', {

@@ -3,7 +3,12 @@
 import React, { useMemo, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
-import { formatRangeLabel, presetRange, shiftStoreRange } from '@/lib/domains/stats/storeTime';
+import {
+  formatCardRangeLabel,
+  last30StoreDays,
+  presetRange,
+  shiftStoreRange,
+} from '@/lib/domains/stats/storeTime';
 import { statsRangeQuerySchema } from '@/lib/security/schemas/statsRange';
 import { cn } from '@/lib/utils/cn';
 
@@ -31,15 +36,25 @@ function readBounds(params: { get: (key: string) => string | null }): {
 export function StatsDateFilter({
   defaultPreset = null,
   heading = 'Production transfers',
+  compact = false,
 }: {
   defaultPreset?: 'day' | 'week' | 'month' | null;
   heading?: string;
+  /** Desktop header slot: chips stay on one row and align to the end. */
+  compact?: boolean;
 }) {
   const router = useRouter();
   const pathname = usePathname();
   const params = useSearchParams();
   const [error, setError] = useState<string | null>(null);
-  const bounds = useMemo(() => readBounds(params) ?? (defaultPreset ? { ...presetRange(defaultPreset), preset: defaultPreset } : null), [params, defaultPreset]);
+  const bounds = useMemo(
+    () =>
+      readBounds(params) ??
+      (defaultPreset
+        ? { ...presetRange(defaultPreset), preset: defaultPreset }
+        : { ...last30StoreDays(), preset: null }),
+    [params, defaultPreset]
+  );
   const preset = params.get('preset') ?? (params.get('from') || params.get('to') ? null : defaultPreset);
   const fromValue = params.get('from') ?? bounds?.from ?? '';
   const toValue = params.get('to') ?? bounds?.to ?? '';
@@ -76,19 +91,29 @@ export function StatsDateFilter({
     writeRange(next.from, next.to);
   };
 
-  const label = bounds ? formatRangeLabel(bounds.from, bounds.to) : 'Last 7 days';
+  const label = bounds ? formatCardRangeLabel(bounds.from, bounds.to) : 'Last 30 days';
 
   return (
-    <div className="space-y-2">
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-        <div>
-          <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500">
+    <div className={cn('w-full space-y-2', compact ? 'w-auto' : 'lg:ml-auto lg:w-auto')}>
+      <div className={cn(
+        'flex flex-col gap-3',
+        compact ? 'flex-row flex-wrap items-center justify-end' : 'lg:flex-row lg:flex-wrap lg:items-center lg:justify-end'
+      )}>
+        <div className={compact ? 'text-right' : 'lg:text-right'}>
+          <p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500">
             {heading}
           </p>
           <p className="mt-1 text-sm font-semibold text-slate-100">{label}</p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="inline-flex rounded-xl border border-slate-700 bg-slate-950/80 p-0.5">
+        <div className={cn(
+          'flex w-full flex-col gap-2',
+          compact ? 'w-auto flex-row flex-wrap items-center justify-end' : 'lg:w-auto lg:flex-row lg:flex-wrap lg:items-center lg:justify-end'
+        )}>
+          <div className={cn('flex w-full items-center gap-2', compact ? 'w-auto' : 'lg:w-auto')}>
+          <div className={cn(
+            'rounded-xl border border-slate-700 bg-slate-950/80 p-0.5',
+            compact ? 'inline-flex' : 'grid w-full grid-cols-3 lg:inline-flex lg:w-auto'
+          )}>
             {(defaultPreset === 'day'
               ? ([['day', 'Today'], ['week', 'Week'], ['month', 'Month']] as const)
               : CHIPS
@@ -100,6 +125,7 @@ export function StatsDateFilter({
                 onClick={() => writeRange('', '', id)}
                 className={cn(
                   'min-h-11 rounded-lg px-3 text-xs font-black',
+                  compact ? '' : 'w-full lg:w-auto',
                   preset === id ? 'bg-blue-900/70 text-blue-50' : 'text-slate-300 hover:bg-slate-800'
                 )}
               >
@@ -123,7 +149,8 @@ export function StatsDateFilter({
           >
             <ChevronRight className="h-4 w-4" />
           </button>
-          <label className="text-[11px] font-bold text-slate-400">
+          </div>
+          <label className={cn('text-xs font-bold text-slate-400', compact ? '' : 'w-full lg:w-auto')}>
             From
             <input
               type="date"
@@ -132,7 +159,7 @@ export function StatsDateFilter({
               className="mt-1 block min-h-11 rounded-xl border border-slate-700 bg-slate-950 px-2 text-sm text-slate-100"
             />
           </label>
-          <label className="text-[11px] font-bold text-slate-400">
+          <label className={cn('text-xs font-bold text-slate-400', compact ? '' : 'w-full lg:w-auto')}>
             To
             <input
               type="date"

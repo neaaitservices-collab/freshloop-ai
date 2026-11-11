@@ -9,8 +9,6 @@ import type { WasteKpiReport } from '@/lib/domains/inventory/ledger';
 import { subscribeInventoryUpdated } from '@/lib/domains/inventory/inventoryMoveClient';
 import { subscribeKpiUpdated } from '@/lib/domains/stats/kpiEvents';
 import { FRESHLOOP_SETTINGS_UPDATED } from '@/lib/domains/stats/settingsEvents';
-import { StatsDateFilter } from '@/components/features/admin/StatsDateFilter';
-
 const inflightAdminStats = new Map<
   string,
   Promise<{
@@ -136,7 +134,6 @@ export function DashboardFigures({
 
   return (
     <section className="space-y-6" aria-label="Store KPI dashboard">
-      <StatsDateFilter />
       {rangeError ? (
         <p className="rounded-xl border border-rose-900/50 bg-rose-950/30 px-4 py-3 text-sm text-rose-200">
           {rangeError}

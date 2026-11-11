@@ -12,7 +12,9 @@ import { belowParSkus, isBelowPar, outOfStockSkus } from '@/lib/domains/inventor
 import { getStockLevels } from '@/lib/domains/inventory/stock';
 import type { DepartmentAlert, StoreStats } from '@/lib/domains/stats/storeStatsTypes';
 import { findLatestStoreSetting } from '@/lib/domains/stats/storeSettingSelect';
+import { summarizeRescueWindow } from '@/lib/domains/stats/rescueCards';
 import { DEFAULT_KPI_LOOKBACK_DAYS, kpiLookbackRange } from '@/lib/domains/stats/wasteKpi';
+import { formatCardRangeLabel, last30StoreDays, torontoRange } from '@/lib/domains/stats/storeTime';
 import {
   enumerateYmd,
   formatBucketLabel,
@@ -234,6 +236,8 @@ async function loadStoreStats(transferRange?: StoreInstantRange | null): Promise
   const weekStart = new Date(now);
   weekStart.setHours(0, 0, 0, 0);
   weekStart.setDate(weekStart.getDate() - 6);
+  const rolling = last30StoreDays(now);
+  const cardBounds = transferRange ?? torontoRange(rolling.from, rolling.to);
   const { startDate: lookbackStart, endDate: lookbackEnd } = kpiLookbackRange(
     DEFAULT_KPI_LOOKBACK_DAYS,
     now
@@ -272,7 +276,7 @@ async function loadStoreStats(transferRange?: StoreInstantRange | null): Promise
     prisma.receivingDisposition.count({
       where: { reason: 'NOT_RECEIVED', status: 'PENDING_CREDIT' },
     }),
-    transferRange ? loadRangeChart(transferRange) : Promise.resolve(null),
+    loadRangeChart(cardBounds),
   ]);
 
   const levelById = new Map(stockLevels.map((row) => [row.productId, row]));
@@ -345,10 +349,11 @@ async function loadStoreStats(transferRange?: StoreInstantRange | null): Promise
     }
   }
 
-  let rescuedValue = 0;
-  let discardValue = 0;
-  let rescuedUnits = 0;
-  let discardedUnits = 0;
+  const cardTotals = summarizeRescueWindow(chartWindow.totals);
+  const rescuedValue = cardTotals.rescued;
+  const discardValue = cardTotals.lost;
+  const rescuedUnits = cardTotals.rescueUnits;
+  const discardedUnits = cardTotals.discardUnits;
   const chartMovements = transferRange ? [] : movements;
   const blankDay = () => ({
     lost: 0,
@@ -390,18 +395,6 @@ async function loadStoreStats(transferRange?: StoreInstantRange | null): Promise
     return { units, amount, isRescue, isDiscard };
   };
 
-  for (const movement of movements) {
-    const scored = scoreMovement(movement);
-    if (!scored) continue;
-    if (scored.isRescue) {
-      rescuedValue += scored.amount;
-      rescuedUnits += scored.units;
-    } else if (scored.isDiscard) {
-      discardValue += scored.amount;
-      discardedUnits += scored.units;
-    }
-  }
-
   const addToDay = (
     days: typeof legacyDays,
     index: number | undefined,
@@ -431,7 +424,7 @@ async function loadStoreStats(transferRange?: StoreInstantRange | null): Promise
       addToDay(legacyDays, legacyIndex.get(dayKey(movement.timestamp)), scored);
     }
   }
-  if (chartWindow) {
+  if (transferRange) {
     const byDay = new Map(chartWindow.totals.map((row) => [row.day, row]));
     for (const day of rangeDays) {
       const row = byDay.get(day.key);
@@ -443,8 +436,7 @@ async function loadStoreStats(transferRange?: StoreInstantRange | null): Promise
     }
   }
 
-  const handled = rescuedValue + discardValue;
-  const wasteReductionPct = handled > 0 ? Number(((rescuedValue / handled) * 100).toFixed(1)) : null;
+  const wasteReductionPct = cardTotals.rate;
 
   return {
     rescuedValue: money(rescuedValue),
@@ -487,5 +479,6 @@ async function loadStoreStats(transferRange?: StoreInstantRange | null): Promise
       ),
     ],
     transferRangeLabel: transferRange ? formatRangeLabel(transferRange.from, transferRange.to) : null,
+    cardRangeLabel: formatCardRangeLabel(cardBounds.from, cardBounds.to),
   };
 }

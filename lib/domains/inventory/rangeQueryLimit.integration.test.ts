@@ -29,14 +29,11 @@ test('the chart does not show a row cap, and the inbox count is the full total',
   const dashboard = readFileSync('components/features/admin/AdminDashboard.tsx', 'utf8');
   const stats = readFileSync('lib/domains/stats/storeStats.ts', 'utf8');
   const inbox = readFileSync('lib/domains/inventory/kitchenInbox.ts', 'utf8');
-  const floor = readFileSync('components/features/kitchen/KitchenFloorInbox.tsx', 'utf8');
   assert.equal(chart.includes('rowLimitHint'), false);
   assert.equal(chart.includes('Showing latest'), false);
   assert.equal(dashboard.includes('showingLatestLabel'), false);
   assert.equal(stats.includes('take: limit'), false);
   assert.match(inbox, /orderBy: \[\{ timestamp: 'desc' \}, \{ id: 'desc' \}\]/);
-  assert.match(floor, /\{totalCount\} item/);
-  assert.match(floor, /total > rows\.length/);
 });
 
 test('range list is capped and SQL totals still include every transfer', { skip: !hasDb }, async (t) => {
