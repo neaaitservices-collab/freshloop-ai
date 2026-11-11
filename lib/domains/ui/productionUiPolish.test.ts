@@ -5,6 +5,11 @@ import { locationLabel } from '@/lib/domains/inventory/locationLabel';
 import { batchActionLabel } from '@/lib/domains/manufacturing/batchActionLabel';
 import { navItemsForRole } from '@/lib/navigation/navItems';
 import { PHONE_NAV_BAR_COUNT, splitPhoneNav, visiblePhoneNavItems } from '@/lib/navigation/phoneNav';
+import {
+  isAdminViewTabActive,
+  pushAdminView,
+  selectedAdminViewHref,
+} from '@/components/features/admin/AdminViewTabs';
 
 test('phone nav keeps five items and parks the rest in More', () => {
   const admin = navItemsForRole('ADMIN');
@@ -48,6 +53,44 @@ test('phone polish screens use at least 12px text', () => {
     const source = readFileSync(file, 'utf8');
     assert.equal(/text-\[(?:8|9|10|11)px\]/.test(source), false, file);
   }
+});
+
+test('admin view select pushes the chosen tab route', () => {
+  assert.equal(selectedAdminViewHref('/admin'), '/admin');
+  assert.equal(selectedAdminViewHref('/admin/executive'), '/admin/executive');
+  assert.equal(selectedAdminViewHref('/admin/executive/detail'), '/admin/executive');
+  assert.equal(selectedAdminViewHref('/admin/suppliers'), '/admin/suppliers');
+  assert.equal(selectedAdminViewHref('/admin/departments'), '/admin/departments');
+  assert.equal(selectedAdminViewHref('/receive'), '');
+  assert.equal(isAdminViewTabActive('/admin/suppliers', '/admin'), false);
+  assert.equal(isAdminViewTabActive('/admin', '/admin'), true);
+
+  const pushed: string[] = [];
+  const push = (href: string) => {
+    pushed.push(href);
+  };
+  pushAdminView(push, '/admin/suppliers');
+  pushAdminView(push, '/production');
+  pushAdminView(push, '/admin/departments');
+  assert.deepEqual(pushed, ['/admin/suppliers', '/admin/departments']);
+
+  const views = readFileSync('components/features/admin/AdminViewTabs.tsx', 'utf8');
+  assert.match(views, /<select/);
+  assert.match(views, /aria-label="Admin view"/);
+  assert.match(views, /min-h-11 w-full/);
+  assert.match(views, /sm:hidden/);
+  assert.match(views, /router\.push\(href\)/);
+  assert.match(views, /pushAdminView\(/);
+  assert.match(views, /hidden overflow-x-auto rounded-xl border border-slate-800 bg-slate-950\/80 p-1 sm:flex/);
+  assert.match(views, /aria-label="Admin views"/);
+  assert.match(views, /aria-current=\{active \? 'page' : undefined\}/);
+  assert.match(views, /focus-visible:outline-solid/);
+  assert.match(views, /focus-visible:outline-2/);
+  assert.match(views, /shrink-0 rounded-lg px-3 py-2 text-xs font-black transition/);
+  assert.match(views, /bg-emerald-400 text-slate-950/);
+  assert.equal(views.includes('grid-cols-2'), false);
+  assert.equal(/\bkitchen\b/i.test(views), false);
+  assert.equal(/text-\[(?:8|9|10|11)px\]/.test(views), false);
 });
 
 test('phone nav omits Voice when there is no handler', () => {
