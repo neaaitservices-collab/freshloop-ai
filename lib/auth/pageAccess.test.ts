@@ -33,6 +33,12 @@ test('nested paths follow the same role matrix', () => {
     location: '/inventory/floor',
   });
   assert.deepEqual(decideFreshNavigation('/admin/settings', admin), { action: 'allow' });
+  assert.deepEqual(decideFreshNavigation('/admin/departments', floor), {
+    action: 'redirect',
+    location: '/inventory/floor',
+  });
+  assert.deepEqual(decideFreshNavigation('/admin/departments', admin), { action: 'allow' });
+  assert.deepEqual(decideFreshNavigation('/admin/departments', user('STORE_MANAGER')), { action: 'allow' });
   assert.deepEqual(decideFreshNavigation('/admin/executive', floor), {
     action: 'redirect',
     location: '/inventory/floor',

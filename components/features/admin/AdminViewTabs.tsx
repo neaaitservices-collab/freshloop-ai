@@ -8,6 +8,7 @@ const TABS = [
   { href: '/admin/executive', label: 'Executive ROI' },
   { href: '/admin', label: 'Operations' },
   { href: '/admin/suppliers', label: 'Suppliers' },
+  { href: '/admin/departments', label: 'Departments' },
 ] as const;
 
 export function AdminViewTabs() {
@@ -15,7 +16,7 @@ export function AdminViewTabs() {
 
   return (
     <nav
-      className="flex rounded-xl border border-slate-800 bg-slate-950/80 p-1"
+      className="flex overflow-x-auto rounded-xl border border-slate-800 bg-slate-950/80 p-1"
       aria-label="Admin views"
     >
       {TABS.map((tab) => {
@@ -24,13 +25,15 @@ export function AdminViewTabs() {
             ? pathname.startsWith('/admin/executive')
             : tab.href === '/admin/suppliers'
               ? pathname.startsWith('/admin/suppliers')
-              : pathname === '/admin';
+              : tab.href === '/admin/departments'
+                ? pathname.startsWith('/admin/departments')
+                : pathname === '/admin';
         return (
           <Link
             key={tab.href}
             href={tab.href}
             className={cn(
-              'rounded-lg px-3 py-2 text-xs font-black transition',
+              'shrink-0 rounded-lg px-3 py-2 text-xs font-black transition',
               active ? 'bg-emerald-400 text-slate-950' : 'text-slate-400 hover:text-slate-200'
             )}
           >

@@ -13,6 +13,7 @@ const boundaries: Array<[string, string]> = [
   ['app/admin/settings/page.tsx', 'getPlatformSettings('],
   ['app/admin/executive/page.tsx', 'getAdminStoreStatsBundle('],
   ['app/admin/suppliers/page.tsx', 'listSuppliers('],
+  ['app/admin/departments/page.tsx', 'loadAdminDepartments('],
 ];
 
 test('protected pages guard before sensitive loaders', () => {
