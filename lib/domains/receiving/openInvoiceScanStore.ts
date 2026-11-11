@@ -34,10 +34,7 @@ export async function loadOpenInvoiceScan(
 
 export type DiscardOpenScanResult = { ok: true } | { ok: false; status: 404 | 409 };
 
-/**
- * Close a scan without deleting it, so posted line records stay on the row.
- * Older open drafts for this clerk are closed in the same step and cannot return.
- */
+/** Close this scan without deleting it, so posted line records stay on the row. */
 export async function discardOpenInvoiceScan(
   staffId: string,
   draftId: string,
@@ -55,21 +52,6 @@ export async function discardOpenInvoiceScan(
       select: { id: true },
     });
     return existing ? { ok: false, status: 409 } : { ok: false, status: 404 };
-  }
-  const target = await prisma.invoiceOcrDraft.findFirst({
-    where: { id, staffId },
-    select: { createdAt: true },
-  });
-  if (target) {
-    await prisma.invoiceOcrDraft.updateMany({
-      where: {
-        staffId,
-        consumedAt: null,
-        expiresAt: { gt: now },
-        createdAt: { lt: target.createdAt },
-      },
-      data: { consumedAt: now },
-    });
   }
   return { ok: true };
 }

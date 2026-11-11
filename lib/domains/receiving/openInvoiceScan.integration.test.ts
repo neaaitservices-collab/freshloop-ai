@@ -194,6 +194,8 @@ test('discard keeps posted lines and a retry is already posted', { skip: !hasScr
     },
   });
   assert.equal(posted.ok, true);
+  const partial = await prisma.invoiceOcrDraft.findUnique({ where: { id: draft.id } });
+  assert.equal(partial?.consumedAt, null);
 
   const discarded = await discardOpenInvoiceScan(staffId, draft.id);
   assert.equal(discarded.ok, true);
@@ -207,8 +209,8 @@ test('discard keeps posted lines and a retry is already posted', { skip: !hasScr
   assert.equal(payload.postedBy?.[0]?.index, 0);
   assert.equal(payload.postedBy?.[0]?.actorId, staffId);
   const olderRow = await prisma.invoiceOcrDraft.findUnique({ where: { id: older.id } });
-  assert.ok(olderRow?.consumedAt);
-  assert.equal(await loadOpenInvoiceScan(staffId), null);
+  assert.equal(olderRow?.consumedAt, null);
+  assert.equal((await loadOpenInvoiceScan(staffId))?.draftId, older.id);
 
   const retry = await receiveAcceptedInvoiceOcr({
     actorId: staffId,
@@ -231,5 +233,77 @@ test('discard keeps posted lines and a retry is already posted', { skip: !hasScr
   assert.equal(retry.ok, false);
   if (retry.ok) return;
   assert.equal(retry.status, 409);
-  assert.equal(retry.code, 'DRAFT_ALREADY_RECEIVED');
+  assert.equal(retry.code, 'OCR_DRAFT_DISCARDED');
+
+  const finished = await saveInvoiceOcrDraft(staffId, {
+    vendorName: `North ${stamp}`,
+    invoiceNumber: `DONE-${stamp}`,
+    invoiceDate: '2026-11-04',
+    totalAmount: 3,
+    departmentBreakdown: { PRODUCE: 3 },
+    lines: [
+      {
+        product_id: product.id,
+        quantity: 1,
+        quantity_kind: 'units',
+        unit_cost: 3,
+        line_name: `Done bananas ${stamp}`,
+        department: 'PRODUCE',
+        case_pack_size: 1,
+        line_confidence: 0.95,
+        requires_approval: false,
+      },
+    ],
+  });
+  const finishedIdentity = await resolveSupplierInvoice({
+    supplierId: supplier.id,
+    invoiceNumber: `DONE-${stamp}`,
+    invoiceDate: '2026-11-04',
+    lines: [{ printedName: `Done bananas ${stamp}` }],
+  });
+  assert.equal(finishedIdentity.ok, true);
+  if (!finishedIdentity.ok) return;
+  const savedAll = await receiveAcceptedInvoiceOcr({
+    actorId: staffId,
+    actorIsManager: false,
+    body: {
+      draftId: finished.id,
+      acceptDraft: true,
+      supplierId: supplier.id,
+      items: [
+        {
+          draftLineIndex: 0,
+          externalLogId: finishedIdentity.lines[0]?.deliveryId,
+          retailUnit: 'units',
+          marginMode: '40',
+          currentRetailPrice: 2,
+        },
+      ],
+    },
+  });
+  assert.equal(savedAll.ok, true);
+  const closedSave = await prisma.invoiceOcrDraft.findUnique({ where: { id: finished.id } });
+  assert.ok(closedSave?.consumedAt);
+  const savedAgain = await receiveAcceptedInvoiceOcr({
+    actorId: staffId,
+    actorIsManager: false,
+    body: {
+      draftId: finished.id,
+      acceptDraft: true,
+      supplierId: supplier.id,
+      items: [
+        {
+          draftLineIndex: 0,
+          externalLogId: finishedIdentity.lines[0]?.deliveryId,
+          retailUnit: 'units',
+          marginMode: '40',
+          currentRetailPrice: 2,
+        },
+      ],
+    },
+  });
+  assert.equal(savedAgain.ok, false);
+  if (savedAgain.ok) return;
+  assert.equal(savedAgain.status, 409);
+  assert.equal(savedAgain.code, 'DRAFT_ALREADY_RECEIVED');
 });
