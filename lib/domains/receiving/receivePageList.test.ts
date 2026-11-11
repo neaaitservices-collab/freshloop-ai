@@ -22,7 +22,10 @@ test('receive page renders the posted delivery list inside the pricing screen', 
   assert.match(screen, /initialLogs=\{initial\.logs\}/);
   assert.match(screen, /initialWarning=\{initial\.warning\}/);
   assert.match(dashboard, /receivingLogRemainsVisible\(/);
-  assert.match(dashboard, /items=\{listLogs\}/);
+  assert.match(dashboard, /recentDeliveryStripItems\(/);
+  assert.match(dashboard, /items=\{stripItems\}/);
+  assert.match(dashboard, /Saved deliveries/);
+  assert.match(dashboard, /initialLogs/);
 });
 
 test('a posted delivery stays listed after this tab has saved it', () => {

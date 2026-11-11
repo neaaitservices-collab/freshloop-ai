@@ -29,7 +29,17 @@ export function InvoiceItemsCarousel({
     });
   }, [selectedId]);
 
-  if (items.length === 0) return null;
+  if (items.length === 0) {
+    return (
+      <section className="min-w-0" aria-label="Recent deliveries">
+        <div className="mb-2 flex items-baseline justify-between gap-2 px-0.5">
+          <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">
+            Recent deliveries ({items.length})
+          </p>
+        </div>
+      </section>
+    );
+  }
 
   return (
     <section className="min-w-0" aria-label="Recent deliveries">
