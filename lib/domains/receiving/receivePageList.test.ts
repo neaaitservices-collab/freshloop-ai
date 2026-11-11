@@ -62,6 +62,16 @@ test('session hide still drops an invoice line that was just saved', () => {
   );
 });
 
+test('a posted scan line is not pending and stays addressable by index', () => {
+  assert.equal(
+    receivingLogRemainsVisible(
+      { id: 'line-2', canPost: true, alreadyPosted: true },
+      { postedIds: new Set(), hiddenIds: new Set(), invoiceIds: new Set(['line-2']) }
+    ),
+    false
+  );
+});
+
 test('a removed delivery stays off the list', () => {
   assert.equal(
     receivingLogRemainsVisible(

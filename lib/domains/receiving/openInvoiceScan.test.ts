@@ -11,9 +11,11 @@ import {
   readOpenScanChoice,
   rememberOpenScanChoice,
 } from '@/lib/domains/receiving/openInvoiceScanChoice';
+import { receivingLogRemainsVisible } from '@/lib/domains/receiving/receivingListVisibility';
 import {
   invoiceResultFromStoredDraft,
   pickOpenInvoiceScan,
+  restoredScanLogs,
   type OpenScanRow,
 } from '@/lib/domains/receiving/openInvoiceScan';
 
@@ -110,6 +112,56 @@ test('a refresh keeps the newest open scan and its draft line indexes', () => {
     acceptDraft: true,
     draftLineIndex: 0,
   });
+});
+
+test('posted lines stay on the restored scan and are not pending', () => {
+  const stored = row({ id: 'draft-new', createdAt: new Date('2026-11-11T11:00:00.000Z') });
+  stored.payload = {
+    ...(stored.payload as Record<string, unknown>),
+    postedLineIndexes: [1],
+  };
+  const invoice = invoiceResultFromStoredDraft(stored);
+  assert.deepEqual(invoice?.postedLineIndexes, [1]);
+  const logs = restoredScanLogs(invoice!);
+  assert.equal(logs.length, 2);
+  assert.equal(logs[0]?.draftLineIndex, 0);
+  assert.equal(logs[0]?.alreadyPosted, undefined);
+  assert.equal(logs[1]?.draftLineIndex, 1);
+  assert.equal(logs[1]?.alreadyPosted, true);
+  const visibility = {
+    postedIds: new Set<string>(),
+    hiddenIds: new Set<string>(),
+    invoiceIds: new Set(logs.map((log) => log.id)),
+  };
+  assert.equal(receivingLogRemainsVisible(logs[0]!, visibility), true);
+  assert.equal(receivingLogRemainsVisible(logs[1]!, visibility), false);
+});
+
+test('an older open draft does not come back under a newer scan', () => {
+  const older = row({ id: 'draft-old', createdAt: new Date('2026-11-11T10:00:00.000Z') });
+  const newerSample = row({
+    id: 'draft-sample',
+    createdAt: new Date('2026-11-11T11:00:00.000Z'),
+    payload: {
+      vendorName: 'Sample',
+      invoiceNumber: DEMO_INVOICE_NUMBER,
+      invoiceDate: '2026-11-01',
+      totalAmount: 1,
+      departmentBreakdown: {},
+      lines: [
+        {
+          product_id: 'x',
+          quantity: 1,
+          unit_cost: 1,
+          line_name: 'Practice apples',
+          department: 'PRODUCE',
+          line_confidence: 1,
+          requires_approval: false,
+        },
+      ],
+    },
+  });
+  assert.equal(pickOpenInvoiceScan([older, newerSample], 'clerk-1', now), null);
 });
 
 test('a consumed, expired, sample, or empty draft is not restored', () => {

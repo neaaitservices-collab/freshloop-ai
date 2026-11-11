@@ -31,10 +31,16 @@ export async function DELETE(req: NextRequest) {
     const actor = await requireReceivingStaff();
     const body = await parseJsonBody(req, discardSchema);
     const discarded = await discardOpenInvoiceScan(actor.id, body.draftId);
-    if (!discarded) {
+    if (!discarded.ok) {
       return NextResponse.json(
-        { success: false, error: 'That scan is not open.' },
-        { status: 404 }
+        {
+          success: false,
+          error:
+            discarded.status === 409
+              ? 'This scan was already received.'
+              : 'That scan is not open.',
+        },
+        { status: discarded.status }
       );
     }
     return NextResponse.json({ success: true });

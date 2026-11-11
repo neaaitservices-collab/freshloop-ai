@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/Button';
 import { Card, CardBody } from '@/components/ui/Card';
 import type { ReceivingDeliveryListResult } from '@/lib/domains/receiving/receivingDeliveries';
 import type { InvoiceOcrResult } from '@/lib/types';
+import { restoredScanLogs, type RestoredInvoiceScan } from '@/lib/domains/receiving/openInvoiceScan';
 import {
   applyOpenScanChoice,
   clearOpenScanChoice,
@@ -51,9 +52,9 @@ export function ReceiveScreen({
   openScan = null,
 }: {
   initial: ReceivingDeliveryListResult;
-  openScan?: InvoiceOcrResult | null;
+  openScan?: RestoredInvoiceScan | null;
 }) {
-  const restoredLogs = openScan ? receivingLogsFromInvoice(openScan) : [];
+  const restoredLogs = openScan ? restoredScanLogs(openScan) : [];
   const openScanDraftId = openScan?.draftId?.trim() ?? '';
   const [invoiceOpen, setInvoiceOpen] = useState(false);
   const [scannedLogs, setScannedLogs] = useState<ReceivingLog[]>(restoredLogs);
@@ -309,9 +310,20 @@ export function ReceiveScreen({
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ draftId }),
     });
-    if (!response.ok && response.status !== 404) return false;
+    if (!response.ok && response.status !== 404 && response.status !== 409) return false;
     clearOpenScanChoice();
     return true;
+  };
+
+  const closeOpenDraft = async (draftId: string) => {
+    try {
+      const cleared = await forgetStoredScan(draftId);
+      if (!cleared) {
+        setScanNote('The scan could not be discarded. It may still be here after a refresh.');
+      }
+    } catch {
+      setScanNote('The scan could not be discarded. It may still be here after a refresh.');
+    }
   };
 
   const discardScan = async () => {
@@ -434,15 +446,9 @@ export function ReceiveScreen({
             screenDepartment={screenDepartment || undefined}
             onScanNext={() => setInvoiceOpen(true)}
             onLogDisposition={(logId) =>
-              setScannedLogs((prev) => {
-                const next = prev.filter((log) => log.id !== logId);
-                if (next.length === 0) {
-                  const draftId = prev.find((log) => log.draftId)?.draftId;
-                  if (draftId) void forgetStoredScan(draftId);
-                }
-                return next;
-              })
+              setScannedLogs((prev) => prev.filter((log) => log.id !== logId))
             }
+            onOpenDraftCleared={(draftId) => closeOpenDraft(draftId)}
           />
         </div>
       </PageMain>

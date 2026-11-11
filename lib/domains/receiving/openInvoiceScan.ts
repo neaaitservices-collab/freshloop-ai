@@ -1,7 +1,13 @@
 import type { Department } from '@prisma/client';
 import type { OcrDraftLine, OcrDraftPayload } from '@/lib/domains/receiving/invoiceOcrCommit';
 import { gateStoredOcrDraft } from '@/lib/domains/receiving/sampleReceivingGuard';
+import { receivingLogsFromInvoice } from '@/lib/domains/receiving/receivingBridge';
+import type { ReceivingLog } from '@/lib/domains/receiving/yieldPricing';
 import type { InvoiceOcrResult } from '@/lib/types';
+
+export interface RestoredInvoiceScan extends InvoiceOcrResult {
+  postedLineIndexes: number[];
+}
 
 const DEPARTMENTS = new Set<Department>([
   'PRODUCE',
@@ -63,11 +69,20 @@ function breakdownOf(raw: Record<string, number> | undefined): InvoiceOcrResult[
   return next;
 }
 
+export function postedLineIndexesOf(payload: unknown): number[] {
+  if (!payload || typeof payload !== 'object') return [];
+  const value = (payload as { postedLineIndexes?: unknown }).postedLineIndexes;
+  if (!Array.isArray(value)) return [];
+  return [
+    ...new Set(value.filter((entry): entry is number => Number.isInteger(entry) && (entry as number) >= 0)),
+  ];
+}
+
 /** Rebuild the receive-screen invoice from the stored OCR draft. Line indexes stay aligned. */
 export function invoiceResultFromStoredDraft(row: {
   id: string;
   payload: unknown;
-}): InvoiceOcrResult | null {
+}): RestoredInvoiceScan | null {
   const payload = readPayload(row.payload);
   if (!payload) return null;
   const supplierRaw =
@@ -103,34 +118,43 @@ export function invoiceResultFromStoredDraft(row: {
     departmentBreakdown: breakdownOf(payload.departmentBreakdown),
     lineItems,
     draftId: row.id,
+    postedLineIndexes: postedLineIndexesOf(row.payload),
     ...(supplierId ? { supplierId } : {}),
   };
 }
 
-/** Newest unconsumed, unexpired scan for this clerk. Sample invoices stay off the board. */
+/** Posted lines stay in the list so later lines keep their stored indexes. */
+export function restoredScanLogs(scan: RestoredInvoiceScan): ReceivingLog[] {
+  const posted = new Set(scan.postedLineIndexes);
+  return receivingLogsFromInvoice(scan).map((log) =>
+    typeof log.draftLineIndex === 'number' && posted.has(log.draftLineIndex)
+      ? { ...log, alreadyPosted: true }
+      : log
+  );
+}
+
+/** The newest unconsumed, unexpired scan. An older open draft is not a fallback. */
 export function pickOpenInvoiceScan(
   rows: OpenScanRow[],
   staffId: string,
   now = new Date()
 ): OpenScanRow | null {
-  const open = rows
+  const newest = rows
     .filter(
       (row) =>
         row.staffId === staffId &&
         row.consumedAt === null &&
         row.expiresAt.getTime() > now.getTime()
     )
-    .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
-  for (const row of open) {
-    const payload = readPayload(row.payload);
-    if (!payload) continue;
-    const gate = gateStoredOcrDraft(
-      { expiresAt: row.expiresAt, payload: { invoiceNumber: payload.invoiceNumber } },
-      now.getTime()
-    );
-    if (!gate.ok) continue;
-    if (!invoiceResultFromStoredDraft(row)) continue;
-    return row;
-  }
-  return null;
+    .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0];
+  if (!newest) return null;
+  const payload = readPayload(newest.payload);
+  if (!payload) return null;
+  const gate = gateStoredOcrDraft(
+    { expiresAt: newest.expiresAt, payload: { invoiceNumber: payload.invoiceNumber } },
+    now.getTime()
+  );
+  if (!gate.ok) return null;
+  if (!invoiceResultFromStoredDraft(newest)) return null;
+  return newest;
 }
