@@ -88,6 +88,8 @@ export interface InvoiceOcrResult {
   ocrConfidenceThreshold?: number;
   /** Server scan id. Corrections and commit both use this draft. */
   draftId?: string;
+  /** Manager confirmed low-confidence or cost-guardrail lines on this scan. */
+  manualReviewOverride?: boolean;
 }
 
 export interface VoiceParsedItem {

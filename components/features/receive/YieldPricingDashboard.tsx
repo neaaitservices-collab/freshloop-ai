@@ -46,6 +46,7 @@ import { SUPPLIER_REQUIRED_ERROR } from '@/lib/domains/receiving/invoiceDelivery
 import { deliveryListPresentation } from '@/lib/domains/receiving/deliveryListPresentation';
 import { receivingLogRemainsVisible } from '@/lib/domains/receiving/receivingListVisibility';
 import { recentDeliveryStripItems } from '@/lib/domains/receiving/recentDeliveryStrip';
+import { invoiceScanBatchFields, invoiceScanPostFields } from '@/lib/domains/receiving/receivingBridge';
 
 interface LogsResponse {
   success?: boolean;
@@ -171,6 +172,7 @@ async function postLogToInventory(
       ...(log.departmentAssumed ? { departmentAssumed: true } : {}),
       ...(log.category ? { category: log.category } : {}),
       ...(screenDepartment ? { screenDepartment } : {}),
+      ...invoiceScanPostFields(log),
     }),
   });
   let json: {
@@ -225,6 +227,7 @@ function logPricingToPostBody(
     ...(log.departmentAssumed ? { departmentAssumed: true } : {}),
     ...(log.category ? { category: log.category } : {}),
     ...(screenDepartment ? { screenDepartment } : {}),
+    ...invoiceScanPostFields(log),
   };
 }
 
@@ -254,6 +257,7 @@ async function postLogsBatchToInventory(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       supplierId,
+      ...invoiceScanBatchFields(entries.map((entry) => entry.log)),
       items: entries.map(({ log, pricing }) =>
         logPricingToPostBody(log, pricing, supplierId, screenDepartment)
       ),

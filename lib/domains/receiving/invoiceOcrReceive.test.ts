@@ -1,0 +1,279 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { NextRequest } from 'next/server';
+import { POST as postReceivingBatch } from '@/app/api/receiving-logs/batch/route';
+import { setReceivingStaffTestAuth } from '@/lib/auth/receivingStaffTestAuth';
+import {
+  OCR_CLIENT_COPY_REJECTED,
+  OCR_DRAFT_NOT_ACCEPTED,
+  receiveAcceptedInvoiceOcr,
+  type InvoiceOcrPostEntry,
+  type OcrDraftRecord,
+} from '@/lib/domains/receiving/invoiceOcrReceive';
+import type { ReceivingLogPostResult } from '@/lib/domains/receiving/receivingLogPost';
+
+const DELIVERY_ID = '33333333-3333-4333-8333-333333333333';
+
+function storedDraft(): OcrDraftRecord {
+  return {
+    id: 'draft-1',
+    staffId: 'clerk-1',
+    expiresAt: new Date(Date.now() + 60_000),
+    consumedAt: null,
+    payload: {
+      vendorName: 'Tony Deodato',
+      invoiceNumber: 'INV-100',
+      invoiceDate: '2026-11-08',
+      totalAmount: 36,
+      departmentBreakdown: { PRODUCE: 36 },
+      lines: [
+        {
+          product_id: 'sku-apple',
+          quantity: 3,
+          quantity_kind: 'cases',
+          unit_cost: 12,
+          line_name: 'Honeycrisp Apples',
+          department: 'PRODUCE',
+          case_pack_size: 40,
+          line_confidence: 0.96,
+          requires_approval: false,
+        },
+      ],
+    },
+  };
+}
+
+function browserCopy(overrides: Record<string, unknown> = {}) {
+  return {
+    draftLineIndex: 0,
+    externalLogId: DELIVERY_ID,
+    itemName: 'Honeycrisp Apples',
+    productId: 'sku-apple',
+    casesReceived: 3,
+    caseCost: 12,
+    packSize: 40,
+    splitFactor: 1,
+    retailUnit: 'units',
+    marginMode: '40',
+    currentRetailPrice: 2.5,
+    ...overrides,
+  };
+}
+
+function deps(draft: OcrDraftRecord | null, posted: InvoiceOcrPostEntry[]) {
+  return {
+    findDraft: async () => draft,
+    postLines: async (input: { entries: InvoiceOcrPostEntry[] }) => {
+      posted.push(...input.entries);
+      return input.entries.map(
+        (entry): ReceivingLogPostResult => ({
+          externalLogId: entry.line.externalLogId,
+          itemName: entry.line.itemName,
+          stock: {
+            posted: true,
+            unitsAdded: entry.line.casesReceived,
+            onHand: entry.line.casesReceived,
+            productId: entry.line.productId ?? '',
+            productName: entry.line.itemName,
+            transactionId: 'tx-1',
+          },
+        })
+      );
+    },
+  };
+}
+
+test('an accepted server draft posts its stored quantity and cost', async () => {
+  const posted: InvoiceOcrPostEntry[] = [];
+  const outcome = await receiveAcceptedInvoiceOcr({
+    actorId: 'clerk-1',
+    actorIsManager: false,
+    body: {
+      invoiceOcr: true,
+      draftId: 'draft-1',
+      acceptDraft: true,
+      supplierId: 'sup-1',
+      items: [browserCopy()],
+    },
+    deps: deps(storedDraft(), posted),
+  });
+  assert.equal(outcome.ok, true);
+  if (!outcome.ok) return;
+  assert.equal(posted.length, 1);
+  assert.equal(posted[0]?.line.casesReceived, 3);
+  assert.equal(posted[0]?.line.caseCost, 12);
+  assert.equal(posted[0]?.line.itemName, 'Honeycrisp Apples');
+  assert.equal(posted[0]?.line.productId, 'sku-apple');
+  assert.equal(outcome.results[0]?.stock.posted, true);
+  if (outcome.results[0]?.stock.posted) {
+    assert.equal(outcome.results[0].stock.unitsAdded, 3);
+  }
+});
+
+test('client-only invoice data is rejected', async () => {
+  let lookedUp = false;
+  let wrote = false;
+  const outcome = await receiveAcceptedInvoiceOcr({
+    actorId: 'clerk-1',
+    actorIsManager: false,
+    body: {
+      invoiceOcr: true,
+      items: [browserCopy({ casesReceived: 40, caseCost: 1 })],
+    },
+    deps: {
+      findDraft: async () => {
+        lookedUp = true;
+        return storedDraft();
+      },
+      postLines: async () => {
+        wrote = true;
+        return [];
+      },
+    },
+  });
+  assert.equal(outcome.ok, false);
+  if (outcome.ok) return;
+  assert.equal(outcome.status, 400);
+  assert.equal(outcome.error, OCR_CLIENT_COPY_REJECTED);
+  assert.equal(lookedUp, false);
+  assert.equal(wrote, false);
+});
+
+test('a tampered client payload is ignored and the stored draft is posted', async () => {
+  const posted: InvoiceOcrPostEntry[] = [];
+  const outcome = await receiveAcceptedInvoiceOcr({
+    actorId: 'clerk-1',
+    actorIsManager: false,
+    body: {
+      invoiceOcr: true,
+      draftId: 'draft-1',
+      acceptDraft: true,
+      supplierId: 'sup-1',
+      items: [
+        browserCopy({
+          itemName: 'Free apples',
+          productId: 'evil-sku',
+          casesReceived: 99,
+          caseCost: 0.01,
+          unit_cost: 0.01,
+          quantity: 99,
+        }),
+      ],
+    },
+    deps: deps(storedDraft(), posted),
+  });
+  assert.equal(outcome.ok, true);
+  if (!outcome.ok) return;
+  assert.equal(posted.length, 1);
+  assert.equal(posted[0]?.line.casesReceived, 3);
+  assert.equal(posted[0]?.line.caseCost, 12);
+  assert.equal(posted[0]?.line.itemName, 'Honeycrisp Apples');
+  assert.equal(posted[0]?.line.productId, 'sku-apple');
+  assert.notEqual(posted[0]?.line.casesReceived, 99);
+  assert.notEqual(posted[0]?.line.caseCost, 0.01);
+});
+
+test('an unaccepted draft is rejected', async () => {
+  let wrote = false;
+  const outcome = await receiveAcceptedInvoiceOcr({
+    actorId: 'clerk-1',
+    actorIsManager: false,
+    body: {
+      invoiceOcr: true,
+      draftId: 'draft-1',
+      supplierId: 'sup-1',
+      items: [browserCopy()],
+    },
+    deps: {
+      findDraft: async () => storedDraft(),
+      postLines: async () => {
+        wrote = true;
+        return [];
+      },
+    },
+  });
+  assert.equal(outcome.ok, false);
+  if (outcome.ok) return;
+  assert.equal(outcome.status, 409);
+  assert.equal(outcome.error, OCR_DRAFT_NOT_ACCEPTED);
+  assert.equal(wrote, false);
+});
+
+test('a clerk cannot post a cost-guardrail line by sending an override flag', async () => {
+  let wrote = false;
+  const draft = storedDraft();
+  const payload = draft.payload as { lines: Array<{ requires_approval: boolean }> };
+  payload.lines[0]!.requires_approval = true;
+  const outcome = await receiveAcceptedInvoiceOcr({
+    actorId: 'clerk-1',
+    actorIsManager: false,
+    body: {
+      invoiceOcr: true,
+      draftId: 'draft-1',
+      acceptDraft: true,
+      manualReviewOverride: true,
+      supplierId: 'sup-1',
+      items: [browserCopy()],
+    },
+    deps: {
+      findDraft: async () => draft,
+      postLines: async () => {
+        wrote = true;
+        return [];
+      },
+    },
+  });
+  assert.equal(outcome.ok, false);
+  if (outcome.ok) return;
+  assert.equal(outcome.status, 409);
+  assert.equal(wrote, false);
+});
+
+test('a sanctioned quantity correction is posted and the browser quantity is not', async () => {
+  const posted: InvoiceOcrPostEntry[] = [];
+  const outcome = await receiveAcceptedInvoiceOcr({
+    actorId: 'clerk-1',
+    actorIsManager: false,
+    body: {
+      invoiceOcr: true,
+      draftId: 'draft-1',
+      acceptDraft: true,
+      supplierId: 'sup-1',
+      resolutions: { lines: [{ index: 0, quantity: 5 }] },
+      items: [browserCopy({ casesReceived: 99, caseCost: 0.01 })],
+    },
+    deps: deps(storedDraft(), posted),
+  });
+  assert.equal(outcome.ok, true);
+  if (!outcome.ok) return;
+  assert.equal(posted[0]?.line.casesReceived, 5);
+  assert.equal(posted[0]?.line.caseCost, 12);
+});
+
+test('POST /api/receiving-logs/batch rejects a browser invoice copy with no draft', async (t) => {
+  setReceivingStaffTestAuth(async () => ({
+    id: 'clerk-1',
+    name: 'Clerk',
+    email: 'clerk@example.com',
+    role: 'RECEIVING_CLERK',
+    position: 'Receiver',
+    hourlyRate: null,
+  }));
+  t.after(() => setReceivingStaffTestAuth(null));
+  const response = await postReceivingBatch(
+    new NextRequest('http://localhost:3000/api/receiving-logs/batch', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        invoiceOcr: true,
+        supplierId: 'sup-1',
+        items: [browserCopy({ casesReceived: 99, caseCost: 0.01 })],
+      }),
+    })
+  );
+  const body = (await response.json()) as { success?: boolean; error?: string; code?: string };
+  assert.equal(response.status, 400);
+  assert.equal(body.success, false);
+  assert.equal(body.code, 'OCR_DRAFT_REQUIRED');
+  assert.match(body.error ?? '', /browser copy/i);
+});
