@@ -8,6 +8,10 @@ import {
   draftForSupplier,
   draftsForSuppliers,
   matchSupplierRecipient,
+  purchaseOrderLineKey,
+  purchaseOrderMailto,
+  purchaseOrderSendAllConfirm,
+  purchaseOrderSendPlan,
   storedSupplierRecipient,
   supplierRecipientHint,
 } from '@/components/features/orders/supplierMail';
@@ -118,6 +122,7 @@ test('supplier names match trimmed and case-insensitive, and ambiguous names sta
   assert.equal(matched.length, 1);
   assert.equal(matched[0].to, 'desk@dairy.test');
   assert.equal(matched[0].recipientIssue, undefined);
+  assert.equal(matched[0].supplierId, null);
   assert.deepEqual(matched[0].productIds, ['dairy-milk']);
   assert.equal(supplierRecipientHint(matched[0]), null);
 
@@ -143,7 +148,7 @@ test('supplier names match trimmed and case-insensitive, and ambiguous names sta
   assert.doesNotMatch(AMBIGUOUS_SUPPLIER_EMAIL_HINT, /@/);
 });
 
-test('purchase order panel keeps drafts separate and does not send mail', () => {
+test('purchase order panel sends one supplier at a time and falls back to mail', () => {
   const panel = readFileSync('components/features/orders/PoEmailPanel.tsx', 'utf8');
   const buyList = readFileSync('components/features/orders/BuyList.tsx', 'utf8');
   const mail = readFileSync('components/features/orders/supplierMail.ts', 'utf8');
@@ -151,9 +156,14 @@ test('purchase order panel keeps drafts separate and does not send mail', () => 
   assert.match(panel, /supplierRecipientHint/);
   assert.match(panel, /href="\/admin\/suppliers"/);
   assert.match(panel, /Prepare draft/);
-  assert.equal(panel.includes('mailto:'), false);
+  assert.match(panel, />\s*Send\s*</);
+  assert.match(panel, /Send all/);
+  assert.match(panel, /purchaseOrderSendPlan/);
+  assert.match(panel, /purchaseOrderSendAllConfirm/);
+  assert.match(panel, /EMAIL_NOT_CONFIGURED/);
+  assert.match(panel, /purchaseOrderMailto/);
+  assert.equal(panel.includes('drafts.map((draft) => draft.to).join'), false);
   assert.equal(/resend/i.test(panel), false);
-  assert.equal(/\bsent\b/i.test(panel), false);
   assert.equal(/\bkitchen\b/i.test(panel), false);
 
   assert.match(buyList, /draftsForSuppliers\(/);
@@ -167,5 +177,31 @@ test('purchase order panel keeps drafts separate and does not send mail', () => 
   assert.equal(mail.includes('draftForAll'), false);
   assert.equal(mail.includes('recipients.join'), false);
   assert.match(mail, /draftForRows/);
+  assert.match(mail, /Each supplier gets only their own order/);
   assert.equal(/\bkitchen\b/i.test(mail), false);
+});
+
+test('send all keeps each supplier separate and skips a blank address', () => {
+  const farm = draftForSupplier('Farm & Sons', [row('Farm & Sons', 'Bananas', 'farm-banana')], [
+    { id: 'sup-farm', name: 'Farm & Sons', contactEmail: 'buyer@farm.test' },
+  ]);
+  const greens = draftForSupplier('Greens', [row('Greens', 'Kale', 'greens-kale')], []);
+  assert.equal(farm.supplierId, 'sup-farm');
+  const plan = purchaseOrderSendPlan([farm, greens]);
+  assert.deepEqual(plan.ready.map((draft) => draft.supplier), ['Farm & Sons']);
+  assert.deepEqual(plan.skipped.map((draft) => draft.supplier), ['Greens']);
+  assert.equal(plan.ready[0].to.includes('buyer@farm.test'), true);
+  assert.equal(plan.ready[0].body.includes('Kale'), false);
+  assert.match(purchaseOrderSendAllConfirm(plan.ready.length), /1 supplier/);
+  assert.match(purchaseOrderSendAllConfirm(2), /2 suppliers/);
+  assert.match(purchaseOrderSendAllConfirm(2), /only their own order/);
+
+  const mailto = purchaseOrderMailto(farm);
+  assert.match(mailto ?? '', /^mailto:buyer@farm\.test\?/);
+  assert.equal(purchaseOrderMailto(greens), null);
+
+  const key = purchaseOrderLineKey(farm);
+  assert.equal(purchaseOrderLineKey({ ...farm, productIds: [...farm.productIds] }), key);
+  assert.notEqual(purchaseOrderLineKey({ ...farm, body: `${farm.body}\nextra` }), key);
+  assert.equal(key.includes('buyer@farm.test'), false);
 });

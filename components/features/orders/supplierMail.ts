@@ -10,6 +10,7 @@ export function acknowledgePurchaseOrderDraft(): { notice: string; markSent: fal
 }
 
 export interface SupplierDirectoryEntry {
+  id?: string | null;
   name: string;
   contactEmail?: string | null;
 }
@@ -24,6 +25,8 @@ export const AMBIGUOUS_SUPPLIER_EMAIL_HINT =
 
 export interface PoDraft {
   supplier: string;
+  /** Directory id when one supplier matched. The server also resolves by name. */
+  supplierId?: string | null;
   to: string;
   subject: string;
   body: string;
@@ -85,7 +88,7 @@ export function matchSupplierRecipient(
   supplierName: string,
   directory: readonly SupplierDirectoryEntry[]
 ):
-  | { status: 'matched'; email: string }
+  | { status: 'matched'; email: string; supplierId: string | null }
   | { status: 'missing' }
   | { status: 'ambiguous' } {
   const key = supplierNameKey(supplierName);
@@ -95,7 +98,8 @@ export function matchSupplierRecipient(
   if (matches.length > 1) return { status: 'ambiguous' };
   const email = storedSupplierRecipient(matches[0]?.contactEmail);
   if (!email) return { status: 'missing' };
-  return { status: 'matched', email };
+  const supplierId = matches[0]?.id?.trim() || null;
+  return { status: 'matched', email, supplierId };
 }
 
 export function supplierRecipientHint(
@@ -114,11 +118,14 @@ export function draftForSupplier(
 ): PoDraft {
   const ownRows = rowsForSupplier(supplier, rows);
   const match = matchSupplierRecipient(supplier, directory);
-  if (match.status === 'matched') return draftForRows(supplier, ownRows, match.email);
+  if (match.status === 'matched') {
+    return { ...draftForRows(supplier, ownRows, match.email), supplierId: match.supplierId };
+  }
   return {
     ...draftForRows(supplier, ownRows, null),
     to: '',
     recipientIssue: match.status,
+    supplierId: null,
   };
 }
 
@@ -130,6 +137,58 @@ export function draftsForSuppliers(
   return groups
     .filter((group) => rowsForSupplier(group.supplier, group.rows).length > 0)
     .map((group) => draftForSupplier(group.supplier, group.rows, directory));
+}
+
+function hashLineKey(value: string): string {
+  const seeds = [0x811c9dc5, 0x01000193, 0x811c9dc5 ^ 0x9e3779b9, 0x85ebca6b];
+  return seeds
+    .map((seed) => {
+      let hash = seed;
+      for (let i = 0; i < value.length; i++) {
+        hash ^= value.charCodeAt(i);
+        hash = Math.imul(hash, 0x01000193);
+      }
+      return (hash >>> 0).toString(16).padStart(8, '0');
+    })
+    .join('');
+}
+
+/** Stable idempotency key for one supplier's current order lines. */
+export function purchaseOrderLineKey(draft: {
+  supplier: string;
+  productIds: readonly string[];
+  body: string;
+}): string {
+  const ids = [...draft.productIds].map((id) => id.trim()).filter(Boolean).sort();
+  const body = draft.body.replace(/\r\n/g, '\n').trim();
+  return hashLineKey(`${draft.supplier.trim().toLowerCase()}\n${ids.join('\n')}\n${body}`);
+}
+
+export function purchaseOrderMailto(
+  draft: Pick<PoDraft, 'to' | 'subject' | 'body'>
+): string | null {
+  const to = draft.to.trim();
+  if (!to) return null;
+  return `mailto:${to}?subject=${encodeURIComponent(draft.subject)}&body=${encodeURIComponent(draft.body)}`;
+}
+
+/** Suppliers with a To address can be emailed. The rest are listed and skipped. */
+export function purchaseOrderSendPlan(drafts: readonly PoDraft[]): {
+  ready: PoDraft[];
+  skipped: PoDraft[];
+} {
+  const ready: PoDraft[] = [];
+  const skipped: PoDraft[] = [];
+  for (const draft of drafts) {
+    if (draft.to.trim()) ready.push(draft);
+    else skipped.push(draft);
+  }
+  return { ready, skipped };
+}
+
+export function purchaseOrderSendAllConfirm(count: number): string {
+  const noun = count === 1 ? 'supplier' : 'suppliers';
+  return `Send a separate email to ${count} ${noun}? Each supplier gets only their own order.`;
 }
 
 export function groupBySupplier(levels: StockLevel[]): Record<string, StockLevel[]> {
