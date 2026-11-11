@@ -9,7 +9,6 @@ import {
   torontoWeekdayIndex,
 } from '@/lib/domains/stats/storeTime';
 import { statsRangeQuerySchema } from '@/lib/security/schemas/statsRange';
-import { kitchenInboxReceiptQty } from '@/lib/domains/inventory/kitchenInbox';
 import { isInboundProductionTransfer } from '@/lib/domains/inventory/kitchenInbox';
 
 test('spring-forward and fall-back days stay half-open', () => {
@@ -68,9 +67,4 @@ test('a production transfer counts the inbound leg only', () => {
     0
   );
   assert.equal(units, 4);
-  const inbox = kitchenInboxReceiptQty([
-    { productId: 'apple', qtyChange: 4 },
-    { productId: 'apple', qtyChange: -4 },
-  ]);
-  assert.equal(inbox.get('apple'), 4);
 });

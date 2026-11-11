@@ -144,13 +144,6 @@ export async function executeInventoryMove(input: {
   if (result.ok && result.offline) {
     if (input.broadcast !== false) {
       notifyInventoryUpdated({ productId: input.productId });
-      if (input.action === 'rescue' && typeof window !== 'undefined') {
-        window.dispatchEvent(
-          new CustomEvent('freshloop-kitchen-inbox', {
-            detail: { productId: input.productId, units: input.quantity },
-          })
-        );
-      }
     }
     return {
       success: true,
@@ -177,13 +170,6 @@ export async function executeInventoryMove(input: {
   }
   if (input.broadcast !== false) {
     notifyInventoryUpdated({ level: json.level, productId: input.productId });
-    if (input.action === 'rescue' && typeof window !== 'undefined') {
-      window.dispatchEvent(
-        new CustomEvent('freshloop-kitchen-inbox', {
-          detail: { productId: input.productId, units: json.units },
-        })
-      );
-    }
   }
   return {
     success: true,

@@ -4,7 +4,6 @@ import { quantityKindForInvoiceUnit } from '@/lib/domains/receiving/invoiceOcrCo
 import { parseInvoiceIdentity, parseInvoiceLineFields } from '@/lib/domains/receiving/invoiceOcrParse';
 import { draftPostingBlockers, buildAuthoritativeOcrDraft, applyOcrDraftResolutions } from '@/lib/domains/receiving/invoiceOcrDraft';
 import { isLedgerIdempotencyConflict } from '@/lib/domains/inventory/idempotencyConflict';
-import { kitchenInboxReceiptQty } from '@/lib/domains/inventory/kitchenInbox';
 
 test('missing invoice identity stays blank', () => {
   const identity = parseInvoiceIdentity({});
@@ -181,13 +180,4 @@ test('only the ledger idempotency key is treated as a replay', () => {
     false
   );
   assert.equal(isLedgerIdempotencyConflict({ code: 'P2003' }), false);
-});
-
-test('kitchen inbox counts a rescue once and ignores production consumption', () => {
-  const totals = kitchenInboxReceiptQty([
-    { productId: 'apple', qtyChange: -4 },
-    { productId: 'apple', qtyChange: 4 },
-    { productId: 'apple', qtyChange: -3 },
-  ]);
-  assert.equal(totals.get('apple'), 4);
 });

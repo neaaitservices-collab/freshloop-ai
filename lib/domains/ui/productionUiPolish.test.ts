@@ -15,7 +15,8 @@ test('phone nav keeps five items and parks the rest in More', () => {
     [...split.bar, ...split.more].map((item) => item.id),
     admin.map((item) => item.id)
   );
-  assert.ok(split.more.some((item) => item.label === 'Operations'));
+  assert.equal(split.more.some((item) => item.label === 'Operations'), false);
+  assert.ok(split.more.some((item) => item.label === 'Orders'));
 
   for (const role of ['FLOOR_STAFF', 'DELI_CHEF', 'RECEIVING_CLERK'] as const) {
     const items = navItemsForRole(role);
@@ -29,7 +30,6 @@ const PHONE_POLISH_FILES = [
   'app/operations/page.tsx',
   'components/features/inventory/SubInventoryTransferBar.tsx',
   'components/features/inventory/SubInventoryTransferList.tsx',
-  'components/features/operations/OperationsCenter.tsx',
   'components/features/operations/VolumetricScrapForm.tsx',
   'components/features/production/ProductionActiveBomPanel.tsx',
   'components/features/production/ProductionBomKpiBadges.tsx',
@@ -82,12 +82,23 @@ test('execute-batch footer uses a plain Make label', () => {
   assert.match(bom, /Execute batch/);
 });
 
-test('operations links to production and does not mount a second transfer panel', () => {
-  const ops = readFileSync('components/features/operations/OperationsCenter.tsx', 'utf8');
-  assert.equal(ops.includes('OperationsLiveTransfers'), false);
-  assert.match(ops, /href="\/production"/);
+test('/operations is a guarded permanent redirect to production', () => {
   const page = readFileSync('app/operations/page.tsx', 'utf8');
-  assert.equal(page.includes('getStockLevels'), false);
+  const guardAt = page.indexOf("guardFreshPage('/operations')");
+  const redirectAt = page.indexOf("permanentRedirect('/production')");
+  assert.ok(guardAt !== -1 && redirectAt !== -1 && guardAt < redirectAt);
+  assert.equal(page.includes('OperationsCenter'), false);
+  for (const role of ['ADMIN', 'STORE_MANAGER'] as const) {
+    const items = navItemsForRole(role);
+    assert.equal(
+      items.some((item) => item.id === 'operations' || item.href === '/operations'),
+      false,
+      role
+    );
+  }
+});
+
+test('production keeps the live transfer panel', () => {
   const production = readFileSync(
     'components/features/production/ProductionFloorTransfersSection.tsx',
     'utf8'
