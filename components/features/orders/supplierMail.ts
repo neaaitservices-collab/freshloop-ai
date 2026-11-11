@@ -210,12 +210,41 @@ export function purchaseOrderRepeatGate(status: number): 'open' | 'confirm' | 'i
   return 'issue';
 }
 
-/** Stable id for one supplier order, including To so an edited address is checked again. */
-export function purchaseOrderOpenIdentity(
-  draft: Pick<PoDraft, 'supplier' | 'supplierId' | 'to' | 'subject' | 'body' | 'productIds'>
+/** Supplier and line identity. To, subject, and body are text and stay out of it. */
+export function purchaseOrderOpenIdentity(draft: {
+  supplier: string;
+  supplierId?: string | null;
+  productIds: readonly string[];
+}): string {
+  const id = draft.supplierId?.trim() || draft.supplier.trim().toLowerCase();
+  const products = [...draft.productIds].map((productId) => productId.trim()).filter(Boolean).sort();
+  return `${id}\n${products.join(',')}`;
+}
+
+/** One check for the set of suppliers being opened. To, subject, and body do not change it. */
+export function purchaseOrderCheckKey(
+  drafts: readonly {
+    supplier: string;
+    supplierId?: string | null;
+    productIds: readonly string[];
+    to?: string;
+    subject?: string;
+    body?: string;
+  }[]
 ): string {
-  const email = singleSupplierEmail(draft.to) ?? '';
-  return `${draft.supplierId ?? ''}\n${draft.supplier}\n${draft.subject}\n${email}\n${purchaseOrderLineKey(draft)}`;
+  return drafts.map((draft) => purchaseOrderOpenIdentity(draft)).sort().join('\n');
+}
+
+export function purchaseOrderRememberOpen(
+  known: Record<string, { state: 'checking' | 'ready' | 'opened'; openedAt?: string }>,
+  id: string,
+  status: number,
+  openedAt?: string
+): Record<string, { state: 'checking' | 'ready' | 'opened'; openedAt?: string }> {
+  if (status === 409 || (status >= 200 && status < 300)) {
+    return { ...known, [id]: { state: 'opened', openedAt } };
+  }
+  return known;
 }
 
 export function purchaseOrderGroupOpenState(

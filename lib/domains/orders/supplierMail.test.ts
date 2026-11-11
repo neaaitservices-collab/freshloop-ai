@@ -19,10 +19,12 @@ import {
   purchaseOrderGroupCompose,
   purchaseOrderLineKey,
   purchaseOrderMailto,
+  purchaseOrderCheckKey,
   purchaseOrderClickPlan,
   purchaseOrderGroupOpenState,
   purchaseOrderOpenedWarning,
   purchaseOrderRepeatGate,
+  purchaseOrderRememberOpen,
   purchaseOrderRepeatWarning,
   purchaseOrderSendPlan,
   purchaseOrderSkippedNoEmail,
@@ -472,7 +474,8 @@ test('a fresh mailto is not cancelled and nothing is logged before the click', (
   assert.deepEqual(again.log, { reopen: true });
 
   const panel = readFileSync('components/features/orders/PoEmailPanel.tsx', 'utf8');
-  const effect = panel.slice(panel.indexOf('useEffect(() => {'), panel.indexOf('}, [watchKey]);'));
+  const effect = panel.slice(panel.indexOf('useEffect(() => {'), panel.indexOf('}, [checkKey]);'));
+  assert.match(effect, /setCheckIssues\(\[\]\)/);
   assert.match(effect, /checkOnly: true/);
   assert.equal(effect.includes('logOpened'), false);
   assert.equal(effect.includes('reopen'), false);
@@ -482,6 +485,54 @@ test('a fresh mailto is not cancelled and nothing is logged before the click', (
   assert.match(panel, /if \(!plan\.log\) return;/);
   assert.match(panel, /onOpen\(plan\.log\.reopen\)/);
   assert.equal(panel.includes('keepalive'), false);
+});
+
+test('typing in To, subject, or body does not start another open check', () => {
+  const base = {
+    supplierId: 'sup-farm',
+    supplier: 'Farm & Sons',
+    to: 'buyer@farm.test',
+    subject: 'Order',
+    body: '2 cases - Bananas',
+    productIds: ['farm-banana'],
+  };
+  const key = purchaseOrderCheckKey([base]);
+  assert.equal(purchaseOrderCheckKey([{ ...base, to: 'other@farm.test' }]), key);
+  assert.equal(purchaseOrderCheckKey([{ ...base, subject: 'Changed subject' }]), key);
+  assert.equal(purchaseOrderCheckKey([{ ...base, body: 'typed in the draft' }]), key);
+  assert.notEqual(purchaseOrderCheckKey([{ ...base, supplierId: 'sup-other' }]), key);
+  assert.notEqual(purchaseOrderCheckKey([{ ...base, productIds: ['other-line'] }]), key);
+
+  const panel = readFileSync('components/features/orders/PoEmailPanel.tsx', 'utf8');
+  assert.match(panel, /const checkKey = purchaseOrderCheckKey\(loggable\)/);
+  assert.match(panel, /\}, \[checkKey\]\);/);
+  const effect = panel.slice(panel.indexOf('useEffect(() => {'), panel.indexOf('}, [checkKey]);'));
+  assert.match(effect, /setCheckIssues\(\[\]\)/);
+  assert.equal(effect.includes('watchKey'), false);
+  assert.equal(effect.includes('logOpened'), false);
+});
+
+test('a successful or repeat open marks the order so the next click confirms', () => {
+  const opened = purchaseOrderRememberOpen({}, 'farm', 200, '2026-11-11T15:04:00.000Z');
+  assert.deepEqual(opened.farm, { state: 'opened', openedAt: '2026-11-11T15:04:00.000Z' });
+  assert.deepEqual(
+    purchaseOrderClickPlan({ alreadyOpened: opened.farm.state === 'opened', clicked: true }).log,
+    { reopen: true }
+  );
+
+  const repeat = purchaseOrderRememberOpen({}, 'farm', 409, '2026-11-11T22:15:00.000Z');
+  assert.equal(repeat.farm.state, 'opened');
+  assert.equal(repeat.farm.openedAt, '2026-11-11T22:15:00.000Z');
+  const kept = purchaseOrderRememberOpen(repeat, 'farm', 500);
+  assert.equal(kept.farm.state, 'opened');
+  assert.equal(kept.farm.openedAt, '2026-11-11T22:15:00.000Z');
+  assert.equal(purchaseOrderRememberOpen({}, 'farm', 400).farm, undefined);
+
+  const panel = readFileSync('components/features/orders/PoEmailPanel.tsx', 'utf8');
+  assert.match(
+    panel,
+    /setKnown\(\(current\) =>\s*purchaseOrderRememberOpen\(current, purchaseOrderOpenIdentity\(item\), response\.status, json\?\.openedAt\)/
+  );
 });
 
 test('copy confirms the full order text', () => {

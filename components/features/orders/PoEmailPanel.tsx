@@ -5,12 +5,14 @@ import Link from 'next/link';
 import { Mail, X } from 'lucide-react';
 import {
   applyPurchaseOrderLog,
+  purchaseOrderCheckKey,
   purchaseOrderClickPlan,
   purchaseOrderCompose,
   purchaseOrderCopiedMessage,
   purchaseOrderGroupCompose,
   purchaseOrderGroupOpenState,
   purchaseOrderOpenIdentity,
+  purchaseOrderRememberOpen,
   purchaseOrderRepeatGate,
   purchaseOrderRepeatWarning,
   purchaseOrderSendPlan,
@@ -27,28 +29,6 @@ import { cn } from '@/lib/utils/cn';
 type OpenLogJson = { error?: string; openedAt?: string } | null;
 
 type KnownOpen = { state: 'checking' | 'ready' | 'opened'; openedAt?: string };
-
-type OpenCheck = {
-  id: string;
-  supplierId: string | null;
-  supplier: string;
-  to: string;
-  subject: string;
-  body: string;
-  productIds: string[];
-};
-
-function openCheck(item: PoDraft): OpenCheck {
-  return {
-    id: purchaseOrderOpenIdentity(item),
-    supplierId: item.supplierId ?? null,
-    supplier: item.supplier,
-    to: item.to,
-    subject: item.subject,
-    body: item.body,
-    productIds: item.productIds,
-  };
-}
 
 async function readOpenLog(response: Response): Promise<OpenLogJson> {
   try {
@@ -73,6 +53,7 @@ export function PoEmailPanel({
 }) {
   const [notes, setNotes] = useState<string[]>([]);
   const [issues, setIssues] = useState<string[]>([]);
+  const [checkIssues, setCheckIssues] = useState<string[]>([]);
   const [skipNote, setSkipNote] = useState<string | null>(null);
   const [copyMessage, setCopyMessage] = useState<string | null>(null);
   const [known, setKnown] = useState<Record<string, KnownOpen>>({});
@@ -81,23 +62,29 @@ export function PoEmailPanel({
     drafts.length === 0 ? 0 : Math.min(Math.max(activeIndex, 0), drafts.length - 1);
   const withLines = drafts.filter((item) => item.productIds.length > 0 || item.body.trim().length > 0);
   const loggable = purchaseOrderSendPlan(withLines).ready;
-  const watchKey = JSON.stringify(loggable.map(openCheck));
+  const loggableRef = useRef(loggable);
+  loggableRef.current = loggable;
+  const checkKey = purchaseOrderCheckKey(loggable);
 
   useEffect(() => {
-    const items = JSON.parse(watchKey) as OpenCheck[];
+    const items = loggableRef.current;
     requestId.current += 1;
+    setCheckIssues([]);
     if (items.length === 0) {
       setKnown({});
       return;
     }
     let cancelled = false;
-    setKnown(Object.fromEntries(items.map((item) => [item.id, { state: 'checking' }])));
+    setKnown(
+      Object.fromEntries(items.map((item) => [purchaseOrderOpenIdentity(item), { state: 'checking' as const }]))
+    );
     for (const item of items) {
+      const id = purchaseOrderOpenIdentity(item);
       fetch('/api/orders/purchase-order-email', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
-          supplierId: item.supplierId,
+          supplierId: item.supplierId ?? null,
           supplierName: item.supplier,
           to: item.to,
           subject: item.subject,
@@ -112,10 +99,10 @@ export function PoEmailPanel({
           if (cancelled) return;
           const gate = purchaseOrderRepeatGate(response.status);
           if (gate === 'confirm') {
-            setKnown((current) => ({ ...current, [item.id]: { state: 'opened', openedAt: json?.openedAt } }));
+            setKnown((current) => ({ ...current, [id]: { state: 'opened', openedAt: json?.openedAt } }));
             return;
           }
-          setKnown((current) => ({ ...current, [item.id]: { state: 'ready' } }));
+          setKnown((current) => ({ ...current, [id]: { state: 'ready' } }));
           if (gate === 'issue') {
             const next = applyPurchaseOrderLog(
               { notes: [], issues: [] },
@@ -125,23 +112,23 @@ export function PoEmailPanel({
                 result: { status: response.status, error: json?.error, openedAt: json?.openedAt },
               }
             );
-            if (next.issues.length > 0) setIssues((current) => [...current, ...next.issues]);
+            if (next.issues.length > 0) setCheckIssues((current) => [...current, ...next.issues]);
           }
         })
         .catch(() => {
           if (cancelled) return;
-          setKnown((current) => ({ ...current, [item.id]: { state: 'ready' } }));
+          setKnown((current) => ({ ...current, [id]: { state: 'ready' } }));
           const next = applyPurchaseOrderLog(
             { notes: [], issues: [] },
             { supplier: item.supplier, grouped: false, result: { network: true } }
           );
-          if (next.issues.length > 0) setIssues((current) => [...current, ...next.issues]);
+          if (next.issues.length > 0) setCheckIssues((current) => [...current, ...next.issues]);
         });
     }
     return () => {
       cancelled = true;
     };
-  }, [watchKey]);
+  }, [checkKey]);
 
   const draft = drafts[index];
   if (!draft) return null;
@@ -192,6 +179,9 @@ export function PoEmailPanel({
     })
       .then(async (response) => {
         const json = await readOpenLog(response);
+        setKnown((current) =>
+          purchaseOrderRememberOpen(current, purchaseOrderOpenIdentity(item), response.status, json?.openedAt)
+        );
         showLog(item, grouped, { status: response.status, error: json?.error, openedAt: json?.openedAt }, generation);
       })
       .catch(() => {
@@ -363,9 +353,9 @@ export function PoEmailPanel({
                 ))}
               </ul>
             ) : null}
-            {issues.length > 0 ? (
+            {checkIssues.length + issues.length > 0 ? (
               <ul aria-label="Purchase order email results" className="space-y-1 text-xs text-slate-300">
-                {issues.map((issue, issueIndex) => (
+                {[...checkIssues, ...issues].map((issue, issueIndex) => (
                   <li key={`${issue}-${issueIndex}`}>{issue}</li>
                 ))}
               </ul>
