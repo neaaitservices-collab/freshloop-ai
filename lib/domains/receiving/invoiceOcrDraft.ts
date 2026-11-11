@@ -34,7 +34,7 @@ export interface AuditedDraftSourceLine {
   quantity: number;
   unit: string;
   unit_cost: number;
-  department: Department | 'PRODUCE' | 'DAIRY' | 'BAKERY' | 'PANTRY';
+  department: Department | 'PRODUCE' | 'DAIRY' | 'BAKERY' | 'PANTRY' | 'DELI_KITCHEN';
   case_pack_size: number;
   line_confidence: number;
   requires_approval: boolean;

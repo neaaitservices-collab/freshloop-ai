@@ -1,4 +1,4 @@
-export type DepartmentType = 'PRODUCE' | 'DAIRY' | 'BAKERY' | 'PANTRY';
+export type DepartmentType = 'PRODUCE' | 'DAIRY' | 'BAKERY' | 'PANTRY' | 'DELI_KITCHEN';
 
 export type InventoryStatusType = 'FRESH' | 'WARNING' | 'PULL_RESCUE' | 'MARKDOWN' | 'DISCARDED';
 
@@ -71,6 +71,7 @@ export interface InvoiceOcrResult {
     DAIRY: number;
     BAKERY: number;
     PANTRY: number;
+    DELI_KITCHEN?: number;
   };
   lineItems: InvoiceLineItemExtract[];
   rawSummary?: string;

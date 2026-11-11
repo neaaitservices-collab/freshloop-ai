@@ -7,7 +7,7 @@ export interface ParsedInvoiceIdentity {
 
 export interface ParsedInvoiceLineFields {
   name: string;
-  department: 'PRODUCE' | 'DAIRY' | 'BAKERY' | 'PANTRY';
+  department: 'PRODUCE' | 'DAIRY' | 'BAKERY' | 'PANTRY' | 'DELI_KITCHEN';
   quantity: number;
   unit: string;
   departmentAssumed: boolean;
@@ -15,7 +15,7 @@ export interface ParsedInvoiceLineFields {
   gaps: string[];
 }
 
-const DEPARTMENTS = ['PRODUCE', 'DAIRY', 'BAKERY', 'PANTRY'] as const;
+const DEPARTMENTS = ['PRODUCE', 'DAIRY', 'BAKERY', 'PANTRY', 'DELI_KITCHEN'] as const;
 
 /** Keep a missing invoice identity blank. Do not mint a number or a vendor. */
 export function parseInvoiceIdentity(raw: {
@@ -40,7 +40,7 @@ export function parseInvoiceIdentity(raw: {
 
 /**
  * A missing quantity stays 0 so receiving cannot post an invented case.
- * An unknown department stays PRODUCE for the enum and is flagged.
+ * An unknown department is flagged. PRODUCE is only the placeholder until a clerk or a name signal chooses one.
  */
 export function parseInvoiceLineFields(
   raw: Record<string, unknown>,

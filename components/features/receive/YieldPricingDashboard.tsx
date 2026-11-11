@@ -139,7 +139,8 @@ function resolveLogPricing(log: ReceivingLog, live: (LogPricing & { id: string }
 async function postLogToInventory(
   log: ReceivingLog,
   pricing: LogPricing,
-  supplierId?: string
+  supplierId?: string,
+  screenDepartment?: string
 ) {
   const response = await fetch('/api/receiving-logs', {
     method: 'POST',
@@ -158,6 +159,10 @@ async function postLogToInventory(
       currentRetailPrice: pricing.currentRetailPrice,
       caseRetailPrice: pricing.caseRetailPrice,
       ...(supplierId ? { supplierId } : {}),
+      ...(log.department ? { department: log.department } : {}),
+      ...(log.departmentAssumed ? { departmentAssumed: true } : {}),
+      ...(log.category ? { category: log.category } : {}),
+      ...(screenDepartment ? { screenDepartment } : {}),
     }),
   });
   let json: {
@@ -188,7 +193,12 @@ async function postLogToInventory(
   };
 }
 
-function logPricingToPostBody(log: ReceivingLog, pricing: LogPricing, supplierId?: string) {
+function logPricingToPostBody(
+  log: ReceivingLog,
+  pricing: LogPricing,
+  supplierId?: string,
+  screenDepartment?: string
+) {
   return {
     externalLogId: log.id,
     itemName: log.itemName,
@@ -203,12 +213,17 @@ function logPricingToPostBody(log: ReceivingLog, pricing: LogPricing, supplierId
     currentRetailPrice: pricing.currentRetailPrice,
     caseRetailPrice: pricing.caseRetailPrice,
     ...(supplierId ? { supplierId } : {}),
+    ...(log.department ? { department: log.department } : {}),
+    ...(log.departmentAssumed ? { departmentAssumed: true } : {}),
+    ...(log.category ? { category: log.category } : {}),
+    ...(screenDepartment ? { screenDepartment } : {}),
   };
 }
 
 async function postLogsBatchToInventory(
   entries: Array<{ log: ReceivingLog; pricing: LogPricing }>,
-  supplierId?: string
+  supplierId?: string,
+  screenDepartment?: string
 ): Promise<{
   ok: boolean;
   results: Array<{
@@ -231,7 +246,9 @@ async function postLogsBatchToInventory(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       supplierId,
-      items: entries.map(({ log, pricing }) => logPricingToPostBody(log, pricing, supplierId)),
+      items: entries.map(({ log, pricing }) =>
+        logPricingToPostBody(log, pricing, supplierId, screenDepartment)
+      ),
     }),
   });
   let json: {
@@ -298,6 +315,7 @@ export function YieldPricingDashboard({
   onScanNext,
   onLogDisposition,
   supplierId,
+  screenDepartment,
 }: {
   onOpenCommandCenter?: () => void;
   embedded?: boolean;
@@ -310,6 +328,8 @@ export function YieldPricingDashboard({
   onLogDisposition?: (logId: string) => void;
   /** Global supplier for posts to `/api/receiving-logs`. */
   supplierId?: string;
+  /** Used only when a new item's name, supplier, and category do not pick a department. */
+  screenDepartment?: string;
 }) {
   const { activeUser } = useRole();
   const canResolveVendorCredit = canManageStaff(activeUser?.role);
@@ -789,7 +809,7 @@ export function YieldPricingDashboard({
     setMovedNotice(null);
 
     try {
-      const result = await postLogToInventory(selected, pricing, supplierId);
+      const result = await postLogToInventory(selected, pricing, supplierId, screenDepartment);
       if (!result.ok) {
         setErrorMessage(
           result.reason || 'Stock was not updated, so this case stays on the receiving list.'
@@ -846,7 +866,7 @@ export function YieldPricingDashboard({
     }));
 
     try {
-      const batch = await postLogsBatchToInventory(entries, supplierId);
+      const batch = await postLogsBatchToInventory(entries, supplierId, screenDepartment);
       if (!batch.ok) {
         setErrorMessage(batch.error || 'Batch save failed. Check the connection and try again.');
         return;

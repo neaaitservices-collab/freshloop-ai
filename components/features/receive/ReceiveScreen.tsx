@@ -29,6 +29,11 @@ import {
 } from '@/lib/domains/receiving/invoiceIdentityHold';
 import type { ReceivingLog } from '@/lib/domains/receiving/yieldPricing';
 import type { SupplierRecord } from '@/lib/domains/suppliers/suppliers';
+import {
+  RECEIVING_DEPARTMENTS,
+  type ReceivingDepartment,
+} from '@/lib/domains/inventory/receivingDepartment';
+import { departmentLabel } from '@/lib/domains/inventory/inventoryCatalog';
 
 export function ReceiveScreen({ initial }: { initial: ReceivingDeliveryListResult }) {
   const [invoiceOpen, setInvoiceOpen] = useState(false);
@@ -36,6 +41,7 @@ export function ReceiveScreen({ initial }: { initial: ReceivingDeliveryListResul
   const [scanNote, setScanNote] = useState<string | null>(null);
   const [suppliers, setSuppliers] = useState<SupplierRecord[]>([]);
   const [selectedSupplierId, setSelectedSupplierId] = useState('');
+  const [screenDepartment, setScreenDepartment] = useState<ReceivingDepartment | ''>('');
   const [supplierLoadError, setSupplierLoadError] = useState<string | null>(null);
   const [identityNonce, setIdentityNonce] = useState(0);
   const [identityHold, setIdentityHold] = useState<IdentityHoldState | null>(null);
@@ -242,9 +248,25 @@ export function ReceiveScreen({ initial }: { initial: ReceivingDeliveryListResul
               onChange={setSelectedSupplierId}
               label="Delivery supplier"
             />
-            <p className="self-end text-xs text-slate-500 sm:col-span-2 lg:col-span-2">
+            <label className="block text-sm text-slate-300">
+              Department when the item is unclear
+              <select
+                className="mt-1 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-3 text-sm text-slate-100"
+                value={screenDepartment}
+                onChange={(event) => setScreenDepartment(event.target.value as ReceivingDepartment | '')}
+              >
+                <option value="">Leave unclassified items for review</option>
+                {RECEIVING_DEPARTMENTS.map((code) => (
+                  <option key={code} value={code}>
+                    {departmentLabel(code)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <p className="self-end text-xs text-slate-500 sm:col-span-2 lg:col-span-3">
               Invoice lines stay blocked until you pick a saved supplier. The printed vendor name is not used as
-              the receipt identity. {SUPPLIER_REQUIRED_ERROR}
+              the receipt identity. {SUPPLIER_REQUIRED_ERROR} Dairy, bakery, pantry, produce, and deli names are
+              classified from the line. This pick is used only when the line does not say.
             </p>
           </CardBody>
         </Card>
@@ -299,6 +321,7 @@ export function ReceiveScreen({ initial }: { initial: ReceivingDeliveryListResul
             initialLogs={initial.logs}
             initialWarning={initial.warning}
             supplierId={selectedSupplierId || undefined}
+            screenDepartment={screenDepartment || undefined}
             onScanNext={() => setInvoiceOpen(true)}
             onLogDisposition={(logId) =>
               setScannedLogs((prev) => prev.filter((log) => log.id !== logId))

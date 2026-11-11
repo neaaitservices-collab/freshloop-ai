@@ -759,6 +759,10 @@ export interface NumberedInvoicePostLine {
   unitCost: number;
   quantityKind?: 'units' | 'cases';
   casePackSize?: number | null;
+  department?: string | null;
+  departmentAssumed?: boolean;
+  category?: string | null;
+  screenDepartment?: string | null;
 }
 
 export async function invoiceLinePostInput(
@@ -792,6 +796,10 @@ export async function invoiceLinePostInput(
     currentRetailPrice: 0,
     externalLogId: deliveryId,
     supplierId,
+    ...(line.department ? { department: line.department } : {}),
+    ...(line.departmentAssumed ? { departmentAssumed: true } : {}),
+    ...(line.category ? { category: line.category } : {}),
+    ...(line.screenDepartment ? { screenDepartment: line.screenDepartment } : {}),
   };
 }
 

@@ -25,6 +25,7 @@ import {
   type RetailUnit,
   RETAIL_UNITS,
 } from '@/lib/domains/receiving/yieldPricing';
+import { receivingDepartment } from '@/lib/domains/inventory/receivingDepartment';
 
 export const MAX_RECEIVING_BATCH_SIZE = 80;
 
@@ -41,6 +42,12 @@ export interface ReceivingLogPostInput {
   currentRetailPrice: number;
   caseRetailPrice?: number | null;
   supplierId?: string;
+  /** Invoice-line department. Ignored when departmentAssumed is set. */
+  department?: string;
+  departmentAssumed?: boolean;
+  category?: string;
+  /** Receive-screen department, used only when the line cannot be classified. */
+  screenDepartment?: string;
   /** Client log id (invoice line) for batch result mapping. */
   externalLogId?: string;
 }
@@ -62,6 +69,18 @@ export function receivingLineHttpStatus(
   stock: PostedReceipt | SkippedReceipt | ConflictReceipt
 ): 200 | 409 {
   return stock.posted === false && stock.conflict === true ? 409 : 200;
+}
+
+function optionalDepartment(
+  value: string | undefined,
+  label: string
+): { ok: true; value?: string } | { ok: false; error: string } {
+  const trimmed = value?.trim() ?? '';
+  if (!trimmed) return { ok: true };
+  if (!receivingDepartment(trimmed)) {
+    return { ok: false, error: `${label} must be a store department.` };
+  }
+  return { ok: true, value: trimmed.toUpperCase() };
 }
 
 function parseCaseRetail(raw: number | null | undefined): number | undefined {
@@ -135,6 +154,11 @@ export function validateReceivingLogPostInput(body: Partial<ReceivingLogPostInpu
   }
   const deliveryId = normalizeDeliveryUuid(rawDeliveryId);
   if (!deliveryId) return { ok: false, error: DELIVERY_UUID_REQUIRED_ERROR };
+  const department = optionalDepartment(body.department, 'department');
+  if (!department.ok) return department;
+  const screenDepartment = optionalDepartment(body.screenDepartment, 'screenDepartment');
+  if (!screenDepartment.ok) return screenDepartment;
+  const category = body.category?.trim() || undefined;
 
   return {
     ok: true,
@@ -151,6 +175,10 @@ export function validateReceivingLogPostInput(body: Partial<ReceivingLogPostInpu
       currentRetailPrice,
       caseRetailPrice: body.caseRetailPrice,
       supplierId: body.supplierId?.trim() || undefined,
+      ...(department.value ? { department: department.value } : {}),
+      ...(body.departmentAssumed === true ? { departmentAssumed: true } : {}),
+      ...(category ? { category } : {}),
+      ...(screenDepartment.value ? { screenDepartment: screenDepartment.value } : {}),
       externalLogId: deliveryId,
     },
   };
@@ -213,6 +241,10 @@ export async function postReceivingLogToInventory(
       staffId: actorId,
       targetMargin,
       supplier: supplierName,
+      department: input.department,
+      departmentAssumed: input.departmentAssumed,
+      category: input.category,
+      screenDepartment: input.screenDepartment,
       externalLogId: input.externalLogId,
       delivery: input.externalLogId
         ? {
