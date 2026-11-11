@@ -2,14 +2,15 @@ import type { StockLevel } from '@/lib/domains/inventory/stock';
 
 export type LineMark = 'approved' | 'sent';
 
-/** No mail transport is wired. A prepared draft must not claim the order was sent. */
-export const PO_DRAFT_PREPARED_NOTICE = 'Draft prepared - not sent';
+/** Preparing a draft does not deliver it. */
+export const PO_DRAFT_PREPARED_NOTICE = 'Draft prepared';
 
 export function acknowledgePurchaseOrderDraft(): { notice: string; markSent: false } {
   return { notice: PO_DRAFT_PREPARED_NOTICE, markSent: false };
 }
 
 export interface SupplierDirectoryEntry {
+  id?: string | null;
   name: string;
   contactEmail?: string | null;
 }
@@ -19,11 +20,27 @@ export type SupplierRecipientIssue = 'missing' | 'ambiguous';
 export const MISSING_SUPPLIER_EMAIL_HINT =
   'No email saved for this supplier. Add it in Suppliers.';
 
+export const INVALID_SUPPLIER_EMAIL_HINT = 'Enter one supplier email address.';
+
+/** One mailbox. Rejects lists, copies, and display-name wrappers. */
+export function singleSupplierEmail(value: string): string | null {
+  const email = value.trim();
+  if (!email || email.length > 320) return null;
+  if (/[\s,;<>?&=%#/]/.test(email)) return null;
+  if ((email.match(/@/g) ?? []).length !== 1) return null;
+  if (!/^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$/.test(email)) {
+    return null;
+  }
+  return email;
+}
+
 export const AMBIGUOUS_SUPPLIER_EMAIL_HINT =
   'More than one supplier matches this name. Add it in Suppliers.';
 
 export interface PoDraft {
   supplier: string;
+  /** Directory id when one supplier matched. The server also resolves by name. */
+  supplierId?: string | null;
   to: string;
   subject: string;
   body: string;
@@ -85,7 +102,7 @@ export function matchSupplierRecipient(
   supplierName: string,
   directory: readonly SupplierDirectoryEntry[]
 ):
-  | { status: 'matched'; email: string }
+  | { status: 'matched'; email: string; supplierId: string | null }
   | { status: 'missing' }
   | { status: 'ambiguous' } {
   const key = supplierNameKey(supplierName);
@@ -95,12 +112,14 @@ export function matchSupplierRecipient(
   if (matches.length > 1) return { status: 'ambiguous' };
   const email = storedSupplierRecipient(matches[0]?.contactEmail);
   if (!email) return { status: 'missing' };
-  return { status: 'matched', email };
+  const supplierId = matches[0]?.id?.trim() || null;
+  return { status: 'matched', email, supplierId };
 }
 
 export function supplierRecipientHint(
   draft: Pick<PoDraft, 'to' | 'recipientIssue'>
 ): string | null {
+  if (draft.to.trim() && !singleSupplierEmail(draft.to)) return INVALID_SUPPLIER_EMAIL_HINT;
   if (draft.to.trim()) return null;
   if (draft.recipientIssue === 'ambiguous') return AMBIGUOUS_SUPPLIER_EMAIL_HINT;
   return MISSING_SUPPLIER_EMAIL_HINT;
@@ -114,11 +133,14 @@ export function draftForSupplier(
 ): PoDraft {
   const ownRows = rowsForSupplier(supplier, rows);
   const match = matchSupplierRecipient(supplier, directory);
-  if (match.status === 'matched') return draftForRows(supplier, ownRows, match.email);
+  if (match.status === 'matched') {
+    return { ...draftForRows(supplier, ownRows, match.email), supplierId: match.supplierId };
+  }
   return {
     ...draftForRows(supplier, ownRows, null),
     to: '',
     recipientIssue: match.status,
+    supplierId: null,
   };
 }
 
@@ -130,6 +152,162 @@ export function draftsForSuppliers(
   return groups
     .filter((group) => rowsForSupplier(group.supplier, group.rows).length > 0)
     .map((group) => draftForSupplier(group.supplier, group.rows, directory));
+}
+
+function hashLineKey(value: string): string {
+  const seeds = [0x811c9dc5, 0x01000193, 0x811c9dc5 ^ 0x9e3779b9, 0x85ebca6b];
+  return seeds
+    .map((seed) => {
+      let hash = seed;
+      for (let i = 0; i < value.length; i++) {
+        hash ^= value.charCodeAt(i);
+        hash = Math.imul(hash, 0x01000193);
+      }
+      return (hash >>> 0).toString(16).padStart(8, '0');
+    })
+    .join('');
+}
+
+/** Stable idempotency key for one supplier's current order lines. */
+export function purchaseOrderLineKey(draft: {
+  supplier: string;
+  productIds: readonly string[];
+  body: string;
+}): string {
+  const ids = [...draft.productIds].map((id) => id.trim()).filter(Boolean).sort();
+  const body = draft.body.replace(/\r\n/g, '\n').trim();
+  return hashLineKey(`${draft.supplier.trim().toLowerCase()}\n${ids.join('\n')}\n${body}`);
+}
+
+export const GMAIL_COMPOSE_URL_LIMIT = 8000;
+export const ORDER_TRUNCATED_NOTE = '\n…(order truncated, see attached/full list)';
+
+export function purchaseOrderOpenedWarning(openedAt: string): string {
+  const time = new Date(openedAt);
+  const label = Number.isNaN(time.getTime())
+    ? openedAt
+    : time.toLocaleString('en-US', { timeZone: 'UTC', dateStyle: 'medium', timeStyle: 'short' });
+  return `Already opened for this order on ${label}, open again?`;
+}
+
+function composeHref(to: string, subject: string, body: string): { gmailUrl: string; mailtoUrl: string } {
+  const encodedTo = encodeURIComponent(to);
+  const encodedSubject = encodeURIComponent(subject);
+  const encodedBody = encodeURIComponent(body);
+  return {
+    gmailUrl: `https://mail.google.com/mail/?view=cm&fs=1&to=${encodedTo}&su=${encodedSubject}&body=${encodedBody}`,
+    mailtoUrl: `mailto:${to}?subject=${encodedSubject}&body=${encodedBody}`,
+  };
+}
+
+/** Shorten the body until the Gmail URL fits. The note stays in the shortened text. */
+export function fitPurchaseOrderBody(input: {
+  to: string;
+  subject: string;
+  body: string;
+}): { body: string; truncated: boolean } {
+  const to = singleSupplierEmail(input.to) ?? input.to.trim();
+  const lengthOf = (body: string) => composeHref(to, input.subject, body).gmailUrl.length;
+  if (lengthOf(input.body) <= GMAIL_COMPOSE_URL_LIMIT) return { body: input.body, truncated: false };
+  let low = 0;
+  let high = input.body.length;
+  let best = ORDER_TRUNCATED_NOTE.trim();
+  while (low <= high) {
+    const mid = Math.floor((low + high) / 2);
+    const candidate = `${input.body.slice(0, mid).trimEnd()}${ORDER_TRUNCATED_NOTE}`;
+    if (lengthOf(candidate) <= GMAIL_COMPOSE_URL_LIMIT) {
+      best = candidate;
+      low = mid + 1;
+    } else {
+      high = mid - 1;
+    }
+  }
+  return { body: best, truncated: true };
+}
+
+export function purchaseOrderCompose(input: {
+  to: string;
+  subject: string;
+  body: string;
+}): { to: string; body: string; truncated: boolean; gmailUrl: string; mailtoUrl: string } | null {
+  const to = singleSupplierEmail(input.to);
+  if (!to) return null;
+  const fitted = fitPurchaseOrderBody({ to, subject: input.subject, body: input.body });
+  const hrefs = composeHref(to, input.subject, fitted.body);
+  return { to, body: fitted.body, truncated: fitted.truncated, ...hrefs };
+}
+
+export type PurchaseOrderRecordResult =
+  | { ok: true }
+  | { ok: false; status: number; openedAt?: string; message: string };
+
+export type PurchaseOrderPopup = {
+  opener: Window | null;
+  location: { href: string };
+  close: () => void;
+};
+
+/** Open a blank tab during the click. `noopener` in window.open features always returns null. */
+export function openPurchaseOrderWindow(
+  open: (url: string, target: string) => PurchaseOrderPopup | null
+): PurchaseOrderPopup | null {
+  const popup = open('about:blank', '_blank');
+  if (popup) popup.opener = null;
+  return popup;
+}
+
+/** Point the blank tab at Gmail only after the log succeeds. Close it on a repeat or a failure. */
+export async function settlePurchaseOrderWindow(
+  popup: PurchaseOrderPopup,
+  gmailUrl: string,
+  record: () => Promise<PurchaseOrderRecordResult>
+): Promise<
+  | { outcome: 'opened' }
+  | { outcome: 'repeat'; openedAt: string }
+  | { outcome: 'failed'; message: string }
+> {
+  try {
+    const recorded = await record();
+    if (!recorded.ok) {
+      popup.close();
+      if (recorded.status === 409) return { outcome: 'repeat', openedAt: recorded.openedAt ?? '' };
+      return { outcome: 'failed', message: recorded.message };
+    }
+    popup.location.href = gmailUrl;
+    return { outcome: 'opened' };
+  } catch {
+    popup.close();
+    return { outcome: 'failed', message: 'The order could not be recorded.' };
+  }
+}
+
+export function purchaseOrderMailto(
+  draft: Pick<PoDraft, 'to' | 'subject' | 'body'>
+): string | null {
+  return purchaseOrderCompose(draft)?.mailtoUrl ?? null;
+}
+
+export function purchaseOrderSkipMessage(to: string): string {
+  return to.trim() ? 'Invalid email, skipped.' : 'No email, skipped.';
+}
+
+/** Suppliers with one valid To address can be emailed. Empty or invalid addresses are skipped. */
+export function purchaseOrderSendPlan(drafts: readonly PoDraft[]): {
+  ready: PoDraft[];
+  skipped: PoDraft[];
+} {
+  const ready: PoDraft[] = [];
+  const skipped: PoDraft[] = [];
+  for (const draft of drafts) {
+    if (singleSupplierEmail(draft.to)) ready.push(draft);
+    else skipped.push(draft);
+  }
+  return { ready, skipped };
+}
+
+export function purchaseOrderSendAllConfirm(count: number): string {
+  const noun = count === 1 ? 'supplier' : 'suppliers';
+  return `Open a separate email for ${count} ${noun}?`;
 }
 
 export function groupBySupplier(levels: StockLevel[]): Record<string, StockLevel[]> {

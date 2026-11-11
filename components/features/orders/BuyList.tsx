@@ -103,13 +103,14 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
       .then(async (response) => {
         const json = (await response.json()) as {
           success?: boolean;
-          suppliers?: Array<{ name?: string; contactEmail?: string | null }>;
+          suppliers?: Array<{ id?: string; name?: string; contactEmail?: string | null }>;
         };
         if (cancelled || !response.ok || !json.success || !Array.isArray(json.suppliers)) return;
         const next: SupplierDirectoryEntry[] = [];
         for (const row of json.suppliers) {
           if (typeof row.name !== 'string' || !row.name.trim()) continue;
           next.push({
+            id: typeof row.id === 'string' ? row.id : null,
             name: row.name,
             contactEmail: typeof row.contactEmail === 'string' ? row.contactEmail : null,
           });

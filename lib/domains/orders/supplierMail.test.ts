@@ -3,11 +3,22 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import {
   AMBIGUOUS_SUPPLIER_EMAIL_HINT,
+  GMAIL_COMPOSE_URL_LIMIT,
   MISSING_SUPPLIER_EMAIL_HINT,
+  ORDER_TRUNCATED_NOTE,
   draftForRows,
   draftForSupplier,
   draftsForSuppliers,
   matchSupplierRecipient,
+  openPurchaseOrderWindow,
+  purchaseOrderCompose,
+  settlePurchaseOrderWindow,
+  purchaseOrderLineKey,
+  purchaseOrderMailto,
+  purchaseOrderOpenedWarning,
+  purchaseOrderSendAllConfirm,
+  purchaseOrderSendPlan,
+  singleSupplierEmail,
   storedSupplierRecipient,
   supplierRecipientHint,
 } from '@/components/features/orders/supplierMail';
@@ -118,6 +129,7 @@ test('supplier names match trimmed and case-insensitive, and ambiguous names sta
   assert.equal(matched.length, 1);
   assert.equal(matched[0].to, 'desk@dairy.test');
   assert.equal(matched[0].recipientIssue, undefined);
+  assert.equal(matched[0].supplierId, null);
   assert.deepEqual(matched[0].productIds, ['dairy-milk']);
   assert.equal(supplierRecipientHint(matched[0]), null);
 
@@ -143,7 +155,7 @@ test('supplier names match trimmed and case-insensitive, and ambiguous names sta
   assert.doesNotMatch(AMBIGUOUS_SUPPLIER_EMAIL_HINT, /@/);
 });
 
-test('purchase order panel keeps drafts separate and does not send mail', () => {
+test('purchase order panel sends one supplier at a time and falls back to mail', () => {
   const panel = readFileSync('components/features/orders/PoEmailPanel.tsx', 'utf8');
   const buyList = readFileSync('components/features/orders/BuyList.tsx', 'utf8');
   const mail = readFileSync('components/features/orders/supplierMail.ts', 'utf8');
@@ -151,7 +163,16 @@ test('purchase order panel keeps drafts separate and does not send mail', () => 
   assert.match(panel, /supplierRecipientHint/);
   assert.match(panel, /href="\/admin\/suppliers"/);
   assert.match(panel, /Prepare draft/);
-  assert.equal(panel.includes('mailto:'), false);
+  assert.match(panel, />\s*Send\s*</);
+  assert.match(panel, /Send all/);
+  assert.match(panel, /Open in Gmail/);
+  assert.match(panel, /purchaseOrderSendPlan/);
+  assert.match(panel, /purchaseOrderSendAllConfirm/);
+  assert.match(panel, /purchaseOrderCompose/);
+  assert.match(panel, /purchaseOrderOpenedWarning/);
+  assert.match(panel, /Copy full order/);
+  assert.match(mail, /mail\.google\.com/);
+  assert.equal(panel.includes('drafts.map((draft) => draft.to).join'), false);
   assert.equal(/resend/i.test(panel), false);
   assert.equal(/\bsent\b/i.test(panel), false);
   assert.equal(/\bkitchen\b/i.test(panel), false);
@@ -167,5 +188,132 @@ test('purchase order panel keeps drafts separate and does not send mail', () => 
   assert.equal(mail.includes('draftForAll'), false);
   assert.equal(mail.includes('recipients.join'), false);
   assert.match(mail, /draftForRows/);
+  assert.match(mail, /Open a separate email for /);
   assert.equal(/\bkitchen\b/i.test(mail), false);
+});
+
+test('send all keeps each supplier separate and skips a blank address', () => {
+  const farm = draftForSupplier('Farm & Sons', [row('Farm & Sons', 'Bananas', 'farm-banana')], [
+    { id: 'sup-farm', name: 'Farm & Sons', contactEmail: 'buyer@farm.test' },
+  ]);
+  const greens = draftForSupplier('Greens', [row('Greens', 'Kale', 'greens-kale')], []);
+  const listed = { ...farm, supplier: 'Listed Co', to: 'buyer@farm.test, other@farm.test' };
+  assert.equal(farm.supplierId, 'sup-farm');
+  const plan = purchaseOrderSendPlan([farm, greens, listed]);
+  assert.deepEqual(plan.ready.map((draft) => draft.supplier), ['Farm & Sons']);
+  assert.deepEqual(
+    plan.skipped.map((draft) => draft.supplier),
+    ['Greens', 'Listed Co']
+  );
+  assert.equal(plan.ready[0].to.includes('buyer@farm.test'), true);
+  assert.equal(plan.ready[0].body.includes('Kale'), false);
+  assert.equal(purchaseOrderSendAllConfirm(plan.ready.length), 'Open a separate email for 1 supplier?');
+  assert.equal(purchaseOrderSendAllConfirm(2), 'Open a separate email for 2 suppliers?');
+
+  const mailto = purchaseOrderMailto(farm);
+  assert.match(mailto ?? '', /^mailto:buyer@farm\.test\?/);
+  assert.equal(purchaseOrderMailto(greens), null);
+  assert.equal(purchaseOrderMailto({ ...farm, to: 'buyer@farm.test, other@farm.test' }), null);
+
+  const key = purchaseOrderLineKey(farm);
+  assert.equal(purchaseOrderLineKey({ ...farm, productIds: [...farm.productIds] }), key);
+  assert.notEqual(purchaseOrderLineKey({ ...farm, body: `${farm.body}\nextra` }), key);
+  assert.equal(key.includes('buyer@farm.test'), false);
+});
+
+test('Gmail compose encodes each part and shortens a long order', () => {
+  const compose = purchaseOrderCompose({
+    to: 'buyer@farm.test',
+    subject: 'A & B',
+    body: '2 cases\nBananas',
+  });
+  assert.ok(compose);
+  assert.match(compose?.gmailUrl ?? '', /^https:\/\/mail\.google\.com\/mail\/\?view=cm&fs=1&to=/);
+  assert.match(compose?.gmailUrl ?? '', /to=buyer%40farm\.test/);
+  assert.match(compose?.gmailUrl ?? '', /su=A%20%26%20B/);
+  assert.match(compose?.gmailUrl ?? '', /body=2%20cases%0ABananas/);
+  const params = new URL(compose?.gmailUrl ?? 'https://mail.google.com/');
+  assert.equal(params.searchParams.get('to'), 'buyer@farm.test');
+  assert.equal(params.searchParams.get('su'), 'A & B');
+  assert.equal(params.searchParams.get('body'), '2 cases\nBananas');
+  assert.deepEqual([...params.searchParams.keys()], ['view', 'fs', 'to', 'su', 'body']);
+  assert.equal(compose?.truncated, false);
+  assert.equal(singleSupplierEmail('x?bcc=spy%40evil.com&z=@b.co'), null);
+  assert.equal(singleSupplierEmail('buyer#note@farm.test'), null);
+  assert.equal(purchaseOrderCompose({ to: 'x?bcc=spy%40evil.com&z=@b.co', subject: 'Hi', body: 'Order' }), null);
+  assert.equal(purchaseOrderCompose({ to: 'buyer#note@farm.test', subject: 'Hi', body: 'Order' }), null);
+  const injected = purchaseOrderCompose({
+    to: 'buyer@farm.test',
+    subject: 'Hi&bcc=spy@evil.com',
+    body: 'line&x=1',
+  });
+  const injectedParams = new URL(injected?.gmailUrl ?? 'https://mail.google.com/').searchParams;
+  assert.deepEqual([...injectedParams.keys()], ['view', 'fs', 'to', 'su', 'body']);
+  assert.equal(injectedParams.get('to'), 'buyer@farm.test');
+  assert.equal(injectedParams.get('su'), 'Hi&bcc=spy@evil.com');
+  const mailtoParams = new URLSearchParams((injected?.mailtoUrl ?? '').split('?')[1]);
+  assert.deepEqual([...mailtoParams.keys()], ['subject', 'body']);
+  assert.match(injected?.mailtoUrl ?? '', /^mailto:buyer@farm\.test\?/);
+
+  const long = purchaseOrderCompose({
+    to: 'buyer@farm.test',
+    subject: 'Order',
+    body: 'x'.repeat(12000),
+  });
+  assert.ok(long);
+  assert.equal(long?.truncated, true);
+  assert.ok((long?.gmailUrl.length ?? 0) <= GMAIL_COMPOSE_URL_LIMIT);
+  assert.match(long?.body ?? '', /order truncated, see attached\/full list/);
+  assert.equal(long?.body.endsWith(ORDER_TRUNCATED_NOTE), true);
+  assert.match(purchaseOrderOpenedWarning('2026-11-11T15:04:00.000Z'), /Already opened for this order on .+ open again\?/);
+});
+
+test('a blank compose tab is opened in the click, then pointed at Gmail only after the log succeeds', async () => {
+  assert.equal(openPurchaseOrderWindow(() => null), null);
+
+  const openedCalls: string[] = [];
+  const popup = {
+    opener: {} as Window | null,
+    location: { href: '' },
+    close() {
+      this.location.href = 'closed';
+    },
+  };
+  const opened = openPurchaseOrderWindow((url, target) => {
+    openedCalls.push(`${url}|${target}`);
+    return popup;
+  });
+  assert.deepEqual(openedCalls, ['about:blank|_blank']);
+  assert.equal(opened?.opener, null);
+
+  const success = await settlePurchaseOrderWindow(popup, 'https://mail.google.com/compose', async () => ({ ok: true }));
+  assert.equal(success.outcome, 'opened');
+  assert.equal(popup.location.href, 'https://mail.google.com/compose');
+
+  const repeat = await settlePurchaseOrderWindow(popup, 'https://mail.google.com/again', async () => ({
+    ok: false,
+    status: 409,
+    openedAt: '2026-11-11T16:00:00.000Z',
+    message: 'Already opened for this order.',
+  }));
+  assert.equal(repeat.outcome, 'repeat');
+  if (repeat.outcome === 'repeat') assert.equal(repeat.openedAt, '2026-11-11T16:00:00.000Z');
+  assert.equal(popup.location.href, 'closed');
+
+  popup.location.href = 'still-blank';
+  const failed = await settlePurchaseOrderWindow(popup, 'https://mail.google.com/fail', async () => ({
+    ok: false,
+    status: 500,
+    message: 'The order could not be recorded.',
+  }));
+  assert.equal(failed.outcome, 'failed');
+  if (failed.outcome === 'failed') assert.equal(failed.message, 'The order could not be recorded.');
+  assert.equal(popup.location.href, 'closed');
+
+  popup.location.href = 'still-blank';
+  const thrown = await settlePurchaseOrderWindow(popup, 'https://mail.google.com/throw', async () => {
+    throw new Error('network');
+  });
+  assert.equal(thrown.outcome, 'failed');
+  assert.equal(popup.location.href, 'closed');
 });
