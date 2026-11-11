@@ -148,6 +148,7 @@ model Product {
   markdownEvents     MarkdownEvent[]
   floorBundlePromos  FloorBundlePromo[]
   priceVarianceLogs  PriceVarianceLog[]
+  supplierActivities SupplierActivity[]
 
   @@index([department])
   @@index([departmentId])
@@ -268,6 +269,8 @@ model StoreSetting {
   defaultScrapCostPerKg     Float    @default(3.5)
   pullSensitivityDays       Int      @default(3)
   costGuardrailVariancePct  Float    @default(20.0)
+  /// Absolute percent change that records a supplier PRICE_CHANGE activity.
+  priceChangeThresholdPct   Float    @default(8)
   /// Brynn's Sheets default (e.g. $17.60/hr) when Recipe.laborRate is null.
   defaultLaborRatePerHour   Float    @default(17.6) @map("Default_Labor_Rate_Per_Hour")
   /// Default par (cases) for new SKUs and any item with alert level 0 — drives Orders low-stock.
@@ -454,6 +457,7 @@ model Supplier {
   qualityEvents          SupplierQualityEvent[]
   receivingDispositions  ReceivingDisposition[]
   invoiceDocuments       SupplierInvoiceDocument[]
+  activities             SupplierActivity[]
 
   @@map("suppliers")
 }
@@ -474,6 +478,7 @@ model VendorInvoice {
 
   invoiceLineItems    InvoiceLineItem[]
   priceVarianceLogs   PriceVarianceLog[]
+  supplierActivities  SupplierActivity[]
 
   @@index([supplierId])
   @@index([supplierId, createdAt])
@@ -549,6 +554,64 @@ model SupplierQualityEvent {
   @@index([eventType])
   @@index([receivingDispositionId])
   @@map("supplier_quality_events")
+}
+
+enum SupplierActivityType {
+  PRICE_CHANGE
+  CREDIT
+  SHORT_SHIP
+  QUALITY_REJECT
+  LATE_DELIVERY
+  NOTE
+}
+
+enum SupplierActivitySource {
+  AUTO
+  MANUAL
+}
+
+enum SupplierCreditStatus {
+  OPEN
+  RECEIVED
+}
+
+enum SupplierCreditReason {
+  SHORT
+  DAMAGED
+  QUALITY
+  PRICING
+  OTHER
+}
+
+/// One supplier timeline row. Existing price and quality logs stay in their own tables.
+model SupplierActivity {
+  id              String                 @id @default(cuid()) @map("id")
+  supplierId      String                 @map("supplier_id")
+  supplier        Supplier               @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  type            SupplierActivityType   @map("type")
+  productId       String?                @map("product_id")
+  product         Product?               @relation(fields: [productId], references: [id], onDelete: SetNull)
+  vendorInvoiceId String?                @map("vendor_invoice_id")
+  vendorInvoice   VendorInvoice?         @relation(fields: [vendorInvoiceId], references: [id], onDelete: SetNull)
+  invoiceRef      String?                @map("invoice_ref")
+  amount          Float?                 @map("amount")
+  oldCost         Float?                 @map("old_cost")
+  newCost         Float?                 @map("new_cost")
+  qty             Float?                 @map("qty")
+  reason          SupplierCreditReason?  @map("reason")
+  creditStatus    SupplierCreditStatus?  @map("credit_status")
+  resolvedAt      DateTime?              @map("resolved_at")
+  note            String?                @map("note")
+  /// Acting staff user id. Stored like other actor ids, with no user foreign key.
+  actorId         String?                @map("actor_id")
+  source          SupplierActivitySource @map("source")
+  voidedAt        DateTime?              @map("voided_at")
+  voidReason      String?                @map("void_reason")
+  createdAt       DateTime               @default(now()) @map("created_at")
+
+  @@index([supplierId, createdAt])
+  @@index([supplierId, type, creditStatus])
+  @@map("supplier_activities")
 }
 
 model InventoryItem {
