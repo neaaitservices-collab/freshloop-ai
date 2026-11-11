@@ -15,3 +15,14 @@ export function deliveryListPresentation(input: {
   if (input.loading) return 'loading';
   return 'empty';
 }
+
+/** Shown when Receive has no invoice open. Every delivery has to come through an invoice. */
+export const SCAN_OR_OPEN_INVOICE_TO_RECEIVE = 'Scan or open an invoice to receive';
+
+export function receiveInvoiceGate(invoiceOpen: boolean): {
+  emptyMessage: string | null;
+  saveAvailable: boolean;
+} {
+  if (invoiceOpen) return { emptyMessage: null, saveAvailable: true };
+  return { emptyMessage: SCAN_OR_OPEN_INVOICE_TO_RECEIVE, saveAvailable: false };
+}

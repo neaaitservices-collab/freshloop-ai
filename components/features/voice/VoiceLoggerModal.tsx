@@ -431,9 +431,6 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
       }
 
       notifyInventoryUpdated();
-      if (draftItems.some((i) => i.target_action === 'PULL_RESCUE')) {
-        window.dispatchEvent(new CustomEvent('freshloop-kitchen-inbox'));
-      }
 
       setStep('COMMITTED');
       onVoiceConfirmed?.({

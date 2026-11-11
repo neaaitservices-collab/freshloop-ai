@@ -4,7 +4,6 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
-  Activity,
   ChefHat,
   ClipboardList,
   Ellipsis,
@@ -31,7 +30,6 @@ const ICONS: Record<string, NavIcon> = {
   inventory: Warehouse,
   voice: Mic,
   production: ChefHat,
-  operations: Activity,
   orders: ClipboardList,
   account: Users,
 };

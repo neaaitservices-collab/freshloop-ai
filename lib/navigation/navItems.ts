@@ -34,12 +34,6 @@ const NAV_ITEMS: NavItem[] = [
       ]
     : []),
   { id: 'production', label: 'Production', href: '/production', roles: ['ADMIN', 'STORE_MANAGER', 'DELI_CHEF'] },
-  {
-    id: 'operations',
-    label: 'Operations',
-    href: '/operations',
-    roles: ['ADMIN', 'STORE_MANAGER'],
-  },
   { id: 'orders', label: 'Orders', href: '/orders', roles: ['ADMIN', 'STORE_MANAGER'] },
   {
     id: 'account',
