@@ -4,7 +4,7 @@ import {
   type PostedReceipt,
   type SkippedReceipt,
 } from '@/lib/domains/inventory/stock';
-import { getCurrentStock, prisma } from '@/lib/domains/inventory/ledger';
+import { getCurrentStock, InventoryLedgerError, prisma } from '@/lib/domains/inventory/ledger';
 import type { LotTx } from '@/lib/domains/inventory/lots';
 import {
   DELIVERY_UUID_REQUIRED_ERROR,
@@ -25,6 +25,10 @@ import {
   type RetailUnit,
   RETAIL_UNITS,
 } from '@/lib/domains/receiving/yieldPricing';
+import {
+  receivingDepartmentFieldErrors,
+  type ReceivingDepartmentFieldError,
+} from '@/lib/domains/inventory/receivingDepartment';
 import { receivingDepartment } from '@/lib/domains/inventory/receivingDepartment';
 
 export const MAX_RECEIVING_BATCH_SIZE = 80;
@@ -81,6 +85,50 @@ function optionalDepartment(
     return { ok: false, error: `${label} must be a store department.` };
   }
   return { ok: true, value: trimmed.toUpperCase() };
+}
+
+export function departmentRequiredBody(gaps: ReceivingDepartmentFieldError[]) {
+  return {
+    success: false as const,
+    error: gaps[0]?.message ?? 'Pick a department before this receipt can be saved.',
+    field: 'department' as const,
+    fieldErrors: gaps,
+  };
+}
+
+/** Catalog lookup, then the lines that still have no department. No stock is written. */
+export async function receivingDepartmentGaps(
+  lines: ReceivingLogPostInput[],
+  supplierName: string | null
+): Promise<ReceivingDepartmentFieldError[]> {
+  const postable = lines.filter((line) => !sampleReceivingRejection(line));
+  if (postable.length === 0) return [];
+  const catalog = await prisma.product.findMany({
+    where: { isManufactured: false },
+    select: { id: true, name: true },
+  });
+  return receivingDepartmentFieldErrors(
+    postable.map((line) => ({
+      itemName: line.itemName,
+      productId: line.productId,
+      explicitDepartment: line.department,
+      departmentAssumed: line.departmentAssumed,
+      supplier: supplierName,
+      category: line.category,
+      screenDepartment: line.screenDepartment,
+      externalLogId: line.externalLogId,
+    })),
+    catalog
+  );
+}
+
+export async function assertReceivingDepartmentsChosen(
+  lines: ReceivingLogPostInput[],
+  supplierName: string | null
+): Promise<void> {
+  const gaps = await receivingDepartmentGaps(lines, supplierName);
+  if (gaps.length === 0) return;
+  throw new InventoryLedgerError(gaps[0].message, 'DEPARTMENT_REQUIRED', 400, departmentRequiredBody(gaps));
 }
 
 function parseCaseRetail(raw: number | null | undefined): number | undefined {
@@ -188,7 +236,9 @@ export async function postReceivingLogToInventory(
   input: ReceivingLogPostInput,
   actorId: string,
   supplierName: string | null,
-  db?: LotTx
+  db?: LotTx,
+  /** Set after the batch already loaded the catalogue and checked every line. */
+  departmentChecked = false
 ): Promise<ReceivingLogPostResult> {
   const sampleReason = sampleReceivingRejection(input);
   if (sampleReason) {
@@ -197,6 +247,9 @@ export async function postReceivingLogToInventory(
       itemName: input.itemName,
       stock: { posted: false, reason: sampleReason },
     };
+  }
+  if (!departmentChecked) {
+    await assertReceivingDepartmentsChosen([input], supplierName);
   }
 
   const targetMargin = resolveTargetMargin(input.marginMode, input.customMarginPercent ?? 0);
@@ -267,6 +320,7 @@ export async function postReceivingLogToInventory(
       stock,
     };
   } catch (error) {
+    if (error instanceof InventoryLedgerError && error.code === 'DEPARTMENT_REQUIRED') throw error;
     if (error instanceof ReceivingDeliveryConflict) {
       return {
         externalLogId: input.externalLogId,
@@ -350,6 +404,7 @@ export async function postReceivingLogBatch(
 ): Promise<ReceivingLogPostResult[]> {
   const supplierId = items.find((i) => i.supplierId)?.supplierId;
   const supplierName = supplierId ? await getSupplierNameById(supplierId) : null;
+  await assertReceivingDepartmentsChosen(items, supplierName);
 
   const results: ReceivingLogPostResult[] = new Array(items.length);
   let nextIndex = 0;
@@ -359,7 +414,13 @@ export async function postReceivingLogBatch(
       const index = nextIndex;
       nextIndex += 1;
       if (index >= items.length) return;
-      results[index] = await postReceivingLogToInventory(items[index], actorId, supplierName);
+      results[index] = await postReceivingLogToInventory(
+        items[index],
+        actorId,
+        supplierName,
+        undefined,
+        true
+      );
     }
   }
 

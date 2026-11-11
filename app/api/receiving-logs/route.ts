@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { listReceivingDeliveryLogs } from '@/lib/domains/receiving/receivingDeliveries';
+import { InventoryLedgerError } from '@/lib/domains/inventory/ledger';
 import {
+  assertReceivingDepartmentsChosen,
   buildSavedPackRecord,
   postReceivingLogToInventory,
   receivingLineHttpStatus,
@@ -69,12 +71,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: sampleReason }, { status: 409 });
     }
 
+    const supplierName = input.supplierId ? await getSupplierNameById(input.supplierId) : null;
+    await assertReceivingDepartmentsChosen([input], supplierName);
+
     const record = buildSavedPackRecord(input);
     savedPacks.unshift(record);
     if (savedPacks.length > 50) savedPacks.pop();
 
-    const supplierName = input.supplierId ? await getSupplierNameById(input.supplierId) : null;
-    const posted = await postReceivingLogToInventory(input, actor.id, supplierName);
+    const posted = await postReceivingLogToInventory(input, actor.id, supplierName, undefined, true);
     const stock = posted.stock;
 
     const status = receivingLineHttpStatus(stock);
@@ -90,6 +94,13 @@ export async function POST(req: NextRequest) {
       { status }
     );
   } catch (error) {
+    if (error instanceof InventoryLedgerError && error.code === 'DEPARTMENT_REQUIRED') {
+      const body =
+        error.details && typeof error.details === 'object'
+          ? error.details
+          : { success: false, error: error.message, field: 'department' };
+      return NextResponse.json(body, { status: 400 });
+    }
     const authRes = authErrorResponse(error);
     if (authRes) return authRes;
     return handleApiRouteError(

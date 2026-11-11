@@ -15,6 +15,12 @@ test('missing invoice identity stays blank', () => {
   assert.ok(identity.gaps.some((gap) => gap.includes('Vendor')));
 });
 
+test('an explicit grocery department is kept', () => {
+  const line = parseInvoiceLineFields({ name: 'Paper Towels', quantity: 1, department: 'GROCERY' }, 1);
+  assert.equal(line.department, 'GROCERY');
+  assert.equal(line.departmentAssumed, false);
+});
+
 test('an explicit deli department is kept', () => {
   const line = parseInvoiceLineFields({ name: 'Rotisserie Chicken', quantity: 2, department: 'DELI_KITCHEN' }, 1);
   assert.equal(line.department, 'DELI_KITCHEN');

@@ -1,4 +1,5 @@
-import { TransactionType } from '@prisma/client';
+import { TransactionType, type Department } from '@prisma/client';
+import type { DepartmentType } from '@/lib/types';
 import { prisma, VOLUMETRIC_SCRAP_REF_PREFIX } from '@/lib/domains/inventory/ledger';
 import type { WasteKpiReport } from '@/lib/domains/inventory/ledger';
 import { calculateRealTimeWastePct } from '@/lib/domains/inventory/ledger';
@@ -24,13 +25,14 @@ export type {
   StoreStats,
 } from '@/lib/domains/stats/storeStatsTypes';
 
-const DEPARTMENT_LABELS: Record<string, string> = {
+const DEPARTMENT_LABELS = {
   PRODUCE: 'Produce',
   DAIRY: 'Dairy',
   BAKERY: 'Bakery',
   PANTRY: 'Pantry',
   DELI_KITCHEN: 'Deli',
-};
+  GROCERY: 'Grocery',
+} satisfies Record<Department, string>;
 
 function money(value: number): number {
   return Number(value.toFixed(2));
@@ -275,7 +277,7 @@ async function loadStoreStats(transferRange?: StoreInstantRange | null): Promise
       ? setting.pullSensitivityDays
       : 3;
   const alerts = new Map<string, DepartmentAlert>();
-  for (const department of Object.keys(DEPARTMENT_LABELS)) {
+  for (const department of Object.keys(DEPARTMENT_LABELS) as DepartmentType[]) {
     alerts.set(department, { department: DEPARTMENT_LABELS[department], low: 0, expiring: 0 });
   }
 
@@ -295,7 +297,10 @@ async function loadStoreStats(transferRange?: StoreInstantRange | null): Promise
     let bucket = alerts.get(product.department);
     if (!bucket) {
       bucket = {
-        department: DEPARTMENT_LABELS[product.department] ?? product.department,
+        department:
+          product.department in DEPARTMENT_LABELS
+            ? DEPARTMENT_LABELS[product.department]
+            : product.department,
         low: 0,
         expiring: 0,
       };

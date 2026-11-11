@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { DepartmentType } from '@/lib/types';
-import { Apple, Milk, Cake, Package, UtensilsCrossed } from 'lucide-react';
+import { Apple, Milk, Cake, Package, UtensilsCrossed, ShoppingBasket } from 'lucide-react';
 
 interface DepartmentBadgeProps {
   department: DepartmentType;
@@ -50,6 +50,13 @@ export const DepartmentBadge: React.FC<DepartmentBadgeProps> = ({
       text: 'text-orange-300',
       border: 'border-orange-500/30',
       icon: UtensilsCrossed
+    },
+    GROCERY: {
+      label: 'Grocery',
+      bg: 'bg-sky-950/70',
+      text: 'text-sky-300',
+      border: 'border-sky-500/30',
+      icon: ShoppingBasket
     }
   };
 

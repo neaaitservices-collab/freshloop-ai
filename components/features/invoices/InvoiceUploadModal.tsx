@@ -423,6 +423,12 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
                       ${ocrResult.departmentBreakdown.PANTRY.toFixed(2)}
                     </p>
                   </div>
+                  <div className="p-3 rounded-xl bg-zinc-950 border border-sky-500/30">
+                    <span className="text-sky-300 font-bold">Grocery</span>
+                    <p className="mt-1 font-mono text-sm font-extrabold tabular-nums text-white">
+                      ${(ocrResult.departmentBreakdown.GROCERY ?? 0).toFixed(2)}
+                    </p>
+                  </div>
                 </div>
               </div>
 

@@ -13,7 +13,7 @@ const scan: InvoiceOcrResult = {
   invoiceNumber: '',
   invoiceDate: '2026-11-08',
   totalAmount: 0,
-  departmentBreakdown: { PRODUCE: 0, DAIRY: 0, BAKERY: 0, PANTRY: 0 },
+  departmentBreakdown: { PRODUCE: 0, DAIRY: 0, BAKERY: 0, PANTRY: 0, DELI_KITCHEN: 0, GROCERY: 0 },
   lineItems: [
     {
       name: 'Unread line 1',

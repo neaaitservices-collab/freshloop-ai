@@ -69,7 +69,7 @@ export interface VoiceLoggerApiResponse {
       name: string;
       quantity: number;
       unit: string;
-      department: 'PRODUCE' | 'DAIRY' | 'BAKERY' | 'PANTRY';
+      department: 'PRODUCE' | 'DAIRY' | 'BAKERY' | 'PANTRY' | 'DELI_KITCHEN' | 'GROCERY';
       condition: string;
       allergenWarnings: string[];
       productId?: string | null;
@@ -250,7 +250,7 @@ function mapVoiceParserItems(items: Record<string, unknown>[]) {
     unit: String(item.unit || 'units'),
     condition: String(item.condition || 'Overripe'),
     target_action: (item.target_action === 'DISCARD' ? 'DISCARD' : 'PULL_RESCUE') as VoiceTargetAction,
-    department: (['PRODUCE', 'DAIRY', 'BAKERY', 'PANTRY'].includes(String(item.department))
+    department: (['PRODUCE', 'DAIRY', 'BAKERY', 'PANTRY', 'DELI_KITCHEN', 'GROCERY'].includes(String(item.department))
       ? String(item.department)
       : 'PRODUCE') as Department,
     allergen_warnings: Array.isArray(item.allergen_warnings)
@@ -365,6 +365,14 @@ async function parseVoiceWithGemini15Flash(
       allergens.push('Wheat / Gluten');
     } else if (segLower.includes('oil') || segLower.includes('olive')) {
       department = Department.PANTRY;
+    } else if (
+      segLower.includes('grocery') ||
+      segLower.includes('detergent') ||
+      segLower.includes('paper towel') ||
+      segLower.includes('household') ||
+      segLower.includes('soap')
+    ) {
+      department = Department.GROCERY;
     }
 
     const segDiscard =
@@ -628,9 +636,9 @@ export async function POST(req: NextRequest) {
             : it.item_name,
           quantity: it.quantity,
           unit: it.unit,
-          department: (it.department === 'DELI_KITCHEN'
-            ? 'PRODUCE'
-            : it.department) as 'PRODUCE' | 'DAIRY' | 'BAKERY' | 'PANTRY',
+          department: (['PRODUCE', 'DAIRY', 'BAKERY', 'PANTRY', 'DELI_KITCHEN', 'GROCERY'].includes(it.department)
+            ? it.department
+            : 'PRODUCE') as 'PRODUCE' | 'DAIRY' | 'BAKERY' | 'PANTRY' | 'DELI_KITCHEN' | 'GROCERY',
           condition: it.condition,
           allergenWarnings: it.allergen_warnings,
           productId: it.product_id,

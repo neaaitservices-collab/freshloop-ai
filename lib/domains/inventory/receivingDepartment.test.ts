@@ -1,6 +1,23 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { resolveReceivingDepartment } from '@/lib/domains/inventory/receivingDepartment';
+import { CATALOG_DEPARTMENTS, departmentLabel } from '@/lib/domains/inventory/inventoryCatalog';
+import {
+  RECEIVING_DEPARTMENTS,
+  receivingDepartmentFieldErrors,
+  receivingLineNeedsDepartmentPick,
+  resolveReceivingDepartment,
+} from '@/lib/domains/inventory/receivingDepartment';
+
+test('a grocery line maps to grocery and the catalogue offers Grocery', () => {
+  assert.equal(resolveReceivingDepartment({ itemName: 'Paper Towels' }), 'GROCERY');
+  assert.equal(
+    resolveReceivingDepartment({ itemName: 'Whole Milk', explicitDepartment: 'GROCERY' }),
+    'GROCERY'
+  );
+  assert.equal(departmentLabel('GROCERY'), 'Grocery');
+  assert.ok(CATALOG_DEPARTMENTS.includes('GROCERY'));
+  assert.ok(RECEIVING_DEPARTMENTS.includes('GROCERY'));
+});
 
 test('dairy, bakery, and pantry lines map from the item name', () => {
   assert.equal(resolveReceivingDepartment({ itemName: 'Whole Milk' }), 'DAIRY');
@@ -15,6 +32,17 @@ test('a produce line stays produce and a deli line is not left out', () => {
 
 test('an unknown item does not become produce', () => {
   assert.equal(resolveReceivingDepartment({ itemName: 'Mystery Gadget' }), null);
+});
+
+test('an explicit line department wins over the receive-screen default', () => {
+  assert.equal(
+    resolveReceivingDepartment({
+      itemName: 'Whole Milk',
+      explicitDepartment: 'GROCERY',
+      screenDepartment: 'DAIRY',
+    }),
+    'GROCERY'
+  );
 });
 
 test('an explicit department wins over the item name', () => {
@@ -45,6 +73,26 @@ test('supplier and category are used before the name, and an assumed department 
     }),
     'DAIRY'
   );
+});
+
+test('an unclear line with no pick blocks the save, and a pick clears only that line', () => {
+  const lines = [
+    { itemName: 'Whole Milk', externalLogId: 'milk' },
+    { itemName: 'Mystery Gadget', externalLogId: 'gadget' },
+  ];
+  const blocked = receivingDepartmentFieldErrors(lines, []);
+  assert.equal(blocked.length, 1);
+  assert.equal(blocked[0]?.field, 'department');
+  assert.equal(blocked[0]?.itemName, 'Mystery Gadget');
+  assert.equal(receivingLineNeedsDepartmentPick({ itemName: 'Mystery Gadget' }), true);
+  assert.equal(receivingLineNeedsDepartmentPick({ itemName: 'Lemons' }), false);
+  const picked = receivingDepartmentFieldErrors(
+    lines.map((line) =>
+      line.externalLogId === 'gadget' ? { ...line, screenDepartment: 'DELI_KITCHEN' } : line
+    ),
+    []
+  );
+  assert.deepEqual(picked, []);
 });
 
 test('an unclear item uses the receive-screen department', () => {

@@ -7,7 +7,7 @@ export interface ParsedInvoiceIdentity {
 
 export interface ParsedInvoiceLineFields {
   name: string;
-  department: 'PRODUCE' | 'DAIRY' | 'BAKERY' | 'PANTRY' | 'DELI_KITCHEN';
+  department: 'PRODUCE' | 'DAIRY' | 'BAKERY' | 'PANTRY' | 'DELI_KITCHEN' | 'GROCERY';
   quantity: number;
   unit: string;
   departmentAssumed: boolean;
@@ -15,7 +15,10 @@ export interface ParsedInvoiceLineFields {
   gaps: string[];
 }
 
-const DEPARTMENTS = ['PRODUCE', 'DAIRY', 'BAKERY', 'PANTRY', 'DELI_KITCHEN'] as const;
+const DEPARTMENTS = ['PRODUCE', 'DAIRY', 'BAKERY', 'PANTRY', 'DELI_KITCHEN', 'GROCERY'] as const;
+type MissingInvoiceDepartment = Exclude<import('@/lib/types').DepartmentType, (typeof DEPARTMENTS)[number]>;
+const _allInvoiceDepartments: [MissingInvoiceDepartment] extends [never] ? true : never = true;
+void _allInvoiceDepartments;
 
 /** Keep a missing invoice identity blank. Do not mint a number or a vendor. */
 export function parseInvoiceIdentity(raw: {

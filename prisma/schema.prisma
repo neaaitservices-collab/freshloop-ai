@@ -41,6 +41,7 @@ enum Department {
   BAKERY
   PANTRY
   DELI_KITCHEN
+  GROCERY
 }
 
 enum UnitType {

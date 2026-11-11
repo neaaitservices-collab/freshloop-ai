@@ -15,12 +15,9 @@ import {
   STOCK_REFRESH_NETWORK_ERROR,
   listLoadFailure,
 } from '@/lib/domains/http/clientLoadFailure';
-import { matchesStoredDepartment } from '@/lib/domains/inventory/inventoryCatalog';
+import { CATALOG_DEPARTMENTS, departmentLabel, matchesStoredDepartment } from '@/lib/domains/inventory/inventoryCatalog';
 import type { StockLevel } from '@/lib/domains/inventory/stock';
-import type { DepartmentType } from '@/lib/types';
 import { useOptimisticInventoryLevels } from '@/hooks/use-optimistic-inventory-levels';
-
-const DEPARTMENTS: DepartmentType[] = ['PRODUCE', 'DAIRY', 'BAKERY', 'PANTRY'];
 
 export function FloorTransferPage({ levels: initialLevels }: { levels: StockLevel[] | null }) {
   const loading = initialLevels === null;
@@ -106,9 +103,9 @@ export function FloorTransferPage({ levels: initialLevels }: { levels: StockLeve
           className="min-h-12 rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-xs font-medium text-slate-300"
         >
           <option value="ALL">All departments</option>
-          {DEPARTMENTS.map((dept) => (
+          {CATALOG_DEPARTMENTS.map((dept) => (
             <option key={dept} value={dept}>
-              {dept.charAt(0) + dept.slice(1).toLowerCase()}
+              {departmentLabel(dept)}
             </option>
           ))}
         </select>

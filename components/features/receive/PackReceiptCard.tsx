@@ -42,6 +42,8 @@ export function PackReceiptCard({
   dispositionBusy = false,
   saveAllLabel = null,
   saveAllProgress = null,
+  saveAllDisabled = false,
+  departmentBlocked = false,
   onSave,
   onSaveAll,
   onNotReceived,
@@ -62,6 +64,8 @@ export function PackReceiptCard({
   dispositionBusy?: boolean;
   saveAllLabel?: string | null;
   saveAllProgress?: string | null;
+  saveAllDisabled?: boolean;
+  departmentBlocked?: boolean;
   onSave: () => void;
   onSaveAll?: () => void;
   onNotReceived: () => void;
@@ -86,9 +90,10 @@ export function PackReceiptCard({
     dispositionBusy,
     alreadyInInventory,
     readOnly,
-    saveDisabled: quote.totalRetailUnits === null || readOnly,
+    saveDisabled: quote.totalRetailUnits === null || readOnly || departmentBlocked,
     saveAllLabel,
     saveAllProgress,
+    saveAllDisabled,
     onSave,
     onSaveAll,
     onNotReceived,

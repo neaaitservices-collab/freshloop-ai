@@ -9,7 +9,11 @@ import {
 } from '@/lib/domains/receiving/invoiceOcrConfidence';
 import { sampleInvoiceCommitRejection } from '@/lib/domains/receiving/sampleReceivingGuard';
 import { canonicalInvoiceDate } from '@/lib/domains/receiving/invoiceDeliveryId';
-import { postReceivingLogToInventory } from '@/lib/domains/receiving/receivingLogPost';
+import {
+  assertReceivingDepartmentsChosen,
+  postReceivingLogToInventory,
+} from '@/lib/domains/receiving/receivingLogPost';
+import { getSupplierNameById } from '@/lib/domains/suppliers/suppliers';
 import {
   invoiceLinePostInput,
   resolveSupplierInvoice,
@@ -273,6 +277,9 @@ export async function commitInvoiceOcrReceipts(input: {
     );
   }
 
+  const supplierName = await getSupplierNameById(supplierId);
+  await assertReceivingDepartmentsChosen(posts, supplierName);
+
   let result: {
     invoiceId: string | null;
     receipts: { transactionId: string; productId: string; unitsAdded: number; onHand: number }[];
@@ -309,7 +316,7 @@ export async function commitInvoiceOcrReceipts(input: {
         }
         const postedRows: ReceivingLogPostResult[] = [];
         for (const post of posts) {
-          const row = await postReceivingLogToInventory(post, input.staffId, null, tx);
+          const row = await postReceivingLogToInventory(post, input.staffId, supplierName, tx, true);
           if (!row.stock.posted) {
             const rolledBack: ReceivingLogPostResult[] = postedRows.map((earlier) => ({
               externalLogId: earlier.externalLogId,
@@ -385,7 +392,7 @@ export async function commitInvoiceOcrReceipts(input: {
               throw new InventoryLedgerError(
                 'Pick a department for this new item before receiving it.',
                 'DEPARTMENT_REQUIRED',
-                409,
+                400,
                 { committed: false }
               );
             }

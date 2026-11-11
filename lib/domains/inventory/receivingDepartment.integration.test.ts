@@ -1,80 +1,183 @@
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import test from 'node:test';
+import { NextRequest } from 'next/server';
+import { POST } from '@/app/api/receiving-logs/batch/route';
+import { setReceivingStaffTestAuth } from '@/lib/auth/receivingStaffTestAuth';
 import { prisma } from '@/lib/domains/inventory/ledger';
-import { postReceipt } from '@/lib/domains/inventory/stock';
-import { RECEIVING_DEPARTMENT_REQUIRED } from '@/lib/domains/inventory/receivingDepartment';
+import { postReceivingLogBatch, type ReceivingLogPostInput } from '@/lib/domains/receiving/receivingLogPost';
 
 const databaseUrl = process.env.DATABASE_URL?.trim() ?? '';
 const hasDb = Boolean(databaseUrl) && process.env.FRESHLOOP_DB_TESTS !== '0';
 
-test('receiving assigns a department and does not file an unknown item as produce', { skip: !hasDb }, async (t) => {
+function line(itemName: string, externalLogId: string, screenDepartment?: string) {
+  return {
+    itemName,
+    casesReceived: 1,
+    caseCost: 4,
+    packSize: 1,
+    splitFactor: 1,
+    retailUnit: 'units',
+    marginMode: '40',
+    currentRetailPrice: 6,
+    externalLogId,
+    ...(screenDepartment ? { screenDepartment } : {}),
+  };
+}
+
+test('an unclear receiving line blocks the whole save until a department is picked', { skip: !hasDb }, async (t) => {
   try {
     await prisma.$connect();
   } catch {
     t.skip('Database unreachable.');
     return;
   }
+  setReceivingStaffTestAuth(async () => ({
+    id: 'staff-voice',
+    name: 'Clerk',
+    email: 'clerk@example.com',
+    role: 'RECEIVING_CLERK',
+    position: 'Receiver',
+    hourlyRate: null,
+  }));
   const stamp = `dept-${Date.now()}`;
   const milk = `Whole Milk ${stamp}`;
-  const loaf = `Sourdough ${stamp}`;
   const gadget = `Mystery Gadget ${stamp}`;
-  const createdIds: string[] = [];
+  const milkId = crypto.randomUUID();
+  const gadgetId = crypto.randomUUID();
+  const pickedMilkId = crypto.randomUUID();
+  const pickedGadgetId = crypto.randomUUID();
   t.after(async () => {
-    if (createdIds.length === 0) return;
-    await prisma.inventoryLot.deleteMany({ where: { productId: { in: createdIds } } });
-    await prisma.inventoryTransaction.deleteMany({ where: { productId: { in: createdIds } } });
-    await prisma.product.deleteMany({ where: { id: { in: createdIds } } });
+    setReceivingStaffTestAuth(null);
+    const products = await prisma.product.findMany({
+      where: { name: { in: [milk, gadget] } },
+      select: { id: true },
+    });
+    const productIds = products.map((row) => row.id);
+    const deliveryIds = [milkId, gadgetId, pickedMilkId, pickedGadgetId];
+    if (productIds.length > 0) {
+      await prisma.inventoryLot.deleteMany({ where: { productId: { in: productIds } } });
+      await prisma.inventoryTransaction.deleteMany({ where: { productId: { in: productIds } } });
+    }
+    await prisma.receivingDelivery.deleteMany({ where: { id: { in: deliveryIds } } });
+    await prisma.ledgerIdempotencyKey.deleteMany({
+      where: { key: { in: deliveryIds.map((id) => `recv:${id}`) } },
+    });
+    if (productIds.length > 0) {
+      await prisma.product.deleteMany({ where: { id: { in: productIds } } });
+    }
   });
 
-  const dairy = await postReceipt({
-    itemName: milk,
+  const blocked = await POST(
+    new NextRequest('http://localhost/api/receiving-logs/batch', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ items: [line(milk, milkId), line(gadget, gadgetId)] }),
+    })
+  );
+  const blockedBody = (await blocked.json()) as {
+    field?: string;
+    fieldErrors?: Array<{ field?: string; itemName?: string }>;
+  };
+  assert.equal(blocked.status, 400);
+  assert.equal(blockedBody.field, 'department');
+  assert.equal(blockedBody.fieldErrors?.length, 1);
+  assert.equal(blockedBody.fieldErrors?.[0]?.itemName, gadget);
+  assert.equal(await prisma.product.count({ where: { name: { in: [milk, gadget] } } }), 0);
+  assert.equal(await prisma.receivingDelivery.count({ where: { id: { in: [milkId, gadgetId] } } }), 0);
+
+  const saved = await POST(
+    new NextRequest('http://localhost/api/receiving-logs/batch', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        items: [line(milk, pickedMilkId), line(gadget, pickedGadgetId, 'DELI_KITCHEN')],
+      }),
+    })
+  );
+  assert.equal(saved.status, 200);
+  const milkRow = await prisma.product.findFirst({ where: { name: milk }, select: { department: true } });
+  const gadgetRow = await prisma.product.findFirst({ where: { name: gadget }, select: { department: true } });
+  assert.equal(milkRow?.department, 'DAIRY');
+  assert.equal(gadgetRow?.department, 'DELI_KITCHEN');
+
+  const towels = `Paper Towels ${stamp}`;
+  const towelId = crypto.randomUUID();
+  t.after(async () => {
+    const towel = await prisma.product.findFirst({ where: { name: towels }, select: { id: true } });
+    if (!towel) return;
+    await prisma.inventoryLot.deleteMany({ where: { productId: towel.id } });
+    await prisma.inventoryTransaction.deleteMany({ where: { productId: towel.id } });
+    await prisma.receivingDelivery.deleteMany({ where: { id: towelId } });
+    await prisma.ledgerIdempotencyKey.deleteMany({ where: { key: `recv:${towelId}` } });
+    await prisma.product.deleteMany({ where: { id: towel.id } });
+  });
+  const grocery = await POST(
+    new NextRequest('http://localhost/api/receiving-logs/batch', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ items: [line(towels, towelId)] }),
+    })
+  );
+  assert.equal(grocery.status, 200);
+  const towelRow = await prisma.product.findFirst({ where: { name: towels }, select: { department: true } });
+  assert.equal(towelRow?.department, 'GROCERY');
+});
+
+test('a non-department line error does not discard the other batch line', { skip: !hasDb }, async (t) => {
+  try {
+    await prisma.$connect();
+  } catch {
+    t.skip('Database unreachable.');
+    return;
+  }
+  const stamp = `mix-${Date.now()}`;
+  const apples = `Honeycrisp Apples ${stamp}`;
+  const milk = `Whole Milk ${stamp}`;
+  const deliveryId = crypto.randomUUID();
+  const milkId = crypto.randomUUID();
+  t.after(async () => {
+    const products = await prisma.product.findMany({
+      where: { name: { in: [apples, milk] } },
+      select: { id: true },
+    });
+    const productIds = products.map((row) => row.id);
+    if (productIds.length > 0) {
+      await prisma.inventoryLot.deleteMany({ where: { productId: { in: productIds } } });
+      await prisma.inventoryTransaction.deleteMany({ where: { productId: { in: productIds } } });
+      await prisma.product.deleteMany({ where: { id: { in: productIds } } });
+    }
+    await prisma.receivingDelivery.deleteMany({ where: { id: { in: [deliveryId, milkId] } } });
+    await prisma.ledgerIdempotencyKey.deleteMany({
+      where: { key: { in: [`recv:${deliveryId}`, `recv:${milkId}`] } },
+    });
+  });
+
+  const first: ReceivingLogPostInput = {
+    itemName: apples,
     casesReceived: 1,
     caseCost: 4,
     packSize: 1,
     splitFactor: 1,
-    retailPrice: 6,
-    staffId: 'staff-voice',
-  });
-  assert.equal(dairy.posted, true);
-  if (!dairy.posted) return;
-  createdIds.push(dairy.productId);
-  const dairyRow = await prisma.product.findUnique({
-    where: { id: dairy.productId },
-    select: { department: true },
-  });
-  assert.equal(dairyRow?.department, 'DAIRY');
+    retailUnit: 'units',
+    marginMode: '40',
+    currentRetailPrice: 6,
+    externalLogId: deliveryId,
+  };
+  const seeded = await postReceivingLogBatch([first], 'staff-voice');
+  assert.equal(seeded[0]?.stock.posted, true);
 
-  const explicit = await postReceipt({
-    itemName: loaf,
-    casesReceived: 1,
+  const conflict: ReceivingLogPostInput = { ...first, caseCost: 9 };
+  const added: ReceivingLogPostInput = {
+    ...first,
+    itemName: milk,
     caseCost: 3,
-    packSize: 1,
-    splitFactor: 1,
-    retailPrice: 5,
-    staffId: 'staff-voice',
-    department: 'DAIRY',
-  });
-  assert.equal(explicit.posted, true);
-  if (!explicit.posted) return;
-  createdIds.push(explicit.productId);
-  const explicitRow = await prisma.product.findUnique({
-    where: { id: explicit.productId },
-    select: { department: true },
-  });
-  assert.equal(explicitRow?.department, 'DAIRY');
-
-  const unknown = await postReceipt({
-    itemName: gadget,
-    casesReceived: 1,
-    caseCost: 2,
-    packSize: 1,
-    splitFactor: 1,
-    retailPrice: 3,
-    staffId: 'staff-voice',
-  });
-  assert.equal(unknown.posted, false);
-  if (unknown.posted) return;
-  assert.equal(unknown.reason, RECEIVING_DEPARTMENT_REQUIRED);
-  const leftover = await prisma.product.findFirst({ where: { name: gadget }, select: { id: true, department: true } });
-  assert.equal(leftover, null);
+    externalLogId: milkId,
+  };
+  const mixed = await postReceivingLogBatch([conflict, added], 'staff-voice');
+  assert.equal(mixed[0]?.stock.posted, false);
+  assert.equal(mixed[0]?.stock.posted === false && mixed[0].stock.conflict, true);
+  assert.equal(mixed[1]?.stock.posted, true);
+  const milkRow = await prisma.product.findFirst({ where: { name: milk }, select: { department: true } });
+  assert.equal(milkRow?.department, 'DAIRY');
 });

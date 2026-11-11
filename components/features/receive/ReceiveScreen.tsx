@@ -255,7 +255,7 @@ export function ReceiveScreen({ initial }: { initial: ReceivingDeliveryListResul
                 value={screenDepartment}
                 onChange={(event) => setScreenDepartment(event.target.value as ReceivingDepartment | '')}
               >
-                <option value="">Leave unclassified items for review</option>
+                <option value="">Choose on each unclear line</option>
                 {RECEIVING_DEPARTMENTS.map((code) => (
                   <option key={code} value={code}>
                     {departmentLabel(code)}
@@ -321,6 +321,7 @@ export function ReceiveScreen({ initial }: { initial: ReceivingDeliveryListResul
             initialLogs={initial.logs}
             initialWarning={initial.warning}
             supplierId={selectedSupplierId || undefined}
+            supplierName={suppliers.find((row) => row.id === selectedSupplierId)?.name}
             screenDepartment={screenDepartment || undefined}
             onScanNext={() => setInvoiceOpen(true)}
             onLogDisposition={(logId) =>

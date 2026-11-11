@@ -12,10 +12,12 @@ import {
   SUPPLIER_REQUIRED_ERROR,
 } from '@/lib/domains/receiving/invoiceDeliveryId';
 import {
+  assertReceivingDepartmentsChosen,
   postReceivingLogToInventory,
   type ReceivingLogPostInput,
   type ReceivingLogPostResult,
 } from '@/lib/domains/receiving/receivingLogPost';
+import { getSupplierNameById } from '@/lib/domains/suppliers/suppliers';
 
 export const INVOICE_NUMBER_REQUIRED_ERROR =
   'This scan has no invoice number, so it was not given a delivery id. Enter the number from the paper and scan again.';
@@ -829,11 +831,13 @@ export async function postResolvedSupplierInvoice(input: {
     }
     posts.push(await invoiceLinePostInput(line, identity.deliveryId, input.supplierId));
   }
+  const supplierName = await getSupplierNameById(input.supplierId);
+  await assertReceivingDepartmentsChosen(posts, supplierName);
   try {
     const results = await prisma.$transaction(async (tx) => {
       const rows: ReceivingLogPostResult[] = [];
       for (const post of posts) {
-        const row = await postReceivingLogToInventory(post, input.staffId, null, tx);
+        const row = await postReceivingLogToInventory(post, input.staffId, supplierName, tx, true);
         if (!row.stock.posted) {
           const error = new Error(row.stock.posted === false ? row.stock.reason : 'Stock was not updated.');
           (error as Error & { rows?: ReceivingLogPostResult[] }).rows = rows.concat(row);

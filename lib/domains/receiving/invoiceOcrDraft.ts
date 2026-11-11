@@ -34,7 +34,7 @@ export interface AuditedDraftSourceLine {
   quantity: number;
   unit: string;
   unit_cost: number;
-  department: Department | 'PRODUCE' | 'DAIRY' | 'BAKERY' | 'PANTRY' | 'DELI_KITCHEN';
+  department: Department | 'PRODUCE' | 'DAIRY' | 'BAKERY' | 'PANTRY' | 'DELI_KITCHEN' | 'GROCERY';
   case_pack_size: number;
   line_confidence: number;
   requires_approval: boolean;
@@ -180,6 +180,8 @@ function recomputeDraftEconomics(payload: OcrDraftPayload): OcrDraftPayload {
     DAIRY: 0,
     BAKERY: 0,
     PANTRY: 0,
+    DELI_KITCHEN: 0,
+    GROCERY: 0,
   };
   let totalAmount = 0;
   for (const line of payload.lines) {
