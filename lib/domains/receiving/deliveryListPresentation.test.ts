@@ -2,7 +2,11 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
-import { deliveryListPresentation } from '@/lib/domains/receiving/deliveryListPresentation';
+import {
+  deliveryListPresentation,
+  receiveInvoiceGate,
+  SCAN_OR_OPEN_INVOICE_TO_RECEIVE,
+} from '@/lib/domains/receiving/deliveryListPresentation';
 
 const dashboard = fs.readFileSync(
   path.join(process.cwd(), 'components/features/receive/YieldPricingDashboard.tsx'),
@@ -33,6 +37,30 @@ test('rows stay on screen, otherwise the list is loading, an error, or empty', (
   assert.equal(deliveryListPresentation({ rowCount: 0, loading: true, warning: null }), 'loading');
   assert.equal(deliveryListPresentation({ rowCount: 0, loading: false, warning: null }), 'empty');
   assert.equal(deliveryListPresentation({ rowCount: 0, loading: false, warning: '   ' }), 'empty');
+});
+
+test('with no invoice open the screen is empty and save is unavailable', () => {
+  const idle = receiveInvoiceGate(false);
+  assert.equal(idle.emptyMessage, 'Scan or open an invoice to receive');
+  assert.equal(idle.emptyMessage, SCAN_OR_OPEN_INVOICE_TO_RECEIVE);
+  assert.equal(idle.saveAvailable, false);
+
+  const open = receiveInvoiceGate(true);
+  assert.equal(open.emptyMessage, null);
+  assert.equal(open.saveAvailable, true);
+});
+
+test('the receive screen shows that empty state and hides save until an invoice is open', () => {
+  assert.match(dashboard, /receiveInvoiceGate\(/);
+  assert.match(dashboard, /\{invoiceGate\.emptyMessage\}/);
+  assert.match(dashboard, /invoiceGate\.saveAvailable && listPresentation === 'rows'/);
+  const rowsAt = dashboard.indexOf("invoiceGate.saveAvailable && listPresentation === 'rows'");
+  assert.ok(rowsAt >= 0);
+  const rowsBranch = dashboard.slice(rowsAt);
+  assert.match(rowsBranch, /onSave=/);
+  const beforeRows = dashboard.slice(0, rowsAt);
+  assert.equal(beforeRows.includes('onSave='), false);
+  assert.equal(dashboard.includes('setLogs([])'), false);
 });
 
 test('the deliveries screen cannot render only the header', () => {

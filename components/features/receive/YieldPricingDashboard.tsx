@@ -43,7 +43,10 @@ import {
   receivingStockWasAdded,
 } from '@/lib/domains/receiving/invoiceIdentityHold';
 import { SUPPLIER_REQUIRED_ERROR } from '@/lib/domains/receiving/invoiceDeliveryId';
-import { deliveryListPresentation } from '@/lib/domains/receiving/deliveryListPresentation';
+import {
+  deliveryListPresentation,
+  receiveInvoiceGate,
+} from '@/lib/domains/receiving/deliveryListPresentation';
 import { receivingLogRemainsVisible } from '@/lib/domains/receiving/receivingListVisibility';
 import {
   canActOnReceivingStripLine,
@@ -530,6 +533,8 @@ export function YieldPricingDashboard({
     loading,
     warning,
   });
+
+  const invoiceGate = receiveInvoiceGate(invoiceLogIds.size > 0);
 
   useEffect(() => {
     setSelectedId((current) => {
@@ -1019,7 +1024,7 @@ export function YieldPricingDashboard({
         </div>
       </div>
 
-      {listPresentation === 'loading' ? (
+      {invoiceGate.saveAvailable && listPresentation === 'loading' ? (
         <p className="text-sm text-slate-400">Loading deliveries…</p>
       ) : null}
 
@@ -1033,7 +1038,25 @@ export function YieldPricingDashboard({
         </Card>
       ) : null}
 
-      {listPresentation === 'empty' ? (
+      {invoiceGate.emptyMessage ? (
+        <Card className="border-dashed border-slate-700 bg-slate-900/50 backdrop-blur-md">
+          <CardBody className="flex flex-col items-center px-6 py-16 text-center">
+            <Receipt className="h-16 w-16 text-slate-600" strokeWidth={1.1} aria-hidden />
+            <p className="mt-6 max-w-md text-lg font-black tracking-tight text-slate-100">
+              {invoiceGate.emptyMessage}
+            </p>
+            <Button
+              variant="success"
+              className="mt-8 px-6 py-3.5 text-sm"
+              onClick={() => onScanNext?.()}
+            >
+              Scan invoice
+            </Button>
+          </CardBody>
+        </Card>
+      ) : null}
+
+      {invoiceGate.saveAvailable && listPresentation === 'empty' ? (
         <Card className="border-dashed border-slate-700 bg-slate-900/50 backdrop-blur-md transition-opacity duration-500">
           <CardBody className="flex flex-col items-center px-6 py-16 text-center">
             <Receipt className="h-16 w-16 text-slate-600" strokeWidth={1.1} aria-hidden />
@@ -1065,7 +1088,7 @@ export function YieldPricingDashboard({
         onMarkCredited={(id) => void handleMarkCredited(id)}
       />
 
-      {listPresentation === 'rows' ? (
+      {invoiceGate.saveAvailable && listPresentation === 'rows' ? (
         <div
           className={cn(
             'mx-auto flex max-w-3xl flex-col gap-5 pb-8 transition-opacity duration-300',
