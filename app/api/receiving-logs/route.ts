@@ -14,6 +14,10 @@ import { handleApiRouteError } from '@/lib/domains/ai/apiError';
 import { authErrorResponse } from '@/lib/auth/http';
 import { requireReceivingStaff } from '@/lib/auth/guardRoute';
 import { sampleReceivingRejection } from '@/lib/domains/receiving/sampleReceivingGuard';
+import {
+  isInvoiceOcrReceiveRequest,
+  receiveAcceptedInvoiceOcr,
+} from '@/lib/domains/receiving/invoiceOcrReceive';
 
 export const dynamic = 'force-dynamic';
 
@@ -52,6 +56,42 @@ export async function POST(req: NextRequest) {
   try {
     const actor = await requireReceivingStaff();
     const body = (await req.json()) as Record<string, unknown>;
+
+    if (isInvoiceOcrReceiveRequest(body)) {
+      const outcome = await receiveAcceptedInvoiceOcr({
+        actorId: actor.id,
+        actorIsManager: actor.role === 'ADMIN' || actor.role === 'STORE_MANAGER',
+        body,
+      });
+      if (!outcome.ok) {
+        return NextResponse.json(
+          { success: false, error: outcome.error, code: outcome.code },
+          { status: outcome.status }
+        );
+      }
+      const stock = outcome.results[0]?.stock ?? {
+        posted: false as const,
+        reason: 'Stock was not updated.',
+      };
+      const postedLine = outcome.lines[0];
+      const record = postedLine ? buildSavedPackRecord(postedLine) : null;
+      if (record) {
+        savedPacks.unshift(record);
+        if (savedPacks.length > 50) savedPacks.pop();
+      }
+      const status = receivingLineHttpStatus(stock);
+      return NextResponse.json(
+        {
+          success: status === 200,
+          destination: stock.posted ? 'ledger' : 'session',
+          record,
+          stock,
+          savedCount: savedPacks.length,
+          ...(status === 409 ? { error: stock.posted ? undefined : stock.reason, code: 'DELIVERY_CONFLICT' } : {}),
+        },
+        { status }
+      );
+    }
 
     const validated = validateReceivingLogPostInput(body as Parameters<typeof validateReceivingLogPostInput>[0]);
     if (!validated.ok) {
