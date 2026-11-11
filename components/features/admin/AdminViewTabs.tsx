@@ -43,7 +43,7 @@ export function AdminViewTabs() {
       <select
         aria-label="Admin view"
         className={cn(
-          'min-h-11 w-full rounded-xl border border-slate-800 bg-slate-950/80 px-3 text-xs font-black text-slate-100 sm:hidden',
+          'min-h-11 w-full rounded-xl border border-slate-800 bg-slate-950/80 px-3 text-base sm:text-xs font-black text-slate-100 sm:hidden',
           focusRing
         )}
         value={selected}
