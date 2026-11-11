@@ -48,8 +48,13 @@ export const DEPARTMENT_LABELS = {
   GROCERY: 'Grocery',
 } satisfies Record<Department, string>;
 
-/** Every catalogue department, in label order. */
+/** Every catalogue department, in label order. Prompts must use this list. */
 export const CATALOG_DEPARTMENTS = Object.keys(DEPARTMENT_LABELS) as DepartmentType[];
+
+/** Quoted department union for model prompts, one entry per Department enum value. */
+export function departmentPromptUnion(): string {
+  return CATALOG_DEPARTMENTS.map((code) => `"${code}"`).join(' | ');
+}
 
 export function departmentLabel(code: string): string {
   if (code in DEPARTMENT_LABELS) return DEPARTMENT_LABELS[code as DepartmentType];

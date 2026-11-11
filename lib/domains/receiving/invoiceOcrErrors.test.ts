@@ -21,6 +21,14 @@ describe('invoiceOcrErrorResponse', () => {
     assert.equal(res.status, 422);
   });
 
+  it('names an unsupported PDF', async () => {
+    const res = invoiceOcrErrorResponse(new Error('PDF not supported yet'));
+    assert.ok(res);
+    assert.equal(res.status, 400);
+    const body = await res.json();
+    assert.match(body.error, /PDF not supported yet/);
+  });
+
   it('returns null for unknown errors', () => {
     assert.equal(invoiceOcrErrorResponse(new Error('database exploded')), null);
   });

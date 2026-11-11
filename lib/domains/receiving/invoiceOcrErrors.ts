@@ -31,6 +31,10 @@ export function invoiceOcrErrorResponse(error: unknown): NextResponse | null {
     return apiError(msg, 422);
   }
 
+  if (/PDF not supported yet/i.test(msg)) {
+    return apiError(msg, 400);
+  }
+
   if (/Could not prepare the photo/i.test(msg)) {
     return apiError(msg, 400);
   }

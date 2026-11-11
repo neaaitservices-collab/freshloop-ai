@@ -36,6 +36,16 @@ export function quantityKindForInvoiceUnit(
   return 'units';
 }
 
+export type OcrReviewReasonCode =
+  | 'low_confidence'
+  | 'cost_guardrail'
+  | 'department_assumed'
+  | 'quantity_unreadable'
+  | 'name_unreadable'
+  | 'line_total_mismatch'
+  | 'cost_unreadable'
+  | 'unit_invalid';
+
 export interface OcrCommitLine {
   product_id: string;
   quantity: number;
@@ -52,9 +62,10 @@ export interface OcrCommitLine {
   department_assumed?: boolean;
   quantity_unreadable?: boolean;
   name_unreadable?: boolean;
-  review_reasons?: Array<
-    'low_confidence' | 'cost_guardrail' | 'department_assumed' | 'quantity_unreadable' | 'name_unreadable'
-  >;
+  cost_unreadable?: boolean;
+  unit_invalid?: boolean;
+  line_total_mismatch?: boolean;
+  review_reasons?: OcrReviewReasonCode[];
 }
 
 export interface OcrInvoiceMeta {
@@ -152,9 +163,11 @@ export interface OcrDraftLine {
   department_assumed?: boolean;
   quantity_unreadable?: boolean;
   name_unreadable?: boolean;
-  review_reasons?: Array<
-    'low_confidence' | 'cost_guardrail' | 'department_assumed' | 'quantity_unreadable' | 'name_unreadable'
-  >;
+  cost_unreadable?: boolean;
+  unit_invalid?: boolean;
+  line_total_mismatch?: boolean;
+  line_total_note?: string;
+  review_reasons?: OcrReviewReasonCode[];
 }
 
 export interface OcrDraftPayload {
