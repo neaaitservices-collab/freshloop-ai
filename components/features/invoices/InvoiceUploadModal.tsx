@@ -8,9 +8,13 @@ import { DepartmentBadge } from '@/components/ui/DepartmentBadge';
 import { prepareImageDataUrlForOcr, prepareImageFileForOcr } from '@/lib/utils/prepareImageForOcr';
 import { AlertTriangle, ArrowRight, Camera, CheckCircle2, FileText, ImagePlus, Loader2, Sparkles, Upload, X } from 'lucide-react';
 import { ModalBody, ModalFooter, ModalHeader, ModalShell, ScrollTable } from '@/components/ui/layout';
-import { invoiceImportBlockedWithoutSupplier } from '@/lib/domains/receiving/invoiceIdentityHold';
-import { SupplierSelect } from '@/components/features/suppliers/SupplierSelect';
 import type { SupplierRecord } from '@/lib/domains/suppliers/suppliers';
+import {
+  ADD_OCR_SUPPLIER_VALUE,
+  addOcrSupplierLabel,
+  matchSupplierByName,
+  supplierInvoiceSavePlan,
+} from '@/lib/domains/suppliers/supplierInvoiceMatch';
 
 interface InvoiceUploadModalProps {
   isOpen: boolean;
@@ -19,6 +23,8 @@ interface InvoiceUploadModalProps {
   suppliers?: SupplierRecord[];
   selectedSupplierId?: string;
   onSupplierChange?: (supplierId: string) => void;
+  /** Fired when save creates the printed supplier, before the invoice is linked. */
+  onSupplierCreated?: (supplier: SupplierRecord) => void;
 }
 
 export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
@@ -26,8 +32,8 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
   onClose,
   onInvoiceImported,
   suppliers = [],
-  selectedSupplierId = '',
   onSupplierChange,
+  onSupplierCreated,
 }) => {
   const [loading, setLoading] = useState(false);
   const [loadingPhase, setLoadingPhase] = useState<'prepare' | 'ocr' | null>(null);
@@ -39,6 +45,9 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
   const [ocrResult, setOcrResult] = useState<InvoiceOcrResult | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
   const [managerApprovedCosts, setManagerApprovedCosts] = useState(false);
+  /** Null follows the automatic match. A string is the clerk's own pick, including add-new. */
+  const [supplierChoice, setSupplierChoice] = useState<string | null>(null);
+  const [creatingSupplier, setCreatingSupplier] = useState(false);
   const { activeUser } = useRole();
   const managerCanApprove = Boolean(activeUser && isManager(activeUser.role));
 
@@ -112,6 +121,7 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
         ),
       };
       setOcrResult(parsed);
+      setSupplierChoice(null);
       setManagerApprovedCosts(false);
     } catch (err) {
       if (generation !== scanGeneration.current) return;
@@ -164,6 +174,8 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
     setCompressingImage(false);
     setSelectedFile(null);
     setScanError(null);
+    setSupplierChoice(null);
+    setCreatingSupplier(false);
     for (const id of ['invoice-file-input', 'invoice-camera-input']) {
       const fileInput = document.getElementById(id) as HTMLInputElement | null;
       if (fileInput) fileInput.value = '';
@@ -180,17 +192,57 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
   const needsManagerGate =
     flaggedInvoice && (!managerCanApprove || !managerApprovedCosts);
 
-  const offersSupplierPicker = suppliers.length > 0 && Boolean(onSupplierChange);
-  const supplierBlocked = invoiceImportBlockedWithoutSupplier({
-    offersSupplierPicker,
-    selectedSupplierId,
-  });
+  const offersSupplierPicker = Boolean(onSupplierChange);
+  const supplierMatch = ocrResult ? matchSupplierByName(ocrResult.vendorName, suppliers) : null;
+  const autoSupplierId = supplierMatch?.status === 'matched' ? supplierMatch.supplier.id : '';
+  const supplierPick = supplierChoice ?? autoSupplierId;
+  const addSupplierLabel =
+    ocrResult && supplierMatch?.status === 'none' ? addOcrSupplierLabel(ocrResult.vendorName) : null;
+  const savePlan = ocrResult
+    ? supplierInvoiceSavePlan({
+        ocrName: ocrResult.vendorName,
+        selectedSupplierId: supplierPick,
+      })
+    : null;
+  const supplierBlocked = offersSupplierPicker && savePlan?.action === 'blocked';
 
-  const handleAddToReceiving = () => {
-    if (!ocrResult || needsManagerGate || ocrResult.source === 'sample' || supplierBlocked) return;
+  const handleAddToReceiving = async () => {
+    if (!ocrResult || needsManagerGate || ocrResult.source === 'sample' || supplierBlocked || !savePlan) {
+      return;
+    }
+    let supplierId: string | undefined;
+    if (offersSupplierPicker && savePlan.action === 'create') {
+      setCreatingSupplier(true);
+      setScanError(null);
+      try {
+        const res = await fetch('/api/receiving-suppliers', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: savePlan.name }),
+        });
+        const json = (await res.json()) as {
+          success?: boolean;
+          supplier?: SupplierRecord;
+          error?: string;
+        };
+        if (!res.ok || !json.success || !json.supplier?.id) {
+          setScanError(json.error || 'Could not add that supplier.');
+          return;
+        }
+        supplierId = json.supplier.id;
+        onSupplierCreated?.(json.supplier);
+      } catch {
+        setScanError('Could not add that supplier. Check the connection and try again.');
+        return;
+      } finally {
+        setCreatingSupplier(false);
+      }
+    } else if (savePlan.action === 'link') {
+      supplierId = savePlan.supplierId;
+    }
     onInvoiceImported({
       ...ocrResult,
-      supplierId: selectedSupplierId || undefined,
+      supplierId,
     });
     onClose();
   };
@@ -334,13 +386,34 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
           ) : (
             /* OCR Extraction Results View */
             <div className="space-y-5">
-              {suppliers.length > 0 && onSupplierChange ? (
-                <SupplierSelect
-                  suppliers={suppliers}
-                  value={selectedSupplierId}
-                  onChange={onSupplierChange}
-                  label="Saved supplier for this invoice"
-                />
+              {onSupplierChange ? (
+                <label className="block min-w-0">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                    Saved supplier for this invoice
+                  </span>
+                  <select
+                    value={supplierPick}
+                    disabled={creatingSupplier}
+                    onChange={(event) => setSupplierChoice(event.target.value)}
+                    className="mt-2 w-full min-h-11 rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-slate-100"
+                  >
+                    <option value="">{supplierMatch?.status === 'none' ? 'No match' : 'Select a supplier…'}</option>
+                    {suppliers.map((supplier) => (
+                      <option key={supplier.id} value={supplier.id}>
+                        {supplier.name}
+                      </option>
+                    ))}
+                    {addSupplierLabel ? (
+                      <option value={ADD_OCR_SUPPLIER_VALUE}>{addSupplierLabel}</option>
+                    ) : null}
+                  </select>
+                </label>
+              ) : null}
+              {scanError ? (
+                <div className="flex items-start gap-2 rounded-2xl border border-amber-500/40 bg-amber-950/50 p-3 text-xs text-amber-100">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-300" />
+                  <p>{scanError}</p>
+                </div>
               ) : null}
               {supplierBlocked ? (
                 <p className="rounded-2xl border border-amber-500/40 bg-amber-950/50 px-4 py-3 text-xs text-amber-100">
@@ -614,8 +687,8 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
           ) : (
             <button
               type="button"
-              onClick={handleAddToReceiving}
-              disabled={needsManagerGate || ocrResult.source === 'sample' || supplierBlocked}
+              onClick={() => void handleAddToReceiving()}
+              disabled={needsManagerGate || ocrResult.source === 'sample' || supplierBlocked || creatingSupplier}
               title={
                 ocrResult.source === 'sample'
                   ? 'Sample invoice lines are not posted to inventory'
@@ -628,9 +701,11 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
               className="flex min-h-12 items-center gap-2 rounded-xl bg-emerald-400 px-5 py-3 text-xs font-black text-zinc-950 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400"
             >
               <span>
-                {ocrResult.source === 'sample'
-                  ? 'Sample invoice is not received'
-                  : `Add ${ocrResult.lineItems.length} cases to receiving`}
+                {creatingSupplier
+                  ? 'Adding supplier…'
+                  : ocrResult.source === 'sample'
+                    ? 'Sample invoice is not received'
+                    : `Add ${ocrResult.lineItems.length} cases to receiving`}
               </span>
               <ArrowRight className="h-4 w-4" />
             </button>

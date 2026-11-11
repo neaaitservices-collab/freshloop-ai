@@ -338,6 +338,13 @@ export function ReceiveScreen({ initial }: { initial: ReceivingDeliveryListResul
         suppliers={suppliers}
         selectedSupplierId={selectedSupplierId}
         onSupplierChange={setSelectedSupplierId}
+        onSupplierCreated={(supplier) => {
+          setSuppliers((current) =>
+            current.some((row) => row.id === supplier.id)
+              ? current
+              : [...current, supplier].sort((a, b) => a.name.localeCompare(b.name))
+          );
+        }}
       />
     </>
   );

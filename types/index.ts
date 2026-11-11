@@ -64,7 +64,7 @@ export interface InvoiceLineItemExtract {
 
 export interface InvoiceOcrResult {
   vendorName: string;
-  /** Global supplier row (upserted from OCR vendor name). */
+  /** Saved supplier chosen for this invoice. Set when the clerk saves the review. */
   supplierId?: string;
   invoiceNumber: string;
   invoiceDate: string;
