@@ -75,7 +75,7 @@ test('an open invoice scan survives a reload until it is discarded', { skip: !ha
   if (!missing.ok) assert.equal(missing.status, 404);
 });
 
-test('discard keeps posted lines and a retry is already posted', { skip: !hasScratchDb }, async (t) => {
+test('discard keeps posted lines and does not close older scans', { skip: !hasScratchDb }, async (t) => {
   const stamp = `scan-post-${Date.now()}`;
   const staffId = `staff-${stamp}`;
   try {
