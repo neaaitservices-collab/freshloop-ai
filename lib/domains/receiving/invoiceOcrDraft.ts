@@ -5,6 +5,7 @@ import {
   type OcrDraftLine,
   type OcrDraftPayload,
   type OcrQuantityKind,
+  type OcrReviewReasonCode,
 } from '@/lib/domains/receiving/invoiceOcrCommit';
 
 export const OCR_REVIEW_REASONS = [
@@ -13,19 +14,29 @@ export const OCR_REVIEW_REASONS = [
   'department_assumed',
   'quantity_unreadable',
   'name_unreadable',
+  'line_total_mismatch',
+  'cost_unreadable',
+  'unit_invalid',
 ] as const;
 
 export type OcrReviewReason = (typeof OCR_REVIEW_REASONS)[number];
 
+type ReviewReasonDrift = Exclude<OcrReviewReason, OcrReviewReasonCode> | Exclude<OcrReviewReasonCode, OcrReviewReason>;
+const _reviewReasonsMatch: [ReviewReasonDrift] extends [never] ? true : never = true;
+void _reviewReasonsMatch;
+
 const HARD_REVIEW_REASONS = new Set<OcrReviewReason>([
   'quantity_unreadable',
   'name_unreadable',
+  'cost_unreadable',
 ]);
 
 const MANAGER_REVIEW_REASONS = new Set<OcrReviewReason>([
   'low_confidence',
   'cost_guardrail',
   'department_assumed',
+  'line_total_mismatch',
+  'unit_invalid',
 ]);
 
 export interface AuditedDraftSourceLine {
@@ -40,6 +51,10 @@ export interface AuditedDraftSourceLine {
   requires_approval: boolean;
   department_assumed?: boolean;
   quantity_unreadable?: boolean;
+  cost_unreadable?: boolean;
+  unit_invalid?: boolean;
+  line_total_mismatch?: boolean;
+  line_total_note?: string;
 }
 
 export interface OcrDraftResolution {
@@ -68,6 +83,9 @@ export function reviewReasonsForLine(line: {
   department_assumed?: boolean;
   quantity_unreadable?: boolean;
   name_unreadable?: boolean;
+  cost_unreadable?: boolean;
+  unit_invalid?: boolean;
+  line_total_mismatch?: boolean;
   review_reasons?: OcrReviewReason[];
 }): OcrReviewReason[] {
   if (line.review_reasons) return [...line.review_reasons];
@@ -76,6 +94,9 @@ export function reviewReasonsForLine(line: {
   if (line.name_unreadable || isUnreadName(name)) reasons.push('name_unreadable');
   if (line.quantity_unreadable || !(line.quantity > 0)) reasons.push('quantity_unreadable');
   if (line.department_assumed) reasons.push('department_assumed');
+  if (line.cost_unreadable) reasons.push('cost_unreadable');
+  if (line.unit_invalid) reasons.push('unit_invalid');
+  if (line.line_total_mismatch) reasons.push('line_total_mismatch');
   if (line.requires_approval) reasons.push('cost_guardrail');
   if (lineNeedsManualReview(line.line_confidence)) reasons.push('low_confidence');
   return reasons;
@@ -94,6 +115,9 @@ export function buildAuthoritativeOcrDraft(input: {
     const nameUnreadable = isUnreadName(line.item_name);
     const quantityUnreadable = line.quantity_unreadable === true || !(line.quantity > 0);
     const departmentAssumed = line.department_assumed === true;
+    const costUnreadable = line.cost_unreadable === true;
+    const unitInvalid = line.unit_invalid === true;
+    const lineTotalMismatch = line.line_total_mismatch === true;
     const review_reasons = reviewReasonsForLine({
       line_name: line.item_name,
       quantity: line.quantity,
@@ -102,6 +126,9 @@ export function buildAuthoritativeOcrDraft(input: {
       department_assumed: departmentAssumed,
       quantity_unreadable: quantityUnreadable,
       name_unreadable: nameUnreadable,
+      cost_unreadable: costUnreadable,
+      unit_invalid: unitInvalid,
+      line_total_mismatch: lineTotalMismatch,
       review_reasons: undefined,
     });
     return {
@@ -117,6 +144,10 @@ export function buildAuthoritativeOcrDraft(input: {
       department_assumed: departmentAssumed,
       quantity_unreadable: quantityUnreadable,
       name_unreadable: nameUnreadable,
+      cost_unreadable: costUnreadable,
+      unit_invalid: unitInvalid,
+      line_total_mismatch: lineTotalMismatch,
+      ...(line.line_total_note ? { line_total_note: line.line_total_note } : {}),
       review_reasons,
     };
   });
@@ -141,7 +172,7 @@ export function unresolvedLineReasons(
   });
 }
 
-/** Hard gaps always block. Confidence, cost, and assumed department need a manager. */
+/** Hard gaps always block. Confidence, cost, an assumed department, and a line-total gap need a manager. */
 export function draftPostingBlockers(
   payload: Pick<OcrDraftPayload, 'vendorName' | 'invoiceNumber' | 'invoiceDate' | 'lines'>,
   options: { actorIsManager: boolean; manualReviewOverride: boolean }

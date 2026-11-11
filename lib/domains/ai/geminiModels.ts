@@ -12,3 +12,22 @@ export function invoiceOcrModelCandidates(): string[] {
   if (fromEnv) return [fromEnv];
   return [INVOICE_OCR_FLASH_MODEL];
 }
+
+export type InvoiceOcrThinkingConfig =
+  | { thinkingLevel: 'LOW' | 'MINIMAL'; includeThoughts: false }
+  | { thinkingBudget: 0; includeThoughts: false };
+
+/**
+ * Lowest thinking the invoice model will accept.
+ * gemini-3.8-flash and gemini-3.7-flash return 400 for thinkingBudget 0 and for MINIMAL.
+ * LOW is the smallest level those models accept. Older flash models can disable thinking.
+ */
+export function invoiceOcrThinkingConfig(modelName: string): InvoiceOcrThinkingConfig {
+  if (/gemini-(3\.[87]-flash|4)/.test(modelName)) {
+    return { thinkingLevel: 'LOW', includeThoughts: false };
+  }
+  if (/gemini-3/.test(modelName)) {
+    return { thinkingLevel: 'MINIMAL', includeThoughts: false };
+  }
+  return { thinkingBudget: 0, includeThoughts: false };
+}
