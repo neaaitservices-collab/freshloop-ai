@@ -27,7 +27,8 @@ import {
   type RetailUnit,
   type YieldQuote,
 } from '@/lib/domains/receiving/yieldPricing';
-import { CATALOG_DEPARTMENTS, departmentLabel } from '@/lib/domains/inventory/inventoryCatalog';
+import { departmentLabel } from '@/lib/domains/inventory/inventoryCatalog';
+import { useDepartmentOptions } from '@/hooks/use-department-options';
 import { ModalBody, ModalFooter, ModalHeader, ModalShell } from '@/components/ui/layout';
 import { ParCasesToggle } from '@/components/ui/ParCasesToggle';
 import { PullDaysToggle } from '@/components/ui/PullDaysToggle';
@@ -135,6 +136,16 @@ export function ItemSettingsModal({
 }) {
   const [tab, setTab] = useState<TabId>('overview');
   const [department, setDepartment] = useState('');
+  const loadedDepartments = useDepartmentOptions();
+  const departmentOptions = useMemo(() => {
+    if (!department || loadedDepartments.some((dept) => dept.code === department)) {
+      return loadedDepartments;
+    }
+    return [
+      ...loadedDepartments,
+      { code: department, name: departmentLabel(department), sortOrder: 10_000 },
+    ];
+  }, [department, loadedDepartments]);
   const [supplier, setSupplier] = useState('');
   const [origin, setOrigin] = useState('');
   const storePullDefault = useStorePullSensitivityDays();
@@ -474,16 +485,23 @@ export function ItemSettingsModal({
                   <label className="block sm:col-span-1">
                     <span className={LABEL}>Department</span>
                     <select value={department} onChange={(e) => setDepartment(e.target.value)} className={INPUT}>
-                      {CATALOG_DEPARTMENTS.map((d) => (
-                        <option key={d} value={d}>
-                          {departmentLabel(d)}
+                      {departmentOptions.map((dept) => (
+                        <option key={dept.code} value={dept.code}>
+                          {dept.name}
                         </option>
                       ))}
                     </select>
                   </label>
                   <label className="block sm:col-span-1">
                     <span className={LABEL}>Category</span>
-                    <input readOnly value={departmentLabel(department)} className={cn(INPUT, 'text-slate-500')} />
+                    <input
+                      readOnly
+                      value={
+                        departmentOptions.find((dept) => dept.code === department)?.name ??
+                        departmentLabel(department)
+                      }
+                      className={cn(INPUT, 'text-slate-500')}
+                    />
                     <span className="mt-1.5 block text-[11px] text-slate-600">Mirrors department.</span>
                   </label>
                   <label className="block sm:col-span-1">

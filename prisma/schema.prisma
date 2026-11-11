@@ -84,11 +84,32 @@ enum Role {
   DELI_CHEF
 }
 
+/// Store department list. `code` is permanent and matches a Department enum value.
+/// Enum columns stay. Reads prefer this row; a null departmentId or an empty or
+/// unavailable table falls back to the enum.
+model DepartmentRef {
+  id        String  @id @default(uuid())
+  code      String  @unique
+  name      String
+  active    Boolean @default(true)
+  sortOrder Int     @default(0) @map("sort_order")
+
+  products         Product[]
+  invoiceLineItems InvoiceLineItem[]
+  inventoryItems   InventoryItem[]
+
+  @@index([active, sortOrder])
+  @@map("department_refs")
+}
+
 model Product {
   id                 String                 @id @default(uuid())
   barcode            String?                @unique
   name               String
   department         Department
+  /// Nullable link to department_refs. Null keeps `department` as the source.
+  departmentId       String?                @map("department_id")
+  departmentRef      DepartmentRef?         @relation(fields: [departmentId], references: [id], onDelete: SetNull)
   targetMargin       Float                  @default(0.4)
   unitType           UnitType               @default(UNIT)
   /// Sellable catalog units per case (after split): receivePackSize ÷ splitFactor.
@@ -129,6 +150,7 @@ model Product {
   priceVarianceLogs  PriceVarianceLog[]
 
   @@index([department])
+  @@index([departmentId])
   @@index([name])
   @@index([supplier])
   @@index([catalogActive, isManufactured])
@@ -464,6 +486,9 @@ model InvoiceLineItem {
   invoice         VendorInvoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
   name            String
   department      Department
+  /// Nullable link to department_refs. Null keeps `department` as the source.
+  departmentId    String?        @map("department_id")
+  departmentRef   DepartmentRef? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
   quantity        Float
   unit            String
   unitCost        Float
@@ -479,6 +504,7 @@ model InvoiceLineItem {
   @@index([invoiceId])
   @@index([invoiceId, createdAt])
   @@index([inventoryItemId])
+  @@index([departmentId])
   @@map("invoice_line_items")
 }
 
@@ -529,6 +555,9 @@ model InventoryItem {
   id                String          @id @default(uuid())
   name              String
   department        Department
+  /// Nullable link to department_refs. Null keeps `department` as the source.
+  departmentId      String?         @map("department_id")
+  departmentRef     DepartmentRef?  @relation(fields: [departmentId], references: [id], onDelete: SetNull)
   quantity          Float
   unit              String
   receivedCost      Float
@@ -557,6 +586,7 @@ model InventoryItem {
 
   @@index([status])
   @@index([department])
+  @@index([departmentId])
   @@index([expirationDate])
   @@index([receivedDate])
   @@index([productId])

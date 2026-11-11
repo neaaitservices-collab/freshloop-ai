@@ -30,10 +30,10 @@ import {
 import type { ReceivingLog } from '@/lib/domains/receiving/yieldPricing';
 import type { SupplierRecord } from '@/lib/domains/suppliers/suppliers';
 import {
-  RECEIVING_DEPARTMENTS,
+  receivingDepartment,
   type ReceivingDepartment,
 } from '@/lib/domains/inventory/receivingDepartment';
-import { departmentLabel } from '@/lib/domains/inventory/inventoryCatalog';
+import { useDepartmentOptions } from '@/hooks/use-department-options';
 
 export function ReceiveScreen({ initial }: { initial: ReceivingDeliveryListResult }) {
   const [invoiceOpen, setInvoiceOpen] = useState(false);
@@ -42,6 +42,7 @@ export function ReceiveScreen({ initial }: { initial: ReceivingDeliveryListResul
   const [suppliers, setSuppliers] = useState<SupplierRecord[]>([]);
   const [selectedSupplierId, setSelectedSupplierId] = useState('');
   const [screenDepartment, setScreenDepartment] = useState<ReceivingDepartment | ''>('');
+  const departmentOptions = useDepartmentOptions();
   const [supplierLoadError, setSupplierLoadError] = useState<string | null>(null);
   const [identityNonce, setIdentityNonce] = useState(0);
   const [identityHold, setIdentityHold] = useState<IdentityHoldState | null>(null);
@@ -253,12 +254,12 @@ export function ReceiveScreen({ initial }: { initial: ReceivingDeliveryListResul
               <select
                 className="mt-1 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-3 text-sm text-slate-100"
                 value={screenDepartment}
-                onChange={(event) => setScreenDepartment(event.target.value as ReceivingDepartment | '')}
+                onChange={(event) => setScreenDepartment(receivingDepartment(event.target.value) ?? '')}
               >
                 <option value="">Choose on each unclear line</option>
-                {RECEIVING_DEPARTMENTS.map((code) => (
-                  <option key={code} value={code}>
-                    {departmentLabel(code)}
+                {departmentOptions.map((dept) => (
+                  <option key={dept.code} value={dept.code}>
+                    {dept.name}
                   </option>
                 ))}
               </select>

@@ -1,6 +1,10 @@
-import { TransactionType, type Department } from '@prisma/client';
-import type { DepartmentType } from '@/lib/types';
+import { TransactionType } from '@prisma/client';
 import { prisma, VOLUMETRIC_SCRAP_REF_PREFIX } from '@/lib/domains/inventory/ledger';
+import {
+  orderedDepartmentAlerts,
+  resolveItemDepartment,
+} from '@/lib/domains/catalog/departmentRef';
+import { loadDepartmentRefState } from '@/lib/domains/catalog/departmentRefStore';
 import type { WasteKpiReport } from '@/lib/domains/inventory/ledger';
 import { calculateRealTimeWastePct } from '@/lib/domains/inventory/ledger';
 import { isInboundProductionTransfer } from '@/lib/domains/inventory/kitchenInbox';
@@ -24,15 +28,6 @@ export type {
   RevenueDay,
   StoreStats,
 } from '@/lib/domains/stats/storeStatsTypes';
-
-const DEPARTMENT_LABELS = {
-  PRODUCE: 'Produce',
-  DAIRY: 'Dairy',
-  BAKERY: 'Bakery',
-  PANTRY: 'Pantry',
-  DELI_KITCHEN: 'Deli',
-  GROCERY: 'Grocery',
-} satisfies Record<Department, string>;
 
 function money(value: number): number {
   return Number(value.toFixed(2));
@@ -208,6 +203,31 @@ export async function getAdminStoreStatsBundle(
   return { stats: applyWasteKpiToStoreStats(baseStats, wasteKpi), wasteKpi };
 }
 
+async function loadStatProducts(tableReady: boolean) {
+  const where = { isManufactured: false, catalogActive: true } as const;
+  const select = {
+    id: true,
+    department: true,
+    standardCost: true,
+    retailPrice: true,
+    casePackSize: true,
+    parCases: true,
+  } as const;
+  if (!tableReady) {
+    const rows = await prisma.product.findMany({ where, select });
+    return rows.map((row) => ({ ...row, departmentId: null as string | null }));
+  }
+  try {
+    return await prisma.product.findMany({
+      where,
+      select: { ...select, departmentId: true },
+    });
+  } catch {
+    const rows = await prisma.product.findMany({ where, select });
+    return rows.map((row) => ({ ...row, departmentId: null as string | null }));
+  }
+}
+
 async function loadStoreStats(transferRange?: StoreInstantRange | null): Promise<StoreStats> {
   const now = new Date();
   const horizon = new Date(now.getTime() + 48 * 60 * 60 * 1000);
@@ -218,20 +238,11 @@ async function loadStoreStats(transferRange?: StoreInstantRange | null): Promise
     DEFAULT_KPI_LOOKBACK_DAYS,
     now
   );
+  const departmentState = await loadDepartmentRefState();
 
   const [products, stockLevels, expirations, movements, setting, pendingCredits, chartWindow] =
     await Promise.all([
-    prisma.product.findMany({
-      where: { isManufactured: false, catalogActive: true },
-      select: {
-        id: true,
-        department: true,
-        standardCost: true,
-        retailPrice: true,
-        casePackSize: true,
-        parCases: true,
-      },
-    }),
+    loadStatProducts(departmentState.ready),
     getStockLevels(),
     prisma.$queryRaw<Array<{ productId: string; expirationDate: Date }>>`
       SELECT DISTINCT ON ("Product_ID")
@@ -276,10 +287,29 @@ async function loadStoreStats(transferRange?: StoreInstantRange | null): Promise
     setting?.pullSensitivityDays === 4
       ? setting.pullSensitivityDays
       : 3;
-  const alerts = new Map<string, DepartmentAlert>();
-  for (const department of Object.keys(DEPARTMENT_LABELS) as DepartmentType[]) {
-    alerts.set(department, { department: DEPARTMENT_LABELS[department], low: 0, expiring: 0 });
-  }
+  const refsById = new Map(departmentState.rows.map((row) => [row.id, row]));
+  const resolvedById = new Map(
+    products.map((product) => [
+      product.id,
+      resolveItemDepartment({
+        departmentId: product.departmentId,
+        enumCode: product.department,
+        refsById,
+        unavailable: !departmentState.ready,
+      }),
+    ])
+  );
+  const slots = orderedDepartmentAlerts({
+    rows: departmentState.rows,
+    unavailable: !departmentState.ready,
+    items: products.map((product) => ({
+      departmentId: product.departmentId,
+      enumCode: product.department,
+    })),
+  });
+  const alerts = new Map<string, DepartmentAlert>(
+    slots.map((slot) => [slot.code, { department: slot.name, low: 0, expiring: 0 }])
+  );
 
   for (const product of products) {
     const level = levelById.get(product.id);
@@ -294,17 +324,16 @@ async function loadStoreStats(transferRange?: StoreInstantRange | null): Promise
 
     if (onHand <= 0) continue;
 
-    let bucket = alerts.get(product.department);
+    const resolved = resolvedById.get(product.id);
+    const departmentCode = resolved?.code ?? product.department;
+    let bucket = alerts.get(departmentCode);
     if (!bucket) {
       bucket = {
-        department:
-          product.department in DEPARTMENT_LABELS
-            ? DEPARTMENT_LABELS[product.department]
-            : product.department,
+        department: resolved?.name ?? product.department,
         low: 0,
         expiring: 0,
       };
-      alerts.set(product.department, bucket);
+      alerts.set(departmentCode, bucket);
     }
     if (level && isBelowPar(level)) bucket.low += 1;
 
@@ -448,7 +477,15 @@ async function loadStoreStats(transferRange?: StoreInstantRange | null): Promise
       rescueUnits: Number(day.rescueUnits.toFixed(2)),
       discardUnits: Number(day.discardUnits.toFixed(2)),
     })),
-    departmentAlerts: Array.from(alerts.values()),
+    departmentAlerts: [
+      ...slots.flatMap((slot) => {
+        const bucket = alerts.get(slot.code);
+        return bucket ? [bucket] : [];
+      }),
+      ...Array.from(alerts.entries()).flatMap(([code, bucket]) =>
+        slots.some((slot) => slot.code === code) ? [] : [bucket]
+      ),
+    ],
     transferRangeLabel: transferRange ? formatRangeLabel(transferRange.from, transferRange.to) : null,
   };
 }

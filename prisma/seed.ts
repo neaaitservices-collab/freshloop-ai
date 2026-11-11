@@ -7,6 +7,7 @@ import {
   PrismaClient,
   TransactionType,
 } from "@prisma/client";
+import { DEPARTMENT_REF_SEED } from "../lib/domains/catalog/departmentRef";
 import { multiplyMoney } from "../lib/utils/money";
 
 function loadEnvFiles() {
@@ -300,6 +301,34 @@ async function seedStaffUsers() {
   }
 }
 
+/**
+ * Upsert department_refs from the enum seed. Requires migration
+ * 20261111120000_department_ref. Do not run this seed against a shared,
+ * preview, or production database.
+ */
+async function seedDepartmentRefs(): Promise<Map<string, string>> {
+  const ids = new Map<string, string>();
+  for (const row of DEPARTMENT_REF_SEED) {
+    const saved = await prisma.departmentRef.upsert({
+      where: { code: row.code },
+      create: {
+        id: row.id,
+        code: row.code,
+        name: row.name,
+        active: row.active,
+        sortOrder: row.sortOrder,
+      },
+      update: {
+        name: row.name,
+        active: row.active,
+        sortOrder: row.sortOrder,
+      },
+    });
+    ids.set(row.code, saved.id);
+  }
+  return ids;
+}
+
 async function main() {
   if (process.env.NODE_ENV === "production" && process.env.FRESHLOOP_ALLOW_DEMO_SEED !== "1") {
     throw new Error(
@@ -313,6 +342,7 @@ async function main() {
   }
   console.log("🌱 Starting FreshLoop AI database seed...");
 
+  const departmentIds = await seedDepartmentRefs();
   await seedStaffUsers();
 
   await prisma.pOSMapping.deleteMany();
@@ -337,6 +367,7 @@ async function main() {
         barcode: product.barcode ?? null,
         name: product.name,
         department: product.department,
+        departmentId: departmentIds.get(product.department) ?? null,
         targetMargin: product.targetMargin,
         unitType: product.unitType,
         standardCost: product.unitCost,
@@ -398,6 +429,7 @@ async function main() {
     data: {
       isManufactured: true,
       department: "DELI_KITCHEN",
+      departmentId: departmentIds.get(Department.DELI_KITCHEN) ?? null,
       retailPrice: 8.99,
       regularRetailPrice: 8.99,
     },
@@ -407,6 +439,7 @@ async function main() {
     data: {
       isManufactured: true,
       department: "DELI_KITCHEN",
+      departmentId: departmentIds.get(Department.DELI_KITCHEN) ?? null,
       retailPrice: 6.49,
       regularRetailPrice: 6.49,
     },
@@ -416,6 +449,7 @@ async function main() {
     data: {
       isManufactured: true,
       department: "DELI_KITCHEN",
+      departmentId: departmentIds.get(Department.DELI_KITCHEN) ?? null,
       retailPrice: 4.99,
       regularRetailPrice: 4.99,
     },

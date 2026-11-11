@@ -15,7 +15,8 @@ import {
   STOCK_REFRESH_NETWORK_ERROR,
   listLoadFailure,
 } from '@/lib/domains/http/clientLoadFailure';
-import { CATALOG_DEPARTMENTS, departmentLabel, matchesStoredDepartment } from '@/lib/domains/inventory/inventoryCatalog';
+import { matchesStoredDepartment } from '@/lib/domains/inventory/inventoryCatalog';
+import { useDepartmentOptions } from '@/hooks/use-department-options';
 import type { StockLevel } from '@/lib/domains/inventory/stock';
 import { useOptimisticInventoryLevels } from '@/hooks/use-optimistic-inventory-levels';
 
@@ -25,6 +26,7 @@ export function FloorTransferPage({ levels: initialLevels }: { levels: StockLeve
   const { levels, performMove, setLevels } = useOptimisticInventoryLevels(initialLevels);
   const [query, setQuery] = useState('');
   const [department, setDepartment] = useState<string>('ALL');
+  const departmentOptions = useDepartmentOptions();
   const pullDays = useStorePullSensitivityDays();
   const [toast, setToast] = useState<{ text: string; kitchen?: boolean } | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -103,9 +105,9 @@ export function FloorTransferPage({ levels: initialLevels }: { levels: StockLeve
           className="min-h-12 rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-xs font-medium text-slate-300"
         >
           <option value="ALL">All departments</option>
-          {CATALOG_DEPARTMENTS.map((dept) => (
-            <option key={dept} value={dept}>
-              {departmentLabel(dept)}
+          {departmentOptions.map((dept) => (
+            <option key={dept.code} value={dept.code}>
+              {dept.name}
             </option>
           ))}
         </select>
