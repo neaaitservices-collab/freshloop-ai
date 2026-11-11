@@ -45,6 +45,7 @@ import {
 import { SUPPLIER_REQUIRED_ERROR } from '@/lib/domains/receiving/invoiceDeliveryId';
 import { deliveryListPresentation } from '@/lib/domains/receiving/deliveryListPresentation';
 import { receivingLogRemainsVisible } from '@/lib/domains/receiving/receivingListVisibility';
+import { recentDeliveryStripItems } from '@/lib/domains/receiving/recentDeliveryStrip';
 
 interface LogsResponse {
   success?: boolean;
@@ -504,6 +505,11 @@ export function YieldPricingDashboard({
     return rows;
   }, [openLogs, animatingOutIds, visibleLogs]);
 
+  const stripItems = useMemo(
+    () => recentDeliveryStripItems(listLogs, invoiceLogIds),
+    [invoiceLogIds, listLogs]
+  );
+
   const listPresentation = deliveryListPresentation({
     rowCount: listLogs.length,
     loading,
@@ -527,6 +533,13 @@ export function YieldPricingDashboard({
       return openLogs[0]?.id ?? null;
     });
   }, [openLogs]);
+
+  useEffect(() => {
+    if (stripItems.length === 0) return;
+    setSelectedId((current) =>
+      current && stripItems.some((log) => log.id === current) ? current : (stripItems[0]?.id ?? null)
+    );
+  }, [stripItems]);
 
   const selected =
     listLogs.find((log) => log.id === selectedId) ?? openLogs[0] ?? listLogs[0] ?? null;
@@ -1056,7 +1069,7 @@ export function YieldPricingDashboard({
             </p>
           ) : null}
           <InvoiceItemsCarousel
-            items={listLogs}
+            items={stripItems}
             selectedId={selected?.id ?? null}
             animatingOutIds={animatingOutIds}
             onSelect={setSelectedId}
@@ -1064,6 +1077,22 @@ export function YieldPricingDashboard({
               lineNeedsPick(log) ? receivingDepartmentRequiredMessage(log.itemName) : null
             }
           />
+          {stripItems.length === 0 && listLogs.length > 0 ? (
+            <label className="block text-sm text-slate-300">
+              Saved deliveries
+              <select
+                className="mt-1 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-3 text-sm text-slate-100"
+                value={selected?.id ?? ''}
+                onChange={(event) => setSelectedId(event.target.value)}
+              >
+                {listLogs.map((log) => (
+                  <option key={log.id} value={log.id}>
+                    {log.itemName}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
           {selected ? (
           <>
           <ReceivingPricingYieldCard
