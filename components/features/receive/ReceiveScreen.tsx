@@ -13,7 +13,6 @@ import type { ReceivingDeliveryListResult } from '@/lib/domains/receiving/receiv
 import type { InvoiceOcrResult } from '@/lib/types';
 import {
   consumeStashedReceivingScan,
-  identifiedLineCanPost,
   receivingLogsFromInvoice,
 } from '@/lib/domains/receiving/receivingBridge';
 import {
@@ -22,11 +21,17 @@ import {
 } from '@/lib/domains/receiving/invoiceDeliveryId';
 import {
   clearedInvoiceIdentity,
+  firstRenamePair,
   identityHoldFromResponse,
-  invoiceHoldActions,
   type IdentityHoldState,
   type InvoiceHoldAction,
 } from '@/lib/domains/receiving/invoiceIdentityHold';
+import {
+  applyServerDeliveryIds,
+  clearInvoiceDeliveryIds,
+  type InvoiceIdentityPhase,
+} from '@/lib/domains/receiving/invoiceReceiveSave';
+import { InvoiceIdentityActions } from '@/components/features/receive/InvoiceIdentityActions';
 import type { ReceivingLog } from '@/lib/domains/receiving/yieldPricing';
 import type { SupplierRecord } from '@/lib/domains/suppliers/suppliers';
 import {
@@ -46,6 +51,8 @@ export function ReceiveScreen({ initial }: { initial: ReceivingDeliveryListResul
   const [supplierLoadError, setSupplierLoadError] = useState<string | null>(null);
   const [identityNonce, setIdentityNonce] = useState(0);
   const [identityHold, setIdentityHold] = useState<IdentityHoldState | null>(null);
+  const [identityPhase, setIdentityPhase] = useState<InvoiceIdentityPhase>('idle');
+  const [scanVendorName, setScanVendorName] = useState('');
   const [dateDraft, setDateDraft] = useState('');
 
   const loadSuppliers = useCallback(() => {
@@ -76,6 +83,9 @@ export function ReceiveScreen({ initial }: { initial: ReceivingDeliveryListResul
     const cleared = clearedInvoiceIdentity();
     setDateDraft(cleared.dateDraft);
     setIdentityHold(cleared.identityHold);
+    setIdentityPhase(stashed.supplierId ? 'loading' : 'idle');
+    setScanVendorName(stashed.vendorName);
+    if (stashed.supplierId) setSelectedSupplierId(stashed.supplierId);
     setScannedLogs(stashed.logs);
     setScanNote(stashed.note);
   }, [loadSuppliers]);
@@ -84,9 +94,11 @@ export function ReceiveScreen({ initial }: { initial: ReceivingDeliveryListResul
     const cleared = clearedInvoiceIdentity();
     setDateDraft(cleared.dateDraft);
     setIdentityHold(cleared.identityHold);
+    setScanVendorName(result.vendorName?.trim() ?? '');
     const next = receivingLogsFromInvoice(result);
     setScannedLogs(next);
     if (result.supplierId) setSelectedSupplierId(result.supplierId);
+    setIdentityPhase(result.supplierId ? 'loading' : 'idle');
     setScanNote(
       next.length
         ? result.supplierId
@@ -108,11 +120,20 @@ export function ReceiveScreen({ initial }: { initial: ReceivingDeliveryListResul
   );
 
   useEffect(() => {
-    if (!invoiceIdentityKey) return;
-    if (!selectedSupplierId) {
-      setScanNote(SUPPLIER_REQUIRED_ERROR);
+    if (!invoiceIdentityKey) {
+      setIdentityPhase('idle');
       return;
     }
+    if (!selectedSupplierId) {
+      setIdentityPhase('idle');
+      setIdentityHold(null);
+      setScanNote(SUPPLIER_REQUIRED_ERROR);
+      setScannedLogs((prev) => clearInvoiceDeliveryIds(prev));
+      return;
+    }
+    setIdentityPhase('loading');
+    setIdentityHold(null);
+    setScannedLogs((prev) => clearInvoiceDeliveryIds(prev));
     const lines = scannedLogs.filter((log) => log.invoiceNumber && log.printedName);
     const invoiceNumber = lines[0]?.invoiceNumber;
     if (!invoiceNumber) return;
@@ -132,46 +153,34 @@ export function ReceiveScreen({ initial }: { initial: ReceivingDeliveryListResul
           success?: boolean;
           error?: string;
           code?: string;
-          lines?: { deliveryId?: string }[];
+          lines?: { deliveryId?: string; ordinal?: number }[];
+          identifiedLines?: { deliveryId?: string; ordinal?: number }[];
           newPrintedNames?: string[];
           legacyReceipts?: { key: string; vendor: string; invoice: string }[];
           unmatchedStoredLines?: { id: string; printedKey: string }[];
         };
         if (cancelled) return;
         if (!response.ok || !json.success || !Array.isArray(json.lines)) {
-          setIdentityHold(identityHoldFromResponse(json));
+          const hold = identityHoldFromResponse(json);
+          setIdentityHold(hold);
+          setIdentityPhase(hold ? 'held' : 'failed');
           setScanNote(json.error ?? SUPPLIER_REQUIRED_ERROR);
-          setScannedLogs((prev) =>
-            prev.map((log) => (log.invoiceNumber ? { ...log, canPost: false } : log))
-          );
+          setScannedLogs((prev) => applyServerDeliveryIds(prev, json.identifiedLines ?? []));
           return;
         }
         setIdentityHold(null);
-        setScannedLogs((prev) => {
-          let cursor = 0;
-          return prev.map((log) => {
-            if (!log.invoiceNumber || !log.printedName) return log;
-            const assigned = json.lines?.[cursor];
-            cursor += 1;
-            if (!assigned?.deliveryId) return { ...log, canPost: false };
-            return {
-              ...log,
-              id: assigned.deliveryId,
-              canPost: identifiedLineCanPost(log.casesReceived),
-            };
-          });
-        });
+        setIdentityPhase('ready');
+        setScannedLogs((prev) => applyServerDeliveryIds(prev, json.lines));
         setScanNote(
           `Invoice ${invoiceNumber} is tied to the selected supplier. A rescan reuses these delivery ids and does not add a second receipt.`
         );
       })
       .catch(() => {
         if (cancelled) return;
+        setIdentityPhase('failed');
         setScanNote(INVOICE_IDENTITY_NETWORK_ERROR);
         setIdentityHold(null);
-        setScannedLogs((prev) =>
-          prev.map((log) => (log.invoiceNumber ? { ...log, canPost: false } : log))
-        );
+        setScannedLogs((prev) => applyServerDeliveryIds(prev, []));
       });
     return () => {
       cancelled = true;
@@ -180,12 +189,23 @@ export function ReceiveScreen({ initial }: { initial: ReceivingDeliveryListResul
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dateDraft, identityNonce, invoiceIdentityKey, selectedSupplierId]);
 
+  const changeSupplier = (supplierId: string) => {
+    setSelectedSupplierId(supplierId);
+    setIdentityHold(null);
+    setScannedLogs((prev) => clearInvoiceDeliveryIds(prev));
+    if (!supplierId || !invoiceIdentityKey) {
+      setIdentityPhase('idle');
+      if (!supplierId && invoiceIdentityKey) setScanNote(SUPPLIER_REQUIRED_ERROR);
+      return;
+    }
+    setIdentityPhase('loading');
+  };
+
   const confirmHold = (action: InvoiceHoldAction['action'], legacyKey?: string) => {
     const lines = scannedLogs.filter((log) => log.invoiceNumber && log.printedName);
     const invoiceNumber = lines[0]?.invoiceNumber;
     if (!selectedSupplierId || !invoiceNumber) return;
-    const mapped = identityHold?.unmatchedStoredLines?.[0];
-    const newName = identityHold?.newPrintedNames?.[0];
+    const pair = identityHold ? firstRenamePair(identityHold) : null;
     void fetch('/api/receiving-invoices/reconcile', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -197,8 +217,8 @@ export function ReceiveScreen({ initial }: { initial: ReceivingDeliveryListResul
         lines: lines.map((log) => ({ printedName: log.printedName })),
         confirmNewPrintedNames: identityHold?.newPrintedNames,
         legacyKey,
-        fromLineId: action === 'map-line' ? mapped?.id : undefined,
-        mappedPrintedName: action === 'map-line' ? newName : undefined,
+        fromLineId: action === 'map-line' ? pair?.fromLineId : undefined,
+        mappedPrintedName: action === 'map-line' ? pair?.mappedPrintedName : undefined,
       }),
     })
       .then(async (response) => {
@@ -211,6 +231,10 @@ export function ReceiveScreen({ initial }: { initial: ReceivingDeliveryListResul
           legacyReceipts?: { key: string; vendor: string; invoice: string }[];
           unmatchedStoredLines?: { id: string; printedKey: string }[];
         };
+        if (response.status === 403) {
+          setScanNote(json.error ?? 'Only a store manager or the owner can confirm this invoice match.');
+          return;
+        }
         if (!response.ok || !json.success) {
           setIdentityHold(identityHoldFromResponse(json));
           setScanNote(json.error ?? 'That confirmation was not saved.');
@@ -246,7 +270,7 @@ export function ReceiveScreen({ initial }: { initial: ReceivingDeliveryListResul
             <SupplierSelect
               suppliers={suppliers}
               value={selectedSupplierId}
-              onChange={setSelectedSupplierId}
+              onChange={changeSupplier}
               label="Delivery supplier"
             />
             <label className="block text-sm text-slate-300">
@@ -277,40 +301,13 @@ export function ReceiveScreen({ initial }: { initial: ReceivingDeliveryListResul
               <p className={identityHold ? 'font-semibold text-amber-100' : 'font-semibold text-emerald-400/90'}>
                 {scanNote}
               </p>
-              {identityHold?.code === 'DATE_REQUIRED' ? (
-                <label className="block text-xs text-slate-300">
-                  Invoice date from the paper
-                  <input
-                    value={dateDraft}
-                    onChange={(event) => setDateDraft(event.target.value)}
-                    placeholder="YYYY-MM-DD"
-                    className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
-                  />
-                </label>
-              ) : null}
               {identityHold ? (
-                <div className="flex flex-wrap gap-2">
-                  {invoiceHoldActions(identityHold.code)
-                    .filter((choice) => choice.action !== 'map-line' || (identityHold.unmatchedStoredLines?.length === 1 && identityHold.newPrintedNames?.length === 1))
-                    .filter((choice) => choice.action !== 'adopt-legacy')
-                    .map((choice) => (
-                      <Button key={choice.action} type="button" variant="secondary" onClick={() => confirmHold(choice.action)}>
-                        {choice.label}
-                      </Button>
-                    ))}
-                  {identityHold.code === 'LEGACY_RECEIPT_PRESENT'
-                    ? (identityHold.legacyReceipts ?? []).map((receipt) => (
-                        <Button
-                          key={receipt.key}
-                          type="button"
-                          variant="secondary"
-                          onClick={() => confirmHold('adopt-legacy', receipt.key)}
-                        >
-                          Store manager: attach {receipt.vendor} / {receipt.invoice} without adding stock
-                        </Button>
-                      ))
-                    : null}
-                </div>
+                <InvoiceIdentityActions
+                  hold={identityHold}
+                  dateDraft={dateDraft}
+                  onDateDraft={setDateDraft}
+                  onConfirm={confirmHold}
+                />
               ) : null}
             </CardBody>
           </Card>
@@ -323,6 +320,22 @@ export function ReceiveScreen({ initial }: { initial: ReceivingDeliveryListResul
             initialWarning={initial.warning}
             supplierId={selectedSupplierId || undefined}
             supplierName={suppliers.find((row) => row.id === selectedSupplierId)?.name}
+            suppliers={suppliers}
+            vendorName={scanVendorName}
+            identityPhase={identityPhase}
+            identityHold={identityHold}
+            identityMessage={identityHold?.error ?? (identityPhase === 'failed' ? scanNote : null)}
+            invoiceDateDraft={dateDraft}
+            onInvoiceDateDraft={setDateDraft}
+            onSupplierId={changeSupplier}
+            onSupplierCreated={(supplier) => {
+              setSuppliers((current) =>
+                current.some((row) => row.id === supplier.id)
+                  ? current
+                  : [...current, supplier].sort((a, b) => a.name.localeCompare(b.name))
+              );
+            }}
+            onConfirmIdentity={confirmHold}
             screenDepartment={screenDepartment || undefined}
             onScanNext={() => setInvoiceOpen(true)}
             onLogDisposition={(logId) =>

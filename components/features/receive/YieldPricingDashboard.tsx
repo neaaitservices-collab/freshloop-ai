@@ -42,7 +42,17 @@ import {
   describeBatchSaveOutcome,
   receivingStockWasAdded,
 } from '@/lib/domains/receiving/invoiceIdentityHold';
-import { SUPPLIER_REQUIRED_ERROR } from '@/lib/domains/receiving/invoiceDeliveryId';
+import { InvoiceIdentityActions } from '@/components/features/receive/InvoiceIdentityActions';
+import { InlineInvoiceSupplier } from '@/components/features/receive/InlineInvoiceSupplier';
+import type { IdentityHoldState, InvoiceHoldAction } from '@/lib/domains/receiving/invoiceIdentityHold';
+import {
+  lineHasServerDeliveryId,
+  lineLacksServerDeliveryId,
+  receiveLineSaveGate,
+  unidentifiedInvoiceSaveMessage,
+  type InvoiceIdentityPhase,
+} from '@/lib/domains/receiving/invoiceReceiveSave';
+import type { SupplierRecord } from '@/lib/domains/suppliers/suppliers';
 import {
   deliveryListPresentation,
   receiveInvoiceGate,
@@ -337,6 +347,16 @@ export function YieldPricingDashboard({
   supplierId,
   screenDepartment,
   supplierName,
+  suppliers = [],
+  vendorName = '',
+  identityPhase = 'idle',
+  identityHold = null,
+  identityMessage = null,
+  invoiceDateDraft = '',
+  onInvoiceDateDraft,
+  onSupplierId,
+  onSupplierCreated,
+  onConfirmIdentity,
 }: {
   onOpenCommandCenter?: () => void;
   embedded?: boolean;
@@ -353,6 +373,17 @@ export function YieldPricingDashboard({
   screenDepartment?: string;
   /** Saved supplier name, used to classify a line before the clerk picks. */
   supplierName?: string;
+  suppliers?: SupplierRecord[];
+  /** Printed vendor name from the open scan. Used only for "Add as new supplier". */
+  vendorName?: string;
+  identityPhase?: InvoiceIdentityPhase;
+  identityHold?: IdentityHoldState | null;
+  identityMessage?: string | null;
+  invoiceDateDraft?: string;
+  onInvoiceDateDraft?: (value: string) => void;
+  onSupplierId?: (supplierId: string) => void;
+  onSupplierCreated?: (supplier: SupplierRecord) => void;
+  onConfirmIdentity?: (action: InvoiceHoldAction['action'], legacyKey?: string) => void;
 }) {
   const { activeUser } = useRole();
   const canResolveVendorCredit = canManageStaff(activeUser?.role);
@@ -848,16 +879,16 @@ export function YieldPricingDashboard({
       setErrorMessage('This line belongs to a different supplier or invoice.');
       return;
     }
-    if (selected.invoiceNumber && !supplierId) {
-      setErrorMessage(SUPPLIER_REQUIRED_ERROR);
-      return;
-    }
-    if (selected.canPost === false) {
-      setErrorMessage(
-        selected.invoiceNumber
-          ? 'This invoice line does not have a server delivery id yet. Choose a saved supplier and wait for the lines to be identified.'
-          : 'This delivery is already recorded. It is shown for reference and was not posted again.'
-      );
+    const gate = receiveLineSaveGate({
+      invoiceNumber: selected.invoiceNumber,
+      supplierId,
+      lineId: selected.id,
+      canPost: selected.canPost,
+      identityPhase,
+      identityMessage,
+    });
+    if (!gate.canSave) {
+      setErrorMessage(gate.message);
       return;
     }
     if (lineNeedsPick(selected)) {
@@ -898,7 +929,18 @@ export function YieldPricingDashboard({
   };
 
   const handleSaveAll = async () => {
-    const targets = bulkLogs.filter((log) => !animatingOutIds.has(log.id) && log.canPost !== false);
+    const targets = bulkLogs.filter((log) => {
+      if (animatingOutIds.has(log.id) || !lineHasServerDeliveryId(log)) return false;
+      return receiveLineSaveGate({
+        invoiceNumber: log.invoiceNumber,
+        supplierId,
+        lineId: log.id,
+        canPost: log.canPost,
+        identityPhase,
+        identityMessage,
+      }).canSave;
+    });
+    const unidentified = bulkLogs.filter((log) => lineLacksServerDeliveryId(log));
     if (saving || savingAll) return;
     const missingDepartment = targets.filter(lineNeedsPick);
     if (missingDepartment.length > 0) {
@@ -906,10 +948,14 @@ export function YieldPricingDashboard({
       return;
     }
     if (targets.length === 0) {
-      const waitingOnSupplier = bulkLogs.some((log) => log.canPost === false && log.invoiceNumber);
       setErrorMessage(
-        waitingOnSupplier
-          ? 'None of these invoice lines have a server delivery id yet.'
+        unidentified.length > 0
+          ? unidentifiedInvoiceSaveMessage({
+              supplierId,
+              identityPhase,
+              identityMessage,
+              unidentifiedCount: unidentified.length,
+            })
           : 'These deliveries are already recorded, so nothing was posted again.'
       );
       return;
@@ -989,8 +1035,18 @@ export function YieldPricingDashboard({
       failed,
       targetCount: targets.length,
     });
+    const leftBehind =
+      unidentified.length > 0
+        ? unidentifiedInvoiceSaveMessage({
+            supplierId,
+            identityPhase,
+            identityMessage,
+            unidentifiedCount: unidentified.length,
+          })
+        : null;
     if (outcome.notice) setMovedNotice(outcome.notice);
-    if (outcome.error) setErrorMessage(outcome.error);
+    const combinedError = [outcome.error, leftBehind].filter(Boolean).join(' ');
+    if (combinedError) setErrorMessage(combinedError);
     if (outcome.savedMessage) {
       const stockHref = lastProductId
         ? `/inventory?highlight=${encodeURIComponent(lastProductId)}`
@@ -999,6 +1055,19 @@ export function YieldPricingDashboard({
       setSavedMessage(outcome.savedMessage);
     }
   };
+
+  const saveGate = selected
+    ? receiveLineSaveGate({
+        invoiceNumber: selected.invoiceNumber,
+        supplierId,
+        lineId: selected.id,
+        canPost: selected.canPost,
+        identityPhase,
+        identityMessage,
+      })
+    : null;
+  const shownError = saveGate && !saveGate.canSave ? saveGate.message : errorMessage;
+  const unidentifiedInvoice = bulkLogs.some((log) => lineLacksServerDeliveryId(log));
 
   return (
     <div
@@ -1228,6 +1297,26 @@ export function YieldPricingDashboard({
             </div>
           ) : null}
 
+          {unidentifiedInvoice && onSupplierId && onSupplierCreated ? (
+            <div className="space-y-3 rounded-2xl border border-amber-500/40 bg-amber-950/40 p-4">
+              <InlineInvoiceSupplier
+                suppliers={suppliers}
+                supplierId={supplierId ?? ''}
+                vendorName={vendorName}
+                onSupplierId={onSupplierId}
+                onSupplierCreated={onSupplierCreated}
+              />
+              {identityHold && onConfirmIdentity ? (
+                <InvoiceIdentityActions
+                  hold={identityHold}
+                  dateDraft={invoiceDateDraft}
+                  onDateDraft={onInvoiceDateDraft}
+                  onConfirm={onConfirmIdentity}
+                />
+              ) : null}
+            </div>
+          ) : null}
+
           <PackReceiptCard
             log={selected}
             retailUnit={yieldUnit}
@@ -1235,7 +1324,7 @@ export function YieldPricingDashboard({
             currentRetailPrice={priceNumber}
             saving={saving || savingAll}
             savedMessage={savedMessage}
-            errorMessage={errorMessage}
+            errorMessage={shownError}
             stockOnHand={stockOnHand}
             stockMatched={stockMatched}
             alreadyInInventory={postedIds.has(selected.id)}

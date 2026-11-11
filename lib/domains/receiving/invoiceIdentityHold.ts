@@ -66,6 +66,34 @@ export function invoiceImportBlockedWithoutSupplier(options: {
   return options.offersSupplierPicker && options.selectedSupplierId.trim().length === 0;
 }
 
+/**
+ * One renamed printed line, paired with the first saved line that no longer matches.
+ * Further pairs are mapped after this one is confirmed and identity runs again.
+ */
+export function firstRenamePair(hold: {
+  unmatchedStoredLines?: { id: string; printedKey?: string }[];
+  newPrintedNames?: string[];
+}): { fromLineId: string; mappedPrintedName: string; storedKey: string } | null {
+  const fromLineId = hold.unmatchedStoredLines?.[0]?.id?.trim() ?? '';
+  const mappedPrintedName = hold.newPrintedNames?.[0]?.trim() ?? '';
+  const storedKey = hold.unmatchedStoredLines?.[0]?.printedKey?.trim() ?? '';
+  if (!fromLineId || !mappedPrintedName) return null;
+  return { fromLineId, mappedPrintedName, storedKey };
+}
+
+/** Actions the receive screen can offer. A rename stays available for every drifted pair, one at a time. */
+export function actionsForIdentityHold(hold: {
+  code: string;
+  unmatchedStoredLines?: { id: string }[];
+  newPrintedNames?: string[];
+}): InvoiceHoldAction[] {
+  return invoiceHoldActions(hold.code).filter((choice) => {
+    if (choice.action === 'adopt-legacy') return false;
+    if (choice.action !== 'map-line') return true;
+    return (hold.unmatchedStoredLines?.length ?? 0) > 0 && (hold.newPrintedNames?.length ?? 0) > 0;
+  });
+}
+
 export function invoiceHoldActions(code: string): InvoiceHoldAction[] {
   switch (code) {
     case 'DATE_CONFLICT':
