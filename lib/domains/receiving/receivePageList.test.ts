@@ -16,7 +16,8 @@ const dashboard = fs.readFileSync(
 
 test('receive page renders the posted delivery list inside the pricing screen', () => {
   assert.match(page, /listReceivingDeliveryLogs\(\)/);
-  assert.match(page, /<ReceiveScreen initial=\{initial\} \/>/);
+  assert.match(page, /loadOpenInvoiceScan\(actor\.id\)/);
+  assert.match(page, /<ReceiveScreen initial=\{initial\} openScan=\{openScan\} \/>/);
   assert.match(screen, /title="Price the delivery"/);
   assert.match(screen, /<YieldPricingDashboard/);
   assert.match(screen, /initialLogs=\{initial\.logs\}/);
@@ -58,6 +59,16 @@ test('session hide still drops an invoice line that was just saved', () => {
       { postedIds, hiddenIds, invoiceIds: new Set(['line-2']) }
     ),
     true
+  );
+});
+
+test('a posted scan line is not pending and stays addressable by index', () => {
+  assert.equal(
+    receivingLogRemainsVisible(
+      { id: 'line-2', canPost: true, alreadyPosted: true },
+      { postedIds: new Set(), hiddenIds: new Set(), invoiceIds: new Set(['line-2']) }
+    ),
+    false
   );
 });
 

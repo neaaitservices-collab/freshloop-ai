@@ -491,10 +491,22 @@ test('a consumed draft is blocked before stock is written', async () => {
   const block = draftReceiveBlock({
     consumedAt: draft.consumedAt,
     expiresAt: draft.expiresAt,
-    payload: { invoiceNumber: 'INV-100' },
+    payload: draft.payload,
   });
   assert.equal(block?.status, 409);
-  assert.equal(block?.code, 'DRAFT_ALREADY_RECEIVED');
+  assert.equal(block?.code, 'OCR_DRAFT_DISCARDED');
+  assert.match(block?.error ?? '', /discarded/i);
+  const posted = {
+    ...(draft.payload as OcrDraftPayload),
+    postedLineIndexes: [0],
+  };
+  const received = draftReceiveBlock({
+    consumedAt: draft.consumedAt,
+    expiresAt: draft.expiresAt,
+    payload: posted,
+  });
+  assert.equal(received?.status, 409);
+  assert.equal(received?.code, 'DRAFT_ALREADY_RECEIVED');
   let wrote = false;
   const outcome = await receiveAcceptedInvoiceOcr({
     actorId: 'clerk-1',
@@ -509,6 +521,8 @@ test('a consumed draft is blocked before stock is written', async () => {
     },
   });
   assert.equal(outcome.ok, false);
+  if (outcome.ok) return;
+  assert.equal(outcome.code, 'OCR_DRAFT_DISCARDED');
   assert.equal(wrote, false);
 });
 

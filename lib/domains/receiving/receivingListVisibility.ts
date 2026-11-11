@@ -6,13 +6,14 @@ import type { ReceivingLog } from '@/lib/domains/receiving/yieldPricing';
  * A disposition hide always wins.
  */
 export function receivingLogRemainsVisible(
-  log: Pick<ReceivingLog, 'id' | 'canPost'>,
+  log: Pick<ReceivingLog, 'id' | 'canPost' | 'alreadyPosted'>,
   options: {
     postedIds: ReadonlySet<string>;
     hiddenIds: ReadonlySet<string>;
     invoiceIds: ReadonlySet<string>;
   }
 ): boolean {
+  if (log.alreadyPosted) return false;
   if (options.hiddenIds.has(log.id)) return false;
   if (log.canPost === false && !options.invoiceIds.has(log.id)) return true;
   return !options.postedIds.has(log.id);

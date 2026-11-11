@@ -32,6 +32,8 @@ export interface ReceivingLog {
   draftLineIndex?: number;
   /** Manager confirmed low-confidence or cost-guardrail lines for this scan. */
   manualReviewOverride?: boolean;
+  /** This draft line was already posted. The row stays so its draft index does not move. */
+  alreadyPosted?: boolean;
   /** Explicit invoice-line department. Ignored while departmentAssumed is set. */
   department?: string;
   departmentAssumed?: boolean;

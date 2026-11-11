@@ -105,16 +105,32 @@ function failure(
   return { ok: false, status, error, code };
 }
 
+/** Every stored line index is in postedLineIndexes. */
+export function draftIsFullyPosted(payload: unknown): boolean {
+  if (!payload || typeof payload !== 'object') return false;
+  const lines = (payload as { lines?: unknown }).lines;
+  if (!Array.isArray(lines) || lines.length === 0) return false;
+  const posted = new Set(postedLineIndexes(payload));
+  return lines.every((_, index) => posted.has(index));
+}
+
 /** Expired, consumed, and sample drafts fail before any stock write. */
 export function draftReceiveBlock(draft: {
   consumedAt: Date | null;
   expiresAt: Date;
-  payload: { invoiceNumber?: string | null; vendorName?: string | null };
+  payload: unknown;
 }): InvoiceOcrReceiveFailure | null {
+  const payload =
+    draft.payload && typeof draft.payload === 'object'
+      ? (draft.payload as { invoiceNumber?: string | null; vendorName?: string | null })
+      : {};
   if (draft.consumedAt) {
-    return failure(409, 'This scan was already received.', 'DRAFT_ALREADY_RECEIVED');
+    if (draftIsFullyPosted(draft.payload)) {
+      return failure(409, 'This scan was already received.', 'DRAFT_ALREADY_RECEIVED');
+    }
+    return failure(409, 'This scan was discarded.', 'OCR_DRAFT_DISCARDED');
   }
-  const gate = gateStoredOcrDraft({ expiresAt: draft.expiresAt, payload: draft.payload });
+  const gate = gateStoredOcrDraft({ expiresAt: draft.expiresAt, payload });
   if (gate.ok) return null;
   const code = /expired/i.test(gate.error)
     ? 'OCR_DRAFT_EXPIRED'
@@ -333,7 +349,7 @@ async function postDraftLines(input: {
       const blocked = draftReceiveBlock({
         consumedAt: locked[0].consumed_at ? new Date(locked[0].consumed_at) : null,
         expiresAt: new Date(locked[0].expires_at),
-        payload: lockedPayload ?? { invoiceNumber: '' },
+        payload: locked[0].payload,
       });
       if (blocked) {
         throw new InventoryLedgerError(blocked.error, blocked.code, blocked.status);
@@ -353,17 +369,25 @@ async function postDraftLines(input: {
         rows.push(row);
         postedNow.push(entry.draftLineIndex);
       }
-      if (postedNow.length > 0) {
-        await tx.invoiceOcrDraft.update({
-          where: { id: input.draft.id },
+      const covered = new Set([...already, ...postedNow]);
+      const fullyPosted =
+        lockedPayload.lines.length > 0 && lockedPayload.lines.every((_, index) => covered.has(index));
+      if (postedNow.length > 0 || fullyPosted) {
+        await tx.invoiceOcrDraft.updateMany({
+          where: { id: input.draft.id, consumedAt: null },
           data: {
-            payload: payloadWithPostedLines(
-              input.resolved,
-              locked[0].payload,
-              postedNow,
-              input.actorId,
-              new Date().toISOString()
-            ) as unknown as Prisma.InputJsonValue,
+            ...(postedNow.length > 0
+              ? {
+                  payload: payloadWithPostedLines(
+                    input.resolved,
+                    locked[0].payload,
+                    postedNow,
+                    input.actorId,
+                    new Date().toISOString()
+                  ) as unknown as Prisma.InputJsonValue,
+                }
+              : {}),
+            ...(fullyPosted ? { consumedAt: new Date() } : {}),
           },
         });
       }
@@ -418,7 +442,7 @@ export async function receiveAcceptedInvoiceOcr(input: {
   const blocked = draftReceiveBlock({
     consumedAt: draft.consumedAt,
     expiresAt: draft.expiresAt,
-    payload: stored,
+    payload: draft.payload,
   });
   if (blocked) return blocked;
 

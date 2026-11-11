@@ -1,11 +1,13 @@
 import { ReceiveScreen } from '@/components/features/receive/ReceiveScreen';
 import { guardFreshPage } from '@/lib/auth/pageGuard';
+import { loadOpenInvoiceScan } from '@/lib/domains/receiving/openInvoiceScanStore';
 import { listReceivingDeliveryLogs } from '@/lib/domains/receiving/receivingDeliveries';
 
 export const dynamic = 'force-dynamic';
 
 export default async function ReceivePage() {
-  await guardFreshPage('/receive');
+  const actor = await guardFreshPage('/receive');
   const initial = await listReceivingDeliveryLogs();
-  return <ReceiveScreen initial={initial} />;
+  const openScan = await loadOpenInvoiceScan(actor.id);
+  return <ReceiveScreen initial={initial} openScan={openScan} />;
 }
