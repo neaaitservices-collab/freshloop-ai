@@ -43,9 +43,17 @@ import {
   receivingStockWasAdded,
 } from '@/lib/domains/receiving/invoiceIdentityHold';
 import { SUPPLIER_REQUIRED_ERROR } from '@/lib/domains/receiving/invoiceDeliveryId';
-import { deliveryListPresentation } from '@/lib/domains/receiving/deliveryListPresentation';
+import {
+  deliveryListPresentation,
+  receiveInvoiceGate,
+} from '@/lib/domains/receiving/deliveryListPresentation';
 import { receivingLogRemainsVisible } from '@/lib/domains/receiving/receivingListVisibility';
-import { recentDeliveryStripItems } from '@/lib/domains/receiving/recentDeliveryStrip';
+import {
+  canActOnReceivingStripLine,
+  openReceivingLine,
+  recentDeliveryStripItems,
+  savedDeliveryChoices,
+} from '@/lib/domains/receiving/recentDeliveryStrip';
 
 interface LogsResponse {
   success?: boolean;
@@ -350,7 +358,7 @@ export function YieldPricingDashboard({
   const departmentOptions = useDepartmentOptions();
   const [warning, setWarning] = useState<string | null>(initialWarning);
   const [loading, setLoading] = useState(!seeded);
-  const [selectedId, setSelectedId] = useState<string | null>(initialLogs?.[0]?.id ?? null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const [packSize, setPackSize] = useState('12');
   const [splitFactor, setSplitFactor] = useState('1');
@@ -411,13 +419,8 @@ export function YieldPricingDashboard({
         setWarning(json.warning || json.error || 'Deliveries could not be loaded.');
         return;
       }
-      const nextLogs = json.logs;
-      setLogs(nextLogs);
+      setLogs(json.logs);
       setWarning(null);
-      setSelectedId((current) => {
-        if (current) return current;
-        return nextLogs[0]?.id ?? null;
-      });
     } catch {
       setWarning('Deliveries could not be loaded.');
     } finally {
@@ -463,10 +466,20 @@ export function YieldPricingDashboard({
     [visibleLogs, postedIds, hiddenLogIds, invoiceLogIds]
   );
 
+  const activeSupplier = useMemo(
+    () => ({
+      supplierId: supplierId ?? null,
+      supplierName: supplierName ?? null,
+    }),
+    [supplierId, supplierName]
+  );
+
   const bulkLogs = useMemo(() => {
-    const invoiceOpen = openLogs.filter((log) => invoiceLogIds.has(log.id));
-    return invoiceOpen.length > 0 ? invoiceOpen : openLogs;
-  }, [openLogs, invoiceLogIds]);
+    if (invoiceLogIds.size === 0) return [];
+    return openLogs.filter((log) =>
+      canActOnReceivingStripLine(log, openLogs, invoiceLogIds, activeSupplier)
+    );
+  }, [activeSupplier, invoiceLogIds, openLogs]);
 
   const lineNeedsPick = (log: ReceivingLog) =>
     log.canPost !== false &&
@@ -506,8 +519,13 @@ export function YieldPricingDashboard({
   }, [openLogs, animatingOutIds, visibleLogs]);
 
   const stripItems = useMemo(
-    () => recentDeliveryStripItems(listLogs, invoiceLogIds),
-    [invoiceLogIds, listLogs]
+    () => recentDeliveryStripItems(listLogs, invoiceLogIds, activeSupplier),
+    [activeSupplier, invoiceLogIds, listLogs]
+  );
+
+  const savedChoices = useMemo(
+    () => savedDeliveryChoices(listLogs, invoiceLogIds, activeSupplier),
+    [activeSupplier, invoiceLogIds, listLogs]
   );
 
   const listPresentation = deliveryListPresentation({
@@ -516,33 +534,22 @@ export function YieldPricingDashboard({
     warning,
   });
 
-  const extraKey = extraLogs.map((log) => log.id).join('|');
-
-  useEffect(() => {
-    if (extraLogs.length === 0) return;
-    setSelectedId((current) => {
-      if (current && openLogs.some((log) => log.id === current)) return current;
-      return openLogs[0]?.id ?? null;
-    });
-  }, [extraKey, extraLogs.length, openLogs]);
+  const invoiceGate = receiveInvoiceGate(invoiceLogIds.size > 0);
 
   useEffect(() => {
     setSelectedId((current) => {
-      if (!current) return openLogs[0]?.id ?? null;
-      if (openLogs.some((log) => log.id === current)) return current;
-      return openLogs[0]?.id ?? null;
+      const next =
+        invoiceLogIds.size === 0
+          ? null
+          : (openReceivingLine(current, listLogs, invoiceLogIds, activeSupplier)?.id ?? null);
+      return current === next ? current : next;
     });
-  }, [openLogs]);
-
-  useEffect(() => {
-    if (stripItems.length === 0) return;
-    setSelectedId((current) =>
-      current && stripItems.some((log) => log.id === current) ? current : (stripItems[0]?.id ?? null)
-    );
-  }, [stripItems]);
+  }, [activeSupplier, invoiceLogIds, listLogs]);
 
   const selected =
-    listLogs.find((log) => log.id === selectedId) ?? openLogs[0] ?? listLogs[0] ?? null;
+    invoiceLogIds.size === 0
+      ? null
+      : openReceivingLine(selectedId, listLogs, invoiceLogIds, activeSupplier);
 
   useEffect(() => {
     if (!selected) return;
@@ -830,6 +837,13 @@ export function YieldPricingDashboard({
 
   const handleSave = async () => {
     if (!selected || animatingOutIds.has(selected.id) || savingAll) return;
+    if (
+      invoiceLogIds.size === 0 ||
+      !canActOnReceivingStripLine(selected, listLogs, invoiceLogIds, activeSupplier)
+    ) {
+      setErrorMessage('This line belongs to a different supplier or invoice.');
+      return;
+    }
     if (selected.invoiceNumber && !supplierId) {
       setErrorMessage(SUPPLIER_REQUIRED_ERROR);
       return;
@@ -1010,7 +1024,7 @@ export function YieldPricingDashboard({
         </div>
       </div>
 
-      {listPresentation === 'loading' ? (
+      {invoiceGate.saveAvailable && listPresentation === 'loading' ? (
         <p className="text-sm text-slate-400">Loading deliveries…</p>
       ) : null}
 
@@ -1024,7 +1038,25 @@ export function YieldPricingDashboard({
         </Card>
       ) : null}
 
-      {listPresentation === 'empty' ? (
+      {invoiceGate.emptyMessage ? (
+        <Card className="border-dashed border-slate-700 bg-slate-900/50 backdrop-blur-md">
+          <CardBody className="flex flex-col items-center px-6 py-16 text-center">
+            <Receipt className="h-16 w-16 text-slate-600" strokeWidth={1.1} aria-hidden />
+            <p className="mt-6 max-w-md text-lg font-black tracking-tight text-slate-100">
+              {invoiceGate.emptyMessage}
+            </p>
+            <Button
+              variant="success"
+              className="mt-8 px-6 py-3.5 text-sm"
+              onClick={() => onScanNext?.()}
+            >
+              Scan invoice
+            </Button>
+          </CardBody>
+        </Card>
+      ) : null}
+
+      {invoiceGate.saveAvailable && listPresentation === 'empty' ? (
         <Card className="border-dashed border-slate-700 bg-slate-900/50 backdrop-blur-md transition-opacity duration-500">
           <CardBody className="flex flex-col items-center px-6 py-16 text-center">
             <Receipt className="h-16 w-16 text-slate-600" strokeWidth={1.1} aria-hidden />
@@ -1056,7 +1088,7 @@ export function YieldPricingDashboard({
         onMarkCredited={(id) => void handleMarkCredited(id)}
       />
 
-      {listPresentation === 'rows' ? (
+      {invoiceGate.saveAvailable && listPresentation === 'rows' ? (
         <div
           className={cn(
             'mx-auto flex max-w-3xl flex-col gap-5 pb-8 transition-opacity duration-300',
@@ -1072,20 +1104,33 @@ export function YieldPricingDashboard({
             items={stripItems}
             selectedId={selected?.id ?? null}
             animatingOutIds={animatingOutIds}
-            onSelect={setSelectedId}
+            onSelect={(id) => {
+              const opened = openReceivingLine(id, listLogs, invoiceLogIds, activeSupplier);
+              if (!opened || opened.id !== id) return;
+              setSelectedId(opened.id);
+            }}
             departmentPrompt={(log) =>
               lineNeedsPick(log) ? receivingDepartmentRequiredMessage(log.itemName) : null
             }
           />
-          {stripItems.length === 0 && listLogs.length > 0 ? (
+          {savedChoices.length > 0 ? (
             <label className="block text-sm text-slate-300">
               Saved deliveries
               <select
                 className="mt-1 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-3 text-sm text-slate-100"
                 value={selected?.id ?? ''}
-                onChange={(event) => setSelectedId(event.target.value)}
+                onChange={(event) => {
+                  const opened = openReceivingLine(
+                    event.target.value,
+                    listLogs,
+                    invoiceLogIds,
+                    activeSupplier
+                  );
+                  if (!opened || opened.id !== event.target.value) return;
+                  setSelectedId(opened.id);
+                }}
               >
-                {listLogs.map((log) => (
+                {savedChoices.map((log) => (
                   <option key={log.id} value={log.id}>
                     {log.itemName}
                   </option>
