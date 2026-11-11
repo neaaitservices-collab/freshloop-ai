@@ -186,6 +186,8 @@ test('purchase order panel sends one supplier at a time and falls back to mail',
   assert.match(panel, /settlePurchaseOrderGroup/);
   assert.match(panel, /checkOnly/);
   assert.match(panel, /href=\{result\.mailtoUrl\}/);
+  assert.match(panel, /target="_blank"/);
+  assert.match(panel, /rel="noopener noreferrer"/);
   assert.match(panel, />\s*Open mail\s*</);
   assert.match(panel, /activateMailLink/);
   assert.match(panel, /purchaseOrderOpeningMessage/);

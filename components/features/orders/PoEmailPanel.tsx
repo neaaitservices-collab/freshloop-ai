@@ -460,6 +460,8 @@ export function PoEmailPanel({
                       <a
                         ref={mailLinkRef}
                         href={result.mailtoUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
                         className="ml-2 font-semibold text-blue-300 underline underline-offset-2"
                       >
                         Open mail
