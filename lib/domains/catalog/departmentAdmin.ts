@@ -23,6 +23,8 @@ export const DEPARTMENT_CODE_PERMANENT = 'Department code is permanent and canno
 export const DEPARTMENT_CODE_TAKEN = 'A department with that code already exists.';
 export const DEPARTMENT_NOT_DELETED =
   'Departments cannot be removed. Deactivate a department instead.';
+export const DEPARTMENT_CREATE_DISABLED =
+  'Adding departments is disabled until the department enum is retired.';
 
 export interface DepartmentAdminDb {
   ready(): Promise<boolean>;
@@ -48,13 +50,6 @@ export interface DepartmentAdminResult {
     department?: DepartmentRefRecord;
   };
 }
-
-const createSchema = z
-  .object({
-    code: z.string().trim().min(1).max(64),
-    name: z.string().trim().min(1).max(NAME_MAX),
-  })
-  .strict();
 
 const patchSchema = z
   .object({
@@ -163,37 +158,15 @@ export async function runDepartmentAdmin(input: {
     return denied('Only an admin can change departments.', 403);
   }
 
-  if (!(await input.db.ready())) {
-    return { status: 503, body: { success: false, error: DEPARTMENT_TABLE_UNAVAILABLE } };
+  if (method === 'POST') {
+    return {
+      status: 405,
+      body: { success: false, error: DEPARTMENT_CREATE_DISABLED },
+    };
   }
 
-  if (method === 'POST') {
-    const parsed = createSchema.safeParse(input.body);
-    if (!parsed.success) return invalidBody(parsed.error);
-    const code = normalizeDepartmentCode(parsed.data.code);
-    if (!code.ok) return { status: 400, body: { success: false, error: code.error } };
-    const name = normalizeDepartmentName(parsed.data.name);
-    if (!name.ok) return { status: 400, body: { success: false, error: name.error } };
-
-    const existing = await input.db.list();
-    if (existing.some((row) => row.code === code.value)) {
-      return { status: 409, body: { success: false, error: DEPARTMENT_CODE_TAKEN } };
-    }
-    const sortOrder = existing.reduce((max, row) => Math.max(max, row.sortOrder), 0) + 10;
-    try {
-      const department = await input.db.insert({
-        code: code.value,
-        name: name.value,
-        active: true,
-        sortOrder,
-      });
-      return { status: 201, body: { success: true, department } };
-    } catch (error) {
-      if (error instanceof DepartmentAdminError) {
-        return { status: error.status, body: { success: false, error: error.message } };
-      }
-      throw error;
-    }
+  if (!(await input.db.ready())) {
+    return { status: 503, body: { success: false, error: DEPARTMENT_TABLE_UNAVAILABLE } };
   }
 
   const parsed = patchSchema.safeParse(input.body);

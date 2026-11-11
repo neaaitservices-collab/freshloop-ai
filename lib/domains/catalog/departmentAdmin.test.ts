@@ -5,7 +5,7 @@ import test from 'node:test';
 import { canEditDepartments, canViewDepartments } from '@/lib/auth/staffCapabilities';
 import {
   DEPARTMENT_CODE_PERMANENT,
-  DEPARTMENT_CODE_TAKEN,
+  DEPARTMENT_CREATE_DISABLED,
   DEPARTMENT_NOT_DELETED,
   departmentCodeChangeError,
   departmentUpdateFields,
@@ -99,7 +99,9 @@ test('department roles: admin edits, store manager reads, everyone else is refus
       assert.equal(create.status, 401);
     } else if (role === 'ADMIN') {
       assert.equal(view.status, 200);
-      assert.equal(create.status, 201);
+      assert.equal(create.status, 405);
+      assert.equal(create.body.error, DEPARTMENT_CREATE_DISABLED);
+      assert.equal(db.calls.includes('insert'), false);
       assert.equal(rename.status, 200);
     } else if (role === 'STORE_MANAGER') {
       assert.equal(view.status, 200);
@@ -194,41 +196,36 @@ test('department code is permanent and updates never write it', async () => {
   assert.equal(restored.body.department?.active, true);
 });
 
-test('adding a department validates the code and keeps it unique', async () => {
+test('adding a department is rejected until the department enum is retired', async () => {
   assert.deepEqual(normalizeDepartmentCode(' floral '), { ok: true, value: 'FLORAL' });
   assert.equal(normalizeDepartmentCode('1FLORAL').ok, false);
   assert.equal(normalizeDepartmentCode('FLORAL_').ok, false);
   assert.equal(normalizeDepartmentCode('DELI__KITCHEN').ok, false);
 
   const db = memoryDb([row({ id: PRODUCE_ID, code: 'PRODUCE', sortOrder: 10 })]);
-  const created = await runDepartmentAdmin({
-    role: 'ADMIN',
-    method: 'POST',
-    body: { code: 'floral', name: '  Floral  ' },
-    db,
-  });
-  assert.equal(created.status, 201);
-  assert.equal(created.body.department?.code, 'FLORAL');
-  assert.equal(created.body.department?.name, 'Floral');
-  assert.equal(created.body.department?.active, true);
-  assert.equal(created.body.department?.sortOrder, 20);
+  const before = await db.list();
+  db.calls.length = 0;
 
-  const duplicate = await runDepartmentAdmin({
-    role: 'ADMIN',
-    method: 'POST',
-    body: { code: 'FLORAL', name: 'Flowers' },
-    db,
-  });
-  assert.equal(duplicate.status, 409);
-  assert.equal(duplicate.body.error, DEPARTMENT_CODE_TAKEN);
+  for (const body of [
+    { code: 'floral', name: '  Floral  ' },
+    { code: 'PRODUCE', name: 'Produce again' },
+    { code: 'bad code', name: 'Bad' },
+    {},
+  ]) {
+    const created = await runDepartmentAdmin({
+      role: 'ADMIN',
+      method: 'POST',
+      body,
+      db,
+    });
+    assert.equal(created.status, 405);
+    assert.equal(created.body.success, false);
+    assert.equal(created.body.error, DEPARTMENT_CREATE_DISABLED);
+    assert.equal(created.body.department, undefined);
+  }
 
-  const invalid = await runDepartmentAdmin({
-    role: 'ADMIN',
-    method: 'POST',
-    body: { code: 'bad code', name: 'Bad' },
-    db,
-  });
-  assert.equal(invalid.status, 400);
+  assert.deepEqual(db.calls, []);
+  assert.deepEqual(await db.list(), before);
 });
 
 test('the department route enforces roles on the server and has no delete handler', () => {
@@ -255,6 +252,9 @@ test('the department route enforces roles on the server and has no delete handle
   assert.match(page, /canEditDepartments\(user\.role\)/);
   assert.equal(ui.includes('method: \'DELETE\''), false);
   assert.equal(ui.includes('>Delete<'), false);
+  assert.equal(ui.includes('Add department'), false);
+  assert.equal(/method:\s*'POST'/.test(ui), false);
   assert.match(ui, /The code stays the same/);
+  assert.match(ui, /Rename department/);
   assert.match(ui, /canEdit \?/);
 });

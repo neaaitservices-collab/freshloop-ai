@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Pencil, Plus } from 'lucide-react';
+import { Pencil } from 'lucide-react';
 import type { DepartmentRefRecord } from '@/lib/domains/catalog/departmentRef';
 import { ModalBody, ModalFooter, ModalHeader, ModalShell, ScrollTable } from '@/components/ui/layout';
 import { Button } from '@/components/ui/Button';
@@ -9,9 +9,7 @@ import { Button } from '@/components/ui/Button';
 const FIELD =
   'mt-1.5 w-full min-h-11 rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-slate-100 outline-none focus:border-emerald-500/50';
 
-type Editor =
-  | { mode: 'create'; code: string; name: string }
-  | { mode: 'rename'; id: string; code: string; name: string };
+type Editor = { id: string; code: string; name: string };
 
 export function DepartmentAdminTable({
   initialDepartments,
@@ -32,13 +30,9 @@ export function DepartmentAdminTable({
     setError(null);
     try {
       const response = await fetch('/api/admin/departments', {
-        method: editor.mode === 'create' ? 'POST' : 'PATCH',
+        method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(
-          editor.mode === 'create'
-            ? { code: editor.code, name: editor.name }
-            : { id: editor.id, name: editor.name }
-        ),
+        body: JSON.stringify({ id: editor.id, name: editor.name }),
       });
       const json = (await response.json()) as {
         success?: boolean;
@@ -90,27 +84,11 @@ export function DepartmentAdminTable({
 
   return (
     <>
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <p className="text-sm text-slate-400">
-          {canEdit
-            ? 'Add a department, rename it, or change whether it is active.'
-            : 'You can view departments. An admin can add a department, rename it, or change whether it is active.'}
-        </p>
-        {canEdit ? (
-          <Button
-            type="button"
-            variant="success"
-            className="min-h-11 shrink-0"
-            onClick={() => {
-              setError(null);
-              setEditor({ mode: 'create', code: '', name: '' });
-            }}
-          >
-            <Plus className="h-4 w-4" />
-            Add department
-          </Button>
-        ) : null}
-      </div>
+      <p className="text-sm text-slate-400">
+        {canEdit
+          ? 'Rename a department, or change whether it is active.'
+          : 'You can view departments. An admin can rename a department or change whether it is active.'}
+      </p>
       {error && !editor ? <p className="mt-3 text-sm text-amber-200">{error}</p> : null}
 
       <ScrollTable className="mt-4 rounded-xl border border-slate-800">
@@ -145,7 +123,7 @@ export function DepartmentAdminTable({
                           type="button"
                           onClick={() => {
                             setError(null);
-                            setEditor({ mode: 'rename', id: row.id, code: row.code, name: row.name });
+                            setEditor({ id: row.id, code: row.code, name: row.name });
                           }}
                           className="inline-flex min-h-11 items-center gap-1.5 rounded-lg px-2 text-slate-400 hover:bg-slate-800 hover:text-emerald-300"
                           aria-label={`Rename ${row.name}`}
@@ -173,36 +151,14 @@ export function DepartmentAdminTable({
 
       <ModalShell open={editor !== null} onClose={() => setEditor(null)} width="md" label="Department">
         <ModalHeader className="px-6 py-4">
-          <h2 className="text-lg font-black text-white">
-            {editor?.mode === 'rename' ? 'Rename department' : 'Add department'}
-          </h2>
+          <h2 className="text-lg font-black text-white">Rename department</h2>
         </ModalHeader>
         <ModalBody className="space-y-4 px-6 py-4">
-          {editor?.mode === 'rename' ? (
-            <div>
-              <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Code</p>
-              <p className="mt-1.5 font-mono text-sm text-slate-200">{editor.code}</p>
-              <p className="mt-1 text-xs text-slate-500">The code stays the same.</p>
-            </div>
-          ) : (
-            <label className="block text-xs font-bold uppercase tracking-wider text-slate-400">
-              Code
-              <input
-                required
-                value={editor?.code ?? ''}
-                onChange={(event) =>
-                  setEditor((current) =>
-                    current && current.mode === 'create'
-                      ? { ...current, code: event.target.value }
-                      : current
-                  )
-                }
-                className={FIELD}
-                autoCapitalize="characters"
-                spellCheck={false}
-              />
-            </label>
-          )}
+          <div>
+            <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Code</p>
+            <p className="mt-1.5 font-mono text-sm text-slate-200">{editor?.code}</p>
+            <p className="mt-1 text-xs text-slate-500">The code stays the same.</p>
+          </div>
           <label className="block text-xs font-bold uppercase tracking-wider text-slate-400">
             Name
             <input
@@ -227,7 +183,7 @@ export function DepartmentAdminTable({
             disabled={saving || !editor}
             onClick={() => void saveEditor()}
           >
-            {saving ? 'Saving…' : editor?.mode === 'rename' ? 'Save name' : 'Add department'}
+            {saving ? 'Saving…' : 'Save name'}
           </Button>
         </ModalFooter>
       </ModalShell>
