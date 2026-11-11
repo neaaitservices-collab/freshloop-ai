@@ -3,9 +3,11 @@
 import React, { useMemo, useState } from 'react';
 import { ChevronRight, Pencil, Plus, Search } from 'lucide-react';
 import type { SupplierRecord } from '@/lib/domains/suppliers/suppliers';
+import { SupplierActivityPanel } from '@/components/features/suppliers/SupplierActivityPanel';
 import { ModalBody, ModalFooter, ModalHeader, ModalShell } from '@/components/ui/layout';
 import { Button } from '@/components/ui/Button';
 import { cn } from '@/lib/utils/cn';
+import type { RoleName } from '@/lib/utils/roles';
 
 const FIELD =
   'mt-1.5 w-full min-h-11 rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-slate-100 outline-none focus:border-emerald-500/50';
@@ -51,9 +53,11 @@ function DetailValue({ children }: { children: React.ReactNode }) {
 export function SupplierDirectory({
   initialSuppliers,
   canEdit,
+  actorRole,
 }: {
   initialSuppliers: SupplierRecord[];
   canEdit: boolean;
+  actorRole: RoleName;
 }) {
   const [suppliers, setSuppliers] = useState<SupplierRecord[]>(initialSuppliers);
   const [query, setQuery] = useState('');
@@ -210,7 +214,7 @@ export function SupplierDirectory({
       <ModalShell
         open={detail !== null}
         onClose={() => setDetail(null)}
-        width="sm"
+        width="md"
         labelledBy="supplier-detail-title"
       >
         {detail ? (
@@ -269,6 +273,7 @@ export function SupplierDirectory({
                   <DetailValue>{formatSupplierDate(detail.updatedAt)}</DetailValue>
                 </div>
               </dl>
+              <SupplierActivityPanel supplierId={detail.id} role={actorRole} />
             </ModalBody>
             <ModalFooter className="flex gap-3">
               <Button type="button" variant="ghost" className="min-h-11 flex-1" onClick={() => setDetail(null)}>

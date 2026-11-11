@@ -28,7 +28,7 @@ export default async function AdminSuppliersPage() {
         />
       </div>
       <div className="mt-6 rounded-2xl border border-slate-800 bg-slate-900/50 p-4 sm:p-6">
-        <SupplierDirectory initialSuppliers={suppliers} canEdit={canEdit} />
+        <SupplierDirectory initialSuppliers={suppliers} canEdit={canEdit} actorRole={actor.role} />
       </div>
     </PageMain>
   );
