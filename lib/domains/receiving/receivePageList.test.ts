@@ -16,7 +16,8 @@ const dashboard = fs.readFileSync(
 
 test('receive page renders the posted delivery list inside the pricing screen', () => {
   assert.match(page, /listReceivingDeliveryLogs\(\)/);
-  assert.match(page, /<ReceiveScreen initial=\{initial\} \/>/);
+  assert.match(page, /loadOpenInvoiceScan\(actor\.id\)/);
+  assert.match(page, /<ReceiveScreen initial=\{initial\} openScan=\{openScan\} \/>/);
   assert.match(screen, /title="Price the delivery"/);
   assert.match(screen, /<YieldPricingDashboard/);
   assert.match(screen, /initialLogs=\{initial\.logs\}/);

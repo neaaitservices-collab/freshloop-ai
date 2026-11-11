@@ -12,6 +12,12 @@ import { Card, CardBody } from '@/components/ui/Card';
 import type { ReceivingDeliveryListResult } from '@/lib/domains/receiving/receivingDeliveries';
 import type { InvoiceOcrResult } from '@/lib/types';
 import {
+  applyOpenScanChoice,
+  clearOpenScanChoice,
+  readOpenScanChoice,
+  rememberOpenScanChoice,
+} from '@/lib/domains/receiving/openInvoiceScanChoice';
+import {
   consumeStashedReceivingScan,
   receivingLogsFromInvoice,
 } from '@/lib/domains/receiving/receivingBridge';
@@ -40,10 +46,21 @@ import {
 } from '@/lib/domains/inventory/receivingDepartment';
 import { useDepartmentOptions } from '@/hooks/use-department-options';
 
-export function ReceiveScreen({ initial }: { initial: ReceivingDeliveryListResult }) {
+export function ReceiveScreen({
+  initial,
+  openScan = null,
+}: {
+  initial: ReceivingDeliveryListResult;
+  openScan?: InvoiceOcrResult | null;
+}) {
+  const restoredLogs = openScan ? receivingLogsFromInvoice(openScan) : [];
+  const openScanDraftId = openScan?.draftId?.trim() ?? '';
   const [invoiceOpen, setInvoiceOpen] = useState(false);
-  const [scannedLogs, setScannedLogs] = useState<ReceivingLog[]>([]);
-  const [scanNote, setScanNote] = useState<string | null>(null);
+  const [scannedLogs, setScannedLogs] = useState<ReceivingLog[]>(restoredLogs);
+  const [scanNote, setScanNote] = useState<string | null>(
+    restoredLogs.length ? SUPPLIER_REQUIRED_ERROR : null
+  );
+  const [discarding, setDiscarding] = useState(false);
   const [suppliers, setSuppliers] = useState<SupplierRecord[]>([]);
   const [selectedSupplierId, setSelectedSupplierId] = useState('');
   const [screenDepartment, setScreenDepartment] = useState<ReceivingDepartment | ''>('');
@@ -52,7 +69,7 @@ export function ReceiveScreen({ initial }: { initial: ReceivingDeliveryListResul
   const [identityNonce, setIdentityNonce] = useState(0);
   const [identityHold, setIdentityHold] = useState<IdentityHoldState | null>(null);
   const [identityPhase, setIdentityPhase] = useState<InvoiceIdentityPhase>('idle');
-  const [scanVendorName, setScanVendorName] = useState('');
+  const [scanVendorName, setScanVendorName] = useState(openScan?.vendorName?.trim() ?? '');
   const [dateDraft, setDateDraft] = useState('');
 
   const loadSuppliers = useCallback(() => {
@@ -79,7 +96,18 @@ export function ReceiveScreen({ initial }: { initial: ReceivingDeliveryListResul
   useEffect(() => {
     loadSuppliers();
     const stashed = consumeStashedReceivingScan();
-    if (!stashed?.logs.length) return;
+    if (!stashed?.logs.length) {
+      const choice = readOpenScanChoice();
+      if (choice && openScanDraftId && choice.draftId === openScanDraftId) {
+        if (choice.supplierId) setSelectedSupplierId(choice.supplierId);
+        if (choice.manualReviewOverride) {
+          setScannedLogs((prev) => applyOpenScanChoice(prev, choice));
+        }
+      } else if (choice) {
+        clearOpenScanChoice();
+      }
+      return;
+    }
     const cleared = clearedInvoiceIdentity();
     setDateDraft(cleared.dateDraft);
     setIdentityHold(cleared.identityHold);
@@ -88,7 +116,15 @@ export function ReceiveScreen({ initial }: { initial: ReceivingDeliveryListResul
     if (stashed.supplierId) setSelectedSupplierId(stashed.supplierId);
     setScannedLogs(stashed.logs);
     setScanNote(stashed.note);
-  }, [loadSuppliers]);
+    const stashedDraftId = stashed.logs.find((log) => log.draftId)?.draftId;
+    if (stashedDraftId) {
+      rememberOpenScanChoice({
+        draftId: stashedDraftId,
+        supplierId: stashed.supplierId,
+        manualReviewOverride: stashed.logs.some((log) => log.manualReviewOverride),
+      });
+    }
+  }, [loadSuppliers, openScanDraftId]);
 
   const handleInvoiceImported = (result: InvoiceOcrResult) => {
     const cleared = clearedInvoiceIdentity();
@@ -106,6 +142,13 @@ export function ReceiveScreen({ initial }: { initial: ReceivingDeliveryListResul
           : SUPPLIER_REQUIRED_ERROR
         : null
     );
+    if (result.draftId?.trim()) {
+      rememberOpenScanChoice({
+        draftId: result.draftId.trim(),
+        supplierId: result.supplierId ?? '',
+        manualReviewOverride: Boolean(result.manualReviewOverride),
+      });
+    }
     setInvoiceOpen(false);
     loadSuppliers();
   };
@@ -193,6 +236,14 @@ export function ReceiveScreen({ initial }: { initial: ReceivingDeliveryListResul
     setSelectedSupplierId(supplierId);
     setIdentityHold(null);
     setScannedLogs((prev) => clearInvoiceDeliveryIds(prev));
+    const draftId = scannedLogs.find((log) => log.draftId)?.draftId;
+    if (draftId) {
+      rememberOpenScanChoice({
+        draftId,
+        supplierId,
+        manualReviewOverride: scannedLogs.some((log) => log.manualReviewOverride),
+      });
+    }
     if (!supplierId || !invoiceIdentityKey) {
       setIdentityPhase('idle');
       if (!supplierId && invoiceIdentityKey) setScanNote(SUPPLIER_REQUIRED_ERROR);
@@ -244,6 +295,45 @@ export function ReceiveScreen({ initial }: { initial: ReceivingDeliveryListResul
         setIdentityNonce((value) => value + 1);
       })
       .catch(() => setScanNote('That confirmation did not reach the server.'));
+  };
+
+  const openDraftId = scannedLogs.find((log) => log.draftId)?.draftId ?? '';
+
+  const forgetStoredScan = async (draftId: string) => {
+    if (!draftId) {
+      clearOpenScanChoice();
+      return true;
+    }
+    const response = await fetch('/api/receiving-invoices/open-draft', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ draftId }),
+    });
+    if (!response.ok && response.status !== 404) return false;
+    clearOpenScanChoice();
+    return true;
+  };
+
+  const discardScan = async () => {
+    if (!openDraftId || discarding) return;
+    setDiscarding(true);
+    try {
+      const cleared = await forgetStoredScan(openDraftId);
+      if (!cleared) {
+        setScanNote('The scan could not be discarded. It may still be here after a refresh.');
+        return;
+      }
+      setScannedLogs([]);
+      setScanVendorName('');
+      setIdentityHold(null);
+      setIdentityPhase('idle');
+      setDateDraft('');
+      setScanNote(null);
+    } catch {
+      setScanNote('The scan could not be discarded. It may still be here after a refresh.');
+    } finally {
+      setDiscarding(false);
+    }
   };
 
   return (
@@ -309,6 +399,11 @@ export function ReceiveScreen({ initial }: { initial: ReceivingDeliveryListResul
                   onConfirm={confirmHold}
                 />
               ) : null}
+              {openDraftId ? (
+                <Button variant="secondary" className="py-2 text-xs" disabled={discarding} onClick={() => void discardScan()}>
+                  {discarding ? 'Discarding scan…' : 'Discard scan'}
+                </Button>
+              ) : null}
             </CardBody>
           </Card>
         ) : null}
@@ -339,7 +434,14 @@ export function ReceiveScreen({ initial }: { initial: ReceivingDeliveryListResul
             screenDepartment={screenDepartment || undefined}
             onScanNext={() => setInvoiceOpen(true)}
             onLogDisposition={(logId) =>
-              setScannedLogs((prev) => prev.filter((log) => log.id !== logId))
+              setScannedLogs((prev) => {
+                const next = prev.filter((log) => log.id !== logId);
+                if (next.length === 0) {
+                  const draftId = prev.find((log) => log.draftId)?.draftId;
+                  if (draftId) void forgetStoredScan(draftId);
+                }
+                return next;
+              })
             }
           />
         </div>
