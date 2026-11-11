@@ -1,14 +1,17 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { Mail, X } from 'lucide-react';
 import {
+  activateMailLink,
   purchaseOrderCompose,
+  purchaseOrderCopiedMessage,
   purchaseOrderGroupCompose,
   purchaseOrderGroupOpenedWarning,
   purchaseOrderLoggedFailureMessage,
   purchaseOrderOpenedWarning,
+  purchaseOrderOpeningMessage,
   purchaseOrderSendAllConfirm,
   purchaseOrderSendPlan,
   purchaseOrderSkipMessage,
@@ -30,6 +33,7 @@ interface OpenResult {
   message: string;
   truncated?: boolean;
   fullBody?: string;
+  mailtoUrl?: string;
 }
 
 async function recordOpen(draft: PoDraft, reopen: boolean, checkOnly = false): Promise<
@@ -85,6 +89,14 @@ export function PoEmailPanel({
     suppliers?: string[];
   } | null>(null);
   const [results, setResults] = useState<OpenResult[]>([]);
+  const [mailClick, setMailClick] = useState(0);
+  const mailLinkRef = useRef<HTMLAnchorElement | null>(null);
+  const clickedMail = useRef(0);
+  useEffect(() => {
+    if (mailClick === 0 || clickedMail.current === mailClick) return;
+    clickedMail.current = mailClick;
+    activateMailLink(mailLinkRef.current);
+  }, [mailClick]);
   const index =
     drafts.length === 0 ? 0 : Math.min(Math.max(activeIndex, 0), drafts.length - 1);
   const draft = drafts[index];
@@ -124,14 +136,13 @@ export function PoEmailPanel({
         {
           supplier: item.supplier,
           outcome: 'opened',
-          message: compose.truncated
-            ? 'Mail opened. The order text was shortened to fit.'
-            : 'Mail opened.',
+          message: purchaseOrderOpeningMessage(compose.truncated),
           truncated: compose.truncated,
           fullBody: item.body,
+          mailtoUrl: compose.mailtoUrl,
         },
       ]);
-      window.location.href = compose.mailtoUrl;
+      setMailClick((count) => count + 1);
     } catch {
       setResults([{ supplier: item.supplier, outcome: 'failed', message: 'The order could not be recorded.' }]);
     } finally {
@@ -144,13 +155,13 @@ export function PoEmailPanel({
       await navigator.clipboard.writeText(fullBody);
       setResults((current) =>
         current.map((item) =>
-          item.truncated ? { ...item, message: 'Mail opened. Full text copied.' } : item
+          item.fullBody != null ? { ...item, message: purchaseOrderCopiedMessage(true) } : item
         )
       );
     } catch {
       setResults((current) =>
         current.map((item) =>
-          item.truncated ? { ...item, message: 'Mail opened. The full text could not be copied.' } : item
+          item.fullBody != null ? { ...item, message: purchaseOrderCopiedMessage(false) } : item
         )
       );
     }
@@ -207,14 +218,13 @@ export function PoEmailPanel({
         {
           supplier: 'Group',
           outcome: 'opened',
-          message: compose.truncated
-            ? 'Mail opened. The order text was shortened to fit.'
-            : 'Mail opened.',
+          message: purchaseOrderOpeningMessage(compose.truncated),
           truncated: compose.truncated,
           fullBody: compose.fullBody,
+          mailtoUrl: compose.mailtoUrl,
         },
       ]);
-      window.location.href = compose.mailtoUrl;
+      setMailClick((count) => count + 1);
     } finally {
       setBusy(false);
     }
@@ -446,7 +456,16 @@ export function PoEmailPanel({
                     <span>
                       {result.supplier}: {result.message}
                     </span>
-                    {result.truncated && result.fullBody ? (
+                    {result.mailtoUrl ? (
+                      <a
+                        ref={mailLinkRef}
+                        href={result.mailtoUrl}
+                        className="ml-2 font-semibold text-blue-300 underline underline-offset-2"
+                      >
+                        Open mail
+                      </a>
+                    ) : null}
+                    {result.fullBody != null ? (
                       <button
                         type="button"
                         className="ml-2 font-semibold text-blue-300 underline underline-offset-2"

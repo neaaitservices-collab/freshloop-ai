@@ -12,15 +12,17 @@ import {
   draftForSupplier,
   draftsForSuppliers,
   matchSupplierRecipient,
-  openPurchaseOrderWindow,
+  OPENING_MAIL_APP,
+  activateMailLink,
   purchaseOrderCompose,
+  purchaseOrderCopiedMessage,
   purchaseOrderGroupBody,
   purchaseOrderGroupCompose,
   purchaseOrderGroupOpenedWarning,
   purchaseOrderLoggedFailureMessage,
+  purchaseOrderOpeningMessage,
   purchaseOrderSkippedLabel,
   settlePurchaseOrderGroup,
-  settlePurchaseOrderWindow,
   purchaseOrderLineKey,
   purchaseOrderMailto,
   purchaseOrderOpenedWarning,
@@ -183,8 +185,16 @@ test('purchase order panel sends one supplier at a time and falls back to mail',
   assert.match(panel, /purchaseOrderSkippedLabel/);
   assert.match(panel, /settlePurchaseOrderGroup/);
   assert.match(panel, /checkOnly/);
-  assert.match(panel, /window\.location\.href = compose\.mailtoUrl/);
+  assert.match(panel, /href=\{result\.mailtoUrl\}/);
+  assert.match(panel, />\s*Open mail\s*</);
+  assert.match(panel, /activateMailLink/);
+  assert.match(panel, /purchaseOrderOpeningMessage/);
   assert.match(panel, /Copy full text/);
+  assert.equal(panel.includes('result.truncated && result.fullBody'), false);
+  assert.equal(panel.includes('window.location.href'), false);
+  assert.equal(panel.includes('Mail opened'), false);
+  assert.equal(mail.includes('openPurchaseOrderWindow'), false);
+  assert.equal(mail.includes('settlePurchaseOrderWindow'), false);
   assert.equal(panel.includes('about:blank'), false);
   assert.equal(panel.includes('window.open'), false);
   assert.equal(panel.includes('Open in Gmail'), false);
@@ -428,52 +438,23 @@ test('group mailto uses ready suppliers, checks repeats before any write, and na
   assert.equal(route.includes('$transaction'), false);
 });
 
-test('a blank compose tab is opened in the click, then pointed at the mail URL only after the log succeeds', async () => {
-  assert.equal(openPurchaseOrderWindow(() => null), null);
+test('a successful open keeps a mailto link and clicks it once', () => {
+  assert.equal(OPENING_MAIL_APP, 'Opening your mail app…');
+  assert.equal(purchaseOrderOpeningMessage(false), 'Opening your mail app…');
+  assert.equal(
+    purchaseOrderOpeningMessage(true),
+    'Opening your mail app… The order text was shortened to fit.'
+  );
+  assert.equal(purchaseOrderCopiedMessage(true), 'Opening your mail app… Full text copied.');
+  assert.equal(purchaseOrderCopiedMessage(false), 'Opening your mail app… The full text could not be copied.');
 
-  const openedCalls: string[] = [];
-  const popup = {
-    opener: {} as Window | null,
-    location: { href: '' },
-    close() {
-      this.location.href = 'closed';
+  let clicks = 0;
+  const link = {
+    click() {
+      clicks += 1;
     },
   };
-  const opened = openPurchaseOrderWindow((url, target) => {
-    openedCalls.push(`${url}|${target}`);
-    return popup;
-  });
-  assert.deepEqual(openedCalls, ['about:blank|_blank']);
-  assert.equal(opened?.opener, null);
-
-  const success = await settlePurchaseOrderWindow(popup, 'https://mail.google.com/compose', async () => ({ ok: true }));
-  assert.equal(success.outcome, 'opened');
-  assert.equal(popup.location.href, 'https://mail.google.com/compose');
-
-  const repeat = await settlePurchaseOrderWindow(popup, 'https://mail.google.com/again', async () => ({
-    ok: false,
-    status: 409,
-    openedAt: '2026-11-11T16:00:00.000Z',
-    message: 'Already opened for this order.',
-  }));
-  assert.equal(repeat.outcome, 'repeat');
-  if (repeat.outcome === 'repeat') assert.equal(repeat.openedAt, '2026-11-11T16:00:00.000Z');
-  assert.equal(popup.location.href, 'closed');
-
-  popup.location.href = 'still-blank';
-  const failed = await settlePurchaseOrderWindow(popup, 'https://mail.google.com/fail', async () => ({
-    ok: false,
-    status: 500,
-    message: 'The order could not be recorded.',
-  }));
-  assert.equal(failed.outcome, 'failed');
-  if (failed.outcome === 'failed') assert.equal(failed.message, 'The order could not be recorded.');
-  assert.equal(popup.location.href, 'closed');
-
-  popup.location.href = 'still-blank';
-  const thrown = await settlePurchaseOrderWindow(popup, 'https://mail.google.com/throw', async () => {
-    throw new Error('network');
-  });
-  assert.equal(thrown.outcome, 'failed');
-  assert.equal(popup.location.href, 'closed');
+  activateMailLink(link);
+  activateMailLink(null);
+  assert.equal(clicks, 1);
 });

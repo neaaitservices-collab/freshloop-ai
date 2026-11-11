@@ -327,44 +327,19 @@ export type PurchaseOrderRecordResult =
   | { ok: true }
   | { ok: false; status: number; openedAt?: string; message: string };
 
-export type PurchaseOrderPopup = {
-  opener: Window | null;
-  location: { href: string };
-  close: () => void;
-};
+export const OPENING_MAIL_APP = 'Opening your mail app…';
 
-/** Open a blank tab during the click. `noopener` in window.open features always returns null. */
-export function openPurchaseOrderWindow(
-  open: (url: string, target: string) => PurchaseOrderPopup | null
-): PurchaseOrderPopup | null {
-  const popup = open('about:blank', '_blank');
-  if (popup) popup.opener = null;
-  return popup;
+export function purchaseOrderOpeningMessage(truncated: boolean): string {
+  return truncated ? `${OPENING_MAIL_APP} The order text was shortened to fit.` : OPENING_MAIL_APP;
 }
 
-/** Point the blank tab at the mail URL only after the log succeeds. Close it on a repeat or a failure. */
-export async function settlePurchaseOrderWindow(
-  popup: PurchaseOrderPopup,
-  gmailUrl: string,
-  record: () => Promise<PurchaseOrderRecordResult>
-): Promise<
-  | { outcome: 'opened' }
-  | { outcome: 'repeat'; openedAt: string }
-  | { outcome: 'failed'; message: string }
-> {
-  try {
-    const recorded = await record();
-    if (!recorded.ok) {
-      popup.close();
-      if (recorded.status === 409) return { outcome: 'repeat', openedAt: recorded.openedAt ?? '' };
-      return { outcome: 'failed', message: recorded.message };
-    }
-    popup.location.href = gmailUrl;
-    return { outcome: 'opened' };
-  } catch {
-    popup.close();
-    return { outcome: 'failed', message: 'The order could not be recorded.' };
-  }
+export function purchaseOrderCopiedMessage(copied: boolean): string {
+  return copied ? `${OPENING_MAIL_APP} Full text copied.` : `${OPENING_MAIL_APP} The full text could not be copied.`;
+}
+
+/** Click the visible mailto link once. The anchor stays on the page for another click. */
+export function activateMailLink(link: { click: () => void } | null): void {
+  link?.click();
 }
 
 /**
