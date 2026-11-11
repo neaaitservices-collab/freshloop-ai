@@ -4,18 +4,11 @@ import { authErrorResponse } from '@/lib/auth/http';
 import { requireAdminStaff } from '@/lib/auth/guardRoute';
 import { runSupplierActivity } from '@/lib/domains/suppliers/supplierActivity';
 import { supplierActivityDb } from '@/lib/domains/suppliers/supplierActivityStore';
-import { InvalidJsonBodyError } from '@/lib/security/parseJsonBody';
+import { parseJsonBody } from '@/lib/security/parseJsonBody';
+import { voidActivitySchema } from '@/lib/security/schemas/supplierActivity';
 import { assertMutationRateLimit } from '@/lib/security/rateLimit';
 
 export const dynamic = 'force-dynamic';
-
-async function readBody(req: NextRequest): Promise<unknown> {
-  try {
-    return await req.json();
-  } catch {
-    throw new InvalidJsonBodyError();
-  }
-}
 
 export async function POST(
   req: NextRequest,
@@ -31,7 +24,7 @@ export async function POST(
       supplierId: id,
       activityId,
       action: 'void',
-      body: await readBody(req),
+      body: await parseJsonBody(req, voidActivitySchema),
       db: supplierActivityDb,
     });
     return NextResponse.json(result.body, { status: result.status });

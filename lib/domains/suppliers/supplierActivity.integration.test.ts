@@ -201,7 +201,7 @@ test('supplier activity timeline on a local scratch database', { skip: !hasScrat
     }),
     { params: Promise.resolve({ id: supplier.id, activityId: auto.id }) }
   );
-  assert.equal(autoEdit.status, 400);
+  assert.equal(autoEdit.status, 409);
 
   setAdminStaffTestAuth(async () => user('ADMIN', `admin-${stamp}`));
   const voided = await voidActivity(
@@ -228,4 +228,60 @@ test('supplier activity timeline on a local scratch database', { skip: !hasScrat
     { params: Promise.resolve({ id: supplier.id, activityId: note.item?.id ?? '' }) }
   );
   assert.equal(managerVoid.status, 403);
+
+  setAdminStaffTestAuth(async () => user('ADMIN', `admin-again-${stamp}`));
+  const voidAgain = await voidActivity(
+    new NextRequest(`http://localhost/api/admin/suppliers/${supplier.id}/activity/${auto.id}/void`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ voidReason: 'Already voided' }),
+    }),
+    { params: Promise.resolve({ id: supplier.id, activityId: auto.id }) }
+  );
+  assert.equal(voidAgain.status, 409);
+
+  const heldResponse = await POST(
+    new NextRequest(`http://localhost/api/admin/suppliers/${supplier.id}/activity`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ type: 'CREDIT', amount: 3, invoiceRef: 'INV-HELD', reason: 'SHORT' }),
+    }),
+    { params: Promise.resolve({ id: supplier.id }) }
+  );
+  const held = (await heldResponse.json()) as { item?: SupplierTimelineItem };
+  assert.equal(heldResponse.status, 200);
+  setReceivingStaffTestAuth(async () => user('ADMIN', `admin-held-${stamp}`));
+  const heldVoid = await voidActivity(
+    new NextRequest(`http://localhost/api/admin/suppliers/${supplier.id}/activity/${held.item?.id}/void`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ voidReason: 'Hold the credit' }),
+    }),
+    { params: Promise.resolve({ id: supplier.id, activityId: held.item?.id ?? '' }) }
+  );
+  assert.equal(heldVoid.status, 200);
+  setManagerStaffTestAuth(async () => user('ADMIN', `admin-held-${stamp}`));
+  const receiveVoided = await PATCH(
+    new NextRequest(`http://localhost/api/admin/suppliers/${supplier.id}/activity/${held.item?.id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ creditStatus: 'RECEIVED' }),
+    }),
+    { params: Promise.resolve({ id: supplier.id, activityId: held.item?.id ?? '' }) }
+  );
+  assert.equal(receiveVoided.status, 409);
+
+  const other = await prisma.supplier.create({ data: { name: `Other scratch ${stamp}` } });
+  t.after(async () => {
+    await prisma.supplier.delete({ where: { id: other.id } }).catch(() => undefined);
+  });
+  const cross = await PATCH(
+    new NextRequest(`http://localhost/api/admin/suppliers/${other.id}/activity/${held.item?.id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ creditStatus: 'RECEIVED' }),
+    }),
+    { params: Promise.resolve({ id: other.id, activityId: held.item?.id ?? '' }) }
+  );
+  assert.equal(cross.status, 404);
 });

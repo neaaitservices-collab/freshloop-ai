@@ -43,18 +43,20 @@ function memoryDb(seed?: {
   variances?: VarianceRecord[];
   qualities?: QualityRecord[];
   products?: string[];
+  suppliers?: string[];
 }) {
   const calls: string[] = [];
   const activities = [...(seed?.activities ?? [])];
   const variances = [...(seed?.variances ?? [])];
   const qualities = [...(seed?.qualities ?? [])];
   const products = new Set(seed?.products ?? []);
+  const suppliers = new Set([supplierId, ...(seed?.suppliers ?? [])]);
   let seq = activities.length;
 
   const db: SupplierActivityDb = {
     async supplierExists(id) {
       calls.push('supplierExists');
-      return id === supplierId;
+      return suppliers.has(id);
     },
     async productExists(id) {
       calls.push('productExists');
@@ -122,18 +124,35 @@ function memoryDb(seed?: {
       calls.push('find');
       return activities.find((row) => row.supplierId === id && row.id === activityId) ?? null;
     },
-    async updateActivity(activityId, patch) {
-      calls.push('update');
-      const index = activities.findIndex((row) => row.id === activityId);
-      const current = activities[index];
-      if (!current) throw new Error('missing activity');
-      const next = { ...current };
-      if (patch.creditStatus !== undefined) next.creditStatus = patch.creditStatus;
-      if (patch.resolvedAt !== undefined) next.resolvedAt = patch.resolvedAt;
-      if (patch.voidedAt !== undefined) next.voidedAt = patch.voidedAt;
-      if (patch.voidReason !== undefined) next.voidReason = patch.voidReason;
-      activities[index] = next;
-      return next;
+    async receiveCredit({ supplierId: id, activityId, resolvedAt }) {
+      calls.push('receive');
+      const index = activities.findIndex(
+        (row) =>
+          row.id === activityId &&
+          row.supplierId === id &&
+          row.type === 'CREDIT' &&
+          row.source === 'MANUAL' &&
+          row.voidedAt == null &&
+          row.creditStatus === 'OPEN'
+      );
+      if (index >= 0) {
+        activities[index] = { ...activities[index], creditStatus: 'RECEIVED', resolvedAt };
+        return { outcome: 'updated' as const, row: activities[index] };
+      }
+      const owned = activities.some((row) => row.id === activityId && row.supplierId === id);
+      return { outcome: owned ? ('conflict' as const) : ('missing' as const) };
+    },
+    async voidActivity({ supplierId: id, activityId, voidedAt, voidReason }) {
+      calls.push('void');
+      const index = activities.findIndex(
+        (row) => row.id === activityId && row.supplierId === id && row.voidedAt == null
+      );
+      if (index >= 0) {
+        activities[index] = { ...activities[index], voidedAt, voidReason };
+        return { outcome: 'updated' as const, row: activities[index] };
+      }
+      const owned = activities.some((row) => row.id === activityId && row.supplierId === id);
+      return { outcome: owned ? ('conflict' as const) : ('missing' as const) };
     },
   };
 
@@ -389,7 +408,7 @@ test('manual add, receive, and void follow the role rules and never delete', asy
         body: { voidReason: 'Again' },
         db,
       });
-      assert.equal(again.status, 400);
+      assert.equal(again.status, 409);
     } else {
       assert.equal(voided.status, 403, role);
       assert.equal(activities.find((row) => row.id === 'auto-price')?.voidedAt ?? null, voidedAtBefore);
@@ -404,8 +423,7 @@ test('manual add, receive, and void follow the role rules and never delete', asy
     body: { creditStatus: 'RECEIVED' },
     db,
   });
-  assert.equal(edited.status, 400);
-  assert.match(String(edited.body.error), /Automatic rows/);
+  assert.equal(edited.status, 409);
   assert.equal(activities.find((row) => row.id === 'auto-price')?.creditStatus, null);
 
   const handPrice = await runSupplierActivity({
@@ -424,15 +442,18 @@ test('manual add, receive, and void follow the role rules and never delete', asy
 
 test('manual activity fields are validated per type', async () => {
   const productId = '11111111-1111-4111-8111-111111111111';
-  const { db, activities } = memoryDb({ products: [productId] });
+  const legacyProductId = 'legacy-sku-bananas';
+  const { db, activities } = memoryDb({ products: [productId, legacyProductId] });
   const cases: Array<{ body: unknown; status: number }> = [
     { body: { type: 'NOTE', note: '   ' }, status: 400 },
     { body: { type: 'NOTE', note: 'Keep the invoice' }, status: 200 },
+    { body: { type: 'NOTE', note: 'x'.repeat(2001) }, status: 400 },
     { body: { type: 'CREDIT', amount: 0, invoiceRef: 'INV', reason: 'SHORT' }, status: 400 },
     { body: { type: 'CREDIT', amount: 4, invoiceRef: '   ', reason: 'SHORT' }, status: 400 },
     { body: { type: 'CREDIT', amount: 4, invoiceRef: 'INV-2', reason: 'NOPE' }, status: 400 },
     { body: { type: 'SHORT_SHIP', productId: 'not-a-uuid', qty: 2 }, status: 400 },
     { body: { type: 'SHORT_SHIP', productId, qty: 2, invoiceRef: 'INV-3' }, status: 200 },
+    { body: { type: 'SHORT_SHIP', productId: legacyProductId, qty: 1 }, status: 200 },
     { body: { type: 'QUALITY_REJECT', productId: '22222222-2222-4222-8222-222222222222' }, status: 400 },
     { body: { type: 'LATE_DELIVERY' }, status: 200 },
     { body: { type: 'NOPE' }, status: 400 },
@@ -462,8 +483,73 @@ test('manual activity fields are validated per type', async () => {
       body: { creditStatus: 'RECEIVED' },
       db,
     })).status,
-    400
+    409
   );
+});
+
+test('receive after void and a second void conflict, and another supplier’s id is not found', async () => {
+  const { db } = memoryDb({
+    suppliers: ['sup-2'],
+    activities: [
+      activity({
+        id: 'credit-open',
+        type: 'CREDIT',
+        amount: 4,
+        creditStatus: 'OPEN',
+        reason: 'SHORT',
+        invoiceRef: 'INV',
+        source: 'MANUAL',
+        createdAt: at(2),
+      }),
+      activity({
+        id: 'other-supplier-credit',
+        supplierId: 'sup-2',
+        type: 'CREDIT',
+        amount: 9,
+        creditStatus: 'OPEN',
+        reason: 'SHORT',
+        invoiceRef: 'INV-X',
+        source: 'MANUAL',
+        createdAt: at(3),
+      }),
+    ],
+  });
+  const voided = await runSupplierActivity({
+    actor: actor('ADMIN'),
+    supplierId,
+    action: 'void',
+    activityId: 'credit-open',
+    body: { voidReason: 'Duplicate' },
+    db,
+  });
+  assert.equal(voided.status, 200);
+  const again = await runSupplierActivity({
+    actor: actor('ADMIN'),
+    supplierId,
+    action: 'void',
+    activityId: 'credit-open',
+    body: { voidReason: 'Again' },
+    db,
+  });
+  assert.equal(again.status, 409);
+  const received = await runSupplierActivity({
+    actor: actor('STORE_MANAGER'),
+    supplierId,
+    action: 'receive',
+    activityId: 'credit-open',
+    body: { creditStatus: 'RECEIVED' },
+    db,
+  });
+  assert.equal(received.status, 409);
+  const cross = await runSupplierActivity({
+    actor: actor('STORE_MANAGER'),
+    supplierId,
+    action: 'receive',
+    activityId: 'other-supplier-credit',
+    body: { creditStatus: 'RECEIVED' },
+    db,
+  });
+  assert.equal(cross.status, 404);
 });
 
 test('a bad cursor or unknown supplier does not write a row', async () => {

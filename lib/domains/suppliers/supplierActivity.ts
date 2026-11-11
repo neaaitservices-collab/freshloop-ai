@@ -94,6 +94,11 @@ export type ActivityWrite = {
   source: 'MANUAL';
 };
 
+export type ActivityUpdateResult =
+  | { outcome: 'updated'; row: ActivityRecord }
+  | { outcome: 'missing' }
+  | { outcome: 'conflict' };
+
 export interface SupplierActivityDb {
   supplierExists(supplierId: string): Promise<boolean>;
   productExists(productId: string): Promise<boolean>;
@@ -116,10 +121,17 @@ export interface SupplierActivityDb {
   openCredits(supplierId: string): Promise<{ total: number; count: number }>;
   createActivity(input: ActivityWrite): Promise<ActivityRecord>;
   findActivity(supplierId: string, activityId: string): Promise<ActivityRecord | null>;
-  updateActivity(
-    activityId: string,
-    patch: Partial<Pick<ActivityRecord, 'creditStatus' | 'resolvedAt' | 'voidedAt' | 'voidReason'>>
-  ): Promise<ActivityRecord>;
+  receiveCredit(input: {
+    supplierId: string;
+    activityId: string;
+    resolvedAt: Date;
+  }): Promise<ActivityUpdateResult>;
+  voidActivity(input: {
+    supplierId: string;
+    activityId: string;
+    voidedAt: Date;
+    voidReason: string;
+  }): Promise<ActivityUpdateResult>;
 }
 
 export type SupplierActivityResult = {
@@ -415,29 +427,28 @@ export async function runSupplierActivity(input: {
     return { status: 200, body: { success: true, item: presentActivity(saved) } };
   }
 
-  const existing = await input.db.findActivity(input.supplierId, activityId);
-  if (!existing) return fail(404, 'Activity was not found.');
-
   if (input.action === 'receive') {
-    if (existing.source === 'AUTO') return fail(400, "Automatic rows can't be edited.");
-    if (existing.type !== 'CREDIT') return fail(400, 'Only a credit can be marked received.');
-    if (existing.voidedAt) return fail(400, 'Voided credits cannot be marked received.');
-    if (existing.creditStatus === 'RECEIVED') {
-      return { status: 200, body: { success: true, item: presentActivity(existing) } };
-    }
-    const saved = await input.db.updateActivity(existing.id, {
-      creditStatus: 'RECEIVED',
+    const saved = await input.db.receiveCredit({
+      supplierId: input.supplierId,
+      activityId,
       resolvedAt: input.now ?? new Date(),
     });
-    return { status: 200, body: { success: true, item: presentActivity(saved) } };
+    return activityUpdateResult(saved);
   }
 
   const reason = parseVoidReason(input.body);
   if (!reason.ok) return fail(400, reason.error);
-  if (existing.voidedAt) return fail(400, 'This row is already voided.');
-  const saved = await input.db.updateActivity(existing.id, {
+  const saved = await input.db.voidActivity({
+    supplierId: input.supplierId,
+    activityId,
     voidedAt: input.now ?? new Date(),
     voidReason: reason.voidReason,
   });
-  return { status: 200, body: { success: true, item: presentActivity(saved) } };
+  return activityUpdateResult(saved);
+}
+
+function activityUpdateResult(result: ActivityUpdateResult): SupplierActivityResult {
+  if (result.outcome === 'missing') return fail(404, 'Activity was not found.');
+  if (result.outcome === 'conflict') return fail(409, 'This activity was already changed.');
+  return { status: 200, body: { success: true, item: presentActivity(result.row) } };
 }

@@ -8,6 +8,11 @@ import { setManagerStaffTestAuth } from '@/lib/auth/managerStaffTestAuth';
 import type { AuthSessionUser } from '@/lib/auth/staffSnapshot';
 import { DEFAULT_PRICE_CHANGE_THRESHOLD_PCT } from '@/lib/domains/suppliers/priceChangeThreshold';
 import { parsePlatformSettings, PLATFORM_DEFAULTS } from '@/lib/domains/stats/platformSettings';
+import { storeSettingSafeSelect } from '@/lib/domains/stats/storeSettingSelect';
+import {
+  getPriceChangeThresholdPct,
+  isMissingPriceChangeColumn,
+} from '@/lib/domains/suppliers/priceChangeThreshold';
 import { ROLES, type RoleName } from '@/lib/utils/roles';
 
 function settingsBody(priceChangeThresholdPct: unknown) {
@@ -35,6 +40,27 @@ function user(role: RoleName): AuthSessionUser {
     hourlyRate: null,
   };
 }
+
+test('store setting reads do not select the price change column', async () => {
+  assert.equal(Object.hasOwn(storeSettingSafeSelect, 'priceChangeThresholdPct'), false);
+  const fallback = await getPriceChangeThresholdPct(async () => {
+    throw new Error('The column price_change_threshold_pct does not exist in the current database.');
+  });
+  assert.equal(fallback, 8);
+  assert.equal(
+    isMissingPriceChangeColumn(
+      new Error('The column price_change_threshold_pct does not exist in the current database.')
+    ),
+    true
+  );
+  assert.equal(isMissingPriceChangeColumn(new Error('Database unreachable')), false);
+  await assert.rejects(
+    () => getPriceChangeThresholdPct(async () => {
+      throw new Error('Database unreachable');
+    }),
+    /Database unreachable/
+  );
+});
 
 test('price change alert accepts 0 through 100 and rejects anything outside', () => {
   assert.equal(PLATFORM_DEFAULTS.priceChangeThresholdPct, DEFAULT_PRICE_CHANGE_THRESHOLD_PCT);

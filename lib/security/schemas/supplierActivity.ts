@@ -33,10 +33,13 @@ function blankToNull(body: unknown): unknown {
   return copy;
 }
 
-function cleanNote(value: string | null | undefined): string | null {
-  if (typeof value !== 'string') return null;
+function cleanNote(
+  value: string | null | undefined
+): { ok: true; note: string | null } | { ok: false; error: string } {
+  if (typeof value !== 'string') return { ok: true, note: null };
+  if (value.length > 2000) return { ok: false, error: 'Note must be 2000 characters or less.' };
   const cleaned = sanitizePlainText(value, 2000);
-  return cleaned.length > 0 ? cleaned : null;
+  return { ok: true, note: cleaned.length > 0 ? cleaned : null };
 }
 
 function cleanRef(value: string | null | undefined): string | null {
@@ -48,7 +51,9 @@ function cleanRef(value: string | null | undefined): string | null {
 const noteSchema = z
   .object({
     type: z.literal('NOTE'),
-    note: z.string({ required_error: 'Note is required.' }).max(4000),
+    note: z
+      .string({ required_error: 'Note is required.' })
+      .max(2000, 'Note must be 2000 characters or less.'),
   })
   .strict();
 
@@ -56,17 +61,17 @@ const lateSchema = z
   .object({
     type: z.literal('LATE_DELIVERY'),
     invoiceRef: z.string().max(240).nullable().optional(),
-    note: z.string().max(4000).nullable().optional(),
+    note: z.string().max(2000, 'Note must be 2000 characters or less.').nullable().optional(),
   })
   .strict();
 
 const alertSchema = z
   .object({
     type: z.enum(['SHORT_SHIP', 'QUALITY_REJECT']),
-    productId: z.union([z.string().uuid('Product id is invalid.'), z.null()]).optional(),
+    productId: z.union([z.string().trim().min(1).max(128), z.null()]).optional(),
     qty: z.number().finite().positive('Quantity must be greater than 0.').max(1_000_000).nullable().optional(),
     invoiceRef: z.string().max(240).nullable().optional(),
-    note: z.string().max(4000).nullable().optional(),
+    note: z.string().max(2000, 'Note must be 2000 characters or less.').nullable().optional(),
   })
   .strict();
 
@@ -83,9 +88,11 @@ const creditSchema = z
       required_error: 'Credit reason is required.',
       invalid_type_error: 'Credit reason is invalid.',
     }),
-    note: z.string().max(4000).nullable().optional(),
+    note: z.string().max(2000, 'Note must be 2000 characters or less.').nullable().optional(),
   })
   .strict();
+
+export const manualActivityBodySchema = z.union([noteSchema, lateSchema, alertSchema, creditSchema]);
 
 export const receiveCreditSchema = z
   .object({
@@ -114,24 +121,29 @@ export function parseManualActivity(
     const parsed = noteSchema.safeParse(normalized);
     if (!parsed.success) return { ok: false, error: issue(parsed.error) };
     const note = cleanNote(parsed.data.note);
-    if (!note) return { ok: false, error: 'Note is required.' };
-    return { ok: true, value: { type: 'NOTE', note } };
+    if (!note.ok) return note;
+    if (!note.note) return { ok: false, error: 'Note is required.' };
+    return { ok: true, value: { type: 'NOTE', note: note.note } };
   }
   if (type === 'LATE_DELIVERY') {
     const parsed = lateSchema.safeParse(normalized);
     if (!parsed.success) return { ok: false, error: issue(parsed.error) };
+    const note = cleanNote(parsed.data.note);
+    if (!note.ok) return note;
     return {
       ok: true,
       value: {
         type: 'LATE_DELIVERY',
         invoiceRef: cleanRef(parsed.data.invoiceRef),
-        note: cleanNote(parsed.data.note),
+        note: note.note,
       },
     };
   }
   if (type === 'SHORT_SHIP' || type === 'QUALITY_REJECT') {
     const parsed = alertSchema.safeParse(normalized);
     if (!parsed.success) return { ok: false, error: issue(parsed.error) };
+    const note = cleanNote(parsed.data.note);
+    if (!note.ok) return note;
     const productId = typeof parsed.data.productId === 'string' && parsed.data.productId ? parsed.data.productId : null;
     return {
       ok: true,
@@ -140,13 +152,15 @@ export function parseManualActivity(
         productId,
         qty: parsed.data.qty ?? null,
         invoiceRef: cleanRef(parsed.data.invoiceRef),
-        note: cleanNote(parsed.data.note),
+        note: note.note,
       },
     };
   }
   if (type === 'CREDIT') {
     const parsed = creditSchema.safeParse(normalized);
     if (!parsed.success) return { ok: false, error: issue(parsed.error) };
+    const note = cleanNote(parsed.data.note);
+    if (!note.ok) return note;
     const invoiceRef = cleanRef(parsed.data.invoiceRef);
     if (!invoiceRef) return { ok: false, error: 'Invoice reference is required.' };
     return {
@@ -156,7 +170,7 @@ export function parseManualActivity(
         amount: parsed.data.amount,
         invoiceRef,
         reason: parsed.data.reason,
-        note: cleanNote(parsed.data.note),
+        note: note.note,
       },
     };
   }

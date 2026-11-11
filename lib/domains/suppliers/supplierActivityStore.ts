@@ -250,17 +250,49 @@ export const supplierActivityDb: SupplierActivityDb = {
     });
     return row ? mapActivity(row) : null;
   },
-  async updateActivity(activityId, patch) {
-    const row = await prisma.supplierActivity.update({
-      where: { id: activityId },
-      data: {
-        creditStatus: patch.creditStatus as SupplierCreditStatus | null | undefined,
-        resolvedAt: patch.resolvedAt,
-        voidedAt: patch.voidedAt,
-        voidReason: patch.voidReason,
+  async receiveCredit({ supplierId, activityId, resolvedAt }) {
+    const updated = await prisma.supplierActivity.updateMany({
+      where: {
+        id: activityId,
+        supplierId,
+        type: 'CREDIT',
+        source: 'MANUAL',
+        voidedAt: null,
+        creditStatus: 'OPEN',
       },
-      include: activityInclude,
+      data: { creditStatus: 'RECEIVED', resolvedAt },
     });
-    return mapActivity(row);
+    return finishConditionalUpdate(supplierId, activityId, updated.count);
+  },
+  async voidActivity({ supplierId, activityId, voidedAt, voidReason }) {
+    const updated = await prisma.supplierActivity.updateMany({
+      where: { id: activityId, supplierId, voidedAt: null },
+      data: { voidedAt, voidReason },
+    });
+    return finishConditionalUpdate(supplierId, activityId, updated.count);
   },
 };
+
+async function finishConditionalUpdate(
+  supplierId: string,
+  activityId: string,
+  count: number
+): Promise<
+  | { outcome: 'updated'; row: ActivityRecord }
+  | { outcome: 'missing' }
+  | { outcome: 'conflict' }
+> {
+  if (count > 0) {
+    const row = await prisma.supplierActivity.findFirst({
+      where: { id: activityId, supplierId },
+      include: activityInclude,
+    });
+    if (!row) return { outcome: 'missing' };
+    return { outcome: 'updated', row: mapActivity(row) };
+  }
+  const owned = await prisma.supplierActivity.findFirst({
+    where: { id: activityId, supplierId },
+    select: { id: true },
+  });
+  return owned ? { outcome: 'conflict' } : { outcome: 'missing' };
+}

@@ -4,21 +4,14 @@ import { authErrorResponse } from '@/lib/auth/http';
 import { requireReceivingStaff } from '@/lib/auth/guardRoute';
 import { runSupplierActivity } from '@/lib/domains/suppliers/supplierActivity';
 import { supplierActivityDb } from '@/lib/domains/suppliers/supplierActivityStore';
-import { InvalidJsonBodyError } from '@/lib/security/parseJsonBody';
+import { parseJsonBody } from '@/lib/security/parseJsonBody';
+import { manualActivityBodySchema } from '@/lib/security/schemas/supplierActivity';
 import { assertMutationRateLimit } from '@/lib/security/rateLimit';
 
 export const dynamic = 'force-dynamic';
 
 function jsonResult(result: { status: number; body: unknown }) {
   return NextResponse.json(result.body, { status: result.status });
-}
-
-async function readBody(req: NextRequest): Promise<unknown> {
-  try {
-    return await req.json();
-  } catch {
-    throw new InvalidJsonBodyError();
-  }
 }
 
 export async function GET(req: NextRequest, context: { params: Promise<{ id: string }> }) {
@@ -51,7 +44,7 @@ export async function POST(req: NextRequest, context: { params: Promise<{ id: st
       actor,
       supplierId: id,
       action: 'add',
-      body: await readBody(req),
+      body: await parseJsonBody(req, manualActivityBodySchema),
       db: supplierActivityDb,
     });
     return jsonResult(result);
