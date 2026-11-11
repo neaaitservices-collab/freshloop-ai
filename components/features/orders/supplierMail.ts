@@ -180,7 +180,25 @@ export function purchaseOrderLineKey(draft: {
 }
 
 export const GMAIL_COMPOSE_URL_LIMIT = 8000;
+/** Mailto URLs past this length are dropped by some mail apps and browsers. */
+export const MAILTO_URL_LIMIT = 2000;
 export const ORDER_TRUNCATED_NOTE = '\n…(order truncated, see attached/full list)';
+export const PURCHASE_ORDER_GROUP_SUBJECT = 'Supermarket Purchase Order';
+
+export function purchaseOrderSkippedLabel(suppliers: readonly string[]): string {
+  return `Skipped, no valid email: ${suppliers.join(', ')}`;
+}
+
+/** One confirm for every supplier in the group that was already opened. */
+export function purchaseOrderGroupOpenedWarning(suppliers: readonly string[]): string {
+  return `Already opened for ${suppliers.join(', ')}, open again?`;
+}
+
+/** Name the suppliers whose opens were stored when a later write does not finish. */
+export function purchaseOrderLoggedFailureMessage(reason: string, logged: readonly string[]): string {
+  if (logged.length === 0) return reason;
+  return `${reason} Logged: ${logged.join(', ')}.`;
+}
 
 export function purchaseOrderOpenedWarning(openedAt: string): string {
   const time = new Date(openedAt);
@@ -200,29 +218,52 @@ function composeHref(to: string, subject: string, body: string): { gmailUrl: str
   };
 }
 
-/** Shorten the body until the Gmail URL fits. The note stays in the shortened text. */
+function mailHrefFits(to: string, subject: string, body: string): boolean {
+  const hrefs = composeHref(to, subject, body);
+  return hrefs.mailtoUrl.length <= MAILTO_URL_LIMIT && hrefs.gmailUrl.length <= GMAIL_COMPOSE_URL_LIMIT;
+}
+
+/** Shorten the body until the mailto URL fits. The note stays in the shortened text. */
 export function fitPurchaseOrderBody(input: {
   to: string;
   subject: string;
   body: string;
-}): { body: string; truncated: boolean } {
+}): { subject: string; body: string; truncated: boolean } {
   const to = singleSupplierEmail(input.to) ?? input.to.trim();
-  const lengthOf = (body: string) => composeHref(to, input.subject, body).gmailUrl.length;
-  if (lengthOf(input.body) <= GMAIL_COMPOSE_URL_LIMIT) return { body: input.body, truncated: false };
+  if (mailHrefFits(to, input.subject, input.body)) {
+    return { subject: input.subject, body: input.body, truncated: false };
+  }
   let low = 0;
   let high = input.body.length;
   let best = ORDER_TRUNCATED_NOTE.trim();
   while (low <= high) {
     const mid = Math.floor((low + high) / 2);
     const candidate = `${input.body.slice(0, mid).trimEnd()}${ORDER_TRUNCATED_NOTE}`;
-    if (lengthOf(candidate) <= GMAIL_COMPOSE_URL_LIMIT) {
+    if (mailHrefFits(to, input.subject, candidate)) {
       best = candidate;
       low = mid + 1;
     } else {
       high = mid - 1;
     }
   }
-  return { body: best, truncated: true };
+  if (mailHrefFits(to, input.subject, best)) {
+    return { subject: input.subject, body: best, truncated: true };
+  }
+  const note = ORDER_TRUNCATED_NOTE.trim();
+  low = 0;
+  high = input.subject.length;
+  let bestSubject = '';
+  while (low <= high) {
+    const mid = Math.floor((low + high) / 2);
+    const candidate = input.subject.slice(0, mid).trimEnd();
+    if (mailHrefFits(to, candidate, note)) {
+      bestSubject = candidate;
+      low = mid + 1;
+    } else {
+      high = mid - 1;
+    }
+  }
+  return { subject: bestSubject, body: note, truncated: true };
 }
 
 export function purchaseOrderCompose(input: {
@@ -233,52 +274,132 @@ export function purchaseOrderCompose(input: {
   const to = singleSupplierEmail(input.to);
   if (!to) return null;
   const fitted = fitPurchaseOrderBody({ to, subject: input.subject, body: input.body });
-  const hrefs = composeHref(to, input.subject, fitted.body);
+  const hrefs = composeHref(to, fitted.subject, fitted.body);
   return { to, body: fitted.body, truncated: fitted.truncated, ...hrefs };
+}
+
+/** One heading per supplier, then that supplier's lines. Addresses stay out of the text. */
+export function purchaseOrderGroupBody(
+  drafts: readonly Pick<PoDraft, 'supplier' | 'body'>[]
+): string {
+  return drafts
+    .map((draft) => {
+      const heading = draft.supplier.replace(/[\r\n]+/g, ' ').trim();
+      const lines = draft.body.replace(/\r\n/g, '\n').trim();
+      if (!heading && !lines) return '';
+      if (!lines) return heading;
+      if (!heading) return lines;
+      return `${heading}\n${lines}`;
+    })
+    .filter((section) => section.length > 0)
+    .join('\n\n');
+}
+
+/** One mailto for every supplier. To stays empty so the buyer fills it in the mail app. */
+export function purchaseOrderGroupCompose(
+  drafts: readonly Pick<PoDraft, 'supplier' | 'body'>[]
+): {
+  to: '';
+  subject: string;
+  body: string;
+  fullBody: string;
+  truncated: boolean;
+  mailtoUrl: string;
+} | null {
+  const fullBody = purchaseOrderGroupBody(drafts);
+  if (!fullBody) return null;
+  const fitted = fitPurchaseOrderBody({
+    to: '',
+    subject: PURCHASE_ORDER_GROUP_SUBJECT,
+    body: fullBody,
+  });
+  return {
+    to: '',
+    subject: fitted.subject,
+    body: fitted.body,
+    fullBody,
+    truncated: fitted.truncated,
+    mailtoUrl: composeHref('', fitted.subject, fitted.body).mailtoUrl,
+  };
 }
 
 export type PurchaseOrderRecordResult =
   | { ok: true }
   | { ok: false; status: number; openedAt?: string; message: string };
 
-export type PurchaseOrderPopup = {
-  opener: Window | null;
-  location: { href: string };
-  close: () => void;
-};
+export const OPENING_MAIL_APP = 'Opening your mail app…';
 
-/** Open a blank tab during the click. `noopener` in window.open features always returns null. */
-export function openPurchaseOrderWindow(
-  open: (url: string, target: string) => PurchaseOrderPopup | null
-): PurchaseOrderPopup | null {
-  const popup = open('about:blank', '_blank');
-  if (popup) popup.opener = null;
-  return popup;
+export function purchaseOrderOpeningMessage(truncated: boolean): string {
+  return truncated ? `${OPENING_MAIL_APP} The order text was shortened to fit.` : OPENING_MAIL_APP;
 }
 
-/** Point the blank tab at Gmail only after the log succeeds. Close it on a repeat or a failure. */
-export async function settlePurchaseOrderWindow(
-  popup: PurchaseOrderPopup,
-  gmailUrl: string,
-  record: () => Promise<PurchaseOrderRecordResult>
-): Promise<
-  | { outcome: 'opened' }
-  | { outcome: 'repeat'; openedAt: string }
-  | { outcome: 'failed'; message: string }
+export function purchaseOrderCopiedMessage(copied: boolean): string {
+  return copied ? `${OPENING_MAIL_APP} Full text copied.` : `${OPENING_MAIL_APP} The full text could not be copied.`;
+}
+
+/** Click the visible mailto link once. The anchor stays on the page for another click. */
+export function activateMailLink(link: { click: () => void } | null): void {
+  link?.click();
+}
+
+/**
+ * Check every supplier for a repeat before any write. The open-log route stores one
+ * supplier per request, so a later write failure reports the suppliers already logged.
+ */
+export async function settlePurchaseOrderGroup<T>(input: {
+  items: readonly T[];
+  name: (item: T) => string;
+  confirmed: boolean;
+  check: (item: T) => Promise<PurchaseOrderRecordResult>;
+  write: (item: T) => Promise<PurchaseOrderRecordResult>;
+}): Promise<
+  | { outcome: 'repeat'; suppliers: string[] }
+  | { outcome: 'failed'; supplier: string; message: string; logged: string[] }
+  | { outcome: 'opened'; logged: string[] }
 > {
-  try {
-    const recorded = await record();
-    if (!recorded.ok) {
-      popup.close();
-      if (recorded.status === 409) return { outcome: 'repeat', openedAt: recorded.openedAt ?? '' };
-      return { outcome: 'failed', message: recorded.message };
+  if (!input.confirmed) {
+    const repeats: string[] = [];
+    for (const item of input.items) {
+      let checked: PurchaseOrderRecordResult;
+      try {
+        checked = await input.check(item);
+      } catch {
+        return {
+          outcome: 'failed',
+          supplier: input.name(item),
+          message: 'The order could not be recorded.',
+          logged: [],
+        };
+      }
+      if (checked.ok) continue;
+      if (checked.status === 409) {
+        repeats.push(input.name(item));
+        continue;
+      }
+      return { outcome: 'failed', supplier: input.name(item), message: checked.message, logged: [] };
     }
-    popup.location.href = gmailUrl;
-    return { outcome: 'opened' };
-  } catch {
-    popup.close();
-    return { outcome: 'failed', message: 'The order could not be recorded.' };
+    if (repeats.length > 0) return { outcome: 'repeat', suppliers: repeats };
   }
+
+  const logged: string[] = [];
+  for (const item of input.items) {
+    let written: PurchaseOrderRecordResult;
+    try {
+      written = await input.write(item);
+    } catch {
+      return {
+        outcome: 'failed',
+        supplier: input.name(item),
+        message: 'The order could not be recorded.',
+        logged,
+      };
+    }
+    if (!written.ok) {
+      return { outcome: 'failed', supplier: input.name(item), message: written.message, logged };
+    }
+    logged.push(input.name(item));
+  }
+  return { outcome: 'opened', logged };
 }
 
 export function purchaseOrderMailto(

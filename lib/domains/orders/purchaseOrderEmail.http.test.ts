@@ -139,4 +139,47 @@ describe('purchase order open log', { concurrency: 1 }, () => {
     assert.equal(updated?.actorId, manager().id);
     assert.equal(updated?.createdAt.toISOString(), openedJson.openedAt);
   });
+
+  test('a group pre-check reads an open and does not insert a row', { skip: !hasDb }, async (t) => {
+    try {
+      await prisma.$connect();
+    } catch {
+      t.skip('Database unreachable.');
+      return;
+    }
+
+    const stamp = `po-check-${Date.now()}`;
+    const supplier = await prisma.supplier.create({
+      data: { name: `Farm ${stamp}`, contactEmail: 'stored@farm.test' },
+    });
+    const payload = {
+      supplierId: supplier.id,
+      supplierName: supplier.name,
+      to: 'edited@farm.test',
+      subject: 'Purchase order',
+      body: `2 cases - Bananas ${stamp}`,
+      productIds: [`banana-${stamp}`],
+    };
+
+    t.after(async () => {
+      setManagerStaffTestAuth(null);
+      await prisma.purchaseOrderEmail.deleteMany({
+        where: { OR: [{ supplierId: supplier.id }, { supplierName: supplier.name }] },
+      });
+      await prisma.supplier.delete({ where: { id: supplier.id } });
+    });
+
+    setManagerStaffTestAuth(async () => manager());
+    const checked = await POST(request({ ...payload, checkOnly: true }));
+    assert.equal(checked.status, 200);
+    const checkedJson = (await checked.json()) as { status?: string };
+    assert.equal(checkedJson.status, 'READY');
+    assert.equal(await prisma.purchaseOrderEmail.count({ where: { supplierId: supplier.id } }), 0);
+
+    const opened = await POST(request(payload));
+    assert.equal(opened.status, 200);
+    const again = await POST(request({ ...payload, checkOnly: true }));
+    assert.equal(again.status, 409);
+    assert.equal(await prisma.purchaseOrderEmail.count({ where: { supplierId: supplier.id } }), 1);
+  });
 });
