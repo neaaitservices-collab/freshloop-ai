@@ -4,7 +4,6 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, Check, ChevronDown, Mail, Plus, Printer, Search } from 'lucide-react';
 import { PoEmailPanel } from '@/components/features/orders/PoEmailPanel';
 import {
-  acknowledgePurchaseOrderDraft,
   approvedOrderRows,
   caseWord,
   draftForSupplier,
@@ -334,17 +333,6 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
     if (list.length === 0) return;
     setDrafts(list);
     setDraftIndex(0);
-  };
-
-  const prepareDraft = () => {
-    const active = drafts[activeDraftIndex];
-    if (!active?.to.trim() || active.productIds.length === 0) return;
-    const prepared = acknowledgePurchaseOrderDraft();
-    if (prepared.markSent !== false) return;
-    setToast(prepared.notice);
-    const remaining = drafts.filter((_, index) => index !== activeDraftIndex);
-    setDrafts(remaining);
-    setDraftIndex(Math.min(activeDraftIndex, Math.max(0, remaining.length - 1)));
   };
 
   const needle = query.trim().toLowerCase();
@@ -790,7 +778,6 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
                     setDrafts([]);
                     setDraftIndex(0);
                   }}
-                  onPrepare={prepareDraft}
                 />
               ) : null}
             </aside>

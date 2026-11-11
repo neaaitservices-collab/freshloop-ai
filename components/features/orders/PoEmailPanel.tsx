@@ -4,14 +4,16 @@ import { useRef, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { Mail, X } from 'lucide-react';
 import {
+  applyPurchaseOrderLog,
   purchaseOrderCompose,
   purchaseOrderCopiedMessage,
   purchaseOrderGroupCompose,
-  purchaseOrderOpenedWarning,
   purchaseOrderSendPlan,
+  purchaseOrderSkippedNoEmail,
   singleSupplierEmail,
   supplierRecipientHint,
   type PoDraft,
+  type PurchaseOrderLogResult,
 } from '@/components/features/orders/supplierMail';
 import { Card, CardBody, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
@@ -31,11 +33,10 @@ export function PoEmailPanel({
   onActiveIndex: (index: number) => void;
   onChange: (next: PoDraft) => void;
   onClose: () => void;
-  /** Kept so the buy list can still pass its prepare callback. */
-  onPrepare: () => void;
 }) {
   const [notes, setNotes] = useState<string[]>([]);
   const [issues, setIssues] = useState<string[]>([]);
+  const [skipNote, setSkipNote] = useState<string | null>(null);
   const [copyMessage, setCopyMessage] = useState<string | null>(null);
   const requestId = useRef(0);
   const index =
@@ -49,17 +50,28 @@ export function PoEmailPanel({
   const activeCompose = purchaseOrderCompose(draft);
   const groupCompose = purchaseOrderGroupCompose(withLines);
   const sendHref = draft.productIds.length > 0 ? (activeCompose?.mailtoUrl ?? null) : null;
+  const skippedNoEmail = withLines.filter((item) => !item.to.trim()).map((item) => item.supplier);
 
-  const clearFeedback = () => {
+  const beginSend = (skipped: string | null) => {
     requestId.current += 1;
     setNotes([]);
     setIssues([]);
     setCopyMessage(null);
+    setSkipNote(skipped);
   };
 
   const logOpened = (item: PoDraft, grouped: boolean) => {
     if (!singleSupplierEmail(item.to)) return;
     const generation = requestId.current;
+    const publish = (result: PurchaseOrderLogResult) => {
+      if (generation !== requestId.current) return;
+      const next = applyPurchaseOrderLog(
+        { notes: [], issues: [] },
+        { supplier: item.supplier, grouped, result }
+      );
+      if (next.notes.length > 0) setNotes((current) => [...current, ...next.notes]);
+      if (next.issues.length > 0) setIssues((current) => [...current, ...next.issues]);
+    };
     fetch('/api/orders/purchase-order-email', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -71,23 +83,18 @@ export function PoEmailPanel({
         body: item.body,
         productIds: item.productIds,
       }),
-      keepalive: true,
     })
       .then(async (response) => {
-        if (generation !== requestId.current) return;
-        const json = (await response.json().catch(() => null)) as OpenLogJson;
-        if ((response.ok || response.status === 409) && json?.openedAt) {
-          const note = purchaseOrderOpenedWarning(json.openedAt);
-          setNotes((current) => [...current, grouped ? `${item.supplier}: ${note}` : note]);
-          return;
+        let json: OpenLogJson = null;
+        try {
+          json = (await response.json()) as OpenLogJson;
+        } catch {
+          json = null;
         }
-        if (!response.ok) {
-          const message = json?.error || 'The order could not be recorded.';
-          setIssues((current) => [...current, `${item.supplier}: ${message}`]);
-        }
+        publish({ status: response.status, error: json?.error, openedAt: json?.openedAt });
       })
       .catch(() => {
-        // The mail app is already opening. A log that never returns stays quiet.
+        publish({ network: true });
       });
   };
 
@@ -138,7 +145,7 @@ export function PoEmailPanel({
                     aria-selected={selected}
                     aria-controls="po-draft-panel"
                     onClick={() => {
-                      clearFeedback();
+                      beginSend(null);
                       onActiveIndex(itemIndex);
                     }}
                     className={cn(
@@ -207,7 +214,7 @@ export function PoEmailPanel({
                 href={sendHref}
                 variant="primary"
                 onOpen={() => {
-                  clearFeedback();
+                  beginSend(null);
                   logOpened(draft, false);
                 }}
               >
@@ -217,7 +224,7 @@ export function PoEmailPanel({
                 href={groupCompose?.mailtoUrl ?? null}
                 variant="secondary"
                 onOpen={() => {
-                  clearFeedback();
+                  beginSend(purchaseOrderSkippedNoEmail(skippedNoEmail));
                   for (const item of loggable) logOpened(item, true);
                 }}
               >
@@ -242,6 +249,7 @@ export function PoEmailPanel({
                 Copy full text
               </button>
             ) : null}
+            {skipNote ? <p className="text-sm text-slate-100">{skipNote}</p> : null}
             {copyMessage ? <p className="text-xs text-slate-300">{copyMessage}</p> : null}
             {notes.length > 0 ? (
               <ul aria-label="Opened orders" className="space-y-1 text-sm text-slate-100">

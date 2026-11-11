@@ -12,6 +12,7 @@ import {
   draftForSupplier,
   draftsForSuppliers,
   matchSupplierRecipient,
+  applyPurchaseOrderLog,
   purchaseOrderCompose,
   purchaseOrderCopiedMessage,
   purchaseOrderGroupBody,
@@ -20,6 +21,7 @@ import {
   purchaseOrderMailto,
   purchaseOrderOpenedWarning,
   purchaseOrderSendPlan,
+  purchaseOrderSkippedNoEmail,
   singleSupplierEmail,
   storedSupplierRecipient,
   supplierRecipientHint,
@@ -169,9 +171,11 @@ test('purchase order panel opens mailto directly and logs in the background', ()
   assert.match(panel, /purchaseOrderSendPlan/);
   assert.match(panel, /purchaseOrderCompose/);
   assert.match(panel, /purchaseOrderGroupCompose\(withLines\)/);
-  assert.match(panel, /purchaseOrderOpenedWarning/);
+  assert.match(panel, /applyPurchaseOrderLog/);
+  assert.match(panel, /purchaseOrderSkippedNoEmail\(skippedNoEmail\)/);
   assert.match(panel, /singleSupplierEmail\(item\.to\)/);
-  assert.match(panel, /keepalive: true/);
+  assert.equal(panel.includes('keepalive'), false);
+  assert.equal(panel.includes('onPrepare'), false);
   assert.match(panel, /<a href=\{href\} className=\{className\} onClick=\{onOpen\}>/);
   assert.match(panel, /activeCompose\?\.truncated && sendHref \?/);
   assert.match(panel, /groupCompose\?\.truncated \?/);
@@ -209,8 +213,8 @@ test('purchase order panel opens mailto directly and logs in the background', ()
   assert.equal(buyList.includes('draftForAll'), false);
   assert.equal(buyList.includes('mailto:'), false);
   assert.equal(/resend/i.test(buyList), false);
-  assert.match(buyList, /acknowledgePurchaseOrderDraft/);
-  assert.match(buyList, /prepared\.markSent !== false/);
+  assert.equal(buyList.includes('onPrepare'), false);
+  assert.equal(buyList.includes('acknowledgePurchaseOrderDraft'), false);
 
   assert.equal(mail.includes('draftForAll'), false);
   assert.equal(mail.includes('recipients.join'), false);
@@ -388,6 +392,48 @@ test('group body includes suppliers without an email; the open log still require
   const recordAt = route.indexOf('await recordPurchaseOrderOpen');
   assert.ok(checkAt !== -1 && recordAt !== -1 && checkAt < recordAt);
   assert.equal(route.includes('$transaction'), false);
+});
+
+test('a failed open log appears in the issues list and names the supplier', () => {
+  const network = applyPurchaseOrderLog(
+    { notes: [], issues: [] },
+    { supplier: 'Greens', grouped: false, result: { network: true } }
+  );
+  assert.deepEqual(network.notes, []);
+  assert.deepEqual(network.issues, ['Greens: The order could not be recorded.']);
+
+  const denied = applyPurchaseOrderLog(
+    { notes: [], issues: [] },
+    {
+      supplier: 'Farm & Sons',
+      grouped: true,
+      result: { status: 400, error: 'A saved supplier is required before opening.' },
+    }
+  );
+  assert.deepEqual(denied.notes, []);
+  assert.deepEqual(denied.issues, ['Farm & Sons: A saved supplier is required before opening.']);
+
+  const repeat = applyPurchaseOrderLog(
+    { notes: [], issues: ['Greens: The order could not be recorded.'] },
+    { supplier: 'Farm & Sons', grouped: false, result: { status: 409, openedAt: '2026-11-11T15:04:00.000Z' } }
+  );
+  assert.deepEqual(repeat.issues, ['Greens: The order could not be recorded.']);
+  assert.deepEqual(repeat.notes, ['Opened 10:04 AM']);
+
+  const opened = applyPurchaseOrderLog(
+    { notes: [], issues: [] },
+    { supplier: 'Dairy Co', grouped: true, result: { status: 200, openedAt: '2026-11-11T22:15:00.000Z' } }
+  );
+  assert.deepEqual(opened.issues, []);
+  assert.deepEqual(opened.notes, ['Dairy Co: Opened 5:15 PM']);
+
+  assert.equal(purchaseOrderSkippedNoEmail([]), null);
+  assert.equal(purchaseOrderSkippedNoEmail(['Greens', 'Bakery']), 'Skipped, no email: Greens, Bakery');
+
+  const panel = readFileSync('components/features/orders/PoEmailPanel.tsx', 'utf8');
+  assert.match(panel, /setIssues\(\(current\) => \[\.\.\.current, \.\.\.next\.issues\]\)/);
+  assert.match(panel, /\.catch\(\(\) => \{\s*publish\(\{ network: true \}\);\s*\}\)/);
+  assert.equal(panel.includes('keepalive'), false);
 });
 
 test('copy confirms the full order text', () => {

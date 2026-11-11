@@ -200,6 +200,48 @@ export function purchaseOrderOpenedWarning(openedAt: string): string {
   return `Opened ${label}`;
 }
 
+export type PurchaseOrderLogState = { notes: string[]; issues: string[] };
+
+export type PurchaseOrderLogResult =
+  | { network: true }
+  | { status: number; error?: string; openedAt?: string };
+
+/** A 409 keeps the first open time. Any other failure is an issue named for that supplier. */
+export function applyPurchaseOrderLog(
+  state: PurchaseOrderLogState,
+  input: { supplier: string; grouped: boolean; result: PurchaseOrderLogResult }
+): PurchaseOrderLogState {
+  if ('network' in input.result) {
+    return {
+      notes: state.notes,
+      issues: [...state.issues, `${input.supplier}: The order could not be recorded.`],
+    };
+  }
+  const { status, error, openedAt } = input.result;
+  if ((status === 409 || (status >= 200 && status < 300)) && openedAt) {
+    const note = purchaseOrderOpenedWarning(openedAt);
+    return {
+      notes: [...state.notes, input.grouped ? `${input.supplier}: ${note}` : note],
+      issues: state.issues,
+    };
+  }
+  if (status === 409 || (status >= 200 && status < 300)) return state;
+  const message = error?.trim() || 'The order could not be recorded.';
+  return {
+    notes: state.notes,
+    issues: [...state.issues, `${input.supplier}: ${message}`],
+  };
+}
+
+/** One line for group suppliers that have no email and so were not logged. */
+export function purchaseOrderSkippedNoEmail(suppliers: readonly string[]): string | null {
+  const names = suppliers
+    .map((name) => name.replace(/[\r\n]+/g, ' ').trim())
+    .filter(Boolean);
+  if (names.length === 0) return null;
+  return `Skipped, no email: ${names.join(', ')}`;
+}
+
 function composeHref(to: string, subject: string, body: string): { gmailUrl: string; mailtoUrl: string } {
   const encodedTo = encodeURIComponent(to);
   const encodedSubject = encodeURIComponent(subject);
