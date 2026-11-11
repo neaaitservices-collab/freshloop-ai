@@ -7,10 +7,12 @@ import {
   draftReceiveBlock,
   OCR_CLIENT_COPY_REJECTED,
   OCR_DRAFT_NOT_ACCEPTED,
+  payloadWithPostedLines,
   receiveAcceptedInvoiceOcr,
   type InvoiceOcrPostEntry,
   type OcrDraftRecord,
 } from '@/lib/domains/receiving/invoiceOcrReceive';
+import type { OcrDraftPayload } from '@/lib/domains/receiving/invoiceOcrCommit';
 import type { ReceivingLogPostResult } from '@/lib/domains/receiving/receivingLogPost';
 
 const DELIVERY_ID = '33333333-3333-4333-8333-333333333333';
@@ -163,9 +165,9 @@ test('a client packSize of 1000 does not change the posted quantity', async () =
   assert.equal((line?.casesReceived ?? 0) * ((line?.packSize ?? 0) / (line?.splitFactor ?? 1)), 120);
 });
 
-test('a pack change is posted only when it is a checked resolution', async () => {
-  const posted: InvoiceOcrPostEntry[] = [];
-  const accepted = await receiveAcceptedInvoiceOcr({
+test('a clerk changing the pack is blocked', async () => {
+  let wrote = false;
+  const outcome = await receiveAcceptedInvoiceOcr({
     actorId: 'clerk-1',
     actorIsManager: false,
     body: {
@@ -174,20 +176,102 @@ test('a pack change is posted only when it is a checked resolution', async () =>
       acceptDraft: true,
       supplierId: 'sup-1',
       resolutions: { lines: [{ index: 0, packSize: 10, splitFactor: 2 }] },
-      items: [browserCopy({ packSize: 1000 })],
+      items: [browserCopy()],
     },
-    deps: deps(storedDraft(), posted),
+    deps: {
+      findDraft: async () => storedDraft(),
+      postLines: async () => {
+        wrote = true;
+        return [];
+      },
+    },
   });
-  assert.equal(accepted.ok, true);
-  if (!accepted.ok) return;
-  assert.equal(posted[0]?.line.packSize, 10);
-  assert.equal(posted[0]?.line.splitFactor, 2);
-  assert.equal(posted[0]?.line.casesReceived * (10 / 2), 15);
+  assert.equal(outcome.ok, false);
+  if (outcome.ok) return;
+  assert.equal(outcome.status, 409);
+  assert.match(outcome.error, /pack is 10 and split is 2/);
+  assert.equal(wrote, false);
+});
 
-  let wrote = false;
-  const rejected = await receiveAcceptedInvoiceOcr({
+test('a manager or an override may change the pack and the editor is recorded', async () => {
+  const seen: OcrDraftPayload[] = [];
+  const post = async (actorId: string, actorIsManager: boolean, manualReviewOverride: boolean) => {
+    const posted: InvoiceOcrPostEntry[] = [];
+    const outcome = await receiveAcceptedInvoiceOcr({
+      actorId,
+      actorIsManager,
+      body: {
+        invoiceOcr: true,
+        draftId: 'draft-1',
+        acceptDraft: true,
+        manualReviewOverride,
+        supplierId: 'sup-1',
+        resolutions: { lines: [{ index: 0, packSize: 10 }] },
+        items: [browserCopy({ packSize: 1000 })],
+      },
+      deps: {
+        findDraft: async () => storedDraft(),
+        postLines: async (input) => {
+          seen.push(input.resolved);
+          posted.push(...input.entries);
+          return posted.map((entry) => ({
+            externalLogId: entry.line.externalLogId,
+            itemName: entry.line.itemName,
+            stock: {
+              posted: true as const,
+              unitsAdded: entry.line.casesReceived,
+              onHand: entry.line.casesReceived,
+              productId: entry.line.productId ?? '',
+              productName: entry.line.itemName,
+              transactionId: 'tx-1',
+            },
+          }));
+        },
+      },
+    });
+    assert.equal(outcome.ok, true);
+    assert.equal(posted[0]?.line.packSize, 10);
+    assert.equal(posted[0]?.line.splitFactor, 1);
+    assert.equal(posted[0]?.line.casesReceived, 3);
+  };
+  await post('manager-1', true, false);
+  await post('clerk-2', false, true);
+  assert.equal(seen[0]?.lines[0]?.pack_edited_by, 'manager-1');
+  assert.equal(seen[1]?.lines[0]?.pack_edited_by, 'clerk-2');
+  assert.equal(seen[0]?.lines[0]?.case_pack_size, 10);
+});
+
+test('the posting gate sees the resolved quantity and pack', async () => {
+  const draft = storedDraft();
+  const payload = draft.payload as { lines: Array<Record<string, unknown>> };
+  payload.lines[0]!.quantity = 0;
+  payload.lines[0]!.quantity_unreadable = true;
+  const outcome = await receiveAcceptedInvoiceOcr({
     actorId: 'clerk-1',
     actorIsManager: false,
+    body: {
+      invoiceOcr: true,
+      draftId: 'draft-1',
+      acceptDraft: true,
+      resolutions: { lines: [{ index: 0, quantity: 6, packSize: 12 }] },
+      items: [browserCopy()],
+    },
+    deps: {
+      findDraft: async () => draft,
+      postLines: async () => [],
+    },
+  });
+  assert.equal(outcome.ok, false);
+  if (outcome.ok) return;
+  assert.match(outcome.error, /pack is 12 and split is 1/);
+  assert.equal(outcome.error.includes('quantity_unreadable'), false);
+});
+
+test('an out-of-range pack resolution is rejected', async () => {
+  let wrote = false;
+  const rejected = await receiveAcceptedInvoiceOcr({
+    actorId: 'manager-1',
+    actorIsManager: true,
     body: {
       invoiceOcr: true,
       draftId: 'draft-1',
@@ -208,6 +292,21 @@ test('a pack change is posted only when it is a checked resolution', async () =>
   assert.equal(rejected.status, 400);
   assert.equal(rejected.code, 'OCR_RESOLUTION_INVALID');
   assert.equal(wrote, false);
+});
+
+test('postedBy records the actor next to the posted line indexes', () => {
+  const stored = storedDraft().payload as OcrDraftPayload;
+  const raw = {
+    ...stored,
+    postedLineIndexes: [1],
+    postedBy: [{ index: 1, actorId: 'clerk-1', at: '2026-11-01T00:00:00.000Z' }],
+  };
+  const next = payloadWithPostedLines(stored, raw, [0], 'manager-9', '2026-11-11T05:00:00.000Z');
+  assert.deepEqual(next.postedLineIndexes, [1, 0]);
+  assert.deepEqual(next.postedBy, [
+    { index: 1, actorId: 'clerk-1', at: '2026-11-01T00:00:00.000Z' },
+    { index: 0, actorId: 'manager-9', at: '2026-11-11T05:00:00.000Z' },
+  ]);
 });
 
 test('a missing draft line index is rejected', async () => {

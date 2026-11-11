@@ -130,6 +130,31 @@ function draftPackSize(line: OcrDraftLine): number {
   return 1;
 }
 
+/** Writes pack and split onto the draft before the posting gate reads those lines. */
+function applyPackResolutions(
+  payload: OcrDraftPayload,
+  edits: Map<number, { packSize?: number; splitFactor?: number }>
+): OcrDraftPayload {
+  if (edits.size === 0) return payload;
+  return {
+    ...payload,
+    lines: payload.lines.map((line, index) => {
+      const edit = edits.get(index);
+      if (!edit) return line;
+      const scannedPack = draftPackSize(line);
+      const nextPack = edit.packSize ?? scannedPack;
+      const nextSplit = edit.splitFactor ?? 1;
+      if (nextPack === scannedPack && nextSplit === 1) return line;
+      return {
+        ...line,
+        case_pack_size: nextPack,
+        split_factor: nextSplit,
+        pack_needs_manager: true,
+      };
+    }),
+  };
+}
+
 function readPayload(raw: unknown): OcrDraftPayload | null {
   if (!raw || typeof raw !== 'object') return null;
   const payload = raw as Partial<OcrDraftPayload>;
@@ -152,6 +177,42 @@ function postedLineIndexes(raw: unknown): number[] {
   const value = (raw as { postedLineIndexes?: unknown }).postedLineIndexes;
   if (!Array.isArray(value)) return [];
   return [...new Set(value.filter((entry): entry is number => Number.isInteger(entry) && entry >= 0))];
+}
+
+export interface PostedByRecord {
+  index: number;
+  actorId: string;
+  at: string;
+}
+
+export function readPostedBy(raw: unknown): PostedByRecord[] {
+  if (!raw || typeof raw !== 'object') return [];
+  const value = (raw as { postedBy?: unknown }).postedBy;
+  if (!Array.isArray(value)) return [];
+  const records: PostedByRecord[] = [];
+  for (const entry of value) {
+    if (!entry || typeof entry !== 'object') continue;
+    const row = entry as { index?: unknown; actorId?: unknown; at?: unknown };
+    if (!Number.isInteger(row.index) || typeof row.actorId !== 'string' || typeof row.at !== 'string') continue;
+    records.push({ index: row.index as number, actorId: row.actorId, at: row.at });
+  }
+  return records;
+}
+
+/** Stored JSON for a successful post. No new columns. */
+export function payloadWithPostedLines(
+  payload: OcrDraftPayload,
+  raw: unknown,
+  indexes: number[],
+  actorId: string,
+  at: string
+): OcrDraftPayload & { postedLineIndexes: number[]; postedBy: PostedByRecord[] } {
+  const postedBy = readPostedBy(raw);
+  return {
+    ...payload,
+    postedLineIndexes: [...postedLineIndexes(raw), ...indexes],
+    postedBy: [...postedBy, ...indexes.map((index) => ({ index, actorId, at }))],
+  };
 }
 
 function requestItems(body: Record<string, unknown>): unknown[] {
@@ -287,10 +348,13 @@ async function postDraftLines(input: {
         await tx.invoiceOcrDraft.update({
           where: { id: input.draft.id },
           data: {
-            payload: {
-              ...input.resolved,
-              postedLineIndexes: [...already, ...postedNow],
-            } as unknown as Prisma.InputJsonValue,
+            payload: payloadWithPostedLines(
+              input.resolved,
+              locked[0].payload,
+              postedNow,
+              input.actorId,
+              new Date().toISOString()
+            ) as unknown as Prisma.InputJsonValue,
           },
         });
       }
@@ -407,14 +471,21 @@ export async function receiveAcceptedInvoiceOcr(input: {
     actorIsManager: input.actorIsManager,
     manualReviewOverride: body.manualReviewOverride === true,
   };
-  const resolved = applyOcrDraftResolutions(
+  const resolvedBase = applyOcrDraftResolutions(
     applyOcrDraftResolutions(stored, gapResolutions(stored, indexed), actor),
     draftResolutions,
     actor
   );
+  const resolved = applyPackResolutions(resolvedBase, packEdits);
   const blockers = draftPostingBlockers(resolved, actor);
   if (blockers.length > 0) {
     return failure(409, blockers[0] ?? OCR_DRAFT_NOT_ACCEPTED, 'OCR_DRAFT_BLOCKED');
+  }
+  const mayChangePack = actor.actorIsManager || actor.manualReviewOverride;
+  if (mayChangePack) {
+    for (const line of resolved.lines) {
+      if (line.pack_needs_manager) line.pack_edited_by = input.actorId;
+    }
   }
 
   const supplierId = typeof body.supplierId === 'string' ? body.supplierId.trim() : '';
@@ -436,10 +507,8 @@ export async function receiveAcceptedInvoiceOcr(input: {
     if (!Number.isFinite(line.unit_cost) || line.unit_cost < 0 || line.unit_cost > 1_000_000) {
       return failure(409, 'The saved invoice scan has a cost that cannot be posted.', 'OCR_DRAFT_BLOCKED');
     }
-    const packEdit = packEdits.get(client.index);
-    const packSize = packEdit?.packSize ?? draftPackSize(line);
-    const splitFactor = packEdit?.splitFactor ?? 1;
-    if (packEdit?.packSize !== undefined) line.case_pack_size = packEdit.packSize;
+    const packSize = draftPackSize(line);
+    const splitFactor = line.split_factor ?? 1;
     const validated = validateReceivingLogPostInput({
       itemName: line.line_name?.trim() || 'Invoice line',
       productId: line.product_id?.trim() || undefined,

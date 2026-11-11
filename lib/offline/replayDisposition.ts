@@ -1,8 +1,10 @@
+const DROP_STATUSES = new Set([400, 403, 404, 409, 422]);
+
 /**
- * Replaying the same body after a 4xx will not succeed.
- * Drop it. Network failures and 5xx stay in the queue.
+ * Drop a replay only when the same body cannot succeed.
+ * 401, 408, 429, 5xx, and network failures stay queued.
  */
 export function offlineReplayDisposition(status: number): 'retry' | 'drop' {
-  if (status >= 400 && status < 500) return 'drop';
+  if (DROP_STATUSES.has(status)) return 'drop';
   return 'retry';
 }

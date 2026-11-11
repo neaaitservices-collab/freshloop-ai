@@ -2,10 +2,11 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { offlineReplayDisposition } from '@/lib/offline/replayDisposition';
 
-test('an expired invoice replay is dropped instead of retried', () => {
-  assert.equal(offlineReplayDisposition(409), 'drop');
-  assert.equal(offlineReplayDisposition(400), 'drop');
-  assert.equal(offlineReplayDisposition(422), 'drop');
-  assert.equal(offlineReplayDisposition(500), 'retry');
-  assert.equal(offlineReplayDisposition(503), 'retry');
+test('offline replay drops only permanent client statuses', () => {
+  for (const status of [400, 403, 404, 409, 422]) {
+    assert.equal(offlineReplayDisposition(status), 'drop', String(status));
+  }
+  for (const status of [401, 408, 429, 500, 502, 503, 504]) {
+    assert.equal(offlineReplayDisposition(status), 'retry', String(status));
+  }
 });
