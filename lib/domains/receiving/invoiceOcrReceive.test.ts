@@ -193,52 +193,164 @@ test('a clerk changing the pack is blocked', async () => {
   assert.equal(wrote, false);
 });
 
-test('a manager or an override may change the pack and the editor is recorded', async () => {
+test('a manager may change the pack and the editor is recorded', async () => {
   const seen: OcrDraftPayload[] = [];
-  const post = async (actorId: string, actorIsManager: boolean, manualReviewOverride: boolean) => {
-    const posted: InvoiceOcrPostEntry[] = [];
-    const outcome = await receiveAcceptedInvoiceOcr({
-      actorId,
-      actorIsManager,
-      body: {
-        invoiceOcr: true,
-        draftId: 'draft-1',
-        acceptDraft: true,
-        manualReviewOverride,
-        supplierId: 'sup-1',
-        resolutions: { lines: [{ index: 0, packSize: 10 }] },
-        items: [browserCopy({ packSize: 1000 })],
+  const posted: InvoiceOcrPostEntry[] = [];
+  const outcome = await receiveAcceptedInvoiceOcr({
+    actorId: 'manager-1',
+    actorIsManager: true,
+    body: {
+      invoiceOcr: true,
+      draftId: 'draft-1',
+      acceptDraft: true,
+      supplierId: 'sup-1',
+      resolutions: { lines: [{ index: 0, packSize: 10 }] },
+      items: [browserCopy({ packSize: 1000 })],
+    },
+    deps: {
+      findDraft: async () => storedDraft(),
+      postLines: async (input) => {
+        seen.push(input.resolved);
+        posted.push(...input.entries);
+        return posted.map((entry) => ({
+          externalLogId: entry.line.externalLogId,
+          itemName: entry.line.itemName,
+          stock: {
+            posted: true as const,
+            unitsAdded: entry.line.casesReceived,
+            onHand: entry.line.casesReceived,
+            productId: entry.line.productId ?? '',
+            productName: entry.line.itemName,
+            transactionId: 'tx-1',
+          },
+        }));
       },
-      deps: {
-        findDraft: async () => storedDraft(),
-        postLines: async (input) => {
-          seen.push(input.resolved);
-          posted.push(...input.entries);
-          return posted.map((entry) => ({
-            externalLogId: entry.line.externalLogId,
-            itemName: entry.line.itemName,
-            stock: {
-              posted: true as const,
-              unitsAdded: entry.line.casesReceived,
-              onHand: entry.line.casesReceived,
-              productId: entry.line.productId ?? '',
-              productName: entry.line.itemName,
-              transactionId: 'tx-1',
-            },
-          }));
-        },
-      },
-    });
-    assert.equal(outcome.ok, true);
-    assert.equal(posted[0]?.line.packSize, 10);
-    assert.equal(posted[0]?.line.splitFactor, 1);
-    assert.equal(posted[0]?.line.casesReceived, 3);
-  };
-  await post('manager-1', true, false);
-  await post('clerk-2', false, true);
+    },
+  });
+  assert.equal(outcome.ok, true);
+  assert.equal(posted[0]?.line.packSize, 10);
+  assert.equal(posted[0]?.line.casesReceived, 3);
   assert.equal(seen[0]?.lines[0]?.pack_edited_by, 'manager-1');
-  assert.equal(seen[1]?.lines[0]?.pack_edited_by, 'clerk-2');
   assert.equal(seen[0]?.lines[0]?.case_pack_size, 10);
+});
+
+test('a clerk with only manualReviewOverride cannot change the pack', async () => {
+  let wrote = false;
+  const outcome = await receiveAcceptedInvoiceOcr({
+    actorId: 'clerk-2',
+    actorIsManager: false,
+    body: {
+      invoiceOcr: true,
+      draftId: 'draft-1',
+      acceptDraft: true,
+      manualReviewOverride: true,
+      supplierId: 'sup-1',
+      resolutions: { lines: [{ index: 0, packSize: 10 }] },
+      items: [browserCopy()],
+    },
+    deps: {
+      findDraft: async () => storedDraft(),
+      postLines: async () => {
+        wrote = true;
+        return [];
+      },
+    },
+  });
+  assert.equal(outcome.ok, false);
+  if (outcome.ok) return;
+  assert.equal(outcome.status, 409);
+  assert.match(outcome.error, /pack is 10/);
+  assert.equal(wrote, false);
+});
+
+test('a clerk can post the other lines after a manager approves one pack change', async () => {
+  const draft = storedDraft();
+  const payload = draft.payload as OcrDraftPayload;
+  payload.lines.push({
+    ...payload.lines[0]!,
+    product_id: 'sku-pear',
+    line_name: 'Pears',
+    quantity: 2,
+    case_pack_size: 20,
+  });
+  let saved: OcrDraftPayload | null = null;
+  const manager = await receiveAcceptedInvoiceOcr({
+    actorId: 'manager-1',
+    actorIsManager: true,
+    body: {
+      invoiceOcr: true,
+      draftId: 'draft-1',
+      acceptDraft: true,
+      supplierId: 'sup-1',
+      resolutions: { lines: [{ index: 0, packSize: 10 }] },
+      items: [browserCopy()],
+    },
+    deps: {
+      findDraft: async () => draft,
+      postLines: async (input) => {
+        saved = input.resolved;
+        return input.entries.map((entry) => ({
+          externalLogId: entry.line.externalLogId,
+          itemName: entry.line.itemName,
+          stock: {
+            posted: true as const,
+            unitsAdded: entry.line.casesReceived,
+            onHand: 1,
+            productId: entry.line.productId ?? '',
+            productName: entry.line.itemName,
+            transactionId: 'tx-1',
+          },
+        }));
+      },
+    },
+  });
+  assert.equal(manager.ok, true);
+  assert.ok(saved);
+  const approved = saved as unknown as OcrDraftPayload;
+  assert.equal(approved.lines[0]?.pack_edited_by, 'manager-1');
+  const posted: InvoiceOcrPostEntry[] = [];
+  const clerk = await receiveAcceptedInvoiceOcr({
+    actorId: 'clerk-2',
+    actorIsManager: false,
+    body: {
+      invoiceOcr: true,
+      draftId: 'draft-1',
+      acceptDraft: true,
+      supplierId: 'sup-1',
+      items: [
+        browserCopy({
+          draftLineIndex: 1,
+          externalLogId: '44444444-4444-4444-8444-444444444444',
+          itemName: 'Pears',
+          productId: 'sku-pear',
+        }),
+      ],
+    },
+    deps: {
+      findDraft: async () => ({ ...draft, payload: approved }),
+      postLines: async (input) => {
+        posted.push(...input.entries);
+        return input.entries.map((entry) => ({
+          externalLogId: entry.line.externalLogId,
+          itemName: entry.line.itemName,
+          stock: {
+            posted: true as const,
+            unitsAdded: entry.line.casesReceived,
+            onHand: 1,
+            productId: entry.line.productId ?? '',
+            productName: entry.line.itemName,
+            transactionId: 'tx-2',
+          },
+        }));
+      },
+    },
+  });
+  assert.equal(clerk.ok, true);
+  if (!clerk.ok) return;
+  assert.equal(posted.length, 1);
+  assert.equal(posted[0]?.line.itemName, 'Pears');
+  assert.equal(posted[0]?.line.packSize, 20);
+  assert.equal(posted[0]?.line.casesReceived, 2);
 });
 
 test('the posting gate sees the resolved quantity and pack', async () => {

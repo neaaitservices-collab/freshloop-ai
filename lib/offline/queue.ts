@@ -1,4 +1,3 @@
-import { MAX_OFFLINE_ATTEMPTS } from '@/lib/offline/constants';
 import {
   deleteOfflineMutation,
   getOfflineMutation,
@@ -49,12 +48,16 @@ export async function enqueueOfflineMutation(input: {
   return record;
 }
 
-export async function listFlushableMutations(): Promise<OfflineMutationRecord[]> {
-  const rows = await listOfflineMutations();
+/** Failed writes stay queued. The attempt count does not remove them. */
+export function selectFlushableMutations<T extends { status: string; createdAt: number }>(rows: T[]): T[] {
   return rows
     .filter((row) => row.status === 'pending' || row.status === 'failed')
-    .filter((row) => row.attempts < MAX_OFFLINE_ATTEMPTS)
     .sort((a, b) => a.createdAt - b.createdAt);
+}
+
+export async function listFlushableMutations(): Promise<OfflineMutationRecord[]> {
+  const rows = await listOfflineMutations();
+  return selectFlushableMutations(rows);
 }
 
 export async function markMutationProcessing(id: string): Promise<OfflineMutationRecord | null> {

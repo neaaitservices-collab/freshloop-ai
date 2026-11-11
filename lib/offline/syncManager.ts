@@ -1,4 +1,4 @@
-import { MAX_OFFLINE_ATTEMPTS, OFFLINE_FLUSH_DEBOUNCE_MS } from '@/lib/offline/constants';
+import { OFFLINE_FLUSH_DEBOUNCE_MS } from '@/lib/offline/constants';
 import { offlineReplayDisposition } from '@/lib/offline/replayDisposition';
 import { countPendingOfflineMutations } from '@/lib/offline/idb';
 import { isBrowserOnline, subscribeNetworkStatus } from '@/lib/offline/network';
@@ -65,18 +65,10 @@ async function executeMutation(
       return { action: 'drop', message };
     }
     await markMutationFailed(row.id, message);
-    if (row.attempts + 1 >= MAX_OFFLINE_ATTEMPTS) {
-      await completeMutation(row.id);
-      return { action: 'drop', message };
-    }
     return { action: 'retry', message };
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Network error during sync.';
     await markMutationFailed(row.id, message);
-    if (row.attempts + 1 >= MAX_OFFLINE_ATTEMPTS) {
-      await completeMutation(row.id);
-      return { action: 'drop', message };
-    }
     return { action: 'retry', message };
   }
 }

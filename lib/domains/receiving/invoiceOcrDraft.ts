@@ -182,10 +182,9 @@ export function draftPostingBlockers(
   if (!payload.invoiceNumber.trim()) blockers.push('Invoice number was not read.');
   if (!payload.invoiceDate?.trim()) blockers.push('Invoice date was not read.');
   const managerMayResolve = options.manualReviewOverride && options.actorIsManager;
-  const mayChangePack = options.actorIsManager || options.manualReviewOverride;
   payload.lines.forEach((line, index) => {
     const reasons = unresolvedLineReasons(line, managerMayResolve);
-    if (line.pack_needs_manager && !mayChangePack) {
+    if (line.pack_needs_manager && !line.pack_edited_by && !options.actorIsManager) {
       const pack = line.case_pack_size ?? 1;
       const split = line.split_factor ?? 1;
       blockers.push(

@@ -150,6 +150,7 @@ function applyPackResolutions(
         case_pack_size: nextPack,
         split_factor: nextSplit,
         pack_needs_manager: true,
+        pack_edited_by: undefined,
       };
     }),
   };
@@ -481,8 +482,7 @@ export async function receiveAcceptedInvoiceOcr(input: {
   if (blockers.length > 0) {
     return failure(409, blockers[0] ?? OCR_DRAFT_NOT_ACCEPTED, 'OCR_DRAFT_BLOCKED');
   }
-  const mayChangePack = actor.actorIsManager || actor.manualReviewOverride;
-  if (mayChangePack) {
+  if (actor.actorIsManager) {
     for (const line of resolved.lines) {
       if (line.pack_needs_manager) line.pack_edited_by = input.actorId;
     }
