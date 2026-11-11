@@ -26,6 +26,10 @@ export interface ReceivingLog {
   printedName?: string;
   invoiceNumber?: string;
   invoiceDate?: string;
+  /** Explicit invoice-line department. Ignored while departmentAssumed is set. */
+  department?: string;
+  departmentAssumed?: boolean;
+  category?: string;
 }
 
 export interface YieldQuote {

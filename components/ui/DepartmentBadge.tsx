@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { DepartmentType } from '@/lib/types';
-import { Apple, Milk, Cake, Package } from 'lucide-react';
+import { Apple, Milk, Cake, Package, UtensilsCrossed } from 'lucide-react';
 
 interface DepartmentBadgeProps {
   department: DepartmentType;
@@ -43,6 +43,13 @@ export const DepartmentBadge: React.FC<DepartmentBadgeProps> = ({
       text: 'text-purple-300',
       border: 'border-purple-500/30',
       icon: Package
+    },
+    DELI_KITCHEN: {
+      label: 'Deli / Production',
+      bg: 'bg-orange-950/70',
+      text: 'text-orange-300',
+      border: 'border-orange-500/30',
+      icon: UtensilsCrossed
     }
   };
 

@@ -264,6 +264,8 @@ export async function commitInvoiceOcrReceipts(input: {
           unitCost: item.unit_cost,
           quantityKind: item.quantity_kind === 'cases' ? 'cases' : 'units',
           casePackSize: item.case_pack_size,
+          department: item.department_assumed ? undefined : item.department,
+          departmentAssumed: item.department_assumed === true,
         },
         identity.deliveryId,
         supplierId
@@ -376,11 +378,22 @@ export async function commitInvoiceOcrReceipts(input: {
               casePackSize: product?.casePackSize,
             });
             const { units, unitCost } = resolveInvoiceReceipt(item, packFields.casePackSize);
+            const lineDepartment = item.department_assumed
+              ? product?.department
+              : item.department || product?.department;
+            if (!lineDepartment) {
+              throw new InventoryLedgerError(
+                'Pick a department for this new item before receiving it.',
+                'DEPARTMENT_REQUIRED',
+                409,
+                { committed: false }
+              );
+            }
             await tx.invoiceLineItem.create({
               data: {
                 invoiceId,
                 name: item.line_name ?? product?.name ?? 'Invoice line',
-                department: item.department ?? product?.department ?? 'PRODUCE',
+                department: lineDepartment,
                 quantity: units > 0 ? units : item.quantity,
                 unit: 'units',
                 unitCost,

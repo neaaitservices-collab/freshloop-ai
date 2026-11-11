@@ -39,6 +39,10 @@ import {
 } from '@/lib/domains/inventory/volumetricScrapLedger';
 import { departmentLabel } from '@/lib/domains/inventory/inventoryCatalog';
 import {
+  RECEIVING_DEPARTMENT_REQUIRED,
+  resolveReceivingDepartment,
+} from '@/lib/domains/inventory/receivingDepartment';
+import {
   effectivePullDays,
   normalizePullSensitivityDays,
   parseProductPullOverride,
@@ -148,7 +152,7 @@ export async function findOrCreatePurchaseProduct(
   db?: LotTx,
   /** When provided, reused across batch lines (avoids repeated catalog scans). */
   nameCatalog?: PurchaseProductNameCatalog
-): Promise<{ id: string; name: string; created: boolean }> {
+): Promise<{ id: string; name: string; created: boolean } | null> {
   const client = db ?? prisma;
   const name = input.itemName.trim();
   if (!name) throw new Error('Item name is required to add a catalog product.');
@@ -190,10 +194,11 @@ export async function findOrCreatePurchaseProduct(
   });
   const unitCost = input.unitCost && input.unitCost > 0 ? Number(input.unitCost.toFixed(4)) : null;
   const storeDefaultPar = await loadStoreStockDefaults().then((d) => d.defaultParCases);
+  if (!input.department) return null;
   const created = await client.product.create({
     data: {
       name,
-      department: input.department ?? departmentFor(name),
+      department: input.department,
       unitType: unitTypeFor(input.retailUnit ?? 'units'),
       casePackSize: packFields.casePackSize,
       receivePackSize: packFields.receivePackSize,
@@ -1079,14 +1084,6 @@ export async function lookupOnHand(itemName: string): Promise<OnHandLookup> {
   };
 }
 
-function departmentFor(itemName: string): Department {
-  const name = itemName.toLowerCase();
-  if (/cream|yogurt|milk|cheese|butter/.test(name)) return Department.DAIRY;
-  if (/bread|sourdough|loaf|baguette|pastry/.test(name)) return Department.BAKERY;
-  if (/oil|vinegar|flour|sugar|rice|pasta|bean/.test(name)) return Department.PANTRY;
-  return Department.PRODUCE;
-}
-
 function unitTypeFor(retailUnit: string): UnitType {
   if (retailUnit === 'lbs') return UnitType.LBS;
   return UnitType.UNIT;
@@ -1105,6 +1102,12 @@ export async function postReceipt(input: {
   staffId?: string;
   targetMargin?: number;
   supplier?: string | null;
+  /** Chosen on the invoice line. Ignored when departmentAssumed is set. */
+  department?: string | null;
+  departmentAssumed?: boolean;
+  category?: string | null;
+  /** Receive-screen pick used only when the line, supplier, category, and name are silent. */
+  screenDepartment?: string | null;
   /** Persisted delivery UUID. A repeat of the same payload returns the original receipt. */
   externalLogId?: string;
   delivery?: {
@@ -1130,9 +1133,18 @@ export async function postReceipt(input: {
   const idempotencyKey = deliveryId ? `recv:${deliveryId}` : '';
   const referenceId = idempotencyKey || `RCV-${Date.now()}`;
   const payloadHash = input.delivery?.payloadHash ?? '';
+  const resolvedDepartment = resolveReceivingDepartment({
+    itemName: input.itemName,
+    explicitDepartment: input.department,
+    departmentAssumed: input.departmentAssumed,
+    supplier: input.supplier,
+    category: input.category,
+    screenDepartment: input.screenDepartment,
+  });
   let posted:
     | { product: { id: string; name: string }; created: { id: string } }
-    | { replay: { catalogProductId: string | null; productName: string; unitsAdded: number; transactionId: string | null } };
+    | { replay: { catalogProductId: string | null; productName: string; unitsAdded: number; transactionId: string | null } }
+    | { needsDepartment: true };
   const run = async (tx: LotTx) => {
     if (deliveryId && payloadHash) {
       const existing = await tx.receivingDelivery.findUnique({ where: { id: deliveryId } });
@@ -1158,9 +1170,11 @@ export async function postReceipt(input: {
         unitCost: Number(unitCost.toFixed(4)),
         retailUnit: input.retailUnit,
         supplier: supplierLabel,
+        department: resolvedDepartment ?? undefined,
       },
       tx
     );
+    if (!ensured) return { needsDepartment: true as const };
     const productId = ensured.id;
     const product = await tx.product.update({
       where: { id: productId },
@@ -1263,6 +1277,10 @@ export async function postReceipt(input: {
       };
     }
     throw error;
+  }
+
+  if ('needsDepartment' in posted) {
+    return { posted: false, reason: RECEIVING_DEPARTMENT_REQUIRED };
   }
 
   if ('replay' in posted) {
