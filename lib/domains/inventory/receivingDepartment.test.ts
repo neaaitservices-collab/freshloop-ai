@@ -1,10 +1,23 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { CATALOG_DEPARTMENTS, departmentLabel } from '@/lib/domains/inventory/inventoryCatalog';
 import {
+  RECEIVING_DEPARTMENTS,
   receivingDepartmentFieldErrors,
   receivingLineNeedsDepartmentPick,
   resolveReceivingDepartment,
 } from '@/lib/domains/inventory/receivingDepartment';
+
+test('a grocery line maps to grocery and the catalogue offers Grocery', () => {
+  assert.equal(resolveReceivingDepartment({ itemName: 'Paper Towels' }), 'GROCERY');
+  assert.equal(
+    resolveReceivingDepartment({ itemName: 'Whole Milk', explicitDepartment: 'GROCERY' }),
+    'GROCERY'
+  );
+  assert.equal(departmentLabel('GROCERY'), 'Grocery');
+  assert.ok(CATALOG_DEPARTMENTS.includes('GROCERY'));
+  assert.ok(RECEIVING_DEPARTMENTS.includes('GROCERY'));
+});
 
 test('dairy, bakery, and pantry lines map from the item name', () => {
   assert.equal(resolveReceivingDepartment({ itemName: 'Whole Milk' }), 'DAIRY');

@@ -27,7 +27,7 @@ import {
   type RetailUnit,
   type YieldQuote,
 } from '@/lib/domains/receiving/yieldPricing';
-import { departmentLabel } from '@/lib/domains/inventory/inventoryCatalog';
+import { CATALOG_DEPARTMENTS, departmentLabel } from '@/lib/domains/inventory/inventoryCatalog';
 import { ModalBody, ModalFooter, ModalHeader, ModalShell } from '@/components/ui/layout';
 import { ParCasesToggle } from '@/components/ui/ParCasesToggle';
 import { PullDaysToggle } from '@/components/ui/PullDaysToggle';
@@ -39,8 +39,6 @@ import {
   type PullSensitivityDays,
 } from '@/lib/domains/inventory/pullSensitivity';
 import { cn } from '@/lib/utils/cn';
-
-const DEPARTMENTS = ['PRODUCE', 'DAIRY', 'BAKERY', 'PANTRY', 'DELI_KITCHEN'] as const;
 
 const INPUT =
   'mt-2 min-h-11 w-full rounded-xl border border-slate-700/90 bg-slate-950 px-3.5 py-2.5 text-sm text-slate-100 outline-none transition focus:border-emerald-500/45 focus:ring-1 focus:ring-emerald-500/20';
@@ -476,7 +474,7 @@ export function ItemSettingsModal({
                   <label className="block sm:col-span-1">
                     <span className={LABEL}>Department</span>
                     <select value={department} onChange={(e) => setDepartment(e.target.value)} className={INPUT}>
-                      {DEPARTMENTS.map((d) => (
+                      {CATALOG_DEPARTMENTS.map((d) => (
                         <option key={d} value={d}>
                           {departmentLabel(d)}
                         </option>

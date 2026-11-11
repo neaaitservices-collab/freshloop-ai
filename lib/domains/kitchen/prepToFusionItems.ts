@@ -11,6 +11,7 @@ function departmentFromPrisma(value: Department): InventoryItem['department'] {
     BAKERY: 'BAKERY',
     PANTRY: 'PANTRY',
     DELI_KITCHEN: 'PANTRY',
+    GROCERY: 'GROCERY',
   };
   return map[value] ?? 'PRODUCE';
 }

@@ -1,4 +1,5 @@
 import { matchProduct } from '@/lib/domains/inventory/productMatching';
+import type { DepartmentType } from '@/lib/types';
 
 /** Departments a receiving clerk can assign. Matches the existing Department enum. */
 export const RECEIVING_DEPARTMENTS = [
@@ -7,9 +8,14 @@ export const RECEIVING_DEPARTMENTS = [
   'BAKERY',
   'PANTRY',
   'DELI_KITCHEN',
+  'GROCERY',
 ] as const;
 
 export type ReceivingDepartment = (typeof RECEIVING_DEPARTMENTS)[number];
+
+type MissingReceivingDepartment = Exclude<DepartmentType, ReceivingDepartment>;
+const _allReceivingDepartments: [MissingReceivingDepartment] extends [never] ? true : never = true;
+void _allReceivingDepartments;
 
 export const RECEIVING_DEPARTMENT_REQUIRED =
   'Pick a department for this line before this receipt can be saved.';
@@ -30,6 +36,7 @@ const RULES: { department: ReceivingDepartment; pattern: RegExp }[] = [
   { department: 'DAIRY', pattern: /dairy|cream|yogurt|yoghurt|milk|cheese|butter|kefir/ },
   { department: 'BAKERY', pattern: /bakery|bread|sourdough|loaf|baguette|pastry|croissant|muffin|bagel/ },
   { department: 'PANTRY', pattern: /pantry|vinegar|flour|sugar|rice|pasta|bean|canned|spice|cereal|\boil\b/ },
+  { department: 'GROCERY', pattern: /grocery|detergent|paper towel|household|soap|tissue/ },
   {
     department: 'DELI_KITCHEN',
     pattern: /deli|kitchen|prepared|rotisserie|hummus|guacamole|sandwich|cold\s*cut/,

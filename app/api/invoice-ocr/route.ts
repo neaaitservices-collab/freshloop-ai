@@ -51,7 +51,7 @@ export interface InvoiceOcrLineItemWithGuardrail {
   item_name: string;
   product_id: string | null;
   matched_product_name: string | null;
-  department: 'PRODUCE' | 'DAIRY' | 'BAKERY' | 'PANTRY' | 'DELI_KITCHEN';
+  department: 'PRODUCE' | 'DAIRY' | 'BAKERY' | 'PANTRY' | 'DELI_KITCHEN' | 'GROCERY';
   quantity: number;
   unit: string;
   case_pack_size: number;
@@ -100,12 +100,14 @@ export interface InvoiceOcrApiResponse {
       DAIRY: number;
       BAKERY: number;
       PANTRY: number;
+      DELI_KITCHEN: number;
+      GROCERY: number;
     };
     draftId?: string;
     lineItems: Array<{
       name: string;
       deliveryId?: string;
-      department: 'PRODUCE' | 'DAIRY' | 'BAKERY' | 'PANTRY' | 'DELI_KITCHEN';
+      department: 'PRODUCE' | 'DAIRY' | 'BAKERY' | 'PANTRY' | 'DELI_KITCHEN' | 'GROCERY';
       quantity: number;
       unit: string;
       casePackSize: number;
@@ -168,7 +170,7 @@ async function loadCatalogForCostComparison(): Promise<CatalogLookupEntry[]> {
  */
 type RawOcrLineItem = {
   name: string;
-  department: 'PRODUCE' | 'DAIRY' | 'BAKERY' | 'PANTRY' | 'DELI_KITCHEN';
+  department: 'PRODUCE' | 'DAIRY' | 'BAKERY' | 'PANTRY' | 'DELI_KITCHEN' | 'GROCERY';
   quantity: number;
   unit: string;
   casePackSize: number;
@@ -380,7 +382,7 @@ async function extractInvoiceWithGemini15FlashVision(
   invoiceDate: string;
   lineItems: Array<{
     name: string;
-    department: 'PRODUCE' | 'DAIRY' | 'BAKERY' | 'PANTRY' | 'DELI_KITCHEN';
+    department: 'PRODUCE' | 'DAIRY' | 'BAKERY' | 'PANTRY' | 'DELI_KITCHEN' | 'GROCERY';
     quantity: number;
     unit: string;
     casePackSize: number;
@@ -398,7 +400,7 @@ async function extractInvoiceWithGemini15FlashVision(
   }
 
   const visionPrompt = `Extract this vendor invoice as JSON only:
-{"vendorName":"","invoiceNumber":"","invoiceDate":"YYYY-MM-DD","lineItems":[{"name":"","department":"PRODUCE|DAIRY|BAKERY|PANTRY|DELI_KITCHEN","quantity":0,"unit":"cases","casePackSize":0,"subUnit":"lbs|units|L|loaves","unitCost":0,"totalCost":0,"caseRetailPrice":null,"extractionConfidence":0.0}]}
+{"vendorName":"","invoiceNumber":"","invoiceDate":"YYYY-MM-DD","lineItems":[{"name":"","department":"PRODUCE|DAIRY|BAKERY|PANTRY|DELI_KITCHEN|GROCERY","quantity":0,"unit":"cases","casePackSize":0,"subUnit":"lbs|units|L|loaves","unitCost":0,"totalCost":0,"caseRetailPrice":null,"extractionConfidence":0.0}]}
 Rules: unitCost/totalCost per case when unit is cases; caseRetailPrice = printed case list price or null; product names only (no pack codes in name). extractionConfidence = your certainty for that row (0.0-1.0).`;
 
   const cleanBase64 = imageBase64.includes(',') ? imageBase64.split(',')[1] : imageBase64;
@@ -719,6 +721,7 @@ export async function POST(req: NextRequest) {
       BAKERY: 0,
       PANTRY: 0,
       DELI_KITCHEN: 0,
+      GROCERY: 0,
     };
 
     for (const item of auditedItems) {

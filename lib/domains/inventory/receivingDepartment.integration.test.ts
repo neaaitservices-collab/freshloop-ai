@@ -99,4 +99,26 @@ test('an unclear receiving line blocks the whole save until a department is pick
   const gadgetRow = await prisma.product.findFirst({ where: { name: gadget }, select: { department: true } });
   assert.equal(milkRow?.department, 'DAIRY');
   assert.equal(gadgetRow?.department, 'DELI_KITCHEN');
+
+  const towels = `Paper Towels ${stamp}`;
+  const towelId = crypto.randomUUID();
+  t.after(async () => {
+    const towel = await prisma.product.findFirst({ where: { name: towels }, select: { id: true } });
+    if (!towel) return;
+    await prisma.inventoryLot.deleteMany({ where: { productId: towel.id } });
+    await prisma.inventoryTransaction.deleteMany({ where: { productId: towel.id } });
+    await prisma.receivingDelivery.deleteMany({ where: { id: towelId } });
+    await prisma.ledgerIdempotencyKey.deleteMany({ where: { key: `recv:${towelId}` } });
+    await prisma.product.deleteMany({ where: { id: towel.id } });
+  });
+  const grocery = await POST(
+    new NextRequest('http://localhost/api/receiving-logs/batch', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ items: [line(towels, towelId)] }),
+    })
+  );
+  assert.equal(grocery.status, 200);
+  const towelRow = await prisma.product.findFirst({ where: { name: towels }, select: { department: true } });
+  assert.equal(towelRow?.department, 'GROCERY');
 });

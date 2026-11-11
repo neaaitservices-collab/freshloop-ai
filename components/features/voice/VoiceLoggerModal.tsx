@@ -79,6 +79,7 @@ function inferDepartmentFromName(name: string): DepartmentType {
   if (/cream|milk|yogurt|cheese|butter|egg/.test(lower)) return 'DAIRY';
   if (/bread|sourdough|boule|loaf|pastry|bun|bakery/.test(lower)) return 'BAKERY';
   if (/oil|olive|spice|grain|rice|pasta|sauce/.test(lower)) return 'PANTRY';
+  if (/grocery|detergent|paper towel|household|soap|tissue/.test(lower)) return 'GROCERY';
   return 'PRODUCE';
 }
 
@@ -358,7 +359,7 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
             condition: String(it.condition || 'Overripe'),
             target_action:
               it.target_action === 'DISCARD' ? 'DISCARD' : 'PULL_RESCUE',
-            department: (['PRODUCE', 'DAIRY', 'BAKERY', 'PANTRY'].includes(
+            department: (['PRODUCE', 'DAIRY', 'BAKERY', 'PANTRY', 'DELI_KITCHEN', 'GROCERY'].includes(
               String(it.department)
             )
               ? String(it.department)

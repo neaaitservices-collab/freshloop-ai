@@ -12,13 +12,10 @@ import { Card, CardBody } from '@/components/ui/Card';
 import { Input, Select } from '@/components/ui/Input';
 import { Toast } from '@/components/ui/Toast';
 import { Button } from '@/components/ui/Button';
-import { matchesStoredDepartment } from '@/lib/domains/inventory/inventoryCatalog';
+import { CATALOG_DEPARTMENTS, departmentLabel, matchesStoredDepartment } from '@/lib/domains/inventory/inventoryCatalog';
 import type { StockLevel } from '@/lib/domains/inventory/stock';
 import { useOptimisticInventoryLevels } from '@/hooks/use-optimistic-inventory-levels';
-import type { DepartmentType } from '@/lib/types';
 import { formatCurrency } from '@/lib/domains/receiving/yieldPricing';
-
-const DEPARTMENTS: DepartmentType[] = ['PRODUCE', 'DAIRY', 'BAKERY', 'PANTRY'];
 
 export function SlateInventory({
   levels: initialLevels,
@@ -170,9 +167,9 @@ export function SlateInventory({
           className="w-full sm:w-44 text-xs"
         >
           <option value="ALL">All departments</option>
-          {DEPARTMENTS.map((dept) => (
+          {CATALOG_DEPARTMENTS.map((dept) => (
             <option key={dept} value={dept}>
-              {dept.charAt(0) + dept.slice(1).toLowerCase()}
+              {departmentLabel(dept)}
             </option>
           ))}
         </Select>

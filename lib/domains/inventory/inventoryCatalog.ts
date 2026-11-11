@@ -1,4 +1,5 @@
 import type { StockLevel } from '@/lib/domains/inventory/stock';
+import type { DepartmentType } from '@/lib/types';
 import { fieldMatchesNeedle } from '@/lib/utils/searchNeedle';
 
 export type InventoryGroupBy = 'none' | 'department' | 'supplier';
@@ -37,16 +38,21 @@ export function inventoryFiltersAreDefault(filters: InventoryFilters): boolean {
   );
 }
 
-const DEPARTMENT_LABELS: Record<string, string> = {
+export const DEPARTMENT_LABELS: Record<DepartmentType, string> = {
   PRODUCE: 'Produce',
   DAIRY: 'Dairy',
   BAKERY: 'Bakery',
   PANTRY: 'Pantry',
   DELI_KITCHEN: 'Deli / Production',
+  GROCERY: 'Grocery',
 };
 
+/** Every catalogue department, in label order. */
+export const CATALOG_DEPARTMENTS = Object.keys(DEPARTMENT_LABELS) as DepartmentType[];
+
 export function departmentLabel(code: string): string {
-  return DEPARTMENT_LABELS[code] ?? code.replace(/_/g, ' ');
+  if (code in DEPARTMENT_LABELS) return DEPARTMENT_LABELS[code as DepartmentType];
+  return code.replace(/_/g, ' ');
 }
 
 export function categoryForRow(row: StockLevel): string {
