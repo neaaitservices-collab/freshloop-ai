@@ -124,7 +124,7 @@ describe('purchase order open log', { concurrency: 1 }, () => {
     const againJson = (await again.json()) as { openedAt?: string; status?: string };
     assert.equal(againJson.status, 'OPENED');
     assert.equal(againJson.openedAt, openedJson.openedAt);
-    assert.match(purchaseOrderOpenedWarning(againJson.openedAt ?? ''), /Already opened for this order on .+ open again\?/);
+    assert.match(purchaseOrderOpenedWarning(againJson.openedAt ?? ''), /^Opened \d{1,2}:\d{2} [AP]M$/);
 
     const reopened = await POST(
       request({ ...payload, to: 'later@farm.test', subject: 'Changed', body: payload.body, reopen: true })

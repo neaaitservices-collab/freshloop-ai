@@ -1,67 +1,41 @@
 'use client';
 
-import React, { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { Mail, X } from 'lucide-react';
 import {
-  activateMailLink,
+  applyPurchaseOrderLog,
+  purchaseOrderCheckKey,
+  purchaseOrderClickPlan,
   purchaseOrderCompose,
   purchaseOrderCopiedMessage,
   purchaseOrderGroupCompose,
-  purchaseOrderGroupOpenedWarning,
-  purchaseOrderLoggedFailureMessage,
-  purchaseOrderOpenedWarning,
-  purchaseOrderOpeningMessage,
-  purchaseOrderSendAllConfirm,
+  purchaseOrderGroupOpenState,
+  purchaseOrderOpenIdentity,
+  purchaseOrderRememberOpen,
+  purchaseOrderRepeatGate,
+  purchaseOrderRepeatWarning,
   purchaseOrderSendPlan,
-  purchaseOrderSkipMessage,
-  purchaseOrderSkippedLabel,
-  settlePurchaseOrderGroup,
+  purchaseOrderSkippedNoEmail,
+  singleSupplierEmail,
   supplierRecipientHint,
   type PoDraft,
+  type PurchaseOrderLogResult,
 } from '@/components/features/orders/supplierMail';
-import { Button } from '@/components/ui/Button';
 import { Card, CardBody, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { cn } from '@/lib/utils/cn';
 
-type OpenOutcome = 'opened' | 'failed' | 'skipped';
+type OpenLogJson = { error?: string; openedAt?: string } | null;
 
-interface OpenResult {
-  supplier: string;
-  outcome: OpenOutcome;
-  message: string;
-  truncated?: boolean;
-  fullBody?: string;
-  mailtoUrl?: string;
-}
+type KnownOpen = { state: 'checking' | 'ready' | 'opened'; openedAt?: string };
 
-async function recordOpen(draft: PoDraft, reopen: boolean, checkOnly = false): Promise<
-  | { ok: true }
-  | { ok: false; status: number; openedAt?: string; message: string }
-> {
-  const response = await fetch('/api/orders/purchase-order-email', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      supplierId: draft.supplierId ?? null,
-      supplierName: draft.supplier,
-      to: draft.to,
-      subject: draft.subject,
-      body: draft.body,
-      productIds: draft.productIds,
-      reopen,
-      checkOnly,
-    }),
-  });
-  const json = (await response.json().catch(() => null)) as { error?: string; openedAt?: string } | null;
-  if (response.status === 409) {
-    return { ok: false, status: 409, openedAt: json?.openedAt, message: json?.error || 'Already opened for this order.' };
+async function readOpenLog(response: Response): Promise<OpenLogJson> {
+  try {
+    return (await response.json()) as OpenLogJson;
+  } catch {
+    return null;
   }
-  if (!response.ok) {
-    return { ok: false, status: response.status, message: json?.error || 'The order could not be recorded.' };
-  }
-  return { ok: true };
 }
 
 export function PoEmailPanel({
@@ -70,163 +44,157 @@ export function PoEmailPanel({
   onActiveIndex,
   onChange,
   onClose,
-  onPrepare,
 }: {
   drafts: PoDraft[];
   activeIndex: number;
   onActiveIndex: (index: number) => void;
   onChange: (next: PoDraft) => void;
   onClose: () => void;
-  onPrepare: () => void;
 }) {
-  const [busy, setBusy] = useState(false);
-  const [confirmAll, setConfirmAll] = useState(false);
-  const [showOpens, setShowOpens] = useState(false);
-  const [reopen, setReopen] = useState<{
-    openedAt: string;
-    draft?: PoDraft;
-    group?: boolean;
-    suppliers?: string[];
-  } | null>(null);
-  const [results, setResults] = useState<OpenResult[]>([]);
-  const [mailClick, setMailClick] = useState(0);
-  const mailLinkRef = useRef<HTMLAnchorElement | null>(null);
-  const clickedMail = useRef(0);
-  useEffect(() => {
-    if (mailClick === 0 || clickedMail.current === mailClick) return;
-    clickedMail.current = mailClick;
-    activateMailLink(mailLinkRef.current);
-  }, [mailClick]);
+  const [notes, setNotes] = useState<string[]>([]);
+  const [issues, setIssues] = useState<string[]>([]);
+  const [checkIssues, setCheckIssues] = useState<string[]>([]);
+  const [skipNote, setSkipNote] = useState<string | null>(null);
+  const [copyMessage, setCopyMessage] = useState<string | null>(null);
+  const [known, setKnown] = useState<Record<string, KnownOpen>>({});
+  const requestId = useRef(0);
   const index =
     drafts.length === 0 ? 0 : Math.min(Math.max(activeIndex, 0), drafts.length - 1);
+  const withLines = drafts.filter((item) => item.productIds.length > 0 || item.body.trim().length > 0);
+  const loggable = purchaseOrderSendPlan(withLines).ready;
+  const loggableRef = useRef(loggable);
+  loggableRef.current = loggable;
+  const checkKey = purchaseOrderCheckKey(loggable);
+
+  useEffect(() => {
+    const items = loggableRef.current;
+    requestId.current += 1;
+    setCheckIssues([]);
+    if (items.length === 0) {
+      setKnown({});
+      return;
+    }
+    let cancelled = false;
+    setKnown(
+      Object.fromEntries(items.map((item) => [purchaseOrderOpenIdentity(item), { state: 'checking' as const }]))
+    );
+    for (const item of items) {
+      const id = purchaseOrderOpenIdentity(item);
+      fetch('/api/orders/purchase-order-email', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          supplierId: item.supplierId ?? null,
+          supplierName: item.supplier,
+          to: item.to,
+          subject: item.subject,
+          body: item.body,
+          productIds: item.productIds,
+          checkOnly: true,
+        }),
+      })
+        .then(async (response) => {
+          if (cancelled) return;
+          const json = await readOpenLog(response);
+          if (cancelled) return;
+          const gate = purchaseOrderRepeatGate(response.status);
+          if (gate === 'confirm') {
+            setKnown((current) => ({ ...current, [id]: { state: 'opened', openedAt: json?.openedAt } }));
+            return;
+          }
+          setKnown((current) => ({ ...current, [id]: { state: 'ready' } }));
+          if (gate === 'issue') {
+            const next = applyPurchaseOrderLog(
+              { notes: [], issues: [] },
+              {
+                supplier: item.supplier,
+                grouped: false,
+                result: { status: response.status, error: json?.error, openedAt: json?.openedAt },
+              }
+            );
+            if (next.issues.length > 0) setCheckIssues((current) => [...current, ...next.issues]);
+          }
+        })
+        .catch(() => {
+          if (cancelled) return;
+          setKnown((current) => ({ ...current, [id]: { state: 'ready' } }));
+          const next = applyPurchaseOrderLog(
+            { notes: [], issues: [] },
+            { supplier: item.supplier, grouped: false, result: { network: true } }
+          );
+          if (next.issues.length > 0) setCheckIssues((current) => [...current, ...next.issues]);
+        });
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [checkKey]);
+
   const draft = drafts[index];
   if (!draft) return null;
   const hint = supplierRecipientHint(draft);
   const many = drafts.length > 1;
-  const plan = purchaseOrderSendPlan(drafts);
   const activeCompose = purchaseOrderCompose(draft);
+  const groupCompose = purchaseOrderGroupCompose(withLines);
+  const sendHref = draft.productIds.length > 0 ? (activeCompose?.mailtoUrl ?? null) : null;
+  const skippedNoEmail = withLines.filter((item) => !item.to.trim()).map((item) => item.supplier);
+  const sendId = purchaseOrderOpenIdentity(draft);
+  const sendState = !sendHref ? 'unavailable' : (known[sendId]?.state ?? 'checking');
+  const groupStates = loggable.map((item) => known[purchaseOrderOpenIdentity(item)]?.state ?? 'checking');
+  const groupState = groupCompose ? purchaseOrderGroupOpenState(groupStates) : 'unavailable';
+  const sendWarning =
+    sendState === 'opened' ? purchaseOrderRepeatWarning(known[sendId]?.openedAt ?? '') : null;
+  const groupWarnings = loggable
+    .filter((item) => known[purchaseOrderOpenIdentity(item)]?.state === 'opened')
+    .map((item) => {
+      const sentence = purchaseOrderRepeatWarning(known[purchaseOrderOpenIdentity(item)]?.openedAt ?? '');
+      return loggable.length > 1 ? `${item.supplier}: ${sentence}` : sentence;
+    });
 
-  const openCompose = (item: PoDraft, again = false) => {
-    const compose = purchaseOrderCompose(item);
-    if (!compose) {
-      setResults([{ supplier: item.supplier, outcome: 'skipped', message: purchaseOrderSkipMessage(item.to) }]);
-      return;
-    }
-    void finishOpen(item, again, compose);
+  const showLog = (item: PoDraft, grouped: boolean, result: PurchaseOrderLogResult, generation: number) => {
+    if (generation !== requestId.current) return;
+    const next = applyPurchaseOrderLog(
+      { notes: [], issues: [] },
+      { supplier: item.supplier, grouped, result }
+    );
+    if (next.notes.length > 0) setNotes((current) => [...current, ...next.notes]);
+    if (next.issues.length > 0) setIssues((current) => [...current, ...next.issues]);
   };
 
-  const finishOpen = async (
-    item: PoDraft,
-    again: boolean,
-    compose: NonNullable<ReturnType<typeof purchaseOrderCompose>>
-  ) => {
-    setBusy(true);
-    try {
-      const recorded = await recordOpen(item, again);
-      if (!recorded.ok && recorded.status === 409) {
-        setReopen({ draft: item, openedAt: recorded.openedAt ?? '' });
-        return;
-      }
-      if (!recorded.ok) {
-        setResults([{ supplier: item.supplier, outcome: 'failed', message: recorded.message }]);
-        return;
-      }
-      setReopen(null);
-      setResults([
-        {
-          supplier: item.supplier,
-          outcome: 'opened',
-          message: purchaseOrderOpeningMessage(compose.truncated),
-          truncated: compose.truncated,
-          fullBody: item.body,
-          mailtoUrl: compose.mailtoUrl,
-        },
-      ]);
-      setMailClick((count) => count + 1);
-    } catch {
-      setResults([{ supplier: item.supplier, outcome: 'failed', message: 'The order could not be recorded.' }]);
-    } finally {
-      setBusy(false);
-    }
+  const logOpened = (item: PoDraft, grouped: boolean, reopen: boolean) => {
+    if (!singleSupplierEmail(item.to)) return;
+    const generation = requestId.current;
+    fetch('/api/orders/purchase-order-email', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        supplierId: item.supplierId ?? null,
+        supplierName: item.supplier,
+        to: item.to,
+        subject: item.subject,
+        body: item.body,
+        productIds: item.productIds,
+        ...(reopen ? { reopen: true } : {}),
+      }),
+    })
+      .then(async (response) => {
+        const json = await readOpenLog(response);
+        setKnown((current) =>
+          purchaseOrderRememberOpen(current, purchaseOrderOpenIdentity(item), response.status, json?.openedAt)
+        );
+        showLog(item, grouped, { status: response.status, error: json?.error, openedAt: json?.openedAt }, generation);
+      })
+      .catch(() => {
+        showLog(item, grouped, { network: true }, generation);
+      });
   };
 
   const copyFullOrder = async (fullBody: string) => {
     try {
       await navigator.clipboard.writeText(fullBody);
-      setResults((current) =>
-        current.map((item) =>
-          item.fullBody != null ? { ...item, message: purchaseOrderCopiedMessage(true) } : item
-        )
-      );
+      setCopyMessage(purchaseOrderCopiedMessage(true));
     } catch {
-      setResults((current) =>
-        current.map((item) =>
-          item.fullBody != null ? { ...item, message: purchaseOrderCopiedMessage(false) } : item
-        )
-      );
-    }
-  };
-
-  const openGroup = (again = false) => {
-    const compose = purchaseOrderGroupCompose(plan.ready);
-    if (!compose) {
-      setResults(
-        plan.skipped.length > 0
-          ? plan.skipped.map((item) => ({
-              supplier: item.supplier,
-              outcome: 'skipped' as const,
-              message: purchaseOrderSkipMessage(item.to),
-            }))
-          : [{ supplier: 'Group', outcome: 'skipped', message: 'Nothing to include.' }]
-      );
-      return;
-    }
-    void finishGroup(again, compose, plan.ready);
-  };
-
-  const finishGroup = async (
-    again: boolean,
-    compose: NonNullable<ReturnType<typeof purchaseOrderGroupCompose>>,
-    ready: PoDraft[]
-  ) => {
-    setBusy(true);
-    try {
-      const settled = await settlePurchaseOrderGroup({
-        items: ready,
-        name: (item) => item.supplier,
-        confirmed: again,
-        check: (item) => recordOpen(item, false, true),
-        write: (item) => recordOpen(item, again),
-      });
-      if (settled.outcome === 'repeat') {
-        setReopen({ openedAt: '', group: true, suppliers: settled.suppliers });
-        return;
-      }
-      if (settled.outcome === 'failed') {
-        setReopen(null);
-        setResults([
-          {
-            supplier: settled.supplier,
-            outcome: 'failed',
-            message: purchaseOrderLoggedFailureMessage(settled.message, settled.logged),
-          },
-        ]);
-        return;
-      }
-      setReopen(null);
-      setResults([
-        {
-          supplier: 'Group',
-          outcome: 'opened',
-          message: purchaseOrderOpeningMessage(compose.truncated),
-          truncated: compose.truncated,
-          fullBody: compose.fullBody,
-          mailtoUrl: compose.mailtoUrl,
-        },
-      ]);
-      setMailClick((count) => count + 1);
-    } finally {
-      setBusy(false);
+      setCopyMessage(purchaseOrderCopiedMessage(false));
     }
   };
 
@@ -329,154 +297,66 @@ export function PoEmailPanel({
                 className="mt-1 w-full resize-y rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-xs leading-relaxed text-slate-200 outline-none focus:border-slate-500 focus:ring-1 focus:ring-slate-600"
               />
             </label>
-            <Button
-              variant="success"
-              className="w-full py-3"
-              disabled={draft.productIds.length === 0 || !draft.to.trim()}
-              onClick={onPrepare}
-            >
-              <Mail className="h-4 w-4" />
-              Prepare draft
-            </Button>
             <div className="grid grid-cols-2 gap-2">
-              <Button
-                type="button"
+              <OrderLink
+                href={sendHref}
+                state={sendState}
                 variant="primary"
-                className="py-3"
-                disabled={busy || draft.productIds.length === 0 || !activeCompose}
-                onClick={() => void openCompose(draft)}
+                onOpen={(reopen) => logOpened(draft, false, reopen)}
               >
                 Send
-              </Button>
-              <Button
-                type="button"
+              </OrderLink>
+              <OrderLink
+                href={groupCompose?.mailtoUrl ?? null}
+                state={groupState}
                 variant="secondary"
-                className="py-3"
-                disabled={busy || drafts.length === 0}
-                onClick={() => {
-                  if (plan.ready.length === 0) {
-                    setShowOpens(false);
-                    setResults(
-                      plan.skipped.map((item) => ({
-                        supplier: item.supplier,
-                        outcome: 'skipped',
-                        message: purchaseOrderSkipMessage(item.to),
-                      }))
-                    );
-                    return;
-                  }
-                  setConfirmAll(true);
+                onOpen={(reopen) => {
+                  setSkipNote(purchaseOrderSkippedNoEmail(skippedNoEmail));
+                  for (const item of loggable) logOpened(item, true, reopen);
                 }}
               >
-                Send all
-              </Button>
+                Send group
+              </OrderLink>
             </div>
-            <Button
-              type="button"
-              variant="secondary"
-              className="w-full py-3"
-              disabled={busy}
-              onClick={() => void openGroup()}
-            >
-              Send group
-            </Button>
-            {plan.skipped.length > 0 ? (
-              <p className="text-xs text-slate-400">
-                {purchaseOrderSkippedLabel(plan.skipped.map((item) => item.supplier))}
-              </p>
-            ) : null}
-            {confirmAll ? (
-              <div className="space-y-2 rounded-xl border border-slate-700 bg-slate-950/70 p-3">
-                <p className="text-sm text-slate-100">{purchaseOrderSendAllConfirm(plan.ready.length)}</p>
-                {plan.skipped.length > 0 ? (
-                  <p className="text-xs text-slate-400">
-                    {purchaseOrderSkippedLabel(plan.skipped.map((item) => item.supplier))}
+            {sendWarning ? <p className="text-sm text-amber-100">{sendWarning}</p> : null}
+            {groupState === 'opened'
+              ? groupWarnings.map((line) => (
+                  <p key={line} className="text-sm text-amber-100">
+                    {line}
                   </p>
-                ) : null}
-                <div className="grid grid-cols-2 gap-2">
-                  <Button
-                    type="button"
-                    variant="primary"
-                    disabled={plan.ready.length === 0}
-                    onClick={() => {
-                      setConfirmAll(false);
-                      setShowOpens(true);
-                    }}
-                  >
-                    Open one at a time
-                  </Button>
-                  <Button type="button" variant="secondary" onClick={() => setConfirmAll(false)}>
-                    Cancel
-                  </Button>
-                </div>
-              </div>
+                ))
+              : null}
+            {activeCompose?.truncated && sendHref ? (
+              <button
+                type="button"
+                className="font-semibold text-blue-300 underline underline-offset-2"
+                onClick={() => void copyFullOrder(draft.body)}
+              >
+                Copy full text
+              </button>
             ) : null}
-            {showOpens ? (
-              <ul aria-label="Send each supplier" className="space-y-2">
-                {plan.ready.map((item) => (
-                  <li key={`${item.supplier}-${item.to}`} className="flex flex-wrap items-center gap-2">
-                    <span className="min-w-0 flex-1 truncate text-xs text-slate-200">{item.supplier}</span>
-                    <Button type="button" variant="primary" disabled={busy} onClick={() => void openCompose(item)}>
-                      Send
-                    </Button>
-                  </li>
+            {groupCompose?.truncated ? (
+              <button
+                type="button"
+                className="font-semibold text-blue-300 underline underline-offset-2"
+                onClick={() => void copyFullOrder(groupCompose.fullBody)}
+              >
+                Copy full text
+              </button>
+            ) : null}
+            {skipNote ? <p className="text-sm text-slate-100">{skipNote}</p> : null}
+            {copyMessage ? <p className="text-xs text-slate-300">{copyMessage}</p> : null}
+            {notes.length > 0 ? (
+              <ul aria-label="Opened orders" className="space-y-1 text-sm text-slate-100">
+                {notes.map((note, noteIndex) => (
+                  <li key={`${note}-${noteIndex}`}>{note}</li>
                 ))}
               </ul>
             ) : null}
-            {reopen ? (
-              <div className="space-y-2 rounded-xl border border-amber-800/60 bg-amber-950/30 p-3">
-                <p className="text-sm text-amber-100">
-                  {reopen.group
-                    ? purchaseOrderGroupOpenedWarning(reopen.suppliers ?? [])
-                    : purchaseOrderOpenedWarning(reopen.openedAt)}
-                </p>
-                <div className="grid grid-cols-2 gap-2">
-                  <Button
-                    type="button"
-                    variant="primary"
-                    disabled={busy}
-                    onClick={() => {
-                      if (!reopen) return;
-                      if (reopen.group) void openGroup(true);
-                      else if (reopen.draft) void openCompose(reopen.draft, true);
-                    }}
-                  >
-                    Open again
-                  </Button>
-                  <Button type="button" variant="secondary" onClick={() => setReopen(null)}>
-                    Cancel
-                  </Button>
-                </div>
-              </div>
-            ) : null}
-            {results.length > 0 ? (
+            {checkIssues.length + issues.length > 0 ? (
               <ul aria-label="Purchase order email results" className="space-y-1 text-xs text-slate-300">
-                {results.map((result, resultIndex) => (
-                  <li key={`${result.supplier}-${result.outcome}-${resultIndex}`}>
-                    <span>
-                      {result.supplier}: {result.message}
-                    </span>
-                    {result.mailtoUrl ? (
-                      <a
-                        ref={mailLinkRef}
-                        href={result.mailtoUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="ml-2 font-semibold text-blue-300 underline underline-offset-2"
-                      >
-                        Open mail
-                      </a>
-                    ) : null}
-                    {result.fullBody != null ? (
-                      <button
-                        type="button"
-                        className="ml-2 font-semibold text-blue-300 underline underline-offset-2"
-                        onClick={() => void copyFullOrder(result.fullBody ?? '')}
-                      >
-                        Copy full text
-                      </button>
-                    ) : null}
-                  </li>
+                {[...checkIssues, ...issues].map((issue, issueIndex) => (
+                  <li key={`${issue}-${issueIndex}`}>{issue}</li>
                 ))}
               </ul>
             ) : null}
@@ -484,6 +364,51 @@ export function PoEmailPanel({
         </CardBody>
       </Card>
     </div>
+  );
+}
+
+function OrderLink({
+  href,
+  state,
+  onOpen,
+  children,
+  variant,
+}: {
+  href: string | null;
+  state: 'checking' | 'ready' | 'opened' | 'unavailable';
+  onOpen: (reopen: boolean) => void;
+  children: ReactNode;
+  variant: 'primary' | 'secondary';
+}) {
+  const alreadyOpened = state === 'opened';
+  const className = cn(
+    'inline-flex min-h-[44px] w-full items-center justify-center rounded-xl px-4 py-3 text-center text-sm font-bold focus-visible:outline-none focus-visible:ring-1 sm:min-h-[48px]',
+    variant === 'primary'
+      ? 'border border-slate-700 bg-slate-800 text-slate-100 hover:bg-slate-700 focus-visible:ring-slate-600'
+      : 'border border-slate-800 bg-slate-900/60 text-slate-300 hover:bg-slate-800/80 focus-visible:ring-slate-600',
+    (!href || state === 'checking' || state === 'unavailable') && 'cursor-not-allowed opacity-50'
+  );
+  if (!href || state === 'checking' || state === 'unavailable') {
+    return (
+      <span aria-disabled="true" className={className}>
+        {children}
+      </span>
+    );
+  }
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className={className}
+      onClick={() => {
+        const plan = purchaseOrderClickPlan({ alreadyOpened, clicked: true });
+        if (!plan.log) return;
+        onOpen(plan.log.reopen);
+      }}
+    >
+      {alreadyOpened ? 'Open again' : children}
+    </a>
   );
 }
 

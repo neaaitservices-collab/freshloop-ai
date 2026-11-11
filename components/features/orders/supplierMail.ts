@@ -2,13 +2,6 @@ import type { StockLevel } from '@/lib/domains/inventory/stock';
 
 export type LineMark = 'approved' | 'sent';
 
-/** Preparing a draft does not deliver it. */
-export const PO_DRAFT_PREPARED_NOTICE = 'Draft prepared';
-
-export function acknowledgePurchaseOrderDraft(): { notice: string; markSent: false } {
-  return { notice: PO_DRAFT_PREPARED_NOTICE, markSent: false };
-}
-
 export interface SupplierDirectoryEntry {
   id?: string | null;
   name: string;
@@ -185,27 +178,132 @@ export const MAILTO_URL_LIMIT = 2000;
 export const ORDER_TRUNCATED_NOTE = '\n…(order truncated, see attached/full list)';
 export const PURCHASE_ORDER_GROUP_SUBJECT = 'Supermarket Purchase Order';
 
-export function purchaseOrderSkippedLabel(suppliers: readonly string[]): string {
-  return `Skipped, no valid email: ${suppliers.join(', ')}`;
-}
-
-/** One confirm for every supplier in the group that was already opened. */
-export function purchaseOrderGroupOpenedWarning(suppliers: readonly string[]): string {
-  return `Already opened for ${suppliers.join(', ')}, open again?`;
-}
-
-/** Name the suppliers whose opens were stored when a later write does not finish. */
-export function purchaseOrderLoggedFailureMessage(reason: string, logged: readonly string[]): string {
-  if (logged.length === 0) return reason;
-  return `${reason} Logged: ${logged.join(', ')}.`;
-}
-
-export function purchaseOrderOpenedWarning(openedAt: string): string {
+function torontoClock(openedAt: string): string | null {
   const time = new Date(openedAt);
-  const label = Number.isNaN(time.getTime())
-    ? openedAt
-    : time.toLocaleString('en-US', { timeZone: 'UTC', dateStyle: 'medium', timeStyle: 'short' });
-  return `Already opened for this order on ${label}, open again?`;
+  if (Number.isNaN(time.getTime())) return null;
+  return time
+    .toLocaleTimeString('en-US', {
+      timeZone: 'America/Toronto',
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+    })
+    .replace(/[\u202f\u00a0]/g, ' ');
+}
+
+/** One line for when this order was opened, in America/Toronto. */
+export function purchaseOrderOpenedWarning(openedAt: string): string {
+  const label = torontoClock(openedAt);
+  return label ? `Opened ${label}` : `Opened ${openedAt}`;
+}
+
+/** Ask before opening a purchase order that was already opened. */
+export function purchaseOrderRepeatWarning(openedAt: string): string {
+  const label = torontoClock(openedAt) ?? (openedAt.trim() || 'unknown time');
+  return `Already opened at ${label} (Toronto). Open again?`;
+}
+
+/** 409 holds the mailto until the buyer confirms. Other failures stay in the issues list. */
+export function purchaseOrderRepeatGate(status: number): 'open' | 'confirm' | 'issue' {
+  if (status === 409) return 'confirm';
+  if (status >= 200 && status < 300) return 'open';
+  return 'issue';
+}
+
+/** Supplier and line identity. To, subject, and body are text and stay out of it. */
+export function purchaseOrderOpenIdentity(draft: {
+  supplier: string;
+  supplierId?: string | null;
+  productIds: readonly string[];
+}): string {
+  const id = draft.supplierId?.trim() || draft.supplier.trim().toLowerCase();
+  const products = [...draft.productIds].map((productId) => productId.trim()).filter(Boolean).sort();
+  return `${id}\n${products.join(',')}`;
+}
+
+/** One check for the set of suppliers being opened. To, subject, and body do not change it. */
+export function purchaseOrderCheckKey(
+  drafts: readonly {
+    supplier: string;
+    supplierId?: string | null;
+    productIds: readonly string[];
+    to?: string;
+    subject?: string;
+    body?: string;
+  }[]
+): string {
+  return drafts.map((draft) => purchaseOrderOpenIdentity(draft)).sort().join('\n');
+}
+
+export function purchaseOrderRememberOpen(
+  known: Record<string, { state: 'checking' | 'ready' | 'opened'; openedAt?: string }>,
+  id: string,
+  status: number,
+  openedAt?: string
+): Record<string, { state: 'checking' | 'ready' | 'opened'; openedAt?: string }> {
+  if (status === 409 || (status >= 200 && status < 300)) {
+    return { ...known, [id]: { state: 'opened', openedAt } };
+  }
+  return known;
+}
+
+export function purchaseOrderGroupOpenState(
+  states: readonly ('checking' | 'ready' | 'opened')[]
+): 'checking' | 'ready' | 'opened' {
+  if (states.some((state) => state === 'checking')) return 'checking';
+  if (states.some((state) => state === 'opened')) return 'opened';
+  return 'ready';
+}
+
+/** A mailto click is never cancelled. Nothing is logged until that click happens. */
+export function purchaseOrderClickPlan(input: {
+  alreadyOpened: boolean;
+  clicked: boolean;
+}): { preventDefault: false; log: false | { reopen: boolean } } {
+  if (!input.clicked) return { preventDefault: false, log: false };
+  return { preventDefault: false, log: { reopen: input.alreadyOpened } };
+}
+
+export type PurchaseOrderLogState = { notes: string[]; issues: string[] };
+
+export type PurchaseOrderLogResult =
+  | { network: true }
+  | { status: number; error?: string; openedAt?: string };
+
+/** A logged 409 keeps the first open time. Any other failure is an issue named for that supplier. */
+export function applyPurchaseOrderLog(
+  state: PurchaseOrderLogState,
+  input: { supplier: string; grouped: boolean; result: PurchaseOrderLogResult }
+): PurchaseOrderLogState {
+  if ('network' in input.result) {
+    return {
+      notes: state.notes,
+      issues: [...state.issues, `${input.supplier}: The order could not be recorded.`],
+    };
+  }
+  const { status, error, openedAt } = input.result;
+  if ((status === 409 || (status >= 200 && status < 300)) && openedAt) {
+    const note = purchaseOrderOpenedWarning(openedAt);
+    return {
+      notes: [...state.notes, input.grouped ? `${input.supplier}: ${note}` : note],
+      issues: state.issues,
+    };
+  }
+  if (status === 409 || (status >= 200 && status < 300)) return state;
+  const message = error?.trim() || 'The order could not be recorded.';
+  return {
+    notes: state.notes,
+    issues: [...state.issues, `${input.supplier}: ${message}`],
+  };
+}
+
+/** One line for group suppliers that have no email and so were not logged. */
+export function purchaseOrderSkippedNoEmail(suppliers: readonly string[]): string | null {
+  const names = suppliers
+    .map((name) => name.replace(/[\r\n]+/g, ' ').trim())
+    .filter(Boolean);
+  if (names.length === 0) return null;
+  return `Skipped, no email: ${names.join(', ')}`;
 }
 
 function composeHref(to: string, subject: string, body: string): { gmailUrl: string; mailtoUrl: string } {
@@ -323,83 +421,8 @@ export function purchaseOrderGroupCompose(
   };
 }
 
-export type PurchaseOrderRecordResult =
-  | { ok: true }
-  | { ok: false; status: number; openedAt?: string; message: string };
-
-export const OPENING_MAIL_APP = 'Opening your mail app…';
-
-export function purchaseOrderOpeningMessage(truncated: boolean): string {
-  return truncated ? `${OPENING_MAIL_APP} The order text was shortened to fit.` : OPENING_MAIL_APP;
-}
-
 export function purchaseOrderCopiedMessage(copied: boolean): string {
-  return copied ? `${OPENING_MAIL_APP} Full text copied.` : `${OPENING_MAIL_APP} The full text could not be copied.`;
-}
-
-/** Click the visible mailto link once. The anchor stays on the page for another click. */
-export function activateMailLink(link: { click: () => void } | null): void {
-  link?.click();
-}
-
-/**
- * Check every supplier for a repeat before any write. The open-log route stores one
- * supplier per request, so a later write failure reports the suppliers already logged.
- */
-export async function settlePurchaseOrderGroup<T>(input: {
-  items: readonly T[];
-  name: (item: T) => string;
-  confirmed: boolean;
-  check: (item: T) => Promise<PurchaseOrderRecordResult>;
-  write: (item: T) => Promise<PurchaseOrderRecordResult>;
-}): Promise<
-  | { outcome: 'repeat'; suppliers: string[] }
-  | { outcome: 'failed'; supplier: string; message: string; logged: string[] }
-  | { outcome: 'opened'; logged: string[] }
-> {
-  if (!input.confirmed) {
-    const repeats: string[] = [];
-    for (const item of input.items) {
-      let checked: PurchaseOrderRecordResult;
-      try {
-        checked = await input.check(item);
-      } catch {
-        return {
-          outcome: 'failed',
-          supplier: input.name(item),
-          message: 'The order could not be recorded.',
-          logged: [],
-        };
-      }
-      if (checked.ok) continue;
-      if (checked.status === 409) {
-        repeats.push(input.name(item));
-        continue;
-      }
-      return { outcome: 'failed', supplier: input.name(item), message: checked.message, logged: [] };
-    }
-    if (repeats.length > 0) return { outcome: 'repeat', suppliers: repeats };
-  }
-
-  const logged: string[] = [];
-  for (const item of input.items) {
-    let written: PurchaseOrderRecordResult;
-    try {
-      written = await input.write(item);
-    } catch {
-      return {
-        outcome: 'failed',
-        supplier: input.name(item),
-        message: 'The order could not be recorded.',
-        logged,
-      };
-    }
-    if (!written.ok) {
-      return { outcome: 'failed', supplier: input.name(item), message: written.message, logged };
-    }
-    logged.push(input.name(item));
-  }
-  return { outcome: 'opened', logged };
+  return copied ? 'Full text copied.' : 'The full text could not be copied.';
 }
 
 export function purchaseOrderMailto(
@@ -408,11 +431,7 @@ export function purchaseOrderMailto(
   return purchaseOrderCompose(draft)?.mailtoUrl ?? null;
 }
 
-export function purchaseOrderSkipMessage(to: string): string {
-  return to.trim() ? 'Invalid email, skipped.' : 'No email, skipped.';
-}
-
-/** Suppliers with one valid To address can be emailed. Empty or invalid addresses are skipped. */
+/** Suppliers with one valid To address can be logged. Empty or invalid addresses are not. */
 export function purchaseOrderSendPlan(drafts: readonly PoDraft[]): {
   ready: PoDraft[];
   skipped: PoDraft[];
@@ -424,11 +443,6 @@ export function purchaseOrderSendPlan(drafts: readonly PoDraft[]): {
     else skipped.push(draft);
   }
   return { ready, skipped };
-}
-
-export function purchaseOrderSendAllConfirm(count: number): string {
-  const noun = count === 1 ? 'supplier' : 'suppliers';
-  return `Open a separate email for ${count} ${noun}?`;
 }
 
 export function groupBySupplier(levels: StockLevel[]): Record<string, StockLevel[]> {

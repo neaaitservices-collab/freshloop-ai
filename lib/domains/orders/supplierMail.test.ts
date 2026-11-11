@@ -12,22 +12,22 @@ import {
   draftForSupplier,
   draftsForSuppliers,
   matchSupplierRecipient,
-  OPENING_MAIL_APP,
-  activateMailLink,
+  applyPurchaseOrderLog,
   purchaseOrderCompose,
   purchaseOrderCopiedMessage,
   purchaseOrderGroupBody,
   purchaseOrderGroupCompose,
-  purchaseOrderGroupOpenedWarning,
-  purchaseOrderLoggedFailureMessage,
-  purchaseOrderOpeningMessage,
-  purchaseOrderSkippedLabel,
-  settlePurchaseOrderGroup,
   purchaseOrderLineKey,
   purchaseOrderMailto,
+  purchaseOrderCheckKey,
+  purchaseOrderClickPlan,
+  purchaseOrderGroupOpenState,
   purchaseOrderOpenedWarning,
-  purchaseOrderSendAllConfirm,
+  purchaseOrderRepeatGate,
+  purchaseOrderRememberOpen,
+  purchaseOrderRepeatWarning,
   purchaseOrderSendPlan,
+  purchaseOrderSkippedNoEmail,
   singleSupplierEmail,
   storedSupplierRecipient,
   supplierRecipientHint,
@@ -165,44 +165,56 @@ test('supplier names match trimmed and case-insensitive, and ambiguous names sta
   assert.doesNotMatch(AMBIGUOUS_SUPPLIER_EMAIL_HINT, /@/);
 });
 
-test('purchase order panel sends one supplier at a time and falls back to mail', () => {
+test('purchase order panel opens mailto directly and logs in the background', () => {
   const panel = readFileSync('components/features/orders/PoEmailPanel.tsx', 'utf8');
   const buyList = readFileSync('components/features/orders/BuyList.tsx', 'utf8');
   const mail = readFileSync('components/features/orders/supplierMail.ts', 'utf8');
 
   assert.match(panel, /supplierRecipientHint/);
   assert.match(panel, /href="\/admin\/suppliers"/);
-  assert.match(panel, /Prepare draft/);
   assert.match(panel, />\s*Send\s*</);
-  assert.match(panel, /Send all/);
   assert.match(panel, /Send group/);
   assert.match(panel, /purchaseOrderSendPlan/);
-  assert.match(panel, /purchaseOrderSendAllConfirm/);
   assert.match(panel, /purchaseOrderCompose/);
-  assert.match(panel, /purchaseOrderGroupCompose\(plan\.ready\)/);
-  assert.match(panel, /purchaseOrderOpenedWarning/);
-  assert.match(panel, /purchaseOrderGroupOpenedWarning/);
-  assert.match(panel, /purchaseOrderSkippedLabel/);
-  assert.match(panel, /settlePurchaseOrderGroup/);
-  assert.match(panel, /checkOnly/);
-  assert.match(panel, /href=\{result\.mailtoUrl\}/);
+  assert.match(panel, /purchaseOrderGroupCompose\(withLines\)/);
+  assert.match(panel, /applyPurchaseOrderLog/);
+  assert.match(panel, /purchaseOrderSkippedNoEmail\(skippedNoEmail\)/);
+  assert.match(panel, /singleSupplierEmail\(item\.to\)/);
+  assert.equal(panel.includes('keepalive'), false);
+  assert.equal(panel.includes('onPrepare'), false);
+  assert.match(
+    panel,
+    /<a\s+href=\{href\}\s+target="_blank"\s+rel="noopener noreferrer"\s+className=\{className\}\s+onClick=\{\(\) => \{/
+  );
+  assert.match(panel, /activeCompose\?\.truncated && sendHref \?/);
+  assert.match(panel, /groupCompose\?\.truncated \?/);
+  assert.match(panel, /Copy full text/);
+  assert.equal(panel.includes('Prepare draft'), false);
+  assert.equal(panel.includes('Send all'), false);
+  assert.equal(panel.includes('Open mail'), false);
+  assert.match(panel, /Open again/);
+  assert.equal(panel.includes('Already opened'), false);
   assert.match(panel, /target="_blank"/);
   assert.match(panel, /rel="noopener noreferrer"/);
-  assert.match(panel, />\s*Open mail\s*</);
-  assert.match(panel, /activateMailLink/);
-  assert.match(panel, /purchaseOrderOpeningMessage/);
-  assert.match(panel, /Copy full text/);
-  assert.equal(panel.includes('result.truncated && result.fullBody'), false);
+  assert.equal(panel.includes('preventDefault'), false);
+  assert.equal(panel.includes('.click()'), false);
+  assert.match(panel, /checkOnly: true/);
+  assert.match(panel, /reopen: true/);
+  assert.equal(panel.includes('activateMailLink'), false);
+  assert.equal(panel.includes('settlePurchaseOrderGroup'), false);
   assert.equal(panel.includes('window.location.href'), false);
-  assert.equal(panel.includes('Mail opened'), false);
-  assert.equal(mail.includes('openPurchaseOrderWindow'), false);
-  assert.equal(mail.includes('settlePurchaseOrderWindow'), false);
   assert.equal(panel.includes('about:blank'), false);
   assert.equal(panel.includes('window.open'), false);
   assert.equal(panel.includes('Open in Gmail'), false);
   assert.equal(panel.includes('Email app'), false);
   assert.equal(panel.includes('mail.google.com'), false);
   assert.match(mail, /mail\.google\.com/);
+  assert.match(mail, /timeZone: 'America\/Toronto'/);
+  assert.equal(mail.includes("timeZone: 'UTC'"), false);
+  assert.equal(mail.includes('activateMailLink'), false);
+  assert.equal(mail.includes('settlePurchaseOrderGroup'), false);
+  assert.equal(mail.includes('Open a separate email'), false);
+  assert.match(mail, /Already opened at \$\{label\} \(Toronto\)\. Open again\?/);
   assert.equal(panel.includes('drafts.map((draft) => draft.to).join'), false);
   assert.equal(/resend/i.test(panel), false);
   assert.equal(/\bsent\b/i.test(panel), false);
@@ -213,17 +225,16 @@ test('purchase order panel sends one supplier at a time and falls back to mail',
   assert.equal(buyList.includes('draftForAll'), false);
   assert.equal(buyList.includes('mailto:'), false);
   assert.equal(/resend/i.test(buyList), false);
-  assert.match(buyList, /acknowledgePurchaseOrderDraft/);
-  assert.match(buyList, /prepared\.markSent !== false/);
+  assert.equal(buyList.includes('onPrepare'), false);
+  assert.equal(buyList.includes('acknowledgePurchaseOrderDraft'), false);
 
   assert.equal(mail.includes('draftForAll'), false);
   assert.equal(mail.includes('recipients.join'), false);
   assert.match(mail, /draftForRows/);
-  assert.match(mail, /Open a separate email for /);
   assert.equal(/\bkitchen\b/i.test(mail), false);
 });
 
-test('send all keeps each supplier separate and skips a blank address', () => {
+test('a valid supplier email can be logged and a blank address cannot', () => {
   const farm = draftForSupplier('Farm & Sons', [row('Farm & Sons', 'Bananas', 'farm-banana')], [
     { id: 'sup-farm', name: 'Farm & Sons', contactEmail: 'buyer@farm.test' },
   ]);
@@ -238,8 +249,6 @@ test('send all keeps each supplier separate and skips a blank address', () => {
   );
   assert.equal(plan.ready[0].to.includes('buyer@farm.test'), true);
   assert.equal(plan.ready[0].body.includes('Kale'), false);
-  assert.equal(purchaseOrderSendAllConfirm(plan.ready.length), 'Open a separate email for 1 supplier?');
-  assert.equal(purchaseOrderSendAllConfirm(2), 'Open a separate email for 2 suppliers?');
 
   const mailto = purchaseOrderMailto(farm);
   assert.match(mailto ?? '', /^mailto:buyer@farm\.test\?/);
@@ -297,7 +306,10 @@ test('Gmail compose encodes each part and shortens a long order', () => {
   assert.ok((long?.mailtoUrl.length ?? 0) <= MAILTO_URL_LIMIT);
   assert.match(long?.body ?? '', /order truncated, see attached\/full list/);
   assert.equal(long?.body.endsWith(ORDER_TRUNCATED_NOTE), true);
-  assert.match(purchaseOrderOpenedWarning('2026-11-11T15:04:00.000Z'), /Already opened for this order on .+ open again\?/);
+  assert.equal(purchaseOrderOpenedWarning('2026-11-11T15:04:00.000Z'), 'Opened 10:04 AM');
+  assert.equal(purchaseOrderOpenedWarning('2026-11-11T22:15:00.000Z'), 'Opened 5:15 PM');
+  assert.equal(purchaseOrderOpenedWarning('2026-11-11T14:05:00.000Z'), 'Opened 9:05 AM');
+  assert.equal(purchaseOrderOpenedWarning('not-a-date'), 'Opened not-a-date');
 });
 
 test('group mailto joins each supplier under a heading, caps the URL, and keeps extra headers out', () => {
@@ -355,7 +367,7 @@ test('group mailto joins each supplier under a heading, caps the URL, and keeps 
   assert.ok((long?.fullBody.length ?? 0) > (long?.body.length ?? 0));
 });
 
-test('group mailto uses ready suppliers, checks repeats before any write, and names partial logs', async () => {
+test('group body includes suppliers without an email; the open log still requires one', () => {
   const farm = draftForSupplier('Farm & Sons', [row('Farm & Sons', 'Bananas', 'farm-banana')], [
     { name: 'Farm & Sons', contactEmail: 'buyer@farm.test' },
   ]);
@@ -363,100 +375,167 @@ test('group mailto uses ready suppliers, checks repeats before any write, and na
     { name: 'Dairy Co', contactEmail: 'desk@dairy.test' },
   ]);
   const greens = draftForSupplier('Greens', [row('Greens', 'Kale', 'greens-kale')], []);
-  const plan = purchaseOrderSendPlan([farm, dairy, greens]);
-  const body = purchaseOrderGroupBody(plan.ready);
+  const withLines = [farm, dairy, greens].filter(
+    (item) => item.productIds.length > 0 || item.body.trim().length > 0
+  );
+  const body = purchaseOrderGroupBody(withLines);
   assert.equal(body.includes('Bananas'), true);
   assert.equal(body.includes('Milk'), true);
-  assert.equal(body.includes('Kale'), false);
-  assert.equal(purchaseOrderSkippedLabel(plan.skipped.map((item) => item.supplier)), 'Skipped, no valid email: Greens');
-  assert.equal(
-    purchaseOrderGroupOpenedWarning(['Farm & Sons', 'Dairy Co']),
-    'Already opened for Farm & Sons, Dairy Co, open again?'
+  assert.equal(body.includes('Kale'), true);
+  assert.equal(body.includes('buyer@farm.test'), false);
+  const plan = purchaseOrderSendPlan(withLines);
+  assert.deepEqual(
+    plan.ready.map((item) => item.supplier),
+    ['Farm & Sons', 'Dairy Co']
   );
-
-  const writes: string[] = [];
-  const repeat = await settlePurchaseOrderGroup({
-    items: plan.ready,
-    name: (item) => item.supplier,
-    confirmed: false,
-    check: async (item) =>
-      item.supplier === 'Dairy Co'
-        ? { ok: false, status: 409, openedAt: '2026-11-11T16:00:00.000Z', message: 'Already opened for this order.' }
-        : { ok: true },
-    write: async (item) => {
-      writes.push(item.supplier);
-      return { ok: true };
-    },
-  });
-  assert.equal(repeat.outcome, 'repeat');
-  if (repeat.outcome === 'repeat') assert.deepEqual(repeat.suppliers, ['Dairy Co']);
-  assert.deepEqual(writes, []);
-
-  const calls: string[] = [];
-  const opened = await settlePurchaseOrderGroup({
-    items: plan.ready,
-    name: (item) => item.supplier,
-    confirmed: false,
-    check: async (item) => {
-      calls.push(`check:${item.supplier}`);
-      return { ok: true };
-    },
-    write: async (item) => {
-      calls.push(`write:${item.supplier}`);
-      return { ok: true };
-    },
-  });
-  assert.equal(opened.outcome, 'opened');
-  assert.deepEqual(calls, ['check:Farm & Sons', 'check:Dairy Co', 'write:Farm & Sons', 'write:Dairy Co']);
-
-  const partial = await settlePurchaseOrderGroup({
-    items: [farm, dairy],
-    name: (item) => item.supplier,
-    confirmed: true,
-    check: async () => {
-      throw new Error('confirmed group must not pre-check');
-    },
-    write: async (item) => {
-      if (item.supplier === 'Dairy Co') {
-        return { ok: false, status: 500, message: 'The order could not be recorded.' };
-      }
-      return { ok: true };
-    },
-  });
-  assert.equal(partial.outcome, 'failed');
-  if (partial.outcome === 'failed') {
-    assert.deepEqual(partial.logged, ['Farm & Sons']);
-    assert.equal(partial.supplier, 'Dairy Co');
-    assert.equal(
-      purchaseOrderLoggedFailureMessage(partial.message, partial.logged),
-      'The order could not be recorded. Logged: Farm & Sons.'
-    );
-  }
+  assert.deepEqual(
+    plan.skipped.map((item) => item.supplier),
+    ['Greens']
+  );
+  const opened = purchaseOrderGroupCompose(withLines);
+  assert.match(opened?.mailtoUrl ?? '', /^mailto:\?subject=/);
+  assert.equal(new URLSearchParams((opened?.mailtoUrl ?? '').split('?')[1]).get('bcc'), null);
+  assert.match(opened?.fullBody ?? '', /Greens\n2 cases - Kale/);
 
   const route = readFileSync('app/api/orders/purchase-order-email/route.ts', 'utf8');
+  assert.match(route, /singleSupplierEmail\(input\.to\)/);
+  assert.match(route, /Enter one supplier email address\./);
   const checkAt = route.indexOf('input.checkOnly === true');
   const recordAt = route.indexOf('await recordPurchaseOrderOpen');
   assert.ok(checkAt !== -1 && recordAt !== -1 && checkAt < recordAt);
   assert.equal(route.includes('$transaction'), false);
 });
 
-test('a successful open keeps a mailto link and clicks it once', () => {
-  assert.equal(OPENING_MAIL_APP, 'Opening your mail app…');
-  assert.equal(purchaseOrderOpeningMessage(false), 'Opening your mail app…');
-  assert.equal(
-    purchaseOrderOpeningMessage(true),
-    'Opening your mail app… The order text was shortened to fit.'
+test('a failed open log appears in the issues list and names the supplier', () => {
+  const network = applyPurchaseOrderLog(
+    { notes: [], issues: [] },
+    { supplier: 'Greens', grouped: false, result: { network: true } }
   );
-  assert.equal(purchaseOrderCopiedMessage(true), 'Opening your mail app… Full text copied.');
-  assert.equal(purchaseOrderCopiedMessage(false), 'Opening your mail app… The full text could not be copied.');
+  assert.deepEqual(network.notes, []);
+  assert.deepEqual(network.issues, ['Greens: The order could not be recorded.']);
 
-  let clicks = 0;
-  const link = {
-    click() {
-      clicks += 1;
-    },
+  const denied = applyPurchaseOrderLog(
+    { notes: [], issues: [] },
+    {
+      supplier: 'Farm & Sons',
+      grouped: true,
+      result: { status: 400, error: 'A saved supplier is required before opening.' },
+    }
+  );
+  assert.deepEqual(denied.notes, []);
+  assert.deepEqual(denied.issues, ['Farm & Sons: A saved supplier is required before opening.']);
+
+  const repeat = applyPurchaseOrderLog(
+    { notes: [], issues: ['Greens: The order could not be recorded.'] },
+    { supplier: 'Farm & Sons', grouped: false, result: { status: 409, openedAt: '2026-11-11T15:04:00.000Z' } }
+  );
+  assert.deepEqual(repeat.issues, ['Greens: The order could not be recorded.']);
+  assert.deepEqual(repeat.notes, ['Opened 10:04 AM']);
+
+  const opened = applyPurchaseOrderLog(
+    { notes: [], issues: [] },
+    { supplier: 'Dairy Co', grouped: true, result: { status: 200, openedAt: '2026-11-11T22:15:00.000Z' } }
+  );
+  assert.deepEqual(opened.issues, []);
+  assert.deepEqual(opened.notes, ['Dairy Co: Opened 5:15 PM']);
+
+  assert.equal(purchaseOrderSkippedNoEmail([]), null);
+  assert.equal(purchaseOrderSkippedNoEmail(['Greens', 'Bakery']), 'Skipped, no email: Greens, Bakery');
+
+  const panel = readFileSync('components/features/orders/PoEmailPanel.tsx', 'utf8');
+  assert.match(panel, /setIssues\(\(current\) => \[\.\.\.current, \.\.\.next\.issues\]\)/);
+  assert.match(panel, /\.catch\(\(\) => \{\s*showLog\(item, grouped, \{ network: true \}, generation\);\s*\}\)/);
+  assert.equal(panel.includes('keepalive'), false);
+});
+
+test('a fresh mailto is not cancelled and nothing is logged before the click', () => {
+  assert.equal(
+    purchaseOrderRepeatWarning('2026-11-11T15:04:00.000Z'),
+    'Already opened at 10:04 AM (Toronto). Open again?'
+  );
+  assert.equal(purchaseOrderRepeatGate(409), 'confirm');
+  assert.equal(purchaseOrderRepeatGate(200), 'open');
+  assert.equal(purchaseOrderGroupOpenState([]), 'ready');
+  assert.equal(purchaseOrderGroupOpenState(['checking', 'ready']), 'checking');
+  assert.equal(purchaseOrderGroupOpenState(['ready', 'opened']), 'opened');
+  assert.equal(purchaseOrderGroupOpenState(['ready', 'ready']), 'ready');
+
+  const idle = purchaseOrderClickPlan({ alreadyOpened: false, clicked: false });
+  assert.equal(idle.preventDefault, false);
+  assert.equal(idle.log, false);
+  const repeatIdle = purchaseOrderClickPlan({ alreadyOpened: true, clicked: false });
+  assert.equal(repeatIdle.log, false);
+
+  const fresh = purchaseOrderClickPlan({ alreadyOpened: false, clicked: true });
+  assert.equal(fresh.preventDefault, false);
+  assert.deepEqual(fresh.log, { reopen: false });
+  const again = purchaseOrderClickPlan({ alreadyOpened: true, clicked: true });
+  assert.equal(again.preventDefault, false);
+  assert.deepEqual(again.log, { reopen: true });
+
+  const panel = readFileSync('components/features/orders/PoEmailPanel.tsx', 'utf8');
+  const effect = panel.slice(panel.indexOf('useEffect(() => {'), panel.indexOf('}, [checkKey]);'));
+  assert.match(effect, /setCheckIssues\(\[\]\)/);
+  assert.match(effect, /checkOnly: true/);
+  assert.equal(effect.includes('logOpened'), false);
+  assert.equal(effect.includes('reopen'), false);
+  assert.equal(panel.includes('preventDefault'), false);
+  assert.equal(panel.includes('.click()'), false);
+  assert.match(panel, /purchaseOrderClickPlan\(\{ alreadyOpened, clicked: true \}\)/);
+  assert.match(panel, /if \(!plan\.log\) return;/);
+  assert.match(panel, /onOpen\(plan\.log\.reopen\)/);
+  assert.equal(panel.includes('keepalive'), false);
+});
+
+test('typing in To, subject, or body does not start another open check', () => {
+  const base = {
+    supplierId: 'sup-farm',
+    supplier: 'Farm & Sons',
+    to: 'buyer@farm.test',
+    subject: 'Order',
+    body: '2 cases - Bananas',
+    productIds: ['farm-banana'],
   };
-  activateMailLink(link);
-  activateMailLink(null);
-  assert.equal(clicks, 1);
+  const key = purchaseOrderCheckKey([base]);
+  assert.equal(purchaseOrderCheckKey([{ ...base, to: 'other@farm.test' }]), key);
+  assert.equal(purchaseOrderCheckKey([{ ...base, subject: 'Changed subject' }]), key);
+  assert.equal(purchaseOrderCheckKey([{ ...base, body: 'typed in the draft' }]), key);
+  assert.notEqual(purchaseOrderCheckKey([{ ...base, supplierId: 'sup-other' }]), key);
+  assert.notEqual(purchaseOrderCheckKey([{ ...base, productIds: ['other-line'] }]), key);
+
+  const panel = readFileSync('components/features/orders/PoEmailPanel.tsx', 'utf8');
+  assert.match(panel, /const checkKey = purchaseOrderCheckKey\(loggable\)/);
+  assert.match(panel, /\}, \[checkKey\]\);/);
+  const effect = panel.slice(panel.indexOf('useEffect(() => {'), panel.indexOf('}, [checkKey]);'));
+  assert.match(effect, /setCheckIssues\(\[\]\)/);
+  assert.equal(effect.includes('watchKey'), false);
+  assert.equal(effect.includes('logOpened'), false);
+});
+
+test('a successful or repeat open marks the order so the next click confirms', () => {
+  const opened = purchaseOrderRememberOpen({}, 'farm', 200, '2026-11-11T15:04:00.000Z');
+  assert.deepEqual(opened.farm, { state: 'opened', openedAt: '2026-11-11T15:04:00.000Z' });
+  assert.deepEqual(
+    purchaseOrderClickPlan({ alreadyOpened: opened.farm.state === 'opened', clicked: true }).log,
+    { reopen: true }
+  );
+
+  const repeat = purchaseOrderRememberOpen({}, 'farm', 409, '2026-11-11T22:15:00.000Z');
+  assert.equal(repeat.farm.state, 'opened');
+  assert.equal(repeat.farm.openedAt, '2026-11-11T22:15:00.000Z');
+  const kept = purchaseOrderRememberOpen(repeat, 'farm', 500);
+  assert.equal(kept.farm.state, 'opened');
+  assert.equal(kept.farm.openedAt, '2026-11-11T22:15:00.000Z');
+  assert.equal(purchaseOrderRememberOpen({}, 'farm', 400).farm, undefined);
+
+  const panel = readFileSync('components/features/orders/PoEmailPanel.tsx', 'utf8');
+  assert.match(
+    panel,
+    /setKnown\(\(current\) =>\s*purchaseOrderRememberOpen\(current, purchaseOrderOpenIdentity\(item\), response\.status, json\?\.openedAt\)/
+  );
+});
+
+test('copy confirms the full order text', () => {
+  assert.equal(purchaseOrderCopiedMessage(true), 'Full text copied.');
+  assert.equal(purchaseOrderCopiedMessage(false), 'The full text could not be copied.');
 });
