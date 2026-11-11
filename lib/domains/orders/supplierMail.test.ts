@@ -186,10 +186,14 @@ test('send all keeps each supplier separate and skips a blank address', () => {
     { id: 'sup-farm', name: 'Farm & Sons', contactEmail: 'buyer@farm.test' },
   ]);
   const greens = draftForSupplier('Greens', [row('Greens', 'Kale', 'greens-kale')], []);
+  const listed = { ...farm, supplier: 'Listed Co', to: 'buyer@farm.test, other@farm.test' };
   assert.equal(farm.supplierId, 'sup-farm');
-  const plan = purchaseOrderSendPlan([farm, greens]);
+  const plan = purchaseOrderSendPlan([farm, greens, listed]);
   assert.deepEqual(plan.ready.map((draft) => draft.supplier), ['Farm & Sons']);
-  assert.deepEqual(plan.skipped.map((draft) => draft.supplier), ['Greens']);
+  assert.deepEqual(
+    plan.skipped.map((draft) => draft.supplier),
+    ['Greens', 'Listed Co']
+  );
   assert.equal(plan.ready[0].to.includes('buyer@farm.test'), true);
   assert.equal(plan.ready[0].body.includes('Kale'), false);
   assert.match(purchaseOrderSendAllConfirm(plan.ready.length), /1 supplier/);

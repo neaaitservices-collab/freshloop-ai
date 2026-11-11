@@ -7,6 +7,8 @@ import {
   purchaseOrderMailto,
   purchaseOrderSendAllConfirm,
   purchaseOrderSendPlan,
+  purchaseOrderSkipMessage,
+  singleSupplierEmail,
   supplierRecipientHint,
   type PoDraft,
 } from '@/components/features/orders/supplierMail';
@@ -25,8 +27,8 @@ interface SendResult {
 }
 
 async function sendOneDraft(draft: PoDraft): Promise<SendResult> {
-  if (!draft.to.trim()) {
-    return { supplier: draft.supplier, outcome: 'skipped', message: 'No email, skipped.' };
+  if (!singleSupplierEmail(draft.to)) {
+    return { supplier: draft.supplier, outcome: 'skipped', message: purchaseOrderSkipMessage(draft.to) };
   }
   try {
     const response = await fetch('/api/orders/purchase-order-email', {
@@ -102,7 +104,7 @@ export function PoEmailPanel({
       const skippedResults: SendResult[] = nextPlan.skipped.map((item) => ({
         supplier: item.supplier,
         outcome: 'skipped',
-        message: 'No email, skipped.',
+        message: purchaseOrderSkipMessage(item.to),
       }));
       setResults([...skippedResults, ...sentResults]);
       const sentIds = nextPlan.ready
@@ -227,7 +229,7 @@ export function PoEmailPanel({
                 type="button"
                 variant="primary"
                 className="py-3"
-                disabled={sending || draft.productIds.length === 0 || !draft.to.trim()}
+                disabled={sending || draft.productIds.length === 0 || !singleSupplierEmail(draft.to)}
                 onClick={() => void deliver([draft])}
               >
                 Send
@@ -243,7 +245,7 @@ export function PoEmailPanel({
                       plan.skipped.map((item) => ({
                         supplier: item.supplier,
                         outcome: 'skipped',
-                        message: 'No email, skipped.',
+                        message: purchaseOrderSkipMessage(item.to),
                       }))
                     );
                     return;
@@ -259,7 +261,7 @@ export function PoEmailPanel({
                 <p className="text-sm text-slate-100">{purchaseOrderSendAllConfirm(plan.ready.length)}</p>
                 {plan.skipped.length > 0 ? (
                   <p className="text-xs text-slate-400">
-                    No email, skipped: {plan.skipped.map((item) => item.supplier).join(', ')}
+                    Skipped, no valid email: {plan.skipped.map((item) => item.supplier).join(', ')}
                   </p>
                 ) : null}
                 <div className="grid grid-cols-2 gap-2">

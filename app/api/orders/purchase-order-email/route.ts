@@ -4,14 +4,16 @@ import { authErrorResponse } from '@/lib/auth/http';
 import { requireManagerStaff } from '@/lib/auth/guardRoute';
 import { apiError, apiErrorFromUnknown } from '@/lib/domains/ai/apiError';
 import { prisma } from '@/lib/db/prisma';
-import { purchaseOrderLineKey } from '@/components/features/orders/supplierMail';
+import { purchaseOrderLineKey, singleSupplierEmail } from '@/components/features/orders/supplierMail';
 import {
   claimPurchaseOrderEmail,
   markPurchaseOrderEmailFailed,
   markPurchaseOrderEmailSent,
 } from '@/lib/domains/orders/purchaseOrderEmailStore';
 import {
+  formatPurchaseOrderFrom,
   purchaseOrderEmailConfig,
+  purchaseOrderReplyTo,
   sendPurchaseOrderViaResend,
 } from '@/lib/domains/orders/sendPurchaseOrderEmail';
 import { parseJsonBody } from '@/lib/security/parseJsonBody';
@@ -55,8 +57,9 @@ export async function POST(req: NextRequest) {
     if (limited) return limited;
 
     const input = await parseJsonBody(req, purchaseOrderEmailSchema);
-    if (!input.to) {
-      return apiError('Enter a supplier email before sending.', 400);
+    const toEmail = singleSupplierEmail(input.to);
+    if (!toEmail) {
+      return apiError('Enter one supplier email address.', 400);
     }
 
     const config = purchaseOrderEmailConfig();
@@ -76,6 +79,8 @@ export async function POST(req: NextRequest) {
     if (!supplierId) {
       return apiError('A saved supplier is required before sending.', 400);
     }
+    const fromEmail = formatPurchaseOrderFrom(actor.name, config.fromAddress);
+    const replyTo = purchaseOrderReplyTo(actor.email, process.env.PO_REPLY_TO);
     const lineKey = purchaseOrderLineKey({
       supplier: input.supplierName,
       productIds: input.productIds,
@@ -84,9 +89,9 @@ export async function POST(req: NextRequest) {
     const claim = await claimPurchaseOrderEmail({
       supplierId,
       supplierName: input.supplierName,
-      toEmail: input.to,
-      fromEmail: config.from,
-      replyTo: config.replyTo,
+      toEmail,
+      fromEmail,
+      replyTo,
       subject: input.subject,
       body: input.body,
       lineKey,
@@ -106,9 +111,9 @@ export async function POST(req: NextRequest) {
     try {
       const sent = await sendPurchaseOrderViaResend({
         apiKey: config.apiKey,
-        from: config.from,
-        replyTo: config.replyTo,
-        to: input.to,
+        from: fromEmail,
+        replyTo,
+        to: toEmail,
         subject: input.subject,
         body: input.body,
       });

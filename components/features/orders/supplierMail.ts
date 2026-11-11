@@ -20,6 +20,20 @@ export type SupplierRecipientIssue = 'missing' | 'ambiguous';
 export const MISSING_SUPPLIER_EMAIL_HINT =
   'No email saved for this supplier. Add it in Suppliers.';
 
+export const INVALID_SUPPLIER_EMAIL_HINT = 'Enter one supplier email address.';
+
+/** One mailbox. Rejects lists, copies, and display-name wrappers. */
+export function singleSupplierEmail(value: string): string | null {
+  const email = value.trim();
+  if (!email || email.length > 320) return null;
+  if (/[,;\s<>]/.test(email)) return null;
+  if ((email.match(/@/g) ?? []).length !== 1) return null;
+  if (!/^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$/.test(email)) {
+    return null;
+  }
+  return email;
+}
+
 export const AMBIGUOUS_SUPPLIER_EMAIL_HINT =
   'More than one supplier matches this name. Add it in Suppliers.';
 
@@ -105,6 +119,7 @@ export function matchSupplierRecipient(
 export function supplierRecipientHint(
   draft: Pick<PoDraft, 'to' | 'recipientIssue'>
 ): string | null {
+  if (draft.to.trim() && !singleSupplierEmail(draft.to)) return INVALID_SUPPLIER_EMAIL_HINT;
   if (draft.to.trim()) return null;
   if (draft.recipientIssue === 'ambiguous') return AMBIGUOUS_SUPPLIER_EMAIL_HINT;
   return MISSING_SUPPLIER_EMAIL_HINT;
@@ -167,12 +182,16 @@ export function purchaseOrderLineKey(draft: {
 export function purchaseOrderMailto(
   draft: Pick<PoDraft, 'to' | 'subject' | 'body'>
 ): string | null {
-  const to = draft.to.trim();
+  const to = singleSupplierEmail(draft.to);
   if (!to) return null;
   return `mailto:${to}?subject=${encodeURIComponent(draft.subject)}&body=${encodeURIComponent(draft.body)}`;
 }
 
-/** Suppliers with a To address can be emailed. The rest are listed and skipped. */
+export function purchaseOrderSkipMessage(to: string): string {
+  return to.trim() ? 'Invalid email, skipped.' : 'No email, skipped.';
+}
+
+/** Suppliers with one valid To address can be emailed. Empty or invalid addresses are skipped. */
 export function purchaseOrderSendPlan(drafts: readonly PoDraft[]): {
   ready: PoDraft[];
   skipped: PoDraft[];
@@ -180,7 +199,7 @@ export function purchaseOrderSendPlan(drafts: readonly PoDraft[]): {
   const ready: PoDraft[] = [];
   const skipped: PoDraft[] = [];
   for (const draft of drafts) {
-    if (draft.to.trim()) ready.push(draft);
+    if (singleSupplierEmail(draft.to)) ready.push(draft);
     else skipped.push(draft);
   }
   return { ready, skipped };

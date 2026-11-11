@@ -7,14 +7,15 @@ import type { AuthSessionUser } from '@/lib/auth/staffSnapshot';
 import { prisma } from '@/lib/db/prisma';
 import { purchaseOrderLineKey } from '@/components/features/orders/supplierMail';
 
-function manager(): AuthSessionUser {
+function manager(overrides: Partial<AuthSessionUser> = {}): AuthSessionUser {
   return {
     id: 'po-email-manager',
-    name: 'Manager',
-    email: 'manager@example.com',
+    name: 'Jane Doe',
+    email: 'jane@store.test',
     role: 'STORE_MANAGER',
     position: 'Staff',
     hourlyRate: null,
+    ...overrides,
   };
 }
 
@@ -28,9 +29,11 @@ function request(body: unknown) {
 
 const configured = {
   PO_FROM_EMAIL: 'FreshLoop Orders <orders@freshloop.test>',
-  PO_REPLY_TO: 'reply@freshloop.test',
+  PO_REPLY_TO: 'desk@freshloop.test',
   RESEND_API_KEY: 're_test_key',
 };
+
+const staffFrom = 'Jane Doe <orders@freshloop.test>';
 
 async function withEnv(values: Record<string, string | undefined>, run: () => Promise<void>) {
   const previous = new Map<string, string | undefined>();
@@ -82,11 +85,37 @@ test('refuses the wrong role, an empty To, and missing mail settings', async () 
       );
       assert.equal(empty.status, 400);
       const emptyJson = (await empty.json()) as { error?: string };
-      assert.match(emptyJson.error ?? '', /Enter a supplier email/);
+      assert.match(emptyJson.error ?? '', /one supplier email/);
+
+      const listed = await POST(
+        request({
+          supplierName: 'Farm',
+          to: 'buyer@farm.test, other@farm.test',
+          subject: 'PO',
+          body: '1',
+          productIds: ['p1'],
+        })
+      );
+      assert.equal(listed.status, 400);
+      const listedJson = (await listed.json()) as { error?: string };
+      assert.match(listedJson.error ?? '', /one supplier email/);
+
+      const spoofed = await POST(
+        request({
+          supplierName: 'Farm',
+          to: 'buyer@farm.test',
+          subject: 'PO',
+          body: '1',
+          productIds: ['p1'],
+          from: 'Evil <evil@example.com>',
+          replyTo: 'evil@example.com',
+        })
+      );
+      assert.equal(spoofed.status, 400);
     });
 
     await withEnv(
-      { PO_FROM_EMAIL: undefined, PO_REPLY_TO: undefined, RESEND_API_KEY: undefined },
+      { PO_FROM_EMAIL: undefined, PO_REPLY_TO: 'desk@freshloop.test', RESEND_API_KEY: undefined },
       async () => {
         const missing = await POST(
           request({ supplierName: 'Farm', to: 'buyer@farm.test', subject: 'PO', body: '1', productIds: ['p1'] })
@@ -95,8 +124,8 @@ test('refuses the wrong role, an empty To, and missing mail settings', async () 
         const json = (await missing.json()) as { code?: string; error?: string };
         assert.equal(json.code, 'EMAIL_NOT_CONFIGURED');
         assert.match(json.error ?? '', /PO_FROM_EMAIL/);
-        assert.match(json.error ?? '', /PO_REPLY_TO/);
         assert.match(json.error ?? '', /RESEND_API_KEY/);
+        assert.equal((json.error ?? '').includes('PO_REPLY_TO'), false);
       }
     );
     assert.equal(resend.calls.length, 0);
@@ -118,22 +147,19 @@ test('sends one supplier once and blocks a repeat', { skip: !hasDb }, async (t) 
   }
 
   const stamp = `po-send-${Date.now()}`;
-  const supplier = await prisma.supplier.create({ data: { name: `Farm ${stamp}` } });
+  const supplier = await prisma.supplier.create({
+    data: { name: `Farm ${stamp}`, contactEmail: 'stored@farm.test' },
+  });
   const payload = {
     supplierId: supplier.id,
     supplierName: supplier.name,
-    to: 'buyer@farm.test',
+    to: 'edited@farm.test',
     subject: 'Purchase order',
     body: `2 cases - Bananas ${stamp}`,
     productIds: [`banana-${stamp}`],
   };
   let providerStatus = 200;
-  const resend = mockResend((body) => {
-    assert.deepEqual(body.to, ['buyer@farm.test']);
-    assert.equal(body.from, configured.PO_FROM_EMAIL);
-    assert.equal(body.reply_to, configured.PO_REPLY_TO);
-    assert.equal(body.subject, payload.subject);
-    assert.equal(body.text, payload.body);
+  const resend = mockResend(() => {
     if (providerStatus !== 200) return new Response('provider down', { status: providerStatus });
     return new Response(JSON.stringify({ id: 're_provider_1' }), {
       status: 200,
@@ -170,6 +196,9 @@ test('sends one supplier once and blocks a repeat', { skip: !hasDb }, async (t) 
     const failed = await POST(request(payload));
     assert.equal(failed.status, 502);
     assert.equal(resend.calls.length, 1);
+    assert.deepEqual(resend.calls[0]?.to, ['edited@farm.test']);
+    assert.equal(resend.calls[0]?.from, staffFrom);
+    assert.equal(resend.calls[0]?.reply_to, 'jane@store.test');
     const lineKey = purchaseOrderLineKey({
       supplier: payload.supplierName,
       productIds: payload.productIds,
@@ -179,6 +208,10 @@ test('sends one supplier once and blocks a repeat', { skip: !hasDb }, async (t) 
       where: { supplierId: supplier.id, lineKey },
     });
     assert.equal(failedRow?.status, 'FAILED');
+    assert.equal(failedRow?.toEmail, 'edited@farm.test');
+    assert.equal(failedRow?.fromEmail, staffFrom);
+    assert.equal(failedRow?.replyTo, 'jane@store.test');
+    assert.notEqual(failedRow?.toEmail, 'stored@farm.test');
 
     providerStatus = 200;
     const sent = await POST(request(payload));
@@ -200,8 +233,8 @@ test('sends one supplier once and blocks a repeat', { skip: !hasDb }, async (t) 
         supplierId: supplier.id,
         supplierName: supplier.name,
         toEmail: payload.to,
-        fromEmail: configured.PO_FROM_EMAIL,
-        replyTo: configured.PO_REPLY_TO,
+        fromEmail: staffFrom,
+        replyTo: 'jane@store.test',
         subject: payload.subject,
         body: 'other lines',
         lineKey: purchaseOrderLineKey({
@@ -217,6 +250,39 @@ test('sends one supplier once and blocks a repeat', { skip: !hasDb }, async (t) 
     assert.equal(blocked.status, 409);
     assert.equal(resend.calls.length, 2);
     await prisma.purchaseOrderEmail.delete({ where: { id: pending.id } });
+
+    setManagerStaffTestAuth(async () => manager({ email: '' }));
+    const fallback = await POST(request({ ...payload, body: `${payload.body}\nfallback` }));
+    assert.equal(fallback.status, 200);
+    assert.equal(resend.calls.at(-1)?.reply_to, 'desk@freshloop.test');
+    assert.equal(resend.calls.at(-1)?.from, staffFrom);
+    const fallbackKey = purchaseOrderLineKey({
+      supplier: payload.supplierName,
+      productIds: payload.productIds,
+      body: `${payload.body}\nfallback`,
+    });
+    const fallbackRow = await prisma.purchaseOrderEmail.findFirst({
+      where: { supplierId: supplier.id, lineKey: fallbackKey },
+    });
+    assert.equal(fallbackRow?.replyTo, 'desk@freshloop.test');
+    assert.equal(fallbackRow?.toEmail, 'edited@farm.test');
+
+    setManagerStaffTestAuth(async () => manager({ name: 'Doe, Jane', email: '   ' }));
+    delete process.env.PO_REPLY_TO;
+    const quoted = await POST(request({ ...payload, body: `${payload.body}\nquoted` }));
+    assert.equal(quoted.status, 200);
+    assert.equal(resend.calls.at(-1)?.from, '"Doe, Jane" <orders@freshloop.test>');
+    assert.equal('reply_to' in (resend.calls.at(-1) ?? {}), false);
+    const quotedKey = purchaseOrderLineKey({
+      supplier: payload.supplierName,
+      productIds: payload.productIds,
+      body: `${payload.body}\nquoted`,
+    });
+    const quotedRow = await prisma.purchaseOrderEmail.findFirst({
+      where: { supplierId: supplier.id, lineKey: quotedKey },
+    });
+    assert.equal(quotedRow?.fromEmail, '"Doe, Jane" <orders@freshloop.test>');
+    assert.equal(quotedRow?.replyTo, null);
   });
 });
 });

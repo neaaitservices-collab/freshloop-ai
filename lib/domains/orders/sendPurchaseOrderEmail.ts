@@ -1,47 +1,83 @@
+import { singleSupplierEmail } from '@/components/features/orders/supplierMail';
+
+export function purchaseOrderFromAddress(raw: string): string | null {
+  const value = raw.trim();
+  if (!value) return null;
+  const wrapped = value.match(/^.*<([^<>]+)>\s*$/);
+  return singleSupplierEmail((wrapped?.[1] ?? value).trim());
+}
+
+/** Staff display name plus the verified From address. Special characters are quoted. */
+export function formatPurchaseOrderFrom(staffName: string, fromAddress: string): string {
+  const name = staffName.replace(/[\r\n\0]+/g, ' ').trim();
+  if (!name) return fromAddress;
+  if (/^[\p{L}\p{M}\p{N} .'-]+$/u.test(name)) {
+    return `${name} <${fromAddress}>`;
+  }
+  const escaped = name.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  return `"${escaped}" <${fromAddress}>`;
+}
+
+/** Staff email, then PO_REPLY_TO. Null means send with no Reply-To. */
+export function purchaseOrderReplyTo(staffEmail: string, fallback: string | undefined): string | null {
+  const staff = singleSupplierEmail(staffEmail);
+  if (staff) return staff;
+  return singleSupplierEmail(fallback ?? '');
+}
+
 export function purchaseOrderEmailConfig():
-  | { ok: true; from: string; replyTo: string; apiKey: string }
+  | { ok: true; fromAddress: string; apiKey: string }
   | { ok: false; error: string } {
-  const from = process.env.PO_FROM_EMAIL?.trim() ?? '';
-  const replyTo = process.env.PO_REPLY_TO?.trim() ?? '';
+  const rawFrom = process.env.PO_FROM_EMAIL?.trim() ?? '';
   const apiKey = process.env.RESEND_API_KEY?.trim() ?? '';
-  const missing = [
-    from ? null : 'PO_FROM_EMAIL',
-    replyTo ? null : 'PO_REPLY_TO',
-    apiKey ? null : 'RESEND_API_KEY',
-  ].filter((name): name is string => Boolean(name));
+  const missing = [rawFrom ? null : 'PO_FROM_EMAIL', apiKey ? null : 'RESEND_API_KEY'].filter(
+    (name): name is string => Boolean(name)
+  );
   if (missing.length > 0) {
     return {
       ok: false,
       error: `Purchase order email is not configured. Set ${missing.join(', ')}.`,
     };
   }
-  return { ok: true, from, replyTo, apiKey };
+  const fromAddress = purchaseOrderFromAddress(rawFrom);
+  if (!fromAddress) {
+    return { ok: false, error: 'PO_FROM_EMAIL must be one email address.' };
+  }
+  return { ok: true, fromAddress, apiKey };
 }
 
 export async function sendPurchaseOrderViaResend(
   input: {
     apiKey: string;
     from: string;
-    replyTo: string;
+    replyTo: string | null;
     to: string;
     subject: string;
     body: string;
   },
   fetchImpl: typeof fetch = fetch
 ): Promise<{ id: string }> {
+  const payload: {
+    from: string;
+    to: string[];
+    reply_to?: string;
+    subject: string;
+    text: string;
+  } = {
+    from: input.from,
+    to: [input.to],
+    subject: input.subject,
+    text: input.body,
+  };
+  if (input.replyTo) payload.reply_to = input.replyTo;
+
   const response = await fetchImpl('https://api.resend.com/emails', {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${input.apiKey}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({
-      from: input.from,
-      to: [input.to],
-      reply_to: input.replyTo,
-      subject: input.subject,
-      text: input.body,
-    }),
+    body: JSON.stringify(payload),
   });
   const raw = await response.text();
   if (!response.ok) {
