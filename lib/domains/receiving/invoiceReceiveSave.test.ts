@@ -9,6 +9,7 @@ import {
 } from '@/lib/domains/receiving/invoiceIdentityHold';
 import {
   applyServerDeliveryIds,
+  clearInvoiceDeliveryIds,
   lineHasServerDeliveryId,
   lineLacksServerDeliveryId,
   matchPrintedSlots,
@@ -152,6 +153,76 @@ test('a rename keeps delivery ids for lines that still match and does not ask fo
   assert.equal(firstRenamePair(hold)?.mappedPrintedName, 'lemon ice');
 });
 
+test('changing the supplier while identity is loading drops the previous delivery ids', () => {
+  const identified = applyServerDeliveryIds(
+    [openLine(1, 'CLASSIC VANILLA'), openLine(2, 'LEMON ZEST')],
+    [
+      { deliveryId: VANILLA, ordinal: 0 },
+      { deliveryId: LEMON, ordinal: 1 },
+    ]
+  );
+  assert.equal(identified[0]?.id, VANILLA);
+  assert.equal(lineHasServerDeliveryId(identified[0]!), true);
+
+  const reset = clearInvoiceDeliveryIds(identified);
+  assert.equal(reset.every((line) => line.canPost === false), true);
+  assert.equal(
+    reset.some((line) => line.id === VANILLA || line.id === LEMON),
+    false
+  );
+  assert.match(reset[0]?.id ?? '', /^unassigned-invoice-line-/);
+  assert.match(reset[1]?.id ?? '', /^unassigned-invoice-line-/);
+  assert.equal(reset.every((line) => lineHasServerDeliveryId(line)), false);
+
+  for (const identityPhase of ['idle', 'loading', 'failed'] as const) {
+    const gate = receiveLineSaveGate({
+      invoiceNumber: '899559',
+      supplierId: 'sup_other',
+      lineId: VANILLA,
+      canPost: true,
+      identityPhase,
+    });
+    assert.equal(gate.canSave, false, identityPhase);
+  }
+  assert.equal(
+    receiveLineSaveGate({
+      invoiceNumber: '899559',
+      supplierId: 'sup_other',
+      lineId: VANILLA,
+      canPost: true,
+      identityPhase: 'ready',
+    }).canSave,
+    true
+  );
+  assert.equal(
+    receiveLineSaveGate({
+      invoiceNumber: '899559',
+      supplierId: 'sup_other',
+      lineId: VANILLA,
+      canPost: true,
+      identityPhase: 'held',
+    }).canSave,
+    true
+  );
+});
+
+test('an unmatched ordinal does not keep the previous supplier delivery id', () => {
+  const previous = applyServerDeliveryIds(
+    [openLine(1, 'CLASSIC VANILLA'), openLine(2, 'LEMON ZEST')],
+    [
+      { deliveryId: VANILLA, ordinal: 0 },
+      { deliveryId: LEMON, ordinal: 1 },
+    ]
+  );
+  const partial = applyServerDeliveryIds(previous, [{ deliveryId: VANILLA, ordinal: 0 }]);
+  assert.equal(partial[0]?.id, VANILLA);
+  assert.equal(partial[0]?.canPost, true);
+  assert.notEqual(partial[1]?.id, LEMON);
+  assert.match(partial[1]?.id ?? '', /^unassigned-invoice-line-2$/);
+  assert.equal(partial[1]?.canPost, false);
+  assert.equal(lineHasServerDeliveryId(partial[1]!), false);
+});
+
 test('several drifted lines still offer one map at a time, and an empty pick does not create a supplier', () => {
   const names = Array.from({ length: 8 }, (_, index) => `new line ${index + 1}`);
   const stored = names.map((_, index) => ({ id: `stored-${index}`, printedKey: `old line ${index + 1}` }));
@@ -202,6 +273,8 @@ test('the receive screen prompts for a supplier next to an unidentified invoice 
   const fetchAt = inline.indexOf("fetch('/api/receiving-suppliers'");
   assert.ok(confirmAt >= 0 && fetchAt > confirmAt);
   assert.match(screen, /applyServerDeliveryIds/);
+  assert.match(screen, /clearInvoiceDeliveryIds/);
+  assert.match(screen, /changeSupplier/);
   assert.match(screen, /identifiedLines/);
   assert.match(screen, /actionsForIdentityHold|InvoiceIdentityActions/);
 });

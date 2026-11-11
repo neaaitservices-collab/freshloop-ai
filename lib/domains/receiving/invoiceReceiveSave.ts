@@ -77,7 +77,33 @@ export function matchPrintedSlots(
   };
 }
 
-/** Copy server delivery ids onto the open invoice lines. Missing ordinals stay unassigned. */
+/** Placeholder id for an invoice line that does not yet have this supplier's delivery id. */
+export function unassignedInvoiceLineId(index: number): string {
+  return `unassigned-invoice-line-${index + 1}`;
+}
+
+/**
+ * Drop every server delivery id on the open invoice.
+ * A supplier change must not leave the previous supplier's ids in place.
+ */
+export function clearInvoiceDeliveryIds<
+  T extends {
+    id: string;
+    invoiceNumber?: string | null;
+    printedName?: string | null;
+    canPost?: boolean;
+  },
+>(logs: readonly T[]): T[] {
+  let ordinal = 0;
+  return logs.map((log) => {
+    if (!log.invoiceNumber || !log.printedName) return { ...log };
+    const id = unassignedInvoiceLineId(ordinal);
+    ordinal += 1;
+    return { ...log, id, canPost: false };
+  });
+}
+
+/** Copy server delivery ids onto the open invoice lines. An unmatched ordinal loses any previous id. */
 export function applyServerDeliveryIds<
   T extends {
     id: string;
@@ -98,8 +124,9 @@ export function applyServerDeliveryIds<
   return logs.map((log) => {
     if (!log.invoiceNumber || !log.printedName) return { ...log };
     const deliveryId = byOrdinal.get(ordinal);
+    const placeholder = unassignedInvoiceLineId(ordinal);
     ordinal += 1;
-    if (!deliveryId) return { ...log, canPost: false };
+    if (!deliveryId) return { ...log, id: placeholder, canPost: false };
     return {
       ...log,
       id: deliveryId,
@@ -127,7 +154,8 @@ export interface ReceiveLineSaveGate {
 /**
  * Why Save is blocked for one receive line.
  * A supplier is required only when the invoice line has no saved supplier yet.
- * After that, the line waits for a server delivery id, or shows the identity hold.
+ * An invoice line can post only after identity is ready or held. Loading and failed
+ * keep the previous supplier's delivery id from being saved.
  */
 export function receiveLineSaveGate(input: {
   invoiceNumber?: string | null;
@@ -163,11 +191,16 @@ export function receiveLineSaveGate(input: {
     };
   }
 
-  if (postable) {
-    return { canSave: true, promptSupplier: false, showSupplierPicker: false, message: null };
+  if (input.identityPhase === 'loading' || input.identityPhase === 'idle') {
+    return {
+      canSave: false,
+      promptSupplier: false,
+      showSupplierPicker: true,
+      message: IDENTIFYING_INVOICE_LINES,
+    };
   }
 
-  if (input.identityPhase === 'held' || input.identityPhase === 'failed') {
+  if (input.identityPhase === 'failed') {
     return {
       canSave: false,
       promptSupplier: false,
@@ -176,21 +209,16 @@ export function receiveLineSaveGate(input: {
     };
   }
 
+  if (postable) {
+    return { canSave: true, promptSupplier: false, showSupplierPicker: false, message: null };
+  }
+
   if (hasId && input.canPost === false) {
     return {
       canSave: false,
       promptSupplier: false,
       showSupplierPicker: false,
       message: QUANTITY_UNREAD_ERROR,
-    };
-  }
-
-  if (input.identityPhase === 'loading' || input.identityPhase === 'idle') {
-    return {
-      canSave: false,
-      promptSupplier: false,
-      showSupplierPicker: true,
-      message: IDENTIFYING_INVOICE_LINES,
     };
   }
 

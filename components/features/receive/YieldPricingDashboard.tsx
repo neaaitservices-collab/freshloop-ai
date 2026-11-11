@@ -925,7 +925,17 @@ export function YieldPricingDashboard({
   };
 
   const handleSaveAll = async () => {
-    const targets = bulkLogs.filter((log) => !animatingOutIds.has(log.id) && lineHasServerDeliveryId(log));
+    const targets = bulkLogs.filter((log) => {
+      if (animatingOutIds.has(log.id) || !lineHasServerDeliveryId(log)) return false;
+      return receiveLineSaveGate({
+        invoiceNumber: log.invoiceNumber,
+        supplierId,
+        lineId: log.id,
+        canPost: log.canPost,
+        identityPhase,
+        identityMessage,
+      }).canSave;
+    });
     const unidentified = bulkLogs.filter((log) => lineLacksServerDeliveryId(log));
     if (saving || savingAll) return;
     const missingDepartment = targets.filter(lineNeedsPick);

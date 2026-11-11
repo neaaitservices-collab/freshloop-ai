@@ -28,6 +28,7 @@ import {
 } from '@/lib/domains/receiving/invoiceIdentityHold';
 import {
   applyServerDeliveryIds,
+  clearInvoiceDeliveryIds,
   type InvoiceIdentityPhase,
 } from '@/lib/domains/receiving/invoiceReceiveSave';
 import { InvoiceIdentityActions } from '@/components/features/receive/InvoiceIdentityActions';
@@ -127,9 +128,12 @@ export function ReceiveScreen({ initial }: { initial: ReceivingDeliveryListResul
       setIdentityPhase('idle');
       setIdentityHold(null);
       setScanNote(SUPPLIER_REQUIRED_ERROR);
+      setScannedLogs((prev) => clearInvoiceDeliveryIds(prev));
       return;
     }
     setIdentityPhase('loading');
+    setIdentityHold(null);
+    setScannedLogs((prev) => clearInvoiceDeliveryIds(prev));
     const lines = scannedLogs.filter((log) => log.invoiceNumber && log.printedName);
     const invoiceNumber = lines[0]?.invoiceNumber;
     if (!invoiceNumber) return;
@@ -184,6 +188,18 @@ export function ReceiveScreen({ initial }: { initial: ReceivingDeliveryListResul
     // invoiceIdentityKey already captures the printed lines. Ids assigned below must not refetch.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dateDraft, identityNonce, invoiceIdentityKey, selectedSupplierId]);
+
+  const changeSupplier = (supplierId: string) => {
+    setSelectedSupplierId(supplierId);
+    setIdentityHold(null);
+    setScannedLogs((prev) => clearInvoiceDeliveryIds(prev));
+    if (!supplierId || !invoiceIdentityKey) {
+      setIdentityPhase('idle');
+      if (!supplierId && invoiceIdentityKey) setScanNote(SUPPLIER_REQUIRED_ERROR);
+      return;
+    }
+    setIdentityPhase('loading');
+  };
 
   const confirmHold = (action: InvoiceHoldAction['action'], legacyKey?: string) => {
     const lines = scannedLogs.filter((log) => log.invoiceNumber && log.printedName);
@@ -254,7 +270,7 @@ export function ReceiveScreen({ initial }: { initial: ReceivingDeliveryListResul
             <SupplierSelect
               suppliers={suppliers}
               value={selectedSupplierId}
-              onChange={setSelectedSupplierId}
+              onChange={changeSupplier}
               label="Delivery supplier"
             />
             <label className="block text-sm text-slate-300">
@@ -311,7 +327,7 @@ export function ReceiveScreen({ initial }: { initial: ReceivingDeliveryListResul
             identityMessage={identityHold?.error ?? (identityPhase === 'failed' ? scanNote : null)}
             invoiceDateDraft={dateDraft}
             onInvoiceDateDraft={setDateDraft}
-            onSupplierId={setSelectedSupplierId}
+            onSupplierId={changeSupplier}
             onSupplierCreated={(supplier) => {
               setSuppliers((current) =>
                 current.some((row) => row.id === supplier.id)
