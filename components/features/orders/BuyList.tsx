@@ -7,13 +7,13 @@ import {
   acknowledgePurchaseOrderDraft,
   approvedOrderRows,
   caseWord,
-  draftForAll,
-  draftForRows,
+  draftForSupplier,
+  draftsForSuppliers,
   groupBySupplier,
-  storedSupplierRecipient,
   openOrderRows,
   type LineMark,
   type PoDraft,
+  type SupplierDirectoryEntry,
 } from '@/components/features/orders/supplierMail';
 import { PageIntro } from '@/components/layout/PageIntro';
 import { PageMain, ScrollTable } from '@/components/ui/layout';
@@ -81,8 +81,9 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
   const [levelSyncWarning, setLevelSyncWarning] = useState<string | null>(null);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [marks, setMarks] = useState<Record<string, LineMark>>({});
-  const [supplierEmails, setSupplierEmails] = useState<Record<string, string>>({});
-  const [draft, setDraft] = useState<PoDraft | null>(null);
+  const [supplierDirectory, setSupplierDirectory] = useState<SupplierDirectoryEntry[]>([]);
+  const [drafts, setDrafts] = useState<PoDraft[]>([]);
+  const [draftIndex, setDraftIndex] = useState(0);
   const [toast, setToast] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [manualIds, setManualIds] = useState<string[]>([]);
@@ -105,13 +106,15 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
           suppliers?: Array<{ name?: string; contactEmail?: string | null }>;
         };
         if (cancelled || !response.ok || !json.success || !Array.isArray(json.suppliers)) return;
-        const next: Record<string, string> = {};
+        const next: SupplierDirectoryEntry[] = [];
         for (const row of json.suppliers) {
-          const name = row.name?.trim();
-          const email = storedSupplierRecipient(row.contactEmail);
-          if (name && email) next[name] = email;
+          if (typeof row.name !== 'string' || !row.name.trim()) continue;
+          next.push({
+            name: row.name,
+            contactEmail: typeof row.contactEmail === 'string' ? row.contactEmail : null,
+          });
         }
-        setSupplierEmails(next);
+        setSupplierDirectory(next);
       })
       .catch(() => {
         /* Leave the recipient blank until someone types one. */
@@ -120,8 +123,6 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
       cancelled = true;
     };
   }, []);
-
-  const emailFor = (supplier: string) => supplierEmails[supplier] ?? null;
 
   useEffect(() => {
     const syncFromServer = () => {
@@ -150,7 +151,9 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
     return () => window.removeEventListener('freshloop-inventory-updated', syncFromServer);
   }, []);
 
-  const draftKey = draft ? `${draft.supplier}:${draft.productIds.join(',')}` : '';
+  const draftKey = drafts
+    .map((item) => `${item.supplier}:${item.productIds.join(',')}`)
+    .join('|');
 
   useEffect(() => {
     if (!draftKey) return;
@@ -323,15 +326,24 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
     setToast(`${forecastLines.length} forecasted line${forecastLines.length === 1 ? '' : 's'} approved`);
   };
 
-  const openDraft = (next: PoDraft) => {
-    if (next.productIds.length === 0) return;
-    setDraft(next);
+  const activeDraftIndex = drafts.length === 0 ? 0 : Math.min(draftIndex, drafts.length - 1);
+
+  const openDrafts = (next: PoDraft[]) => {
+    const list = next.filter((item) => item.productIds.length > 0);
+    if (list.length === 0) return;
+    setDrafts(list);
+    setDraftIndex(0);
   };
 
   const prepareDraft = () => {
-    if (!draft) return;
-    setToast(acknowledgePurchaseOrderDraft().notice);
-    setDraft(null);
+    const active = drafts[activeDraftIndex];
+    if (!active?.to.trim() || active.productIds.length === 0) return;
+    const prepared = acknowledgePurchaseOrderDraft();
+    if (prepared.markSent !== false) return;
+    setToast(prepared.notice);
+    const remaining = drafts.filter((_, index) => index !== activeDraftIndex);
+    setDrafts(remaining);
+    setDraftIndex(Math.min(activeDraftIndex, Math.max(0, remaining.length - 1)));
   };
 
   const needle = query.trim().toLowerCase();
@@ -383,7 +395,9 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
                 mark={marks[row.productId]}
                 onOrder={onThisOrder(row)}
                 onAdd={() => addToOrder(row.productId)}
-                onEmail={() => openDraft(draftForRows(supplier, [row], emailFor(supplier)))}
+                onEmail={() =>
+                  openDrafts([draftForSupplier(supplier, [row], supplierDirectory)])
+                }
                 onApprove={() => approve(row.productId)}
               />
             </li>
@@ -439,7 +453,9 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
                       mark={marks[row.productId]}
                       onOrder={onThisOrder(row)}
                       onAdd={() => addToOrder(row.productId)}
-                      onEmail={() => openDraft(draftForRows(supplier, [row], emailFor(supplier)))}
+                      onEmail={() =>
+                        openDrafts([draftForSupplier(supplier, [row], supplierDirectory)])
+                      }
                       onApprove={() => approve(row.productId)}
                     />
                   </td>
@@ -493,7 +509,7 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
               variant={approved.length > 0 ? 'success' : 'secondary'}
               className="text-xs"
               disabled={groupSend.length === 0}
-              onClick={() => openDraft(draftForRows(supplier, groupSend, emailFor(supplier)))}
+              onClick={() => openDrafts([draftForSupplier(supplier, groupSend, supplierDirectory)])}
             >
               <Mail className="h-3.5 w-3.5" />
               Draft group email
@@ -591,13 +607,13 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
               className="text-xs"
               disabled={openCount === 0}
               onClick={() =>
-                openDraft(
-                  draftForAll(
+                openDrafts(
+                  draftsForSuppliers(
                     activeOrders.map((group) => ({
                       supplier: group.supplier,
                       rows: group.open,
-                      email: emailFor(group.supplier),
-                    }))
+                    })),
+                    supplierDirectory
                   )
                 )
               }
@@ -746,7 +762,9 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
                           variant={group.approved.length > 0 ? 'success' : 'primary'}
                           className="mt-2 w-full text-xs"
                           disabled={poRows.length === 0}
-                          onClick={() => openDraft(draftForRows(group.supplier, poRows, emailFor(group.supplier)))}
+                          onClick={() =>
+                            openDrafts([draftForSupplier(group.supplier, poRows, supplierDirectory)])
+                          }
                         >
                           <Mail className="h-3.5 w-3.5" />
                           {group.approved.length > 0 ? 'Draft PO email' : 'Draft group email'}
@@ -757,11 +775,20 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
                 </ul>
                 </CardBody>
               </Card>
-              {draft ? (
+              {drafts.length > 0 ? (
                 <PoEmailPanel
-                  draft={draft}
-                  onChange={setDraft}
-                  onClose={() => setDraft(null)}
+                  drafts={drafts}
+                  activeIndex={activeDraftIndex}
+                  onActiveIndex={setDraftIndex}
+                  onChange={(next) =>
+                    setDrafts((current) =>
+                      current.map((item, index) => (index === activeDraftIndex ? next : item))
+                    )
+                  }
+                  onClose={() => {
+                    setDrafts([]);
+                    setDraftIndex(0);
+                  }}
                   onPrepare={prepareDraft}
                 />
               ) : null}
