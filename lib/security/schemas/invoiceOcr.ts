@@ -1,7 +1,7 @@
 import { Department } from '@prisma/client';
 import { z } from 'zod';
 
-const invoiceOcrResolutionsSchema = z
+export const invoiceOcrResolutionsSchema = z
   .object({
     vendorName: z.string().trim().min(1).max(256).optional(),
     invoiceNumber: z.string().trim().min(1).max(128).optional(),

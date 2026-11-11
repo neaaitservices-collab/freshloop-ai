@@ -158,6 +158,11 @@ export interface OcrDraftLine {
   line_name?: string;
   department?: Department;
   case_pack_size?: number;
+  /** Set when a resolution changes the scanned pack or uses a split other than 1. */
+  split_factor?: number;
+  pack_needs_manager?: boolean;
+  /** Receiving clerk who confirmed a pack or split change. */
+  pack_edited_by?: string;
   line_confidence: number;
   requires_approval: boolean;
   department_assumed?: boolean;
