@@ -4,7 +4,8 @@ import React, { useState } from 'react';
 import Link from 'next/link';
 import { Mail, X } from 'lucide-react';
 import {
-  purchaseOrderMailto,
+  purchaseOrderCompose,
+  purchaseOrderOpenedWarning,
   purchaseOrderSendAllConfirm,
   purchaseOrderSendPlan,
   purchaseOrderSkipMessage,
@@ -17,54 +18,41 @@ import { Card, CardBody, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { cn } from '@/lib/utils/cn';
 
-type SendOutcome = 'sent' | 'failed' | 'blocked' | 'skipped' | 'mailto';
+type OpenOutcome = 'opened' | 'failed' | 'skipped';
 
-interface SendResult {
+interface OpenResult {
   supplier: string;
-  outcome: SendOutcome;
+  outcome: OpenOutcome;
   message: string;
-  mailto?: string;
+  truncated?: boolean;
+  fullBody?: string;
 }
 
-async function sendOneDraft(draft: PoDraft): Promise<SendResult> {
-  if (!singleSupplierEmail(draft.to)) {
-    return { supplier: draft.supplier, outcome: 'skipped', message: purchaseOrderSkipMessage(draft.to) };
+async function recordOpen(draft: PoDraft, reopen: boolean): Promise<
+  | { ok: true }
+  | { ok: false; status: number; openedAt?: string; message: string }
+> {
+  const response = await fetch('/api/orders/purchase-order-email', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      supplierId: draft.supplierId ?? null,
+      supplierName: draft.supplier,
+      to: draft.to,
+      subject: draft.subject,
+      body: draft.body,
+      productIds: draft.productIds,
+      reopen,
+    }),
+  });
+  const json = (await response.json().catch(() => null)) as { error?: string; openedAt?: string } | null;
+  if (response.status === 409) {
+    return { ok: false, status: 409, openedAt: json?.openedAt, message: json?.error || 'Already opened for this order.' };
   }
-  try {
-    const response = await fetch('/api/orders/purchase-order-email', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        supplierId: draft.supplierId ?? null,
-        supplierName: draft.supplier,
-        to: draft.to,
-        subject: draft.subject,
-        body: draft.body,
-        productIds: draft.productIds,
-      }),
-    });
-    const json = (await response.json().catch(() => null)) as {
-      error?: string;
-      code?: string;
-    } | null;
-    const message = json?.error || (response.ok ? 'Sent.' : 'Email could not be sent.');
-    if (json?.code === 'EMAIL_NOT_CONFIGURED') {
-      const mailto = purchaseOrderMailto(draft);
-      return {
-        supplier: draft.supplier,
-        outcome: 'mailto',
-        message,
-        ...(mailto ? { mailto } : {}),
-      };
-    }
-    if (response.status === 409) {
-      return { supplier: draft.supplier, outcome: 'blocked', message };
-    }
-    if (!response.ok) return { supplier: draft.supplier, outcome: 'failed', message };
-    return { supplier: draft.supplier, outcome: 'sent', message: 'Sent.' };
-  } catch {
-    return { supplier: draft.supplier, outcome: 'failed', message: 'Email could not be sent.' };
+  if (!response.ok) {
+    return { ok: false, status: response.status, message: json?.error || 'The order could not be recorded.' };
   }
+  return { ok: true };
 }
 
 export function PoEmailPanel({
@@ -74,7 +62,6 @@ export function PoEmailPanel({
   onChange,
   onClose,
   onPrepare,
-  onOrderSent,
 }: {
   drafts: PoDraft[];
   activeIndex: number;
@@ -82,11 +69,12 @@ export function PoEmailPanel({
   onChange: (next: PoDraft) => void;
   onClose: () => void;
   onPrepare: () => void;
-  onOrderSent?: (productIds: string[]) => void;
 }) {
-  const [sending, setSending] = useState(false);
+  const [busy, setBusy] = useState(false);
   const [confirmAll, setConfirmAll] = useState(false);
-  const [results, setResults] = useState<SendResult[]>([]);
+  const [showOpens, setShowOpens] = useState(false);
+  const [reopen, setReopen] = useState<{ draft: PoDraft; openedAt: string } | null>(null);
+  const [results, setResults] = useState<OpenResult[]>([]);
   const index =
     drafts.length === 0 ? 0 : Math.min(Math.max(activeIndex, 0), drafts.length - 1);
   const draft = drafts[index];
@@ -94,25 +82,60 @@ export function PoEmailPanel({
   const hint = supplierRecipientHint(draft);
   const many = drafts.length > 1;
   const plan = purchaseOrderSendPlan(drafts);
+  const activeCompose = purchaseOrderCompose(draft);
 
-  const deliver = async (list: PoDraft[]) => {
-    const nextPlan = purchaseOrderSendPlan(list);
-    setSending(true);
-    setConfirmAll(false);
+  const openCompose = async (item: PoDraft, again = false) => {
+    if (!singleSupplierEmail(item.to)) {
+      setResults([{ supplier: item.supplier, outcome: 'skipped', message: purchaseOrderSkipMessage(item.to) }]);
+      return;
+    }
+    setBusy(true);
     try {
-      const sentResults = await Promise.all(nextPlan.ready.map((item) => sendOneDraft(item)));
-      const skippedResults: SendResult[] = nextPlan.skipped.map((item) => ({
-        supplier: item.supplier,
-        outcome: 'skipped',
-        message: purchaseOrderSkipMessage(item.to),
-      }));
-      setResults([...skippedResults, ...sentResults]);
-      const sentIds = nextPlan.ready
-        .filter((_, resultIndex) => sentResults[resultIndex]?.outcome === 'sent')
-        .flatMap((item) => item.productIds);
-      if (sentIds.length > 0) onOrderSent?.(sentIds);
+      const recorded = await recordOpen(item, again);
+      if (!recorded.ok && recorded.status === 409 && !again) {
+        setReopen({ draft: item, openedAt: recorded.openedAt ?? '' });
+        return;
+      }
+      if (!recorded.ok) {
+        setResults([{ supplier: item.supplier, outcome: 'failed', message: recorded.message }]);
+        return;
+      }
+      const compose = purchaseOrderCompose(item);
+      if (!compose) return;
+      window.open(compose.gmailUrl, '_blank', 'noopener,noreferrer');
+      setReopen(null);
+      setResults([
+        {
+          supplier: item.supplier,
+          outcome: 'opened',
+          message: compose.truncated
+            ? 'Compose opened. The order text was shortened to fit.'
+            : 'Compose opened.',
+          truncated: compose.truncated,
+          fullBody: item.body,
+        },
+      ]);
+    } catch {
+      setResults([{ supplier: item.supplier, outcome: 'failed', message: 'The order could not be recorded.' }]);
     } finally {
-      setSending(false);
+      setBusy(false);
+    }
+  };
+
+  const copyFullOrder = async (fullBody: string) => {
+    try {
+      await navigator.clipboard.writeText(fullBody);
+      setResults((current) =>
+        current.map((item) =>
+          item.truncated ? { ...item, message: 'Compose opened. Full order copied.' } : item
+        )
+      );
+    } catch {
+      setResults((current) =>
+        current.map((item) =>
+          item.truncated ? { ...item, message: 'Compose opened. The full order could not be copied.' } : item
+        )
+      );
     }
   };
 
@@ -229,8 +252,8 @@ export function PoEmailPanel({
                 type="button"
                 variant="primary"
                 className="py-3"
-                disabled={sending || draft.productIds.length === 0 || !singleSupplierEmail(draft.to)}
-                onClick={() => void deliver([draft])}
+                disabled={busy || draft.productIds.length === 0 || !activeCompose}
+                onClick={() => void openCompose(draft)}
               >
                 Send
               </Button>
@@ -238,9 +261,10 @@ export function PoEmailPanel({
                 type="button"
                 variant="secondary"
                 className="py-3"
-                disabled={sending || drafts.length === 0}
+                disabled={busy || drafts.length === 0}
                 onClick={() => {
                   if (plan.ready.length === 0) {
+                    setShowOpens(false);
                     setResults(
                       plan.skipped.map((item) => ({
                         supplier: item.supplier,
@@ -256,6 +280,14 @@ export function PoEmailPanel({
                 Send all
               </Button>
             </div>
+            {activeCompose ? (
+              <a
+                href={activeCompose.mailtoUrl}
+                className="inline-block text-xs font-semibold text-blue-300 underline underline-offset-2"
+              >
+                Email app
+              </a>
+            ) : null}
             {confirmAll ? (
               <div className="space-y-2 rounded-xl border border-slate-700 bg-slate-950/70 p-3">
                 <p className="text-sm text-slate-100">{purchaseOrderSendAllConfirm(plan.ready.length)}</p>
@@ -268,12 +300,51 @@ export function PoEmailPanel({
                   <Button
                     type="button"
                     variant="primary"
-                    disabled={sending || plan.ready.length === 0}
-                    onClick={() => void deliver(drafts)}
+                    disabled={plan.ready.length === 0}
+                    onClick={() => {
+                      setConfirmAll(false);
+                      setShowOpens(true);
+                    }}
                   >
-                    Send {plan.ready.length} {plan.ready.length === 1 ? 'email' : 'emails'}
+                    Open one at a time
                   </Button>
                   <Button type="button" variant="secondary" onClick={() => setConfirmAll(false)}>
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            ) : null}
+            {showOpens ? (
+              <ul aria-label="Open each supplier in Gmail" className="space-y-2">
+                {plan.ready.map((item) => {
+                  const compose = purchaseOrderCompose(item);
+                  return (
+                    <li key={`${item.supplier}-${item.to}`} className="flex flex-wrap items-center gap-2">
+                      <span className="min-w-0 flex-1 truncate text-xs text-slate-200">{item.supplier}</span>
+                      <Button type="button" variant="primary" disabled={busy} onClick={() => void openCompose(item)}>
+                        Open in Gmail
+                      </Button>
+                      {compose ? (
+                        <a
+                          href={compose.mailtoUrl}
+                          className="text-xs font-semibold text-blue-300 underline underline-offset-2"
+                        >
+                          Email app
+                        </a>
+                      ) : null}
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : null}
+            {reopen ? (
+              <div className="space-y-2 rounded-xl border border-amber-800/60 bg-amber-950/30 p-3">
+                <p className="text-sm text-amber-100">{purchaseOrderOpenedWarning(reopen.openedAt)}</p>
+                <div className="grid grid-cols-2 gap-2">
+                  <Button type="button" variant="primary" disabled={busy} onClick={() => void openCompose(reopen.draft, true)}>
+                    Open again
+                  </Button>
+                  <Button type="button" variant="secondary" onClick={() => setReopen(null)}>
                     Cancel
                   </Button>
                 </div>
@@ -286,16 +357,14 @@ export function PoEmailPanel({
                     <span>
                       {result.supplier}: {result.message}
                     </span>
-                    {result.mailto ? (
-                      <>
-                        {' '}
-                        <a
-                          href={result.mailto}
-                          className="font-semibold text-blue-300 underline underline-offset-2"
-                        >
-                          Open in mail
-                        </a>
-                      </>
+                    {result.truncated && result.fullBody ? (
+                      <button
+                        type="button"
+                        className="ml-2 font-semibold text-blue-300 underline underline-offset-2"
+                        onClick={() => void copyFullOrder(result.fullBody ?? '')}
+                      >
+                        Copy full order
+                      </button>
                     ) : null}
                   </li>
                 ))}

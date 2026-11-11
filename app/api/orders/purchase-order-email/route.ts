@@ -5,17 +5,7 @@ import { requireManagerStaff } from '@/lib/auth/guardRoute';
 import { apiError, apiErrorFromUnknown } from '@/lib/domains/ai/apiError';
 import { prisma } from '@/lib/db/prisma';
 import { purchaseOrderLineKey, singleSupplierEmail } from '@/components/features/orders/supplierMail';
-import {
-  claimPurchaseOrderEmail,
-  markPurchaseOrderEmailFailed,
-  markPurchaseOrderEmailSent,
-} from '@/lib/domains/orders/purchaseOrderEmailStore';
-import {
-  formatPurchaseOrderFrom,
-  purchaseOrderEmailConfig,
-  purchaseOrderReplyTo,
-  sendPurchaseOrderViaResend,
-} from '@/lib/domains/orders/sendPurchaseOrderEmail';
+import { recordPurchaseOrderOpen } from '@/lib/domains/orders/purchaseOrderEmailStore';
 import { parseJsonBody } from '@/lib/security/parseJsonBody';
 import { assertMutationRateLimit } from '@/lib/security/rateLimit';
 
@@ -29,6 +19,7 @@ const purchaseOrderEmailSchema = z
     subject: z.string().max(300),
     body: z.string().max(20_000),
     productIds: z.array(z.string().trim().min(1).max(128)).max(200),
+    reopen: z.boolean().optional(),
   })
   .strict();
 
@@ -62,80 +53,50 @@ export async function POST(req: NextRequest) {
       return apiError('Enter one supplier email address.', 400);
     }
 
-    const config = purchaseOrderEmailConfig();
-    if (!config.ok) {
+    const supplierId = await resolveSupplierId(input.supplierId ?? null, input.supplierName);
+    if (!supplierId) {
+      return apiError('A saved supplier is required before opening.', 400);
+    }
+
+    const recorded = await recordPurchaseOrderOpen(
+      {
+        supplierId,
+        supplierName: input.supplierName,
+        toEmail,
+        subject: input.subject,
+        body: input.body,
+        lineKey: purchaseOrderLineKey({
+          supplier: input.supplierName,
+          productIds: input.productIds,
+          body: input.body,
+        }),
+        actorId: actor.id,
+      },
+      input.reopen === true
+    );
+
+    if (!recorded.ok) {
       return NextResponse.json(
         {
           success: false,
-          error: config.error,
-          message: config.error,
-          code: 'EMAIL_NOT_CONFIGURED',
+          error: 'Already opened for this order.',
+          message: 'Already opened for this order.',
+          openedAt: recorded.openedAt,
+          status: 'OPENED',
         },
-        { status: 503 }
-      );
-    }
-
-    const supplierId = await resolveSupplierId(input.supplierId ?? null, input.supplierName);
-    if (!supplierId) {
-      return apiError('A saved supplier is required before sending.', 400);
-    }
-    const fromEmail = formatPurchaseOrderFrom(actor.name, config.fromAddress);
-    const replyTo = purchaseOrderReplyTo(actor.email, process.env.PO_REPLY_TO);
-    const lineKey = purchaseOrderLineKey({
-      supplier: input.supplierName,
-      productIds: input.productIds,
-      body: input.body,
-    });
-    const claim = await claimPurchaseOrderEmail({
-      supplierId,
-      supplierName: input.supplierName,
-      toEmail,
-      fromEmail,
-      replyTo,
-      subject: input.subject,
-      body: input.body,
-      lineKey,
-      actorId: actor.id,
-    });
-    if (!claim.ok) {
-      const error =
-        claim.status === 'SENT'
-          ? 'This purchase order was already sent.'
-          : 'This purchase order is already sending.';
-      return NextResponse.json(
-        { success: false, error, message: error, status: claim.status },
         { status: 409 }
       );
     }
 
-    try {
-      const sent = await sendPurchaseOrderViaResend({
-        apiKey: config.apiKey,
-        from: fromEmail,
-        replyTo,
-        to: toEmail,
-        subject: input.subject,
-        body: input.body,
-      });
-      await markPurchaseOrderEmailSent(claim.id, sent.id);
-      return NextResponse.json({
-        success: true,
-        id: claim.id,
-        providerId: sent.id,
-        status: 'SENT',
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Email could not be sent.';
-      try {
-        await markPurchaseOrderEmailFailed(claim.id, message);
-      } catch {
-        /* The provider failure is the response. */
-      }
-      return apiError(message, 502);
-    }
+    return NextResponse.json({
+      success: true,
+      id: recorded.id,
+      status: 'OPENED',
+      openedAt: recorded.openedAt,
+    });
   } catch (error) {
     const authRes = authErrorResponse(error);
     if (authRes) return authRes;
-    return apiErrorFromUnknown(error, 'Purchase order email could not be sent.');
+    return apiErrorFromUnknown(error, 'The purchase order could not be recorded.');
   }
 }

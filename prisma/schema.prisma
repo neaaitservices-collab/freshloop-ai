@@ -467,9 +467,10 @@ enum PurchaseOrderEmailStatus {
   PENDING
   SENT
   FAILED
+  OPENED
 }
 
-/// Sent log for one supplier purchase order. Nothing is delivered from this table alone.
+/// Log of a supplier purchase order opened in an email compose window. The app does not deliver mail.
 model PurchaseOrderEmail {
   id           String                   @id @default(uuid())
   supplierId   String?                  @map("supplier_id")

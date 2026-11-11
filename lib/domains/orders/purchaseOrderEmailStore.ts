@@ -1,37 +1,24 @@
 import { prisma } from '@/lib/db/prisma';
 
-export interface PurchaseOrderEmailDraft {
-  /** Required. A null id would not collide in the unique index, so the double-send guard would not hold. */
+export interface PurchaseOrderOpenDraft {
+  /** Required. A null id would not collide in the unique index, so a repeat open would not be detected. */
   supplierId: string;
   supplierName: string;
   toEmail: string;
-  fromEmail: string;
-  replyTo: string | null;
   subject: string;
   body: string;
   lineKey: string;
   actorId: string | null;
 }
 
-export type PurchaseOrderEmailClaim =
-  | { ok: true; id: string }
-  | { ok: false; id: string; status: 'PENDING' | 'SENT' };
+export type PurchaseOrderOpenResult =
+  | { ok: true; id: string; openedAt: string }
+  | { ok: false; id: string; openedAt: string };
 
-function pendingData(draft: PurchaseOrderEmailDraft) {
-  return {
-    supplierId: draft.supplierId,
-    supplierName: draft.supplierName,
-    toEmail: draft.toEmail,
-    fromEmail: draft.fromEmail,
-    replyTo: draft.replyTo,
-    subject: draft.subject,
-    body: draft.body,
-    lineKey: draft.lineKey,
-    actorId: draft.actorId,
-    status: 'PENDING' as const,
-    providerId: null,
-    error: null,
-  };
+function requiredSupplierId(supplierId: string): string {
+  const id = typeof supplierId === 'string' ? supplierId.trim() : '';
+  if (!id) throw new Error('supplierId is required.');
+  return id;
 }
 
 function isUniqueConflict(error: unknown): boolean {
@@ -43,67 +30,66 @@ function isUniqueConflict(error: unknown): boolean {
   );
 }
 
-function requiredSupplierId(supplierId: string): string {
-  const id = typeof supplierId === 'string' ? supplierId.trim() : '';
-  if (!id) throw new Error('supplierId is required.');
-  return id;
+function openData(draft: PurchaseOrderOpenDraft, supplierId: string) {
+  return {
+    supplierId,
+    supplierName: draft.supplierName,
+    toEmail: draft.toEmail,
+    fromEmail: '',
+    replyTo: null,
+    subject: draft.subject,
+    body: draft.body,
+    lineKey: draft.lineKey,
+    actorId: draft.actorId,
+    status: 'OPENED' as const,
+    providerId: null,
+    error: null,
+  };
 }
 
 async function findLine(supplierId: string, lineKey: string) {
   return prisma.purchaseOrderEmail.findFirst({
     where: { supplierId, lineKey },
-    select: { id: true, status: true },
+    select: { id: true, createdAt: true },
   });
 }
 
-/** Insert PENDING for this supplier and line key. A SENT or PENDING row blocks another claim. */
-export async function claimPurchaseOrderEmail(
-  draft: PurchaseOrderEmailDraft
-): Promise<PurchaseOrderEmailClaim> {
+/** Record that this supplier's order was opened. An existing row blocks another open until the caller confirms. */
+export async function recordPurchaseOrderOpen(
+  draft: PurchaseOrderOpenDraft,
+  reopen: boolean
+): Promise<PurchaseOrderOpenResult> {
   const supplierId = requiredSupplierId(draft.supplierId);
-  const claimed = { ...draft, supplierId };
-  try {
-    const row = await prisma.purchaseOrderEmail.create({
-      data: pendingData(claimed),
-      select: { id: true },
-    });
-    return { ok: true, id: row.id };
-  } catch (error) {
-    if (!isUniqueConflict(error)) throw error;
+  const data = openData(draft, supplierId);
+
+  if (!reopen) {
+    try {
+      const row = await prisma.purchaseOrderEmail.create({
+        data,
+        select: { id: true, createdAt: true },
+      });
+      return { ok: true, id: row.id, openedAt: row.createdAt.toISOString() };
+    } catch (error) {
+      if (!isUniqueConflict(error)) throw error;
+    }
   }
 
-  const existing = await findLine(supplierId, claimed.lineKey);
+  const existing = await findLine(supplierId, draft.lineKey);
   if (!existing) {
-    throw new Error('Purchase order email claim conflicted, but no row was found.');
+    const row = await prisma.purchaseOrderEmail.create({
+      data,
+      select: { id: true, createdAt: true },
+    });
+    return { ok: true, id: row.id, openedAt: row.createdAt.toISOString() };
   }
-  // A stale PENDING row blocks a resend until it is reset.
-  if (existing.status === 'PENDING' || existing.status === 'SENT') {
-    return { ok: false, id: existing.id, status: existing.status };
+  if (!reopen) {
+    return { ok: false, id: existing.id, openedAt: existing.createdAt.toISOString() };
   }
 
-  const reclaimed = await prisma.purchaseOrderEmail.updateMany({
-    where: { id: existing.id, status: 'FAILED' },
-    data: pendingData(claimed),
+  const row = await prisma.purchaseOrderEmail.update({
+    where: { id: existing.id },
+    data,
+    select: { id: true, createdAt: true },
   });
-  if (reclaimed.count === 1) return { ok: true, id: existing.id };
-
-  const again = await findLine(supplierId, claimed.lineKey);
-  if (again && (again.status === 'PENDING' || again.status === 'SENT')) {
-    return { ok: false, id: again.id, status: again.status };
-  }
-  throw new Error('Purchase order email could not be claimed.');
-}
-
-export async function markPurchaseOrderEmailSent(id: string, providerId: string | null): Promise<void> {
-  await prisma.purchaseOrderEmail.update({
-    where: { id },
-    data: { status: 'SENT', providerId, error: null },
-  });
-}
-
-export async function markPurchaseOrderEmailFailed(id: string, error: string): Promise<void> {
-  await prisma.purchaseOrderEmail.update({
-    where: { id },
-    data: { status: 'FAILED', error: error.slice(0, 500) },
-  });
+  return { ok: true, id: row.id, openedAt: row.createdAt.toISOString() };
 }

@@ -3,13 +3,17 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import {
   AMBIGUOUS_SUPPLIER_EMAIL_HINT,
+  GMAIL_COMPOSE_URL_LIMIT,
   MISSING_SUPPLIER_EMAIL_HINT,
+  ORDER_TRUNCATED_NOTE,
   draftForRows,
   draftForSupplier,
   draftsForSuppliers,
   matchSupplierRecipient,
+  purchaseOrderCompose,
   purchaseOrderLineKey,
   purchaseOrderMailto,
+  purchaseOrderOpenedWarning,
   purchaseOrderSendAllConfirm,
   purchaseOrderSendPlan,
   storedSupplierRecipient,
@@ -158,12 +162,16 @@ test('purchase order panel sends one supplier at a time and falls back to mail',
   assert.match(panel, /Prepare draft/);
   assert.match(panel, />\s*Send\s*</);
   assert.match(panel, /Send all/);
+  assert.match(panel, /Open in Gmail/);
   assert.match(panel, /purchaseOrderSendPlan/);
   assert.match(panel, /purchaseOrderSendAllConfirm/);
-  assert.match(panel, /EMAIL_NOT_CONFIGURED/);
-  assert.match(panel, /purchaseOrderMailto/);
+  assert.match(panel, /purchaseOrderCompose/);
+  assert.match(panel, /purchaseOrderOpenedWarning/);
+  assert.match(panel, /Copy full order/);
+  assert.match(mail, /mail\.google\.com/);
   assert.equal(panel.includes('drafts.map((draft) => draft.to).join'), false);
   assert.equal(/resend/i.test(panel), false);
+  assert.equal(/\bsent\b/i.test(panel), false);
   assert.equal(/\bkitchen\b/i.test(panel), false);
 
   assert.match(buyList, /draftsForSuppliers\(/);
@@ -203,9 +211,40 @@ test('send all keeps each supplier separate and skips a blank address', () => {
   const mailto = purchaseOrderMailto(farm);
   assert.match(mailto ?? '', /^mailto:buyer@farm\.test\?/);
   assert.equal(purchaseOrderMailto(greens), null);
+  assert.equal(purchaseOrderMailto({ ...farm, to: 'buyer@farm.test, other@farm.test' }), null);
 
   const key = purchaseOrderLineKey(farm);
   assert.equal(purchaseOrderLineKey({ ...farm, productIds: [...farm.productIds] }), key);
   assert.notEqual(purchaseOrderLineKey({ ...farm, body: `${farm.body}\nextra` }), key);
   assert.equal(key.includes('buyer@farm.test'), false);
+});
+
+test('Gmail compose encodes each part and shortens a long order', () => {
+  const compose = purchaseOrderCompose({
+    to: 'buyer@farm.test',
+    subject: 'A & B',
+    body: '2 cases\nBananas',
+  });
+  assert.ok(compose);
+  assert.match(compose?.gmailUrl ?? '', /^https:\/\/mail\.google\.com\/mail\/\?view=cm&fs=1&to=/);
+  assert.match(compose?.gmailUrl ?? '', /to=buyer%40farm\.test/);
+  assert.match(compose?.gmailUrl ?? '', /su=A%20%26%20B/);
+  assert.match(compose?.gmailUrl ?? '', /body=2%20cases%0ABananas/);
+  const params = new URL(compose?.gmailUrl ?? 'https://mail.google.com/');
+  assert.equal(params.searchParams.get('to'), 'buyer@farm.test');
+  assert.equal(params.searchParams.get('su'), 'A & B');
+  assert.equal(params.searchParams.get('body'), '2 cases\nBananas');
+  assert.equal(compose?.truncated, false);
+
+  const long = purchaseOrderCompose({
+    to: 'buyer@farm.test',
+    subject: 'Order',
+    body: 'x'.repeat(12000),
+  });
+  assert.ok(long);
+  assert.equal(long?.truncated, true);
+  assert.ok((long?.gmailUrl.length ?? 0) <= GMAIL_COMPOSE_URL_LIMIT);
+  assert.match(long?.body ?? '', /order truncated, see attached\/full list/);
+  assert.equal(long?.body.endsWith(ORDER_TRUNCATED_NOTE), true);
+  assert.match(purchaseOrderOpenedWarning('2026-11-11T15:04:00.000Z'), /Already opened for this order on .+ open again\?/);
 });

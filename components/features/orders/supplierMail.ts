@@ -2,8 +2,8 @@ import type { StockLevel } from '@/lib/domains/inventory/stock';
 
 export type LineMark = 'approved' | 'sent';
 
-/** No mail transport is wired. A prepared draft must not claim the order was sent. */
-export const PO_DRAFT_PREPARED_NOTICE = 'Draft prepared - not sent';
+/** Preparing a draft does not deliver it. */
+export const PO_DRAFT_PREPARED_NOTICE = 'Draft prepared';
 
 export function acknowledgePurchaseOrderDraft(): { notice: string; markSent: false } {
   return { notice: PO_DRAFT_PREPARED_NOTICE, markSent: false };
@@ -179,12 +179,68 @@ export function purchaseOrderLineKey(draft: {
   return hashLineKey(`${draft.supplier.trim().toLowerCase()}\n${ids.join('\n')}\n${body}`);
 }
 
+export const GMAIL_COMPOSE_URL_LIMIT = 8000;
+export const ORDER_TRUNCATED_NOTE = '\n…(order truncated, see attached/full list)';
+
+export function purchaseOrderOpenedWarning(openedAt: string): string {
+  const time = new Date(openedAt);
+  const label = Number.isNaN(time.getTime())
+    ? openedAt
+    : time.toLocaleString('en-US', { timeZone: 'UTC', dateStyle: 'medium', timeStyle: 'short' });
+  return `Already opened for this order on ${label}, open again?`;
+}
+
+function composeHref(to: string, subject: string, body: string): { gmailUrl: string; mailtoUrl: string } {
+  const encodedTo = encodeURIComponent(to);
+  const encodedSubject = encodeURIComponent(subject);
+  const encodedBody = encodeURIComponent(body);
+  return {
+    gmailUrl: `https://mail.google.com/mail/?view=cm&fs=1&to=${encodedTo}&su=${encodedSubject}&body=${encodedBody}`,
+    mailtoUrl: `mailto:${to}?subject=${encodedSubject}&body=${encodedBody}`,
+  };
+}
+
+/** Shorten the body until the Gmail URL fits. The note stays in the shortened text. */
+export function fitPurchaseOrderBody(input: {
+  to: string;
+  subject: string;
+  body: string;
+}): { body: string; truncated: boolean } {
+  const to = singleSupplierEmail(input.to) ?? input.to.trim();
+  const lengthOf = (body: string) => composeHref(to, input.subject, body).gmailUrl.length;
+  if (lengthOf(input.body) <= GMAIL_COMPOSE_URL_LIMIT) return { body: input.body, truncated: false };
+  let low = 0;
+  let high = input.body.length;
+  let best = ORDER_TRUNCATED_NOTE.trim();
+  while (low <= high) {
+    const mid = Math.floor((low + high) / 2);
+    const candidate = `${input.body.slice(0, mid).trimEnd()}${ORDER_TRUNCATED_NOTE}`;
+    if (lengthOf(candidate) <= GMAIL_COMPOSE_URL_LIMIT) {
+      best = candidate;
+      low = mid + 1;
+    } else {
+      high = mid - 1;
+    }
+  }
+  return { body: best, truncated: true };
+}
+
+export function purchaseOrderCompose(input: {
+  to: string;
+  subject: string;
+  body: string;
+}): { to: string; body: string; truncated: boolean; gmailUrl: string; mailtoUrl: string } | null {
+  const to = singleSupplierEmail(input.to);
+  if (!to) return null;
+  const fitted = fitPurchaseOrderBody({ to, subject: input.subject, body: input.body });
+  const hrefs = composeHref(to, input.subject, fitted.body);
+  return { to, body: fitted.body, truncated: fitted.truncated, ...hrefs };
+}
+
 export function purchaseOrderMailto(
   draft: Pick<PoDraft, 'to' | 'subject' | 'body'>
 ): string | null {
-  const to = singleSupplierEmail(draft.to);
-  if (!to) return null;
-  return `mailto:${to}?subject=${encodeURIComponent(draft.subject)}&body=${encodeURIComponent(draft.body)}`;
+  return purchaseOrderCompose(draft)?.mailtoUrl ?? null;
 }
 
 export function purchaseOrderSkipMessage(to: string): string {

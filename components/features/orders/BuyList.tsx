@@ -791,13 +791,6 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
                     setDraftIndex(0);
                   }}
                   onPrepare={prepareDraft}
-                  onOrderSent={(productIds) => {
-                    setMarks((current) => {
-                      const next = { ...current };
-                      for (const productId of productIds) next[productId] = 'sent';
-                      return next;
-                    });
-                  }}
                 />
               ) : null}
             </aside>
