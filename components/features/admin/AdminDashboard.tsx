@@ -2,11 +2,11 @@
 
 import React from 'react';
 import { AdminMetricGrid } from '@/components/features/admin/AdminStats';
-import { StatsDateFilter } from '@/components/features/admin/StatsDateFilter';
 import { LazyRescueOutcomeChart } from '@/components/charts/lazyCharts';
 import { WasteSemaphoreCard } from '@/components/features/admin/WasteSemaphoreCard';
 import { AdminActionCenter } from '@/components/features/admin/AdminActionCenter';
 import { DashboardCard } from '@/components/features/admin/DashboardCard';
+import { ADMIN_DASHBOARD_WINDOW_LABEL } from '@/lib/domains/stats/adminDashboardWindow';
 import type { StoreStats } from '@/lib/domains/stats/storeStatsTypes';
 import type { WasteKpiReport } from '@/lib/domains/inventory/ledger';
 import { cn } from '@/lib/utils/cn';
@@ -17,7 +17,6 @@ export function AdminDashboard({
   refreshing = false,
   showActionLoadingPlaceholders = false,
   className,
-  rangeLabel = null,
   chartLoading = false,
 }: {
   stats: StoreStats | null;
@@ -25,7 +24,6 @@ export function AdminDashboard({
   refreshing?: boolean;
   showActionLoadingPlaceholders?: boolean;
   className?: string;
-  rangeLabel?: string | null;
   chartLoading?: boolean;
 }) {
   const outcomeDays = stats?.outcomeDays ?? [];
@@ -56,10 +54,7 @@ export function AdminDashboard({
         showLoadingPlaceholders={showActionLoadingPlaceholders}
       />
 
-      <div className="space-y-3">
-        <StatsDateFilter heading="Date range" />
-        <AdminMetricGrid stats={stats} rangeLabel={stats?.cardRangeLabel} />
-      </div>
+      <AdminMetricGrid stats={stats} rangeLabel={ADMIN_DASHBOARD_WINDOW_LABEL} />
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-12 lg:gap-6">
         <div className="lg:col-span-5">
@@ -77,7 +72,7 @@ export function AdminDashboard({
               data={outcomeDays}
               tall
               variant="dashboard"
-              rangeLabel={rangeLabel ?? stats?.transferRangeLabel}
+              rangeLabel={ADMIN_DASHBOARD_WINDOW_LABEL}
               loading={chartLoading}
             />
           ) : (

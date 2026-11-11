@@ -201,10 +201,12 @@ export function RescueOutcomeChart({
               <CartesianGrid stroke={GRID} vertical={false} strokeDasharray="3 3" />
               <XAxis
                 dataKey="label"
-                tick={{ fill: TICK, fontSize: 12, fontWeight: 600 }}
+                tick={{ fill: TICK, fontSize: 11, fontWeight: 600 }}
                 axisLine={false}
                 tickLine={false}
                 dy={8}
+                minTickGap={20}
+                interval="preserveStartEnd"
               />
               <YAxis
                 tick={{ fill: TICK, fontSize: 11 }}
