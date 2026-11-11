@@ -73,6 +73,9 @@ export async function POST(req: NextRequest) {
     }
 
     const supplierId = await resolveSupplierId(input.supplierId ?? null, input.supplierName);
+    if (!supplierId) {
+      return apiError('A saved supplier is required before sending.', 400);
+    }
     const lineKey = purchaseOrderLineKey({
       supplier: input.supplierName,
       productIds: input.productIds,

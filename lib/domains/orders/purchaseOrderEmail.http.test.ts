@@ -152,6 +152,20 @@ test('sends one supplier once and blocks a repeat', { skip: !hasDb }, async (t) 
 
   setManagerStaffTestAuth(async () => manager());
   await withEnv(configured, async () => {
+    const missingSupplier = await POST(
+      request({
+        supplierName: `Missing ${stamp}`,
+        to: 'buyer@farm.test',
+        subject: 'Purchase order',
+        body: '1 case',
+        productIds: [`missing-${stamp}`],
+      })
+    );
+    assert.equal(missingSupplier.status, 400);
+    const missingJson = (await missingSupplier.json()) as { error?: string };
+    assert.match(missingJson.error ?? '', /saved supplier is required/);
+    assert.equal(resend.calls.length, 0);
+
     providerStatus = 500;
     const failed = await POST(request(payload));
     assert.equal(failed.status, 502);
