@@ -11,6 +11,63 @@ import {
 const databaseUrl = process.env.DATABASE_URL?.trim() ?? '';
 const hasDb = Boolean(databaseUrl) && process.env.FRESHLOOP_DB_TESTS !== '0';
 
+test('an empty supplier id is rejected', async () => {
+  const draft: PurchaseOrderEmailDraft = {
+    supplierId: 'supplier-1',
+    supplierName: 'Farm',
+    toEmail: 'buyer@farm.test',
+    fromEmail: 'orders@freshloop.test',
+    replyTo: null,
+    subject: 'Purchase order',
+    body: '2 cases - Bananas',
+    lineKey: 'lines-a',
+    actorId: null,
+  };
+  await assert.rejects(() => claimPurchaseOrderEmail({ ...draft, supplierId: '' }), /supplierId is required/);
+  await assert.rejects(
+    () => claimPurchaseOrderEmail({ ...draft, supplierId: '   ' }),
+    /supplierId is required/
+  );
+});
+
+test('a second claim for the same supplier and line key is blocked', { skip: !hasDb }, async (t) => {
+  try {
+    await prisma.$connect();
+  } catch {
+    t.skip('Database unreachable.');
+    return;
+  }
+
+  const stamp = `po-block-${Date.now()}`;
+  const supplier = await prisma.supplier.create({ data: { name: `PO Block ${stamp}` } });
+  const draft: PurchaseOrderEmailDraft = {
+    supplierId: supplier.id,
+    supplierName: supplier.name,
+    toEmail: 'buyer@farm.test',
+    fromEmail: 'orders@freshloop.test',
+    replyTo: null,
+    subject: 'Purchase order',
+    body: '2 cases - Bananas',
+    lineKey: 'lines-a',
+    actorId: null,
+  };
+
+  t.after(async () => {
+    await prisma.purchaseOrderEmail.deleteMany({ where: { supplierId: supplier.id } });
+    await prisma.supplier.delete({ where: { id: supplier.id } });
+  });
+
+  const first = await claimPurchaseOrderEmail(draft);
+  const second = await claimPurchaseOrderEmail(draft);
+  assert.equal(first.ok, true);
+  assert.equal(second.ok, false);
+  if (!second.ok) assert.equal(second.status, 'PENDING');
+  assert.equal(
+    await prisma.purchaseOrderEmail.count({ where: { supplierId: supplier.id, lineKey: 'lines-a' } }),
+    1
+  );
+});
+
 test('purchase order email claim is one row per supplier and line key', { skip: !hasDb }, async (t) => {
   try {
     await prisma.$connect();

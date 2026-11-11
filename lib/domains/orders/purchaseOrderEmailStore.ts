@@ -1,7 +1,8 @@
 import { prisma } from '@/lib/db/prisma';
 
 export interface PurchaseOrderEmailDraft {
-  supplierId: string | null;
+  /** Required. A null id would not collide in the unique index, so the double-send guard would not hold. */
+  supplierId: string;
   supplierName: string;
   toEmail: string;
   fromEmail: string;
@@ -42,7 +43,13 @@ function isUniqueConflict(error: unknown): boolean {
   );
 }
 
-async function findLine(supplierId: string | null, lineKey: string) {
+function requiredSupplierId(supplierId: string): string {
+  const id = typeof supplierId === 'string' ? supplierId.trim() : '';
+  if (!id) throw new Error('supplierId is required.');
+  return id;
+}
+
+async function findLine(supplierId: string, lineKey: string) {
   return prisma.purchaseOrderEmail.findFirst({
     where: { supplierId, lineKey },
     select: { id: true, status: true },
@@ -53,9 +60,11 @@ async function findLine(supplierId: string | null, lineKey: string) {
 export async function claimPurchaseOrderEmail(
   draft: PurchaseOrderEmailDraft
 ): Promise<PurchaseOrderEmailClaim> {
+  const supplierId = requiredSupplierId(draft.supplierId);
+  const claimed = { ...draft, supplierId };
   try {
     const row = await prisma.purchaseOrderEmail.create({
-      data: pendingData(draft),
+      data: pendingData(claimed),
       select: { id: true },
     });
     return { ok: true, id: row.id };
@@ -63,21 +72,22 @@ export async function claimPurchaseOrderEmail(
     if (!isUniqueConflict(error)) throw error;
   }
 
-  const existing = await findLine(draft.supplierId, draft.lineKey);
+  const existing = await findLine(supplierId, claimed.lineKey);
   if (!existing) {
     throw new Error('Purchase order email claim conflicted, but no row was found.');
   }
+  // A stale PENDING row blocks a resend until it is reset.
   if (existing.status === 'PENDING' || existing.status === 'SENT') {
     return { ok: false, id: existing.id, status: existing.status };
   }
 
   const reclaimed = await prisma.purchaseOrderEmail.updateMany({
     where: { id: existing.id, status: 'FAILED' },
-    data: pendingData(draft),
+    data: pendingData(claimed),
   });
   if (reclaimed.count === 1) return { ok: true, id: existing.id };
 
-  const again = await findLine(draft.supplierId, draft.lineKey);
+  const again = await findLine(supplierId, claimed.lineKey);
   if (again && (again.status === 'PENDING' || again.status === 'SENT')) {
     return { ok: false, id: again.id, status: again.status };
   }
