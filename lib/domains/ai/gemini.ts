@@ -440,7 +440,7 @@ function getMockOcrResult(): InvoiceOcrResult {
     invoiceNumber: `DEMO-${Date.now()}`,
     invoiceDate: today,
     totalAmount: 0,
-    departmentBreakdown: { PRODUCE: 0, DAIRY: 0, BAKERY: 0, PANTRY: 0, GROCERY: 0 },
+    departmentBreakdown: { PRODUCE: 0, DAIRY: 0, BAKERY: 0, PANTRY: 0, DELI_KITCHEN: 0, GROCERY: 0 },
     lineItems: [],
     rawSummary: 'Demo OCR (no API key). Set GEMINI_API_KEY to analyze invoice images.',
     source: 'sample',
@@ -484,12 +484,13 @@ Analyze this invoice image and extract structured data in JSON format adhering s
     "DAIRY": number,
     "BAKERY": number,
     "PANTRY": number,
+    "DELI_KITCHEN": number,
     "GROCERY": number
   },
   "lineItems": [
     {
       "name": "string (item description)",
-      "department": "PRODUCE" | "DAIRY" | "BAKERY" | "PANTRY" | "GROCERY",
+      "department": "PRODUCE" | "DAIRY" | "BAKERY" | "PANTRY" | "DELI_KITCHEN" | "GROCERY",
       "quantity": number (number of cases/crates),
       "unit": "cases",
       "casePackSize": number (e.g. 40 for 40lb case, 7 for 7ct case, 24 for 24 bunch case, 4 for 4L case),
@@ -506,6 +507,7 @@ Classification rules:
 - Classify bread, pastries, flour, yeast, buns as "BAKERY".
 - Classify oils, spices, canned goods, sauces, grains as "PANTRY".
 - Classify household paper, soap, detergent, and packaged grocery as "GROCERY".
+- Classify prepared foods, deli, and rotisserie as "DELI_KITCHEN".
 Make sure totalAmount equals sum of department totals and line item costs. Format costs as float numbers.`;
 
     const cleanData = base64Image.includes(',') ? base64Image.split(',')[1] : base64Image;
@@ -532,7 +534,7 @@ Make sure totalAmount equals sum of department totals and line item costs. Forma
       invoiceNumber: identity.invoiceNumber,
       invoiceDate: identity.invoiceDate,
       totalAmount: Number(parsed.totalAmount) || 0,
-      departmentBreakdown: dept || { PRODUCE: 0, DAIRY: 0, BAKERY: 0, PANTRY: 0, GROCERY: 0 },
+      departmentBreakdown: dept || { PRODUCE: 0, DAIRY: 0, BAKERY: 0, PANTRY: 0, DELI_KITCHEN: 0, GROCERY: 0 },
       lineItems: Array.isArray(parsed.lineItems)
         ? parsed.lineItems.map((li, index) => {
             const raw = (li ?? {}) as Record<string, unknown>;
@@ -590,7 +592,7 @@ Your task is to listen to spoken floor audio or transcript (e.g., "Logged 10 lbs
       "name": "string",
       "quantity": number,
       "unit": "lbs" | "Liters" | "kg" | "units" | "cases" | "loaves",
-      "department": "PRODUCE" | "DAIRY" | "BAKERY" | "PANTRY" | "GROCERY",
+      "department": "PRODUCE" | "DAIRY" | "BAKERY" | "PANTRY" | "DELI_KITCHEN" | "GROCERY",
       "condition": "Pristine" | "Slightly Blemished" | "Bruised" | "Overripe" | "Near Expiry",
       "allergenWarnings": ["string"]
     }
@@ -668,7 +670,7 @@ Return a JSON array of recipes adhering strictly to this schema:
       {
         "name": "string",
         "quantity": "string",
-        "department": "PRODUCE" | "DAIRY" | "BAKERY" | "PANTRY" | "GROCERY",
+        "department": "PRODUCE" | "DAIRY" | "BAKERY" | "PANTRY" | "DELI_KITCHEN" | "GROCERY",
         "inventoryItemId": "string",
         "estimatedCost": number
       }

@@ -1,4 +1,4 @@
-import { TransactionType } from '@prisma/client';
+import { TransactionType, type Department } from '@prisma/client';
 import type { DepartmentType } from '@/lib/types';
 import { prisma, VOLUMETRIC_SCRAP_REF_PREFIX } from '@/lib/domains/inventory/ledger';
 import type { WasteKpiReport } from '@/lib/domains/inventory/ledger';
@@ -25,14 +25,14 @@ export type {
   StoreStats,
 } from '@/lib/domains/stats/storeStatsTypes';
 
-const DEPARTMENT_LABELS: Record<DepartmentType, string> = {
+const DEPARTMENT_LABELS = {
   PRODUCE: 'Produce',
   DAIRY: 'Dairy',
   BAKERY: 'Bakery',
   PANTRY: 'Pantry',
   DELI_KITCHEN: 'Deli',
   GROCERY: 'Grocery',
-};
+} satisfies Record<Department, string>;
 
 function money(value: number): number {
   return Number(value.toFixed(2));

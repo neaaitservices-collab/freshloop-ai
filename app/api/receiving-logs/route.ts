@@ -78,7 +78,7 @@ export async function POST(req: NextRequest) {
     savedPacks.unshift(record);
     if (savedPacks.length > 50) savedPacks.pop();
 
-    const posted = await postReceivingLogToInventory(input, actor.id, supplierName);
+    const posted = await postReceivingLogToInventory(input, actor.id, supplierName, undefined, true);
     const stock = posted.stock;
 
     const status = receivingLineHttpStatus(stock);

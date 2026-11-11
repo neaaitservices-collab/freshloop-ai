@@ -1,3 +1,4 @@
+import type { Department } from '@prisma/client';
 import type { StockLevel } from '@/lib/domains/inventory/stock';
 import type { DepartmentType } from '@/lib/types';
 import { fieldMatchesNeedle } from '@/lib/utils/searchNeedle';
@@ -38,14 +39,14 @@ export function inventoryFiltersAreDefault(filters: InventoryFilters): boolean {
   );
 }
 
-export const DEPARTMENT_LABELS: Record<DepartmentType, string> = {
+export const DEPARTMENT_LABELS = {
   PRODUCE: 'Produce',
   DAIRY: 'Dairy',
   BAKERY: 'Bakery',
   PANTRY: 'Pantry',
   DELI_KITCHEN: 'Deli / Production',
   GROCERY: 'Grocery',
-};
+} satisfies Record<Department, string>;
 
 /** Every catalogue department, in label order. */
 export const CATALOG_DEPARTMENTS = Object.keys(DEPARTMENT_LABELS) as DepartmentType[];

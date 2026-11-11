@@ -152,7 +152,7 @@ test('invoice numbers keep punctuation and invoice lines stay unposted until the
     invoiceNumber: '1001/A',
     invoiceDate: '2026-11-08',
     totalAmount: 8,
-    departmentBreakdown: { PRODUCE: 8, DAIRY: 0, BAKERY: 0, PANTRY: 0 },
+    departmentBreakdown: { PRODUCE: 8, DAIRY: 0, BAKERY: 0, PANTRY: 0, DELI_KITCHEN: 0, GROCERY: 0 },
     lineItems: [apples, { ...apples, name: 'Pears', productId: 'sku-pear' }],
     rawSummary: '',
   });

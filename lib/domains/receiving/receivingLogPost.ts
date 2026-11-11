@@ -236,7 +236,9 @@ export async function postReceivingLogToInventory(
   input: ReceivingLogPostInput,
   actorId: string,
   supplierName: string | null,
-  db?: LotTx
+  db?: LotTx,
+  /** Set after the batch already loaded the catalogue and checked every line. */
+  departmentChecked = false
 ): Promise<ReceivingLogPostResult> {
   const sampleReason = sampleReceivingRejection(input);
   if (sampleReason) {
@@ -246,7 +248,9 @@ export async function postReceivingLogToInventory(
       stock: { posted: false, reason: sampleReason },
     };
   }
-  await assertReceivingDepartmentsChosen([input], supplierName);
+  if (!departmentChecked) {
+    await assertReceivingDepartmentsChosen([input], supplierName);
+  }
 
   const targetMargin = resolveTargetMargin(input.marginMode, input.customMarginPercent ?? 0);
   const caseRetailPrice = parseCaseRetail(input.caseRetailPrice);
@@ -316,7 +320,7 @@ export async function postReceivingLogToInventory(
       stock,
     };
   } catch (error) {
-    if (error instanceof InventoryLedgerError) throw error;
+    if (error instanceof InventoryLedgerError && error.code === 'DEPARTMENT_REQUIRED') throw error;
     if (error instanceof ReceivingDeliveryConflict) {
       return {
         externalLogId: input.externalLogId,
@@ -410,7 +414,13 @@ export async function postReceivingLogBatch(
       const index = nextIndex;
       nextIndex += 1;
       if (index >= items.length) return;
-      results[index] = await postReceivingLogToInventory(items[index], actorId, supplierName);
+      results[index] = await postReceivingLogToInventory(
+        items[index],
+        actorId,
+        supplierName,
+        undefined,
+        true
+      );
     }
   }
 

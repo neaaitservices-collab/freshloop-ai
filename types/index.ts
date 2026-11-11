@@ -1,4 +1,7 @@
-export type DepartmentType = 'PRODUCE' | 'DAIRY' | 'BAKERY' | 'PANTRY' | 'DELI_KITCHEN' | 'GROCERY';
+import type { Department } from '@prisma/client';
+
+/** Same values as the Prisma Department enum, so a new enum member fails typecheck. */
+export type DepartmentType = Department;
 
 export type InventoryStatusType = 'FRESH' | 'WARNING' | 'PULL_RESCUE' | 'MARKDOWN' | 'DISCARDED';
 
@@ -71,8 +74,8 @@ export interface InvoiceOcrResult {
     DAIRY: number;
     BAKERY: number;
     PANTRY: number;
-    DELI_KITCHEN?: number;
-    GROCERY?: number;
+    DELI_KITCHEN: number;
+    GROCERY: number;
   };
   lineItems: InvoiceLineItemExtract[];
   rawSummary?: string;

@@ -34,6 +34,17 @@ test('an unknown item does not become produce', () => {
   assert.equal(resolveReceivingDepartment({ itemName: 'Mystery Gadget' }), null);
 });
 
+test('an explicit line department wins over the receive-screen default', () => {
+  assert.equal(
+    resolveReceivingDepartment({
+      itemName: 'Whole Milk',
+      explicitDepartment: 'GROCERY',
+      screenDepartment: 'DAIRY',
+    }),
+    'GROCERY'
+  );
+});
+
 test('an explicit department wins over the item name', () => {
   assert.equal(
     resolveReceivingDepartment({ itemName: 'Whole Milk', explicitDepartment: 'BAKERY' }),

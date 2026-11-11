@@ -9,7 +9,7 @@ const invoice: InvoiceOcrResult = {
   invoiceNumber: 'INV-100',
   invoiceDate: '2026-11-01',
   totalAmount: 518,
-  departmentBreakdown: { PRODUCE: 518, DAIRY: 0, BAKERY: 0, PANTRY: 0 },
+  departmentBreakdown: { PRODUCE: 518, DAIRY: 0, BAKERY: 0, PANTRY: 0, DELI_KITCHEN: 0, GROCERY: 0 },
   lineItems: [
     {
       name: 'Avocados Hass',

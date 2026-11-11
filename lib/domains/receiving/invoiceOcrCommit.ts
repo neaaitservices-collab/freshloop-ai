@@ -316,7 +316,7 @@ export async function commitInvoiceOcrReceipts(input: {
         }
         const postedRows: ReceivingLogPostResult[] = [];
         for (const post of posts) {
-          const row = await postReceivingLogToInventory(post, input.staffId, null, tx);
+          const row = await postReceivingLogToInventory(post, input.staffId, supplierName, tx, true);
           if (!row.stock.posted) {
             const rolledBack: ReceivingLogPostResult[] = postedRows.map((earlier) => ({
               externalLogId: earlier.externalLogId,
@@ -392,7 +392,7 @@ export async function commitInvoiceOcrReceipts(input: {
               throw new InventoryLedgerError(
                 'Pick a department for this new item before receiving it.',
                 'DEPARTMENT_REQUIRED',
-                409,
+                400,
                 { committed: false }
               );
             }

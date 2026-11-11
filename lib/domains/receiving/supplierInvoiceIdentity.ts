@@ -837,7 +837,7 @@ export async function postResolvedSupplierInvoice(input: {
     const results = await prisma.$transaction(async (tx) => {
       const rows: ReceivingLogPostResult[] = [];
       for (const post of posts) {
-        const row = await postReceivingLogToInventory(post, input.staffId, null, tx);
+        const row = await postReceivingLogToInventory(post, input.staffId, supplierName, tx, true);
         if (!row.stock.posted) {
           const error = new Error(row.stock.posted === false ? row.stock.reason : 'Stock was not updated.');
           (error as Error & { rows?: ReceivingLogPostResult[] }).rows = rows.concat(row);
