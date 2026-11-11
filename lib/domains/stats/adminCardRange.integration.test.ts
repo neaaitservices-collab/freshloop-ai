@@ -93,3 +93,59 @@ test('card totals follow the Toronto range, including DST edges and an empty win
   assert.equal(fallback.cardRangeLabel, formatCardRangeLabel(rolling.from, rolling.to));
   assert.equal(fallback.inventoryValue >= 0, true);
 });
+
+test('an old custom range does not replace the last 7 revenue days', { skip: !hasDb }, async (t) => {
+  try {
+    await prisma.$connect();
+  } catch {
+    t.skip('Database unreachable.');
+    return;
+  }
+  const stamp = `revenue-days-${Date.now()}`;
+  const product = await prisma.product.create({
+    data: {
+      name: `Revenue days ${stamp}`,
+      department: 'PRODUCE',
+      standardCost: 2,
+      retailPrice: 10,
+      shelfLifeDays: 4,
+      unitType: 'UNIT',
+    },
+  });
+  const lastYear = torontoRange('2024-06-15', '2024-06-15');
+  t.after(async () => {
+    await prisma.inventoryTransaction.deleteMany({ where: { productId: product.id } });
+    await prisma.product.delete({ where: { id: product.id } });
+  });
+  const before = await getStoreStats(lastYear);
+  await prisma.inventoryTransaction.createMany({
+    data: [
+      {
+        productId: product.id,
+        staffId: 'recent',
+        qtyChange: 1,
+        transactionType: TransactionType.Rescue,
+        fromLocation: InventoryLocation.Retail_Floor,
+        toLocation: InventoryLocation.Kitchen_Prep,
+        unitCostAtTime: 2,
+        timestamp: new Date(),
+      },
+      {
+        productId: product.id,
+        staffId: 'last-year',
+        qtyChange: 3,
+        transactionType: TransactionType.Rescue,
+        fromLocation: InventoryLocation.Retail_Floor,
+        toLocation: InventoryLocation.Kitchen_Prep,
+        unitCostAtTime: 2,
+        timestamp: new Date('2024-06-15T16:00:00.000Z'),
+      },
+    ],
+  });
+  const after = await getStoreStats(lastYear);
+  assert.equal(after.revenueDays.length, 7);
+  assert.equal(Number((after.rescuedValue - before.rescuedValue).toFixed(2)), 30);
+  const beforeRevenue = before.revenueDays.reduce((sum, day) => sum + day.recovered, 0);
+  const afterRevenue = after.revenueDays.reduce((sum, day) => sum + day.recovered, 0);
+  assert.equal(Number((afterRevenue - beforeRevenue).toFixed(2)), 10);
+});

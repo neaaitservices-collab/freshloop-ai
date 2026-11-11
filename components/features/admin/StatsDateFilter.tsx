@@ -94,19 +94,25 @@ export function StatsDateFilter({
   const label = bounds ? formatCardRangeLabel(bounds.from, bounds.to) : 'Last 30 days';
 
   return (
-    <div className={cn('space-y-2', compact ? 'w-auto' : 'w-full')}>
-      <div className={cn('flex gap-3', compact ? 'flex-row flex-wrap items-center justify-end' : 'flex-col')}>
-        <div className={compact ? 'text-right' : undefined}>
+    <div className={cn('w-full space-y-2', compact ? 'w-auto' : 'lg:ml-auto lg:w-auto')}>
+      <div className={cn(
+        'flex flex-col gap-3',
+        compact ? 'flex-row flex-wrap items-center justify-end' : 'lg:flex-row lg:flex-wrap lg:items-center lg:justify-end'
+      )}>
+        <div className={compact ? 'text-right' : 'lg:text-right'}>
           <p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500">
             {heading}
           </p>
           <p className="mt-1 text-sm font-semibold text-slate-100">{label}</p>
         </div>
-        <div className={cn('flex gap-2', compact ? 'flex-wrap items-center justify-end' : 'w-full flex-col')}>
-          <div className={cn('flex items-center gap-2', compact ? '' : 'w-full')}>
+        <div className={cn(
+          'flex w-full flex-col gap-2',
+          compact ? 'w-auto flex-row flex-wrap items-center justify-end' : 'lg:w-auto lg:flex-row lg:flex-wrap lg:items-center lg:justify-end'
+        )}>
+          <div className={cn('flex w-full items-center gap-2', compact ? 'w-auto' : 'lg:w-auto')}>
           <div className={cn(
             'rounded-xl border border-slate-700 bg-slate-950/80 p-0.5',
-            compact ? 'inline-flex' : 'grid w-full grid-cols-3'
+            compact ? 'inline-flex' : 'grid w-full grid-cols-3 lg:inline-flex lg:w-auto'
           )}>
             {(defaultPreset === 'day'
               ? ([['day', 'Today'], ['week', 'Week'], ['month', 'Month']] as const)
@@ -119,7 +125,7 @@ export function StatsDateFilter({
                 onClick={() => writeRange('', '', id)}
                 className={cn(
                   'min-h-11 rounded-lg px-3 text-xs font-black',
-                  compact ? '' : 'w-full',
+                  compact ? '' : 'w-full lg:w-auto',
                   preset === id ? 'bg-blue-900/70 text-blue-50' : 'text-slate-300 hover:bg-slate-800'
                 )}
               >
@@ -144,7 +150,7 @@ export function StatsDateFilter({
             <ChevronRight className="h-4 w-4" />
           </button>
           </div>
-          <label className={cn('text-xs font-bold text-slate-400', compact ? '' : 'w-full')}>
+          <label className={cn('text-xs font-bold text-slate-400', compact ? '' : 'w-full lg:w-auto')}>
             From
             <input
               type="date"
@@ -153,7 +159,7 @@ export function StatsDateFilter({
               className="mt-1 block min-h-11 rounded-xl border border-slate-700 bg-slate-950 px-2 text-sm text-slate-100"
             />
           </label>
-          <label className={cn('text-xs font-bold text-slate-400', compact ? '' : 'w-full')}>
+          <label className={cn('text-xs font-bold text-slate-400', compact ? '' : 'w-full lg:w-auto')}>
             To
             <input
               type="date"

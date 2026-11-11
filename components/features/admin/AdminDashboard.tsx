@@ -57,12 +57,7 @@ export function AdminDashboard({
       />
 
       <div className="space-y-3">
-        <div className="lg:hidden">
-          <StatsDateFilter />
-        </div>
-        <div className="hidden lg:flex lg:items-center lg:justify-end">
-          <StatsDateFilter compact />
-        </div>
+        <StatsDateFilter heading="Date range" />
         <AdminMetricGrid stats={stats} rangeLabel={stats?.cardRangeLabel} />
       </div>
 

@@ -9,6 +9,7 @@ import { getStockLevels } from '@/lib/domains/inventory/stock';
 import type { DepartmentAlert, StoreStats } from '@/lib/domains/stats/storeStatsTypes';
 import { findLatestStoreSetting } from '@/lib/domains/stats/storeSettingSelect';
 import { summarizeRescueWindow } from '@/lib/domains/stats/rescueCards';
+import { DEFAULT_KPI_LOOKBACK_DAYS, kpiLookbackRange } from '@/lib/domains/stats/wasteKpi';
 import { formatCardRangeLabel, last30StoreDays, torontoRange } from '@/lib/domains/stats/storeTime';
 import {
   enumerateYmd,
@@ -217,10 +218,10 @@ async function loadStoreStats(transferRange?: StoreInstantRange | null): Promise
   weekStart.setDate(weekStart.getDate() - 6);
   const rolling = last30StoreDays(now);
   const cardBounds = transferRange ?? torontoRange(rolling.from, rolling.to);
-  const { startDate: lookbackStart, endDate: lookbackEnd } = {
-    startDate: cardBounds.startUtc,
-    endDate: new Date(cardBounds.endUtc.getTime() - 1),
-  };
+  const { startDate: lookbackStart, endDate: lookbackEnd } = kpiLookbackRange(
+    DEFAULT_KPI_LOOKBACK_DAYS,
+    now
+  );
 
   const [products, stockLevels, expirations, movements, setting, pendingCredits, chartWindow] =
     await Promise.all([
