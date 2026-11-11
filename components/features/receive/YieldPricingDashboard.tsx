@@ -344,6 +344,7 @@ export function YieldPricingDashboard({
   initialWarning = null,
   onScanNext,
   onLogDisposition,
+  onOpenDraftCleared,
   supplierId,
   screenDepartment,
   supplierName,
@@ -367,6 +368,8 @@ export function YieldPricingDashboard({
   onScanNext?: () => void;
   /** Drop scanned invoice lines from the parent list when removed / not received. */
   onLogDisposition?: (logId: string) => void;
+  /** After a disposition save removes the last line of an open scan. */
+  onOpenDraftCleared?: (draftId: string) => Promise<void> | void;
   /** Global supplier for posts to `/api/receiving-logs`. */
   supplierId?: string;
   /** Used only when a new item's name, supplier, and category do not pick a department. */
@@ -744,6 +747,9 @@ export function YieldPricingDashboard({
     if (!selected) return;
     const removedId = selected.id;
     const removedName = selected.itemName;
+    const draftId = selected.draftId?.trim() ?? '';
+    const clearsOpenDraft =
+      Boolean(draftId) && extraLogs.every((log) => log.id === removedId || log.draftId !== draftId);
     const notice =
       reason === 'NOT_RECEIVED'
         ? `${removedName} moved to pending vendor credit (not on delivery).`
@@ -781,6 +787,13 @@ export function YieldPricingDashboard({
       ]);
       writeHiddenIds(merged);
       setHiddenLogIds(merged);
+      if (clearsOpenDraft) {
+        try {
+          await onOpenDraftCleared?.(draftId);
+        } catch {
+          setErrorMessage('The scan could not be discarded. It may still be here after a refresh.');
+        }
+      }
     } catch {
       setHiddenLogIds(previousHidden);
       writeHiddenIds(previousHidden);
