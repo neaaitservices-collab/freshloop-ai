@@ -220,7 +220,6 @@ function ProductionDashboardContent() {
       <PageMain width="wide" className="relative w-full py-3 sm:py-5 sm:pb-8">
         <ProductionDashboardHeader
           bomSummary={bomSummary}
-          statsReady={statsReady}
           mobileSection={mobileSection}
           onMobileSectionChange={setMobileSection}
           canEditBom={canEditBom}

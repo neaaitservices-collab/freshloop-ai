@@ -98,6 +98,51 @@ test('/operations is a guarded permanent redirect to production', () => {
   }
 });
 
+test('production header drops duplicate recipe stats and keeps 44px actions', () => {
+  const header = readFileSync('components/features/production/ProductionDashboardHeader.tsx', 'utf8');
+  assert.equal(header.includes('<ProductionBomKpiBadges'), false);
+  assert.equal(header.includes('Total recipes'), false);
+  assert.equal(header.includes('Projected yield'), false);
+  assert.equal(header.includes('Avg. margin'), false);
+  assert.equal(/sm:min-h-10/.test(header), false);
+  assert.equal(/\bkitchen\b/i.test(header), false);
+  assert.match(header, /Production Dashboard/);
+  assert.match(header, /role="toolbar"/);
+  assert.match(header, /New BOM/);
+  assert.match(header, /Execute batch/);
+  assert.match(header, /Voice note/);
+  assert.match(header, /Catalog/);
+  assert.match(header, /More production actions/);
+  assert.match(header, /min-h-11/);
+
+  const bom = readFileSync('components/features/production/ProductionActiveBomPanel.tsx', 'utf8');
+  assert.match(bom, /Total recipes/);
+  assert.match(bom, /Below par/);
+  assert.match(bom, /projected yield/i);
+  assert.match(bom, /Avg\. margin/);
+});
+
+test('supplier directory uses tappable cards and a read-only detail dialog', () => {
+  const src = readFileSync('components/features/suppliers/SupplierTable.tsx', 'utf8');
+  const page = readFileSync('app/admin/suppliers/page.tsx', 'utf8');
+  assert.equal(src.includes('<table'), false);
+  assert.equal(src.includes('<th'), false);
+  assert.equal(/\bkitchen\b/i.test(src), false);
+  assert.match(src, /role="list"/);
+  assert.match(src, /role="listitem"/);
+  assert.match(src, /aria-haspopup="dialog"/);
+  assert.match(src, /focus-visible:outline-solid/);
+  assert.match(src, /focus-visible:outline-2/);
+  assert.match(src, /min-h-11/);
+  assert.match(src, /method: 'POST'/);
+  assert.equal(src.includes("method: 'PUT'"), false);
+  assert.equal(src.includes("method: 'DELETE'"), false);
+  assert.match(src, /labelledBy="supplier-detail-title"/);
+  assert.match(src, /Edit supplier/);
+  assert.match(page, /SupplierDirectory/);
+  assert.match(page, /listSuppliers\(/);
+});
+
 test('production keeps the live transfer panel', () => {
   const production = readFileSync(
     'components/features/production/ProductionFloorTransfersSection.tsx',
