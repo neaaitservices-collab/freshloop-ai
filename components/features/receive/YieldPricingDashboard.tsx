@@ -31,12 +31,12 @@ import { readReceivingPrefs, writeReceivingPrefs } from '@/lib/domains/receiving
 import type { ReceivingDispositionRow } from '@/lib/domains/receiving/receivingDisposition';
 import { interpretReceivingBatchResponse } from '@/lib/domains/receiving/receivingBatchResult';
 import {
-  RECEIVING_DEPARTMENTS,
+  receivingDepartment,
   receivingDepartmentRequiredMessage,
   receivingLineNeedsDepartmentPick,
   type ReceivingDepartment,
 } from '@/lib/domains/inventory/receivingDepartment';
-import { departmentLabel } from '@/lib/domains/inventory/inventoryCatalog';
+import { useDepartmentOptions } from '@/hooks/use-department-options';
 import {
   alreadyReceivedNotice,
   describeBatchSaveOutcome,
@@ -346,6 +346,7 @@ export function YieldPricingDashboard({
   const seeded = initialLogs !== undefined;
   const [logs, setLogs] = useState<ReceivingLog[]>(initialLogs ?? []);
   const [lineDepartment, setLineDepartment] = useState<Record<string, ReceivingDepartment>>({});
+  const departmentOptions = useDepartmentOptions();
   const [warning, setWarning] = useState<string | null>(initialWarning);
   const [loading, setLoading] = useState(!seeded);
   const [selectedId, setSelectedId] = useState<string | null>(initialLogs?.[0]?.id ?? null);
@@ -1128,7 +1129,7 @@ export function YieldPricingDashboard({
                   className="mt-1 min-h-11 w-full rounded-xl border border-slate-600 bg-slate-950 px-3 py-3 text-sm text-slate-100"
                   value={lineDepartment[selected.id] ?? ''}
                   onChange={(event) => {
-                    const value = event.target.value as ReceivingDepartment | '';
+                    const value = receivingDepartment(event.target.value);
                     setLineDepartment((current) => {
                       const next = { ...current };
                       if (!value) delete next[selected.id];
@@ -1139,9 +1140,9 @@ export function YieldPricingDashboard({
                   }}
                 >
                   <option value="">Choose a department</option>
-                  {RECEIVING_DEPARTMENTS.map((code) => (
-                    <option key={code} value={code}>
-                      {departmentLabel(code)}
+                  {departmentOptions.map((dept) => (
+                    <option key={dept.code} value={dept.code}>
+                      {dept.name}
                     </option>
                   ))}
                 </select>

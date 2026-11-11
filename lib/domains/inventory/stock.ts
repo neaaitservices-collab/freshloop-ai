@@ -39,6 +39,8 @@ import {
   serializeVolumetricScrapNotes,
 } from '@/lib/domains/inventory/volumetricScrapLedger';
 import { departmentLabel } from '@/lib/domains/inventory/inventoryCatalog';
+import { departmentIdColumns } from '@/lib/domains/catalog/departmentRef';
+import { departmentRefTableReady, loadDepartmentCodeMap } from '@/lib/domains/catalog/departmentRefStore';
 import {
   receivingDepartmentRequiredMessage,
   resolveReceivingDepartment,
@@ -196,10 +198,12 @@ export async function findOrCreatePurchaseProduct(
   const unitCost = input.unitCost && input.unitCost > 0 ? Number(input.unitCost.toFixed(4)) : null;
   const storeDefaultPar = await loadStoreStockDefaults().then((d) => d.defaultParCases);
   if (!input.department) return null;
+  const departmentIds = await loadDepartmentCodeMap(client);
   const created = await client.product.create({
     data: {
       name,
       department: input.department,
+      ...departmentIdColumns(input.department, departmentIds),
       unitType: unitTypeFor(input.retailUnit ?? 'units'),
       casePackSize: packFields.casePackSize,
       receivePackSize: packFields.receivePackSize,
@@ -443,6 +447,7 @@ export async function updateProductCatalogMeta(input: {
 }): Promise<StockLevel> {
   const data: {
     department?: Department;
+    departmentId?: string | null;
     supplier?: string;
     origin?: string | null;
     pullSensitivityDays?: number | null;
@@ -453,6 +458,8 @@ export async function updateProductCatalogMeta(input: {
       throw new Error('Invalid department.');
     }
     data.department = input.department as Department;
+    const departmentIds = await loadDepartmentCodeMap();
+    Object.assign(data, departmentIdColumns(data.department, departmentIds));
   }
   if (input.supplier !== undefined) {
     const next = input.supplier.trim();
@@ -567,18 +574,30 @@ function posSoldSubselect(posSalesFrom: Date) {
   ), 0)`;
 }
 
+async function departmentCodeSelect(): Promise<Prisma.Sql> {
+  try {
+    if (await departmentRefTableReady()) {
+      return Prisma.sql`COALESCE((SELECT dr.code FROM department_refs dr WHERE dr.id = p.department_id), p.department::text)`;
+    }
+  } catch {
+    /* Enum column remains readable when department_refs is missing. */
+  }
+  return Prisma.sql`p.department::text`;
+}
+
 async function queryStockLevelRows(
   productId?: string,
   posSalesFrom?: Date
 ): Promise<StockLevelRow[]> {
   await ensureProductMarkdownColumn();
+  const departmentSql = await departmentCodeSelect();
   if (productId) {
     return prisma.$queryRaw<StockLevelRow[]>`
       SELECT
         p.id AS "productId",
         p.name,
         p.supplier,
-        p.department::text AS department,
+        ${departmentSql} AS department,
         p.origin,
         p."unitType"::text AS "unitType",
         p."casePackSize",
@@ -629,7 +648,7 @@ async function queryStockLevelRows(
       p.id AS "productId",
       p.name,
       p.supplier,
-      p.department::text AS department,
+      ${departmentSql} AS department,
       p.origin,
       p."unitType"::text AS "unitType",
       p."casePackSize",

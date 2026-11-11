@@ -12,7 +12,8 @@ import { Card, CardBody } from '@/components/ui/Card';
 import { Input, Select } from '@/components/ui/Input';
 import { Toast } from '@/components/ui/Toast';
 import { Button } from '@/components/ui/Button';
-import { CATALOG_DEPARTMENTS, departmentLabel, matchesStoredDepartment } from '@/lib/domains/inventory/inventoryCatalog';
+import { matchesStoredDepartment } from '@/lib/domains/inventory/inventoryCatalog';
+import { useDepartmentOptions } from '@/hooks/use-department-options';
 import type { StockLevel } from '@/lib/domains/inventory/stock';
 import { useOptimisticInventoryLevels } from '@/hooks/use-optimistic-inventory-levels';
 import { formatCurrency } from '@/lib/domains/receiving/yieldPricing';
@@ -30,6 +31,7 @@ export function SlateInventory({
     useOptimisticInventoryLevels(initialLevels);
   const [query, setQuery] = useState('');
   const [department, setDepartment] = useState<string>('ALL');
+  const departmentOptions = useDepartmentOptions();
   const pullDays = useStorePullSensitivityDays();
   const [toast, setToast] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -167,9 +169,9 @@ export function SlateInventory({
           className="w-full sm:w-44 text-xs"
         >
           <option value="ALL">All departments</option>
-          {CATALOG_DEPARTMENTS.map((dept) => (
-            <option key={dept} value={dept}>
-              {departmentLabel(dept)}
+          {departmentOptions.map((dept) => (
+            <option key={dept.code} value={dept.code}>
+              {dept.name}
             </option>
           ))}
         </Select>

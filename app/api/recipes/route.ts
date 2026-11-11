@@ -9,6 +9,8 @@ import { recipeCreateBodySchema } from '@/lib/security/schemas/recipes';
 import { assertMutationRateLimit } from '@/lib/security/rateLimit';
 import { invalidateInventoryCaches } from '@/lib/domains/inventory/inventoryCache';
 import { Department, UnitType, RecipeStatus } from '@prisma/client';
+import { departmentIdColumns } from '@/lib/domains/catalog/departmentRef';
+import { loadDepartmentCodeMap } from '@/lib/domains/catalog/departmentRefStore';
 
 export const dynamic = 'force-dynamic';
 
@@ -88,10 +90,12 @@ export async function POST(req: NextRequest) {
         : 0;
 
     const createdRecipe = await prisma.$transaction(async (tx) => {
+      const departmentIds = await loadDepartmentCodeMap(tx);
       const outputProduct = await tx.product.create({
         data: {
           name: trimmedName,
           department: Department.DELI_KITCHEN,
+          ...departmentIdColumns(Department.DELI_KITCHEN, departmentIds),
           unitType: unitTypeEnum,
           targetMargin: 0.45,
           shelfLifeDays: 3,

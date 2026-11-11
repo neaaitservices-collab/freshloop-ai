@@ -1,4 +1,6 @@
 import { Department, InventoryLocation, Prisma } from '@prisma/client';
+import { departmentIdColumns } from '@/lib/domains/catalog/departmentRef';
+import { loadDepartmentCodeMap } from '@/lib/domains/catalog/departmentRefStore';
 import { InventoryLedgerError, prisma } from '@/lib/domains/inventory/ledger';
 import { invalidateInventoryCaches } from '@/lib/domains/inventory/inventoryCache';
 import { normalizeProductPackFields } from '@/lib/domains/inventory/stock';
@@ -371,6 +373,7 @@ export async function commitInvoiceOcrReceipts(input: {
         }));
 
         if (createdHeader && invoiceId) {
+          const departmentIds = await loadDepartmentCodeMap(tx);
           for (const [index, item] of input.confirmedItems.entries()) {
             const productId = receipts[index]?.productId || String(item.product_id ?? '');
             const product = productId
@@ -401,6 +404,7 @@ export async function commitInvoiceOcrReceipts(input: {
                 invoiceId,
                 name: item.line_name ?? product?.name ?? 'Invoice line',
                 department: lineDepartment,
+                ...departmentIdColumns(lineDepartment, departmentIds),
                 quantity: units > 0 ? units : item.quantity,
                 unit: 'units',
                 unitCost,
