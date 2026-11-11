@@ -4,6 +4,7 @@ import { isLedgerIdempotencyConflict } from '@/lib/domains/inventory/idempotency
 import { parsePosSalesDaysParam, posSalesWindowStart } from '@/lib/domains/inventory/posSalesUnits';
 import {
   getCurrentStock,
+  InventoryLedgerError,
   prisma,
   readShelfOnHandPair,
   VOLUMETRIC_SCRAP_REF_PREFIX,
@@ -39,7 +40,7 @@ import {
 } from '@/lib/domains/inventory/volumetricScrapLedger';
 import { departmentLabel } from '@/lib/domains/inventory/inventoryCatalog';
 import {
-  RECEIVING_DEPARTMENT_REQUIRED,
+  receivingDepartmentRequiredMessage,
   resolveReceivingDepartment,
 } from '@/lib/domains/inventory/receivingDepartment';
 import {
@@ -1143,8 +1144,7 @@ export async function postReceipt(input: {
   });
   let posted:
     | { product: { id: string; name: string }; created: { id: string } }
-    | { replay: { catalogProductId: string | null; productName: string; unitsAdded: number; transactionId: string | null } }
-    | { needsDepartment: true };
+    | { replay: { catalogProductId: string | null; productName: string; unitsAdded: number; transactionId: string | null } };
   const run = async (tx: LotTx) => {
     if (deliveryId && payloadHash) {
       const existing = await tx.receivingDelivery.findUnique({ where: { id: deliveryId } });
@@ -1174,7 +1174,20 @@ export async function postReceipt(input: {
       },
       tx
     );
-    if (!ensured) return { needsDepartment: true as const };
+    if (!ensured) {
+      const message = receivingDepartmentRequiredMessage(input.itemName);
+      throw new InventoryLedgerError(message, 'DEPARTMENT_REQUIRED', 400, {
+        field: 'department',
+        fieldErrors: [
+          {
+            field: 'department',
+            itemName: input.itemName,
+            ...(deliveryId ? { externalLogId: deliveryId } : {}),
+            message,
+          },
+        ],
+      });
+    }
     const productId = ensured.id;
     const product = await tx.product.update({
       where: { id: productId },
@@ -1277,10 +1290,6 @@ export async function postReceipt(input: {
       };
     }
     throw error;
-  }
-
-  if ('needsDepartment' in posted) {
-    return { posted: false, reason: RECEIVING_DEPARTMENT_REQUIRED };
   }
 
   if ('replay' in posted) {

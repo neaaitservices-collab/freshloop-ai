@@ -9,7 +9,11 @@ import {
 } from '@/lib/domains/receiving/invoiceOcrConfidence';
 import { sampleInvoiceCommitRejection } from '@/lib/domains/receiving/sampleReceivingGuard';
 import { canonicalInvoiceDate } from '@/lib/domains/receiving/invoiceDeliveryId';
-import { postReceivingLogToInventory } from '@/lib/domains/receiving/receivingLogPost';
+import {
+  assertReceivingDepartmentsChosen,
+  postReceivingLogToInventory,
+} from '@/lib/domains/receiving/receivingLogPost';
+import { getSupplierNameById } from '@/lib/domains/suppliers/suppliers';
 import {
   invoiceLinePostInput,
   resolveSupplierInvoice,
@@ -272,6 +276,9 @@ export async function commitInvoiceOcrReceipts(input: {
       )
     );
   }
+
+  const supplierName = await getSupplierNameById(supplierId);
+  await assertReceivingDepartmentsChosen(posts, supplierName);
 
   let result: {
     invoiceId: string | null;

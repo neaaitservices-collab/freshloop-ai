@@ -31,6 +31,13 @@ import { readReceivingPrefs, writeReceivingPrefs } from '@/lib/domains/receiving
 import type { ReceivingDispositionRow } from '@/lib/domains/receiving/receivingDisposition';
 import { interpretReceivingBatchResponse } from '@/lib/domains/receiving/receivingBatchResult';
 import {
+  RECEIVING_DEPARTMENTS,
+  receivingDepartmentRequiredMessage,
+  receivingLineNeedsDepartmentPick,
+  type ReceivingDepartment,
+} from '@/lib/domains/inventory/receivingDepartment';
+import { departmentLabel } from '@/lib/domains/inventory/inventoryCatalog';
+import {
   alreadyReceivedNotice,
   describeBatchSaveOutcome,
   receivingStockWasAdded,
@@ -316,6 +323,7 @@ export function YieldPricingDashboard({
   onLogDisposition,
   supplierId,
   screenDepartment,
+  supplierName,
 }: {
   onOpenCommandCenter?: () => void;
   embedded?: boolean;
@@ -330,11 +338,14 @@ export function YieldPricingDashboard({
   supplierId?: string;
   /** Used only when a new item's name, supplier, and category do not pick a department. */
   screenDepartment?: string;
+  /** Saved supplier name, used to classify a line before the clerk picks. */
+  supplierName?: string;
 }) {
   const { activeUser } = useRole();
   const canResolveVendorCredit = canManageStaff(activeUser?.role);
   const seeded = initialLogs !== undefined;
   const [logs, setLogs] = useState<ReceivingLog[]>(initialLogs ?? []);
+  const [lineDepartment, setLineDepartment] = useState<Record<string, ReceivingDepartment>>({});
   const [warning, setWarning] = useState<string | null>(initialWarning);
   const [loading, setLoading] = useState(!seeded);
   const [selectedId, setSelectedId] = useState<string | null>(initialLogs?.[0]?.id ?? null);
@@ -454,6 +465,24 @@ export function YieldPricingDashboard({
     const invoiceOpen = openLogs.filter((log) => invoiceLogIds.has(log.id));
     return invoiceOpen.length > 0 ? invoiceOpen : openLogs;
   }, [openLogs, invoiceLogIds]);
+
+  const lineNeedsPick = (log: ReceivingLog) =>
+    log.canPost !== false &&
+    receivingLineNeedsDepartmentPick({
+      itemName: log.itemName,
+      productId: log.productId,
+      explicitDepartment: lineDepartment[log.id] || log.department,
+      departmentAssumed: lineDepartment[log.id] ? false : log.departmentAssumed,
+      supplier: supplierName,
+      category: log.category,
+      screenDepartment,
+    });
+
+  const withDepartmentPick = (log: ReceivingLog): ReceivingLog => {
+    const picked = lineDepartment[log.id];
+    if (!picked) return log;
+    return { ...log, department: picked, departmentAssumed: false };
+  };
 
   const saveAllLabel =
     invoiceLogIds.size > 0
@@ -799,6 +828,10 @@ export function YieldPricingDashboard({
       );
       return;
     }
+    if (lineNeedsPick(selected)) {
+      setErrorMessage(receivingDepartmentRequiredMessage(selected.itemName));
+      return;
+    }
     const savedId = selected.id;
     const savedName = selected.itemName;
     const pricing = resolveLogPricing(selected, livePricing());
@@ -809,7 +842,7 @@ export function YieldPricingDashboard({
     setMovedNotice(null);
 
     try {
-      const result = await postLogToInventory(selected, pricing, supplierId, screenDepartment);
+      const result = await postLogToInventory(withDepartmentPick(selected), pricing, supplierId, screenDepartment);
       if (!result.ok) {
         setErrorMessage(
           result.reason || 'Stock was not updated, so this case stays on the receiving list.'
@@ -835,6 +868,11 @@ export function YieldPricingDashboard({
   const handleSaveAll = async () => {
     const targets = bulkLogs.filter((log) => !animatingOutIds.has(log.id) && log.canPost !== false);
     if (saving || savingAll) return;
+    const missingDepartment = targets.filter(lineNeedsPick);
+    if (missingDepartment.length > 0) {
+      setErrorMessage(receivingDepartmentRequiredMessage(missingDepartment[0].itemName));
+      return;
+    }
     if (targets.length === 0) {
       const waitingOnSupplier = bulkLogs.some((log) => log.canPost === false && log.invoiceNumber);
       setErrorMessage(
@@ -861,7 +899,7 @@ export function YieldPricingDashboard({
     let lastUnit: RetailUnit = 'units';
 
     const entries = targets.map((log) => ({
-      log,
+      log: withDepartmentPick(log),
       pricing: resolveLogPricing(log, live && live.id === log.id ? live : null),
     }));
 
@@ -1021,6 +1059,9 @@ export function YieldPricingDashboard({
             selectedId={selected?.id ?? null}
             animatingOutIds={animatingOutIds}
             onSelect={setSelectedId}
+            departmentPrompt={(log) =>
+              lineNeedsPick(log) ? receivingDepartmentRequiredMessage(log.itemName) : null
+            }
           />
           {selected ? (
           <>
@@ -1076,6 +1117,38 @@ export function YieldPricingDashboard({
             }}
           />
 
+          {lineNeedsPick(selected) ? (
+            <div className="rounded-2xl border border-amber-500/40 bg-amber-950/40 p-4">
+              <p className="text-sm font-semibold leading-snug text-amber-50">
+                {receivingDepartmentRequiredMessage(selected.itemName)}
+              </p>
+              <label className="mt-3 block text-sm font-semibold text-slate-100">
+                Department
+                <select
+                  className="mt-1 min-h-11 w-full rounded-xl border border-slate-600 bg-slate-950 px-3 py-3 text-sm text-slate-100"
+                  value={lineDepartment[selected.id] ?? ''}
+                  onChange={(event) => {
+                    const value = event.target.value as ReceivingDepartment | '';
+                    setLineDepartment((current) => {
+                      const next = { ...current };
+                      if (!value) delete next[selected.id];
+                      else next[selected.id] = value;
+                      return next;
+                    });
+                    setErrorMessage(null);
+                  }}
+                >
+                  <option value="">Choose a department</option>
+                  {RECEIVING_DEPARTMENTS.map((code) => (
+                    <option key={code} value={code}>
+                      {departmentLabel(code)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+          ) : null}
+
           <PackReceiptCard
             log={selected}
             retailUnit={yieldUnit}
@@ -1091,6 +1164,8 @@ export function YieldPricingDashboard({
             dispositionBusy={dispositionBusy}
             saveAllLabel={bulkLogs.length > 1 ? saveAllLabel : null}
             saveAllProgress={saveAllProgress}
+            saveAllDisabled={bulkLogs.some(lineNeedsPick)}
+            departmentBlocked={lineNeedsPick(selected)}
             onSave={() => void handleSave()}
             onSaveAll={bulkLogs.length > 1 ? () => void handleSaveAll() : undefined}
             onNotReceived={() => void postDisposition('NOT_RECEIVED')}

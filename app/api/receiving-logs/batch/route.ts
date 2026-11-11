@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { InventoryLedgerError } from '@/lib/domains/inventory/ledger';
+import { getSupplierNameById } from '@/lib/domains/suppliers/suppliers';
 import {
   arrangeReceivingBatch,
+  assertReceivingDepartmentsChosen,
   MAX_RECEIVING_BATCH_SIZE,
   postReceivingLogBatch,
   splitUnreadReceivingLines,
@@ -60,6 +63,8 @@ export async function POST(req: NextRequest) {
     }
 
     const arranged = arrangeReceivingBatch(parsed);
+    const supplierName = supplierId ? await getSupplierNameById(supplierId) : null;
+    await assertReceivingDepartmentsChosen(arranged.toPost, supplierName);
     const posted = parsed.length ? await postReceivingLogBatch(arranged.toPost, actor.id) : [];
     posted.forEach((row, index) => {
       const slot = arranged.postIndexes[index];
@@ -81,6 +86,13 @@ export async function POST(req: NextRequest) {
       { status: conflict ? 409 : 200 }
     );
   } catch (error) {
+    if (error instanceof InventoryLedgerError && error.code === 'DEPARTMENT_REQUIRED') {
+      const body =
+        error.details && typeof error.details === 'object'
+          ? error.details
+          : { success: false, error: error.message, field: 'department' };
+      return NextResponse.json(body, { status: 400 });
+    }
     const authRes = authErrorResponse(error);
     if (authRes) return authRes;
     return handleApiRouteError(

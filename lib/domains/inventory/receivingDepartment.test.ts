@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { resolveReceivingDepartment } from '@/lib/domains/inventory/receivingDepartment';
+import {
+  receivingDepartmentFieldErrors,
+  receivingLineNeedsDepartmentPick,
+  resolveReceivingDepartment,
+} from '@/lib/domains/inventory/receivingDepartment';
 
 test('dairy, bakery, and pantry lines map from the item name', () => {
   assert.equal(resolveReceivingDepartment({ itemName: 'Whole Milk' }), 'DAIRY');
@@ -45,6 +49,26 @@ test('supplier and category are used before the name, and an assumed department 
     }),
     'DAIRY'
   );
+});
+
+test('an unclear line with no pick blocks the save, and a pick clears only that line', () => {
+  const lines = [
+    { itemName: 'Whole Milk', externalLogId: 'milk' },
+    { itemName: 'Mystery Gadget', externalLogId: 'gadget' },
+  ];
+  const blocked = receivingDepartmentFieldErrors(lines, []);
+  assert.equal(blocked.length, 1);
+  assert.equal(blocked[0]?.field, 'department');
+  assert.equal(blocked[0]?.itemName, 'Mystery Gadget');
+  assert.equal(receivingLineNeedsDepartmentPick({ itemName: 'Mystery Gadget' }), true);
+  assert.equal(receivingLineNeedsDepartmentPick({ itemName: 'Lemons' }), false);
+  const picked = receivingDepartmentFieldErrors(
+    lines.map((line) =>
+      line.externalLogId === 'gadget' ? { ...line, screenDepartment: 'DELI_KITCHEN' } : line
+    ),
+    []
+  );
+  assert.deepEqual(picked, []);
 });
 
 test('an unclear item uses the receive-screen department', () => {

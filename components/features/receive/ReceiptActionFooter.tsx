@@ -15,6 +15,7 @@ export function ReceiptActionFooter({
   saveDisabled,
   saveAllLabel,
   saveAllProgress,
+  saveAllDisabled = false,
   onSave,
   onSaveAll,
   onNotReceived,
@@ -30,6 +31,7 @@ export function ReceiptActionFooter({
   saveDisabled: boolean;
   saveAllLabel: string | null;
   saveAllProgress: string | null;
+  saveAllDisabled?: boolean;
   onSave: () => void;
   onSaveAll?: () => void;
   onNotReceived: () => void;
@@ -90,7 +92,7 @@ export function ReceiptActionFooter({
             <button
               type="button"
               onClick={onSaveAll}
-              disabled={saving || dispositionBusy}
+              disabled={saving || dispositionBusy || saveAllDisabled}
               title="Other lines use saved pack defaults or 40% target; the selected line keeps the prices on screen."
               className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl border border-emerald-400/40 bg-emerald-400/10 px-4 py-3 text-sm font-black text-emerald-200 transition hover:bg-emerald-400/20 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
             >

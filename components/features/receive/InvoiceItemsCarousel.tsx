@@ -10,11 +10,13 @@ export function InvoiceItemsCarousel({
   selectedId,
   animatingOutIds,
   onSelect,
+  departmentPrompt,
 }: {
   items: ReceivingLog[];
   selectedId: string | null;
   animatingOutIds: Set<string>;
   onSelect: (id: string) => void;
+  departmentPrompt?: (log: ReceivingLog) => string | null;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const selectedRef = useRef<HTMLButtonElement>(null);
@@ -45,6 +47,7 @@ export function InvoiceItemsCarousel({
           const active = log.id === selectedId;
           const exiting = animatingOutIds.has(log.id);
           const lineTotal = Number((log.casesReceived * log.caseCost).toFixed(2));
+          const prompt = departmentPrompt?.(log) ?? null;
 
           return (
             <button
@@ -72,6 +75,16 @@ export function InvoiceItemsCarousel({
               >
                 {log.itemName}
               </span>
+              {prompt ? (
+                <span
+                  className={cn(
+                    'mt-2 text-sm font-semibold leading-snug',
+                    active ? 'text-slate-950' : 'text-amber-200'
+                  )}
+                >
+                  {prompt}
+                </span>
+              ) : null}
               <div className="mt-2 flex items-end justify-between gap-2">
                 <span
                   className={cn(
