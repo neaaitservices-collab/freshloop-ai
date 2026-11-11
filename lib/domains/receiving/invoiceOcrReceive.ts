@@ -164,6 +164,14 @@ function readPayload(raw: unknown): OcrDraftPayload | null {
     vendorName: typeof payload.vendorName === 'string' ? payload.vendorName : '',
     invoiceNumber: typeof payload.invoiceNumber === 'string' ? payload.invoiceNumber : '',
     invoiceDate: typeof payload.invoiceDate === 'string' ? payload.invoiceDate : '',
+    ...(payload.invoiceDateNeedsConfirm === true
+      ? {
+          invoiceDateNeedsConfirm: true,
+          ...(typeof payload.invoiceDateConfirmReason === 'string' && payload.invoiceDateConfirmReason.trim()
+            ? { invoiceDateConfirmReason: payload.invoiceDateConfirmReason }
+            : {}),
+        }
+      : {}),
     totalAmount: Number(payload.totalAmount) || 0,
     departmentBreakdown:
       payload.departmentBreakdown && typeof payload.departmentBreakdown === 'object'

@@ -101,6 +101,8 @@ export const invoiceOcrModelSchema = z.object({
   vendorName: z.string().trim().min(1).max(INVOICE_OCR_TEXT_LIMITS.vendorName),
   invoiceNumber: z.string().trim().min(1).max(INVOICE_OCR_TEXT_LIMITS.invoiceNumber),
   invoiceDate: z.string().trim().min(1).max(40),
+  /** Another printed date, such as the order date. Copied as printed. */
+  orderDate: z.string().trim().max(40).optional(),
   terms: z.string().trim().max(40).optional(),
   subtotal: invoiceOcrMoneySchema.optional(),
   hst: invoiceOcrMoneySchema.optional(),
@@ -155,6 +157,8 @@ export interface InterpretedInvoiceModel {
   subtotalGap: string | null;
   gaps: string[];
   identity: ParsedInvoiceIdentity;
+  invoiceDateNeedsConfirm: boolean;
+  invoiceDateConfirmReason: string | null;
 }
 
 function cappedString(value: unknown, max: number): { text: string; missing: boolean; truncated: boolean } {
@@ -331,7 +335,10 @@ function classifyInvoiceLine(line: InterpretedInvoiceLine, raw: unknown): Interp
   return line;
 }
 
-export function interpretInvoiceOcrModel(raw: unknown): InterpretedInvoiceModel {
+export function interpretInvoiceOcrModel(
+  raw: unknown,
+  options?: { receivedOn?: string | null }
+): InterpretedInvoiceModel {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
     throw new Error(INVOICE_OCR_JSON_ERROR);
   }
@@ -350,6 +357,8 @@ export function interpretInvoiceOcrModel(raw: unknown): InterpretedInvoiceModel 
     vendorName: vendor.text,
     invoiceNumber: invoiceNumber.text,
     invoiceDate: record.invoiceDate ?? record.invoice_date,
+    orderDate: record.orderDate ?? record.order_date,
+    receivedOn: options?.receivedOn,
   });
   const gaps = [...identity.gaps];
   if (vendor.truncated) gaps.push(`Vendor name was longer than ${INVOICE_OCR_TEXT_LIMITS.vendorName} characters.`);
@@ -380,6 +389,8 @@ export function interpretInvoiceOcrModel(raw: unknown): InterpretedInvoiceModel 
   }
   if (subtotalGap) gaps.push(subtotalGap);
   for (const line of classified) gaps.push(...line.gaps);
+  const ambiguousGap = identity.gaps.find((gap) => /is ambiguous/i.test(gap)) ?? null;
+  const invoiceDateNeedsConfirm = Boolean(identity.invoiceDate && ambiguousGap);
 
   return {
     vendorName: identity.vendorName,
@@ -391,5 +402,7 @@ export function interpretInvoiceOcrModel(raw: unknown): InterpretedInvoiceModel 
     subtotalGap,
     gaps,
     identity,
+    invoiceDateNeedsConfirm,
+    invoiceDateConfirmReason: invoiceDateNeedsConfirm ? ambiguousGap : null,
   };
 }

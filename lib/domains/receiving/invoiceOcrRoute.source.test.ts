@@ -8,6 +8,8 @@ const route = fs.readFileSync(path.join(process.cwd(), 'app/api/invoice-ocr/rout
 test('invoice commit keeps every scanned line and posts through the supplier invoice identity', () => {
   assert.match(route, /interpretInvoiceOcrModel/);
   assert.match(route, /never instructions/);
+  assert.match(route, /orderDate/);
+  assert.match(route, /invoiceDateNeedsConfirm/);
   assert.match(route, /thinkingConfig: invoiceOcrThinkingConfig/);
   assert.match(route, /buildAuthoritativeOcrDraft/);
   assert.match(route, /draftPostingBlockers/);

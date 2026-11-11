@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import test, { mock } from 'node:test';
 import { NextRequest } from 'next/server';
 import { POST as postReceivingBatch } from '@/app/api/receiving-logs/batch/route';
 import { setReceivingStaffTestAuth } from '@/lib/auth/receivingStaffTestAuth';
@@ -621,6 +621,91 @@ test('a sanctioned quantity correction is posted and the browser quantity is not
   if (!outcome.ok) return;
   assert.equal(posted[0]?.line.casesReceived, 5);
   assert.equal(posted[0]?.line.caseCost, 12);
+});
+
+const AMBIGUOUS_DATE_REASON =
+  'Invoice date "05-11-2026" is ambiguous. Read as 2026-11-05 (DD-MM), closer to the receive date 2026-11-11 than 2026-05-11 (MM-DD). Confirm this date.';
+
+function draftWithUnconfirmedDate(): OcrDraftRecord {
+  const draft = storedDraft();
+  const payload = draft.payload as OcrDraftPayload;
+  draft.payload = {
+    ...payload,
+    invoiceDate: '2026-11-05',
+    invoiceDateNeedsConfirm: true,
+    invoiceDateConfirmReason: AMBIGUOUS_DATE_REASON,
+  };
+  return draft;
+}
+
+test('posting an unconfirmed ambiguous invoice date returns 409 and writes nothing', async () => {
+  const writeStockAndInvoice = mock.fn(async () => [] as ReceivingLogPostResult[]);
+  const outcome = await receiveAcceptedInvoiceOcr({
+    actorId: 'clerk-1',
+    actorIsManager: false,
+    body: {
+      invoiceOcr: true,
+      draftId: 'draft-1',
+      acceptDraft: true,
+      supplierId: 'sup-1',
+      items: [browserCopy()],
+    },
+    deps: {
+      findDraft: async () => draftWithUnconfirmedDate(),
+      postLines: writeStockAndInvoice,
+    },
+  });
+  assert.equal(outcome.ok, false);
+  if (outcome.ok) return;
+  assert.equal(outcome.status, 409);
+  assert.equal(outcome.code, 'OCR_DRAFT_BLOCKED');
+  assert.match(outcome.error, /ambiguous/);
+  assert.match(outcome.error, /2026-11-05 \(DD-MM\)/);
+  assert.equal(writeStockAndInvoice.mock.callCount(), 0);
+});
+
+test('posting with resolutions.invoiceDate clears the ambiguous-date block', async () => {
+  const writeStockAndInvoice = mock.fn(
+    async (input: { entries: InvoiceOcrPostEntry[]; resolved: OcrDraftPayload }) => {
+      assert.equal(input.resolved.invoiceDateNeedsConfirm, false);
+      assert.equal(input.resolved.invoiceDateConfirmReason, undefined);
+      assert.equal(input.resolved.invoiceDate, '2026-11-05');
+      return input.entries.map(
+        (entry): ReceivingLogPostResult => ({
+          externalLogId: entry.line.externalLogId,
+          itemName: entry.line.itemName,
+          stock: {
+            posted: true,
+            unitsAdded: entry.line.casesReceived,
+            onHand: entry.line.casesReceived,
+            productId: entry.line.productId ?? '',
+            productName: entry.line.itemName,
+            transactionId: 'tx-1',
+          },
+        })
+      );
+    }
+  );
+  const outcome = await receiveAcceptedInvoiceOcr({
+    actorId: 'clerk-1',
+    actorIsManager: false,
+    body: {
+      invoiceOcr: true,
+      draftId: 'draft-1',
+      acceptDraft: true,
+      supplierId: 'sup-1',
+      resolutions: { invoiceDate: '2026-11-05' },
+      items: [browserCopy()],
+    },
+    deps: {
+      findDraft: async () => draftWithUnconfirmedDate(),
+      postLines: writeStockAndInvoice,
+    },
+  });
+  assert.equal(outcome.ok, true);
+  if (!outcome.ok) return;
+  assert.equal(writeStockAndInvoice.mock.callCount(), 1);
+  assert.equal(outcome.results[0]?.stock.posted, true);
 });
 
 test('POST /api/receiving-logs/batch rejects a browser invoice copy with no draft', async (t) => {

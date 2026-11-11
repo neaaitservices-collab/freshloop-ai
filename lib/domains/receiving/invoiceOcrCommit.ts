@@ -179,6 +179,10 @@ export interface OcrDraftPayload {
   vendorName: string;
   invoiceNumber: string;
   invoiceDate: string;
+  /** A guessed ambiguous date is stored, and posting stays blocked until a clerk confirms it. */
+  invoiceDateNeedsConfirm?: boolean;
+  /** The note that says which reading was picked and why. */
+  invoiceDateConfirmReason?: string;
   totalAmount: number;
   departmentBreakdown: Record<string, number>;
   lines: OcrDraftLine[];

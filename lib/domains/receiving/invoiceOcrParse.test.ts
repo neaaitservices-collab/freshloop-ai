@@ -58,19 +58,71 @@ test('an unknown department stays on the produce fallback and is marked assumed'
   assert.ok(draft.lines[0]?.review_reasons?.includes('department_assumed'));
 });
 
-test('written invoice dates are kept and ambiguous dates are flagged', () => {
-  assert.equal(parseOcrInvoiceDate('November 8, 2026').invoiceDate, '2026-11-08');
-  assert.equal(parseOcrInvoiceDate('8 Nov 2026').invoiceDate, '2026-11-08');
-  assert.equal(parseOcrInvoiceDate('2026-11-08').invoiceDate, '2026-11-08');
-  const ambiguous = parseOcrInvoiceDate('01/02/2026');
-  assert.equal(ambiguous.invoiceDate, '');
-  assert.match(ambiguous.gap ?? '', /ambiguous/);
-  const monthDay = parseOcrInvoiceDate('05-11-2026');
-  assert.equal(monthDay.invoiceDate, '');
-  assert.match(monthDay.gap ?? '', /ambiguous/);
+test('written invoice dates are kept and impossible dates stay blank', () => {
+  assert.deepEqual(parseOcrInvoiceDate('November 8, 2026'), { invoiceDate: '2026-11-08', gap: null });
+  assert.deepEqual(parseOcrInvoiceDate('8 Nov 2026'), { invoiceDate: '2026-11-08', gap: null });
+  assert.deepEqual(parseOcrInvoiceDate('2026-11-08'), { invoiceDate: '2026-11-08', gap: null });
   const impossible = parseInvoiceIdentity({ invoiceDate: '2026-02-31' });
   assert.equal(impossible.invoiceDate, '');
   assert.match(impossible.gaps.join(' '), /not a real calendar date/);
+  assert.doesNotMatch(impossible.gaps.join(' '), /ambiguous/);
+});
+
+test('both ambiguous readings in the past use the one closest to the receive date', () => {
+  const parsed = parseOcrInvoiceDate('05-11-2026', { receivedOn: '2026-11-11' });
+  assert.equal(parsed.invoiceDate, '2026-11-05');
+  assert.match(parsed.gap ?? '', /ambiguous/);
+  assert.match(parsed.gap ?? '', /2026-11-05 \(DD-MM\)/);
+  assert.match(parsed.gap ?? '', /closer to the receive date 2026-11-11/);
+  assert.match(parsed.gap ?? '', /Confirm this date/);
+
+  const monthFirst = parseOcrInvoiceDate('11-05-2026', { receivedOn: '2026-12-01' });
+  assert.equal(monthFirst.invoiceDate, '2026-11-05');
+  assert.match(monthFirst.gap ?? '', /2026-11-05 \(MM-DD\)/);
+  assert.match(monthFirst.gap ?? '', /closer to the receive date 2026-12-01/);
+});
+
+test('a future ambiguous reading is dropped', () => {
+  const parsed = parseOcrInvoiceDate('05-11-2026', { receivedOn: '2026-05-20' });
+  assert.equal(parsed.invoiceDate, '2026-05-11');
+  assert.match(parsed.gap ?? '', /ambiguous/);
+  assert.match(parsed.gap ?? '', /2026-05-11 \(MM-DD\)/);
+  assert.match(parsed.gap ?? '', /2026-11-05 \(DD-MM\) is after the receive date 2026-05-20/);
+  assert.match(parsed.gap ?? '', /Confirm this date/);
+});
+
+test('the other date field settles an ambiguous invoice date when it matches one reading', () => {
+  const both = parseOcrInvoiceDate('05-11-2026', {
+    receivedOn: '2026-11-11',
+    orderDate: '05-11-26',
+  });
+  assert.equal(both.invoiceDate, '2026-11-05');
+  assert.match(both.gap ?? '', /closer to the receive date/);
+  assert.doesNotMatch(both.gap ?? '', /order date/);
+
+  const settled = parseOcrInvoiceDate('05-11-2026', {
+    receivedOn: '2026-11-11',
+    orderDate: 'May 11, 2026',
+  });
+  assert.equal(settled.invoiceDate, '2026-05-11');
+  assert.match(settled.gap ?? '', /ambiguous/);
+  assert.match(settled.gap ?? '', /2026-05-11 \(MM-DD\)/);
+  assert.match(settled.gap ?? '', /matches the order date/);
+  assert.match(settled.gap ?? '', /Confirm this date/);
+});
+
+test('a date that is not ambiguous is stored without a review note', () => {
+  assert.deepEqual(parseOcrInvoiceDate('15-11-2026', { receivedOn: '2026-11-01' }), {
+    invoiceDate: '2026-11-15',
+    gap: null,
+  });
+  assert.deepEqual(parseOcrInvoiceDate('2026-11-08', { receivedOn: '2026-01-01', orderDate: '05-11-26' }), {
+    invoiceDate: '2026-11-08',
+    gap: null,
+  });
+  const impossible = parseOcrInvoiceDate('02-31-2026');
+  assert.equal(impossible.invoiceDate, '');
+  assert.match(impossible.gap ?? '', /not a real calendar date/);
 });
 
 test('an unreadable quantity is not replaced with 1', () => {

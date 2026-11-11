@@ -107,6 +107,8 @@ export function buildAuthoritativeOcrDraft(input: {
   vendorName: string;
   invoiceNumber: string;
   invoiceDate: string;
+  invoiceDateNeedsConfirm?: boolean;
+  invoiceDateConfirmReason?: string | null;
   totalAmount: number;
   departmentBreakdown: Record<string, number>;
   lines: AuditedDraftSourceLine[];
@@ -151,10 +153,17 @@ export function buildAuthoritativeOcrDraft(input: {
       review_reasons,
     };
   });
+  const confirmReason = input.invoiceDateConfirmReason?.trim() ?? '';
   return {
     vendorName: input.vendorName.trim(),
     invoiceNumber: input.invoiceNumber.trim(),
     invoiceDate: input.invoiceDate,
+    ...(input.invoiceDateNeedsConfirm
+      ? {
+          invoiceDateNeedsConfirm: true,
+          ...(confirmReason ? { invoiceDateConfirmReason: confirmReason } : {}),
+        }
+      : {}),
     totalAmount: input.totalAmount,
     departmentBreakdown: input.departmentBreakdown,
     lines,
@@ -174,13 +183,26 @@ export function unresolvedLineReasons(
 
 /** Hard gaps always block. Confidence, cost, an assumed department, and a line-total gap need a manager. */
 export function draftPostingBlockers(
-  payload: Pick<OcrDraftPayload, 'vendorName' | 'invoiceNumber' | 'invoiceDate' | 'lines'>,
+  payload: Pick<
+    OcrDraftPayload,
+    | 'vendorName'
+    | 'invoiceNumber'
+    | 'invoiceDate'
+    | 'invoiceDateNeedsConfirm'
+    | 'invoiceDateConfirmReason'
+    | 'lines'
+  >,
   options: { actorIsManager: boolean; manualReviewOverride: boolean }
 ): string[] {
   const blockers: string[] = [];
   if (!payload.vendorName.trim()) blockers.push('Vendor name was not read.');
   if (!payload.invoiceNumber.trim()) blockers.push('Invoice number was not read.');
   if (!payload.invoiceDate?.trim()) blockers.push('Invoice date was not read.');
+  if (payload.invoiceDateNeedsConfirm) {
+    blockers.push(
+      payload.invoiceDateConfirmReason?.trim() || 'Invoice date was guessed and needs confirmation.'
+    );
+  }
   const managerMayResolve = options.manualReviewOverride && options.actorIsManager;
   payload.lines.forEach((line, index) => {
     const reasons = unresolvedLineReasons(line, managerMayResolve);
@@ -245,6 +267,7 @@ export function draftResolutionFingerprint(payload: OcrDraftPayload): string {
     vendorName: payload.vendorName.trim(),
     invoiceNumber: payload.invoiceNumber.trim(),
     invoiceDate: payload.invoiceDate,
+    invoiceDateNeedsConfirm: payload.invoiceDateNeedsConfirm === true,
     lines: lines.map((line) => ({
       name: line.line_name ?? '',
       quantity: line.quantity,
@@ -274,7 +297,11 @@ export function applyOcrDraftResolutions(
   const invoiceNumber = resolution.invoiceNumber?.trim();
   if (invoiceNumber) next.invoiceNumber = invoiceNumber;
   const invoiceDate = resolution.invoiceDate?.trim();
-  if (invoiceDate) next.invoiceDate = invoiceDate;
+  if (invoiceDate) {
+    next.invoiceDate = invoiceDate;
+    next.invoiceDateNeedsConfirm = false;
+    delete next.invoiceDateConfirmReason;
+  }
 
   for (const edit of resolution.lines ?? []) {
     const line = next.lines[edit.index];
