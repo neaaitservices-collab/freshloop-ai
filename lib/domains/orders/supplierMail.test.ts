@@ -16,6 +16,7 @@ import {
   purchaseOrderOpenedWarning,
   purchaseOrderSendAllConfirm,
   purchaseOrderSendPlan,
+  singleSupplierEmail,
   storedSupplierRecipient,
   supplierRecipientHint,
 } from '@/components/features/orders/supplierMail';
@@ -185,7 +186,7 @@ test('purchase order panel sends one supplier at a time and falls back to mail',
   assert.equal(mail.includes('draftForAll'), false);
   assert.equal(mail.includes('recipients.join'), false);
   assert.match(mail, /draftForRows/);
-  assert.match(mail, /Each supplier gets only their own order/);
+  assert.match(mail, /Open a separate email for /);
   assert.equal(/\bkitchen\b/i.test(mail), false);
 });
 
@@ -204,12 +205,11 @@ test('send all keeps each supplier separate and skips a blank address', () => {
   );
   assert.equal(plan.ready[0].to.includes('buyer@farm.test'), true);
   assert.equal(plan.ready[0].body.includes('Kale'), false);
-  assert.match(purchaseOrderSendAllConfirm(plan.ready.length), /1 supplier/);
-  assert.match(purchaseOrderSendAllConfirm(2), /2 suppliers/);
-  assert.match(purchaseOrderSendAllConfirm(2), /only their own order/);
+  assert.equal(purchaseOrderSendAllConfirm(plan.ready.length), 'Open a separate email for 1 supplier?');
+  assert.equal(purchaseOrderSendAllConfirm(2), 'Open a separate email for 2 suppliers?');
 
   const mailto = purchaseOrderMailto(farm);
-  assert.match(mailto ?? '', /^mailto:buyer@farm\.test\?/);
+  assert.match(mailto ?? '', /^mailto:buyer%40farm\.test\?/);
   assert.equal(purchaseOrderMailto(greens), null);
   assert.equal(purchaseOrderMailto({ ...farm, to: 'buyer@farm.test, other@farm.test' }), null);
 
@@ -234,7 +234,24 @@ test('Gmail compose encodes each part and shortens a long order', () => {
   assert.equal(params.searchParams.get('to'), 'buyer@farm.test');
   assert.equal(params.searchParams.get('su'), 'A & B');
   assert.equal(params.searchParams.get('body'), '2 cases\nBananas');
+  assert.deepEqual([...params.searchParams.keys()], ['view', 'fs', 'to', 'su', 'body']);
   assert.equal(compose?.truncated, false);
+  assert.equal(singleSupplierEmail('x?bcc=spy%40evil.com&z=@b.co'), null);
+  assert.equal(singleSupplierEmail('buyer#note@farm.test'), null);
+  assert.equal(purchaseOrderCompose({ to: 'x?bcc=spy%40evil.com&z=@b.co', subject: 'Hi', body: 'Order' }), null);
+  assert.equal(purchaseOrderCompose({ to: 'buyer#note@farm.test', subject: 'Hi', body: 'Order' }), null);
+  const injected = purchaseOrderCompose({
+    to: 'buyer@farm.test',
+    subject: 'Hi&bcc=spy@evil.com',
+    body: 'line&x=1',
+  });
+  const injectedParams = new URL(injected?.gmailUrl ?? 'https://mail.google.com/').searchParams;
+  assert.deepEqual([...injectedParams.keys()], ['view', 'fs', 'to', 'su', 'body']);
+  assert.equal(injectedParams.get('to'), 'buyer@farm.test');
+  assert.equal(injectedParams.get('su'), 'Hi&bcc=spy@evil.com');
+  const mailtoParams = new URLSearchParams((injected?.mailtoUrl ?? '').split('?')[1]);
+  assert.deepEqual([...mailtoParams.keys()], ['subject', 'body']);
+  assert.match(injected?.mailtoUrl ?? '', /^mailto:buyer%40farm\.test\?/);
 
   const long = purchaseOrderCompose({
     to: 'buyer@farm.test',

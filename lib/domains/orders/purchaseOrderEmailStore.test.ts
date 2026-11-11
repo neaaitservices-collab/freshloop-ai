@@ -61,12 +61,18 @@ test('a second open for the same supplier and line key is blocked until confirme
     1
   );
 
-  const again = await recordPurchaseOrderOpen({ ...draft, toEmail: 'other@farm.test' }, true);
+  const again = await recordPurchaseOrderOpen(
+    { ...draft, toEmail: 'other@farm.test', body: 'changed body', subject: 'changed', actorId: 'other-staff' },
+    true
+  );
   assert.equal(again.ok, true);
   const row = await prisma.purchaseOrderEmail.findFirst({
     where: { supplierId: supplier.id, lineKey: 'lines-a' },
   });
   assert.equal(row?.status, 'OPENED');
-  assert.equal(row?.toEmail, 'other@farm.test');
+  assert.equal(row?.toEmail, 'edited@farm.test');
+  assert.equal(row?.body, '2 cases - Bananas');
+  assert.equal(row?.subject, 'Purchase order');
+  assert.equal(row?.actorId, 'staff-1');
   assert.equal(row?.createdAt.toISOString(), first.ok ? first.openedAt : '');
 });

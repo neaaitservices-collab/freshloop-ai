@@ -26,7 +26,7 @@ export const INVALID_SUPPLIER_EMAIL_HINT = 'Enter one supplier email address.';
 export function singleSupplierEmail(value: string): string | null {
   const email = value.trim();
   if (!email || email.length > 320) return null;
-  if (/[,;\s<>]/.test(email)) return null;
+  if (/[\s,;<>?&=%#/]/.test(email)) return null;
   if ((email.match(/@/g) ?? []).length !== 1) return null;
   if (!/^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$/.test(email)) {
     return null;
@@ -196,7 +196,7 @@ function composeHref(to: string, subject: string, body: string): { gmailUrl: str
   const encodedBody = encodeURIComponent(body);
   return {
     gmailUrl: `https://mail.google.com/mail/?view=cm&fs=1&to=${encodedTo}&su=${encodedSubject}&body=${encodedBody}`,
-    mailtoUrl: `mailto:${to}?subject=${encodedSubject}&body=${encodedBody}`,
+    mailtoUrl: `mailto:${encodeURIComponent(to)}?subject=${encodedSubject}&body=${encodedBody}`,
   };
 }
 
@@ -263,7 +263,7 @@ export function purchaseOrderSendPlan(drafts: readonly PoDraft[]): {
 
 export function purchaseOrderSendAllConfirm(count: number): string {
   const noun = count === 1 ? 'supplier' : 'suppliers';
-  return `Send a separate email to ${count} ${noun}? Each supplier gets only their own order.`;
+  return `Open a separate email for ${count} ${noun}?`;
 }
 
 export function groupBySupplier(levels: StockLevel[]): Record<string, StockLevel[]> {

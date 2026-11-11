@@ -126,12 +126,17 @@ describe('purchase order open log', { concurrency: 1 }, () => {
     assert.equal(againJson.openedAt, openedJson.openedAt);
     assert.match(purchaseOrderOpenedWarning(againJson.openedAt ?? ''), /Already opened for this order on .+ open again\?/);
 
-    const reopened = await POST(request({ ...payload, to: 'later@farm.test', reopen: true }));
+    const reopened = await POST(
+      request({ ...payload, to: 'later@farm.test', subject: 'Changed', body: payload.body, reopen: true })
+    );
     assert.equal(reopened.status, 200);
     const updated = await prisma.purchaseOrderEmail.findFirst({
       where: { supplierId: supplier.id, lineKey },
     });
-    assert.equal(updated?.toEmail, 'later@farm.test');
+    assert.equal(updated?.toEmail, 'edited@farm.test');
+    assert.equal(updated?.body, payload.body);
+    assert.equal(updated?.subject, payload.subject);
+    assert.equal(updated?.actorId, manager().id);
     assert.equal(updated?.createdAt.toISOString(), openedJson.openedAt);
   });
 });

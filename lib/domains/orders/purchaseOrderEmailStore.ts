@@ -85,11 +85,5 @@ export async function recordPurchaseOrderOpen(
   if (!reopen) {
     return { ok: false, id: existing.id, openedAt: existing.createdAt.toISOString() };
   }
-
-  const row = await prisma.purchaseOrderEmail.update({
-    where: { id: existing.id },
-    data,
-    select: { id: true, createdAt: true },
-  });
-  return { ok: true, id: row.id, openedAt: row.createdAt.toISOString() };
+  return { ok: true, id: existing.id, openedAt: existing.createdAt.toISOString() };
 }

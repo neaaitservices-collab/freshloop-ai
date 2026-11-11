@@ -9,7 +9,6 @@ import {
   purchaseOrderSendAllConfirm,
   purchaseOrderSendPlan,
   purchaseOrderSkipMessage,
-  singleSupplierEmail,
   supplierRecipientHint,
   type PoDraft,
 } from '@/components/features/orders/supplierMail';
@@ -26,6 +25,7 @@ interface OpenResult {
   message: string;
   truncated?: boolean;
   fullBody?: string;
+  gmailUrl?: string;
 }
 
 async function recordOpen(draft: PoDraft, reopen: boolean): Promise<
@@ -84,26 +84,49 @@ export function PoEmailPanel({
   const plan = purchaseOrderSendPlan(drafts);
   const activeCompose = purchaseOrderCompose(draft);
 
-  const openCompose = async (item: PoDraft, again = false) => {
-    if (!singleSupplierEmail(item.to)) {
+  const openCompose = (item: PoDraft, again = false) => {
+    const compose = purchaseOrderCompose(item);
+    if (!compose) {
       setResults([{ supplier: item.supplier, outcome: 'skipped', message: purchaseOrderSkipMessage(item.to) }]);
       return;
     }
+    const popup = window.open(compose.gmailUrl, '_blank', 'noopener,noreferrer');
+    void finishOpen(item, again, compose, popup);
+  };
+
+  const finishOpen = async (
+    item: PoDraft,
+    again: boolean,
+    compose: NonNullable<ReturnType<typeof purchaseOrderCompose>>,
+    popup: Window | null
+  ) => {
     setBusy(true);
     try {
       const recorded = await recordOpen(item, again);
       if (!recorded.ok && recorded.status === 409 && !again) {
+        popup?.close();
         setReopen({ draft: item, openedAt: recorded.openedAt ?? '' });
         return;
       }
       if (!recorded.ok) {
+        popup?.close();
         setResults([{ supplier: item.supplier, outcome: 'failed', message: recorded.message }]);
         return;
       }
-      const compose = purchaseOrderCompose(item);
-      if (!compose) return;
-      window.open(compose.gmailUrl, '_blank', 'noopener,noreferrer');
       setReopen(null);
+      if (!popup) {
+        setResults([
+          {
+            supplier: item.supplier,
+            outcome: 'failed',
+            message: 'The compose window was blocked. Open it from the link.',
+            gmailUrl: compose.gmailUrl,
+            truncated: compose.truncated,
+            fullBody: item.body,
+          },
+        ]);
+        return;
+      }
       setResults([
         {
           supplier: item.supplier,
@@ -116,6 +139,7 @@ export function PoEmailPanel({
         },
       ]);
     } catch {
+      popup?.close();
       setResults([{ supplier: item.supplier, outcome: 'failed', message: 'The order could not be recorded.' }]);
     } finally {
       setBusy(false);
@@ -357,6 +381,16 @@ export function PoEmailPanel({
                     <span>
                       {result.supplier}: {result.message}
                     </span>
+                    {result.gmailUrl ? (
+                      <a
+                        href={result.gmailUrl}
+                        target="_blank"
+                        rel="noopener"
+                        className="ml-2 font-semibold text-blue-300 underline underline-offset-2"
+                      >
+                        Open in Gmail
+                      </a>
+                    ) : null}
                     {result.truncated && result.fullBody ? (
                       <button
                         type="button"
