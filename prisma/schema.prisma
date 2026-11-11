@@ -458,8 +458,39 @@ model Supplier {
   receivingDispositions  ReceivingDisposition[]
   invoiceDocuments       SupplierInvoiceDocument[]
   activities             SupplierActivity[]
+  purchaseOrderEmails    PurchaseOrderEmail[]
 
   @@map("suppliers")
+}
+
+enum PurchaseOrderEmailStatus {
+  PENDING
+  SENT
+  FAILED
+}
+
+/// Sent log for one supplier purchase order. Nothing is delivered from this table alone.
+model PurchaseOrderEmail {
+  id           String                   @id @default(uuid())
+  supplierId   String?                  @map("supplier_id")
+  supplier     Supplier?                @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+  supplierName String                   @map("supplier_name")
+  toEmail      String                   @map("to_email")
+  fromEmail    String                   @map("from_email")
+  replyTo      String?                  @map("reply_to")
+  subject      String
+  body         String                   @db.Text
+  /// Idempotency key for this supplier's order lines.
+  lineKey      String                   @map("line_key")
+  status       PurchaseOrderEmailStatus
+  providerId   String?                  @map("provider_id")
+  actorId      String?                  @map("actor_id")
+  error        String?
+  createdAt    DateTime                 @default(now()) @map("created_at")
+
+  @@unique([supplierId, lineKey])
+  @@index([supplierId, createdAt])
+  @@map("purchase_order_emails")
 }
 
 model VendorInvoice {
