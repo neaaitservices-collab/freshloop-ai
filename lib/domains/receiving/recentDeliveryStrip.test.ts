@@ -25,10 +25,27 @@ test('the recent deliveries strip is only the open invoice and does not drop his
   );
   assert.deepEqual(
     recentDeliveryStripItems(logs, new Set(['line-1'])).map((row) => row.id),
-    ['line-1', 'line-2']
+    ['line-1']
   );
   assert.deepEqual(recentDeliveryStripItems(logs, new Set()), []);
   assert.deepEqual(recentDeliveryStripItems(logs, new Set(['missing'])), []);
+  assert.deepEqual(logs, before);
+});
+
+test('an old line with no supplier does not match a shared invoice number', () => {
+  const logs = [
+    { id: 'open-1', itemName: 'Cookies', invoiceNumber: '10303', supplierId: 'sup-a' },
+    { id: 'old-1', itemName: 'RED ONION JUMBO', invoiceNumber: '10303' },
+    { id: 'old-2', itemName: 'Biscotti', invoiceNumber: '10303', supplierName: '  ' },
+  ];
+  const active = new Set(['open-1']);
+  const before = logs.map((row) => ({ ...row }));
+
+  assert.deepEqual(recentDeliveryStripItems(logs, active).map((row) => row.id), ['open-1']);
+  assert.equal(canActOnReceivingStripLine(logs[1], logs, active), false);
+  assert.equal(canActOnReceivingStripLine(logs[2], logs, active), false);
+  assert.equal(savedDeliveryChoices(logs, active).some((row) => row.id === 'old-1'), false);
+  assert.notEqual(openReceivingLine('old-1', logs, active)?.id, 'old-1');
   assert.deepEqual(logs, before);
 });
 

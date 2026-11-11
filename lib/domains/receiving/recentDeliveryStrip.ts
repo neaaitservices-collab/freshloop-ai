@@ -32,10 +32,15 @@ function supplierNameOf(
   return raw ? raw.replace(/\s+/g, ' ').toLowerCase() : null;
 }
 
-/** True when both lines are the same supplier. Id wins when both sides have one. */
+/**
+ * True when both lines are the same supplier. Id wins when both sides have one.
+ * A candidate with no supplier id and no supplier name matches only when it is
+ * one of the open invoice lines.
+ */
 function sameReceivingSupplier(
   active: StripLog,
   candidate: StripLog,
+  activeInvoiceIds: ReadonlySet<string>,
   fallback?: ReceivingStripSupplier
 ): boolean {
   const activeId = clean(active.supplierId) ?? clean(fallback?.supplierId);
@@ -44,7 +49,7 @@ function sameReceivingSupplier(
   if (candidateId && !activeId) return false;
   if (activeId && !candidateId) {
     const candidateName = supplierNameOf(candidate);
-    if (!candidateName) return true;
+    if (!candidateName) return activeInvoiceIds.has(candidate.id);
     const activeName = supplierNameOf(active, fallback?.supplierName);
     return Boolean(activeName && activeName === candidateName);
   }
@@ -52,7 +57,7 @@ function sameReceivingSupplier(
   const candidateName = supplierNameOf(candidate);
   if (activeName && candidateName) return activeName === candidateName;
   if (candidateName && !activeName) return false;
-  return true;
+  return activeInvoiceIds.has(candidate.id);
 }
 
 function sameInvoice(active: StripLog, candidate: StripLog): boolean {
@@ -75,7 +80,7 @@ export function canActOnReceivingStripLine<T extends StripLog>(
   for (const anchor of logs) {
     if (!activeInvoiceIds.has(anchor.id)) continue;
     if (!sameInvoice(anchor, log)) continue;
-    if (sameReceivingSupplier(anchor, log, activeSupplier)) return true;
+    if (sameReceivingSupplier(anchor, log, activeInvoiceIds, activeSupplier)) return true;
   }
   return false;
 }
