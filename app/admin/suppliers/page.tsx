@@ -1,6 +1,6 @@
 import { PageIntro } from '@/components/layout/PageIntro';
 import { AdminViewTabs } from '@/components/features/admin/AdminViewTabs';
-import { SupplierTable } from '@/components/features/suppliers/SupplierTable';
+import { SupplierDirectory } from '@/components/features/suppliers/SupplierTable';
 import { PageMain } from '@/components/ui/layout';
 import { listSuppliers } from '@/lib/domains/suppliers/suppliers';
 import { requireOperationalStaff } from '@/lib/auth/guardRoute';
@@ -28,7 +28,7 @@ export default async function AdminSuppliersPage() {
         />
       </div>
       <div className="mt-6 rounded-2xl border border-slate-800 bg-slate-900/50 p-4 sm:p-6">
-        <SupplierTable initialSuppliers={suppliers} canEdit={canEdit} />
+        <SupplierDirectory initialSuppliers={suppliers} canEdit={canEdit} />
       </div>
     </PageMain>
   );

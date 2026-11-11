@@ -1,14 +1,17 @@
 'use client';
 
 import React, { useMemo, useState } from 'react';
-import { Pencil, Plus, Search } from 'lucide-react';
+import { ChevronRight, Pencil, Plus, Search } from 'lucide-react';
 import type { SupplierRecord } from '@/lib/domains/suppliers/suppliers';
-import { ModalBody, ModalFooter, ModalHeader, ModalShell, ScrollTable } from '@/components/ui/layout';
+import { ModalBody, ModalFooter, ModalHeader, ModalShell } from '@/components/ui/layout';
 import { Button } from '@/components/ui/Button';
 import { cn } from '@/lib/utils/cn';
 
 const FIELD =
   'mt-1.5 w-full min-h-11 rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-slate-100 outline-none focus:border-emerald-500/50';
+
+const FOCUS =
+  'focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-400';
 
 type FormState = {
   name: string;
@@ -24,7 +27,28 @@ const EMPTY_FORM: FormState = {
   contactEmail: '',
 };
 
-export function SupplierTable({
+function supplierSummary(row: SupplierRecord): string {
+  const contact = row.contactName?.trim() || '';
+  const reach = row.contactPhone?.trim() || row.contactEmail?.trim() || '';
+  if (contact && reach) return `${contact} · ${reach}`;
+  return contact || reach || 'No contact on file';
+}
+
+function formatSupplierDate(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '—';
+  return new Intl.DateTimeFormat('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  }).format(date);
+}
+
+function DetailValue({ children }: { children: React.ReactNode }) {
+  return <dd className="text-sm font-semibold text-slate-100">{children}</dd>;
+}
+
+export function SupplierDirectory({
   initialSuppliers,
   canEdit,
 }: {
@@ -34,6 +58,8 @@ export function SupplierTable({
   const [suppliers, setSuppliers] = useState<SupplierRecord[]>(initialSuppliers);
   const [query, setQuery] = useState('');
   const [modalOpen, setModalOpen] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [detail, setDetail] = useState<SupplierRecord | null>(null);
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -51,12 +77,15 @@ export function SupplierTable({
   }, [suppliers, query]);
 
   const openCreate = () => {
+    setEditingId(null);
     setForm(EMPTY_FORM);
     setError(null);
     setModalOpen(true);
   };
 
   const openEdit = (row: SupplierRecord) => {
+    setDetail(null);
+    setEditingId(row.id);
     setForm({
       name: row.name,
       contactName: row.contactName ?? '',
@@ -111,13 +140,14 @@ export function SupplierTable({
     <>
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <label className="relative min-w-0 flex-1">
+          <span className="sr-only">Search suppliers</span>
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
           <input
             type="search"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search suppliers…"
-            className="w-full min-h-11 rounded-xl border border-slate-800 bg-slate-950 py-2.5 pl-10 pr-4 text-sm text-slate-100 placeholder:text-slate-600"
+            className="w-full min-h-11 rounded-xl border border-slate-800 bg-slate-950 py-2.5 pl-10 pr-4 text-sm text-slate-100 placeholder:text-slate-600 focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-400"
           />
         </label>
         {canEdit ? (
@@ -128,66 +158,146 @@ export function SupplierTable({
         ) : null}
       </div>
 
-      <ScrollTable className="mt-4 rounded-xl border border-slate-800">
-        <table className="min-w-[640px] w-full text-left text-sm">
-          <thead className="border-b border-slate-800 bg-slate-900/80 text-[10px] font-bold uppercase tracking-wider text-slate-500">
-            <tr>
-              <th className="px-4 py-3">Supplier</th>
-              <th className="px-4 py-3">Contact</th>
-              <th className="px-4 py-3">Phone</th>
-              <th className="px-4 py-3">Email</th>
-              {canEdit ? <th className="px-4 py-3 text-right">Actions</th> : null}
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.length === 0 ? (
-              <tr>
-                <td colSpan={canEdit ? 5 : 4} className="px-4 py-8 text-center text-slate-500">
-                  {query.trim() ? 'No suppliers match your search.' : 'No suppliers yet.'}
-                </td>
-              </tr>
-            ) : (
-              filtered.map((row) => (
-                <tr key={row.id} className="border-t border-slate-800/80 hover:bg-slate-900/40">
-                  <td className="min-w-0 px-4 py-3 font-semibold text-slate-100">
-                    <span className="truncate block max-w-[16rem]" title={row.name}>
-                      {row.name}
-                    </span>
-                  </td>
-                  <td className="min-w-0 px-4 py-3 text-slate-300">
-                    <span className="truncate block max-w-[12rem]" title={row.contactName ?? undefined}>
-                      {row.contactName || '—'}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 font-mono text-slate-400">{row.contactPhone || '—'}</td>
-                  <td className="min-w-0 px-4 py-3 text-slate-400">
-                    <span className="truncate block max-w-[14rem]" title={row.contactEmail ?? undefined}>
-                      {row.contactEmail || '—'}
-                    </span>
-                  </td>
-                  {canEdit ? (
-                    <td className="px-4 py-3 text-right">
-                      <button
-                        type="button"
-                        onClick={() => openEdit(row)}
-                        className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-800 hover:text-emerald-300"
-                        aria-label={`Edit ${row.name}`}
-                      >
-                        <Pencil className="h-4 w-4" />
-                      </button>
-                    </td>
-                  ) : null}
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </ScrollTable>
+      {filtered.length === 0 ? (
+        <p className="mt-4 rounded-2xl border border-dashed border-slate-700 px-4 py-8 text-center text-sm text-slate-500" role="status">
+          {query.trim() ? 'No suppliers match your search.' : 'No suppliers yet.'}
+        </p>
+      ) : (
+        <ul role="list" className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
+          {filtered.map((row) => (
+            <li
+              key={row.id}
+              role="listitem"
+              className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-950/70"
+            >
+              <button
+                type="button"
+                onClick={() => setDetail(row)}
+                aria-haspopup="dialog"
+                className={cn(
+                  'flex w-full min-h-11 flex-col gap-1 px-4 py-3 text-left transition hover:bg-slate-900/80',
+                  FOCUS
+                )}
+              >
+                <span className="flex items-center justify-between gap-3">
+                  <span className="truncate text-base font-semibold text-white">{row.name}</span>
+                  <ChevronRight className="h-4 w-4 shrink-0 text-slate-500" aria-hidden />
+                </span>
+                <span className="truncate text-sm text-slate-400">{supplierSummary(row)}</span>
+                <span className="sr-only">View details</span>
+              </button>
+              {canEdit ? (
+                <div className="border-t border-slate-800 px-2 py-1">
+                  <button
+                    type="button"
+                    onClick={() => openEdit(row)}
+                    aria-label={`Edit ${row.name}`}
+                    className={cn(
+                      'inline-flex min-h-11 items-center gap-2 rounded-xl px-3 text-sm font-semibold text-slate-300 hover:bg-slate-800 hover:text-emerald-200',
+                      FOCUS
+                    )}
+                  >
+                    <Pencil className="h-4 w-4" aria-hidden />
+                    Edit
+                  </button>
+                </div>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      )}
 
-      <ModalShell open={modalOpen} onClose={() => setModalOpen(false)} width="md">
+      <ModalShell
+        open={detail !== null}
+        onClose={() => setDetail(null)}
+        width="sm"
+        labelledBy="supplier-detail-title"
+      >
+        {detail ? (
+          <>
+            <ModalHeader>
+              <p className="text-xs font-bold uppercase tracking-widest text-emerald-200">Supplier</p>
+              <h2 id="supplier-detail-title" className="mt-1 text-lg font-black text-white">
+                {detail.name}
+              </h2>
+            </ModalHeader>
+            <ModalBody>
+              <dl className="space-y-4">
+                <div>
+                  <dt className="text-xs font-bold uppercase tracking-wider text-slate-400">Contact</dt>
+                  <DetailValue>{detail.contactName?.trim() || '—'}</DetailValue>
+                </div>
+                <div>
+                  <dt className="text-xs font-bold uppercase tracking-wider text-slate-400">Phone</dt>
+                  <DetailValue>
+                    {detail.contactPhone?.trim() ? (
+                      <a
+                        href={`tel:${detail.contactPhone.trim()}`}
+                        className={cn('rounded-md text-emerald-300 underline-offset-2 hover:underline', FOCUS)}
+                      >
+                        {detail.contactPhone.trim()}
+                      </a>
+                    ) : (
+                      '—'
+                    )}
+                  </DetailValue>
+                </div>
+                <div>
+                  <dt className="text-xs font-bold uppercase tracking-wider text-slate-400">Email</dt>
+                  <DetailValue>
+                    {detail.contactEmail?.trim() ? (
+                      <a
+                        href={`mailto:${detail.contactEmail.trim()}`}
+                        className={cn(
+                          'break-all rounded-md text-emerald-300 underline-offset-2 hover:underline',
+                          FOCUS
+                        )}
+                      >
+                        {detail.contactEmail.trim()}
+                      </a>
+                    ) : (
+                      '—'
+                    )}
+                  </DetailValue>
+                </div>
+                <div>
+                  <dt className="text-xs font-bold uppercase tracking-wider text-slate-400">Added</dt>
+                  <DetailValue>{formatSupplierDate(detail.createdAt)}</DetailValue>
+                </div>
+                <div>
+                  <dt className="text-xs font-bold uppercase tracking-wider text-slate-400">Updated</dt>
+                  <DetailValue>{formatSupplierDate(detail.updatedAt)}</DetailValue>
+                </div>
+              </dl>
+            </ModalBody>
+            <ModalFooter className="flex gap-3">
+              <Button type="button" variant="ghost" className="min-h-11 flex-1" onClick={() => setDetail(null)}>
+                Close
+              </Button>
+              {canEdit ? (
+                <Button
+                  type="button"
+                  variant="success"
+                  className="min-h-11 flex-1"
+                  onClick={() => openEdit(detail)}
+                >
+                  Edit supplier
+                </Button>
+              ) : null}
+            </ModalFooter>
+          </>
+        ) : null}
+      </ModalShell>
+
+      <ModalShell
+        open={modalOpen}
+        onClose={() => setModalOpen(false)}
+        width="md"
+        labelledBy="supplier-form-title"
+      >
         <ModalHeader className="px-6 py-4">
-          <h2 className="text-lg font-black text-white">
-            {form.name && suppliers.some((s) => s.name === form.name) ? 'Edit supplier' : 'New supplier'}
+          <h2 id="supplier-form-title" className="text-lg font-black text-white">
+            {editingId ? 'Edit supplier' : 'New supplier'}
           </h2>
         </ModalHeader>
         <ModalBody className="space-y-4 px-6 py-4">
@@ -245,3 +355,5 @@ export function SupplierTable({
     </>
   );
 }
+
+export const SupplierTable = SupplierDirectory;
