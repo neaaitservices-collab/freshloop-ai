@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { quantityKindForInvoiceUnit } from '@/lib/domains/receiving/invoiceOcrCommit';
-import { parseInvoiceIdentity, parseInvoiceLineFields } from '@/lib/domains/receiving/invoiceOcrParse';
+import { parseInvoiceIdentity, parseInvoiceLineFields, parseOcrInvoiceDate } from '@/lib/domains/receiving/invoiceOcrParse';
 import { draftPostingBlockers, buildAuthoritativeOcrDraft, applyOcrDraftResolutions } from '@/lib/domains/receiving/invoiceOcrDraft';
 import { isLedgerIdempotencyConflict } from '@/lib/domains/inventory/idempotencyConflict';
 
@@ -24,6 +24,53 @@ test('an explicit deli department is kept', () => {
   const line = parseInvoiceLineFields({ name: 'Rotisserie Chicken', quantity: 2, department: 'DELI_KITCHEN' }, 1);
   assert.equal(line.department, 'DELI_KITCHEN');
   assert.equal(line.departmentAssumed, false);
+});
+
+test('an unknown department stays on the produce fallback and is marked assumed', () => {
+  const line = parseInvoiceLineFields({ name: 'Soap', quantity: 1, department: 'FROZEN' }, 1);
+  assert.equal(line.department, 'PRODUCE');
+  assert.equal(line.departmentAssumed, true);
+  assert.match(line.gaps.join(' '), /FROZEN/);
+  const grocery = parseInvoiceLineFields({ name: 'Soap', quantity: 1, department: 'grocery' }, 1);
+  assert.equal(grocery.department, 'GROCERY');
+  assert.equal(grocery.departmentAssumed, false);
+  const draft = buildAuthoritativeOcrDraft({
+    vendorName: 'North Market',
+    invoiceNumber: 'INV-100',
+    invoiceDate: '2026-11-08',
+    totalAmount: 1,
+    departmentBreakdown: { PRODUCE: 1 },
+    lines: [
+      {
+        item_name: line.name,
+        product_id: null,
+        quantity: line.quantity,
+        unit: 'cases',
+        unit_cost: 1,
+        department: line.department,
+        case_pack_size: 1,
+        line_confidence: 0.99,
+        requires_approval: false,
+        department_assumed: line.departmentAssumed,
+      },
+    ],
+  });
+  assert.ok(draft.lines[0]?.review_reasons?.includes('department_assumed'));
+});
+
+test('written invoice dates are kept and ambiguous dates are flagged', () => {
+  assert.equal(parseOcrInvoiceDate('November 8, 2026').invoiceDate, '2026-11-08');
+  assert.equal(parseOcrInvoiceDate('8 Nov 2026').invoiceDate, '2026-11-08');
+  assert.equal(parseOcrInvoiceDate('2026-11-08').invoiceDate, '2026-11-08');
+  const ambiguous = parseOcrInvoiceDate('01/02/2026');
+  assert.equal(ambiguous.invoiceDate, '');
+  assert.match(ambiguous.gap ?? '', /ambiguous/);
+  const monthDay = parseOcrInvoiceDate('05-11-2026');
+  assert.equal(monthDay.invoiceDate, '');
+  assert.match(monthDay.gap ?? '', /ambiguous/);
+  const impossible = parseInvoiceIdentity({ invoiceDate: '2026-02-31' });
+  assert.equal(impossible.invoiceDate, '');
+  assert.match(impossible.gaps.join(' '), /not a real calendar date/);
 });
 
 test('an unreadable quantity is not replaced with 1', () => {

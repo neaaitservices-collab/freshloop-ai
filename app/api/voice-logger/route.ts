@@ -8,6 +8,7 @@ import {
 } from '@/lib/domains/ai/whisper';
 import { GEMINI_FLASH_MODEL_FALLBACKS } from '@/lib/domains/ai/geminiModels';
 import { loadProductCatalog as loadCatalogProducts } from '@/lib/domains/catalog/productCatalog';
+import { CATALOG_DEPARTMENTS, departmentPromptUnion } from '@/lib/domains/inventory/inventoryCatalog';
 import { handleApiRouteError } from '@/lib/domains/ai/apiError';
 import { authErrorResponse } from '@/lib/auth/http';
 import { requireOperationalStaff } from '@/lib/auth/guardRoute';
@@ -233,7 +234,7 @@ Analyze the spoken audio or text transcript from floor/production staff and retu
       "unit": "lbs" | "kg" | "units" | "cases" | "loaves" | "L" | "bunches" | "tubs",
       "condition": "Overripe" | "Bruised" | "Slightly Blemished" | "Near Expiry" | "Spoiled" | "Crushed",
       "target_action": "PULL_RESCUE" | "DISCARD",
-      "department": "PRODUCE" | "DAIRY" | "BAKERY" | "PANTRY",
+      "department": ${departmentPromptUnion()},
       "allergen_warnings": ["string"]
     }
   ]
@@ -250,7 +251,7 @@ function mapVoiceParserItems(items: Record<string, unknown>[]) {
     unit: String(item.unit || 'units'),
     condition: String(item.condition || 'Overripe'),
     target_action: (item.target_action === 'DISCARD' ? 'DISCARD' : 'PULL_RESCUE') as VoiceTargetAction,
-    department: (['PRODUCE', 'DAIRY', 'BAKERY', 'PANTRY', 'DELI_KITCHEN', 'GROCERY'].includes(String(item.department))
+    department: ((CATALOG_DEPARTMENTS as readonly string[]).includes(String(item.department))
       ? String(item.department)
       : 'PRODUCE') as Department,
     allergen_warnings: Array.isArray(item.allergen_warnings)
@@ -636,9 +637,9 @@ export async function POST(req: NextRequest) {
             : it.item_name,
           quantity: it.quantity,
           unit: it.unit,
-          department: (['PRODUCE', 'DAIRY', 'BAKERY', 'PANTRY', 'DELI_KITCHEN', 'GROCERY'].includes(it.department)
+          department: ((CATALOG_DEPARTMENTS as readonly string[]).includes(it.department)
             ? it.department
-            : 'PRODUCE') as 'PRODUCE' | 'DAIRY' | 'BAKERY' | 'PANTRY' | 'DELI_KITCHEN' | 'GROCERY',
+            : 'PRODUCE') as Department,
           condition: it.condition,
           allergenWarnings: it.allergen_warnings,
           productId: it.product_id,

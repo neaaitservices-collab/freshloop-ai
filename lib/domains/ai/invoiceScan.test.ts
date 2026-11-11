@@ -10,7 +10,10 @@ import {
   geminiFailureDetail,
   INVOICE_OCR_ATTEMPT_TIMEOUT_MS,
   INVOICE_OCR_TOTAL_BUDGET_MS,
+  INVOICE_PDF_MAX_PAGES,
+  INVOICE_PHOTO_MAX_BYTES,
   INVOICE_PHOTO_MAX_EDGE,
+  invoicePhotoWithinPixelCap,
 } from '@/lib/domains/ai/invoiceScan';
 import { invoiceOcrModelCandidates, INVOICE_OCR_FLASH_MODEL } from '@/lib/domains/ai/geminiModels';
 
@@ -77,6 +80,57 @@ test('unreadable invoice bytes fail before a model call', async () => {
   await assert.rejects(
     () => downscaleInvoicePhoto(Buffer.from('not-an-image').toString('base64'), 'image/jpeg'),
     /Could not prepare the photo/
+  );
+});
+
+test('a PDF is sent through and a non-image is rejected', async () => {
+  const pdf = Buffer.from('%PDF-1.4\n1 0 obj\n/Type /Page\nendobj\n%%EOF');
+  const preparedPdf = await downscaleInvoicePhoto(pdf.toString('base64'), 'application/pdf');
+  assert.equal(preparedPdf.mimeType, 'application/pdf');
+  assert.equal(preparedPdf.data, pdf.toString('base64'));
+  const manyPages = Buffer.from(
+    `%PDF-1.4\n${Array.from({ length: INVOICE_PDF_MAX_PAGES + 1 }, () => '/Type /Page').join('\n')}\n%%EOF`
+  );
+  await assert.rejects(
+    () => downscaleInvoicePhoto(manyPages.toString('base64'), 'application/pdf'),
+    /too many pages/
+  );
+  const hugePdf = Buffer.alloc(INVOICE_PHOTO_MAX_BYTES + 1);
+  hugePdf.write('%PDF');
+  await assert.rejects(
+    () => downscaleInvoicePhoto(hugePdf.toString('base64'), 'application/pdf'),
+    /This PDF is too large/
+  );
+  const encrypted = Buffer.from('%PDF-1.4\n/Encrypt 1 0 R\n%%EOF');
+  await assert.rejects(
+    () => downscaleInvoicePhoto(encrypted.toString('base64'), 'application/pdf'),
+    /This PDF is encrypted/
+  );
+  const truncated = Buffer.from('%PDF-1.4\n1 0 obj\n/Type /Page\nendobj\n');
+  await assert.rejects(
+    () => downscaleInvoicePhoto(truncated.toString('base64'), 'application/pdf'),
+    /no ending marker/
+  );
+  await assert.rejects(
+    () => downscaleInvoicePhoto(Buffer.from('GIF89a not an invoice').toString('base64'), 'image/gif'),
+    /not a JPEG, PNG, or WebP/
+  );
+  const png = await sharp({
+    create: { width: 16, height: 16, channels: 3, background: { r: 1, g: 2, b: 3 } },
+  })
+    .png()
+    .toBuffer();
+  const prepared = await downscaleInvoicePhoto(png.toString('base64'), 'image/png');
+  assert.equal(prepared.mimeType, 'image/jpeg');
+  const tooBig = Buffer.alloc(INVOICE_PHOTO_MAX_BYTES + 1);
+  assert.equal(invoicePhotoWithinPixelCap(100_000, 100_000), false);
+  assert.equal(invoicePhotoWithinPixelCap(4000, 3000), true);
+  tooBig[0] = 0xff;
+  tooBig[1] = 0xd8;
+  tooBig[2] = 0xff;
+  await assert.rejects(
+    () => downscaleInvoicePhoto(tooBig.toString('base64'), 'image/jpeg'),
+    /too large/
   );
 });
 

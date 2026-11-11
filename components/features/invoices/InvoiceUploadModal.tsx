@@ -324,7 +324,7 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
 
                 <input
                   type="file"
-                  accept="image/*"
+                  accept="image/*,application/pdf"
                   capture="environment"
                   onChange={handleFileChange}
                   className="hidden"
@@ -332,7 +332,7 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
                 />
                 <input
                   type="file"
-                  accept="image/*"
+                  accept="image/*,application/pdf"
                   onChange={handleFileChange}
                   className="hidden"
                   id="invoice-file-input"

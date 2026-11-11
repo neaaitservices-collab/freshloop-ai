@@ -50,6 +50,9 @@ export async function prepareImageDataUrlForOcr(
 
   const mimeType = match[1];
   const base64Payload = match[2];
+  if (mimeType === 'application/pdf' || base64Payload.startsWith('JVBERi0')) {
+    return { dataUrl, mimeType: 'application/pdf' };
+  }
   const needsTranscode = /heic|heif/i.test(mimeType);
   const acceptableMime =
     mimeType === 'image/jpeg' || mimeType === 'image/webp' || mimeType === 'image/jpg';

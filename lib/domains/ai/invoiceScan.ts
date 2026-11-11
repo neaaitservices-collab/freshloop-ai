@@ -3,6 +3,79 @@ import sharp from 'sharp';
 /** Longest edge sent to Gemini for invoice photos. */
 export const INVOICE_PHOTO_MAX_EDGE = 1200;
 export const INVOICE_PHOTO_JPEG_QUALITY = 72;
+/** Decoded upload cap, checked before sharp runs. */
+export const INVOICE_PHOTO_MAX_BYTES = 8 * 1024 * 1024;
+/** Reject decompression bombs. A 48MP phone photo still fits. */
+export const INVOICE_PHOTO_MAX_PIXELS = 50_000_000;
+/** Invoice PDFs longer than this are rejected before they are sent. */
+export const INVOICE_PDF_MAX_PAGES = 8;
+
+export type InvoicePhotoKind = 'jpeg' | 'png' | 'webp' | 'pdf' | 'unknown';
+
+export function invoicePhotoKind(input: Buffer): InvoicePhotoKind {
+  if (input.length >= 3 && input[0] === 0xff && input[1] === 0xd8 && input[2] === 0xff) return 'jpeg';
+  if (
+    input.length >= 8 &&
+    input[0] === 0x89 &&
+    input[1] === 0x50 &&
+    input[2] === 0x4e &&
+    input[3] === 0x47 &&
+    input[4] === 0x0d &&
+    input[5] === 0x0a &&
+    input[6] === 0x1a &&
+    input[7] === 0x0a
+  ) {
+    return 'png';
+  }
+  if (
+    input.length >= 12 &&
+    input.toString('ascii', 0, 4) === 'RIFF' &&
+    input.toString('ascii', 8, 12) === 'WEBP'
+  ) {
+    return 'webp';
+  }
+  if (input.length >= 4 && input.toString('ascii', 0, 4) === '%PDF') return 'pdf';
+  return 'unknown';
+}
+
+export function invoicePhotoWithinPixelCap(width: number, height: number): boolean {
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return false;
+  return width * height <= INVOICE_PHOTO_MAX_PIXELS;
+}
+
+/** Counts uncompressed page objects. Returns null when the file does not list them in clear text. */
+export function invoicePdfPageCount(input: Buffer): number | null {
+  const pages = input.toString('latin1').match(/\/Type\s*\/Page(?!s)/g);
+  if (!pages || pages.length === 0) return null;
+  return pages.length;
+}
+
+function assertInvoicePdf(input: Buffer): void {
+  if (input.length > INVOICE_PHOTO_MAX_BYTES) {
+    throw new Error('This PDF is too large. Send a smaller file.');
+  }
+  const text = input.toString('latin1');
+  if (text.includes('/Encrypt')) {
+    throw new Error('This PDF is encrypted. Send an unlocked copy.');
+  }
+  if (!text.includes('%%EOF')) {
+    throw new Error('This PDF is incomplete. The file has no ending marker.');
+  }
+  const pages = invoicePdfPageCount(input);
+  if (pages != null && pages > INVOICE_PDF_MAX_PAGES) {
+    throw new Error(`This PDF has too many pages. Send ${INVOICE_PDF_MAX_PAGES} pages or fewer.`);
+  }
+}
+
+function assertInvoicePhotoBytes(input: Buffer): void {
+  if (input.length > INVOICE_PHOTO_MAX_BYTES) {
+    throw new Error('Could not prepare the photo. The upload is too large.');
+  }
+  const kind = invoicePhotoKind(input);
+  if (kind !== 'jpeg' && kind !== 'png' && kind !== 'webp') {
+    throw new Error('Could not prepare the photo. The upload is not a JPEG, PNG, or WebP image.');
+  }
+}
 
 /** Per Gemini HTTP/SDK attempt. Kept inside the 20–25s window Nelson approved. */
 export const INVOICE_OCR_ATTEMPT_TIMEOUT_MS = 22_000;
@@ -43,19 +116,33 @@ export function geminiFailureDetail(error: unknown): string {
   return 'request failed';
 }
 
-/** Always resize and re-encode before the photo is sent to Gemini. */
+/** Resize a photo. A PDF is size-checked and sent through unchanged. */
 export async function downscaleInvoicePhoto(
   base64: string,
   _mimeType: string
-): Promise<{ data: string; mimeType: 'image/jpeg' }> {
+): Promise<{ data: string; mimeType: 'image/jpeg' | 'application/pdf' }> {
   const payload = base64.includes(',') ? (base64.split(',')[1] ?? '') : base64;
   const input = Buffer.from(payload, 'base64');
   if (input.length === 0) {
     throw new Error('Could not prepare the photo. The upload was empty.');
   }
+  if (invoicePhotoKind(input) === 'pdf') {
+    assertInvoicePdf(input);
+    return { data: payload, mimeType: 'application/pdf' };
+  }
+  assertInvoicePhotoBytes(input);
 
   try {
-    const output = await sharp(input, { failOn: 'none' })
+    const image = sharp(input, {
+      failOn: 'none',
+      limitInputPixels: INVOICE_PHOTO_MAX_PIXELS,
+      animated: false,
+    });
+    const meta = await image.metadata();
+    if (!invoicePhotoWithinPixelCap(meta.width ?? 0, meta.height ?? 0)) {
+      throw new Error('Could not prepare the photo. The image is too large.');
+    }
+    const output = await image
       .rotate()
       .resize({
         width: INVOICE_PHOTO_MAX_EDGE,
@@ -72,6 +159,12 @@ export async function downscaleInvoicePhoto(
   } catch (error) {
     if (error instanceof Error && error.message.startsWith('Could not prepare the photo')) {
       throw error;
+    }
+    if (error instanceof Error && error.message.startsWith('This PDF')) {
+      throw error;
+    }
+    if (error instanceof Error && /pixel limit/i.test(error.message)) {
+      throw new Error('Could not prepare the photo. The image is too large.');
     }
     throw new Error('Could not prepare the photo before sending it to the reader.');
   }

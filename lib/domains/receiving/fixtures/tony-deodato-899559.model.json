@@ -1,0 +1,133 @@
+{
+  "vendorName": "Tony Deodato & Sons",
+  "invoiceNumber": "899559",
+  "invoiceDate": "05-11-2026",
+  "terms": "7 days",
+  "subtotal": 570.0,
+  "hst": 0,
+  "pst": 0,
+  "lineItems": [
+    {
+      "name": "48/54 ORANGES",
+      "department": "PRODUCE",
+      "ordered": 1,
+      "shipped": 1,
+      "quantity": 1,
+      "unit": "CASE",
+      "code": "OR9D",
+      "unitCost": 34.5,
+      "totalCost": 34.5
+    },
+    {
+      "name": "BROCCOLI 18'S",
+      "department": "PRODUCE",
+      "ordered": 1,
+      "shipped": 1,
+      "quantity": 1,
+      "unit": "CASE",
+      "code": "BR1J",
+      "unitCost": 36.0,
+      "totalCost": 36.0
+    },
+    {
+      "name": "CELERY 24",
+      "department": "PRODUCE",
+      "ordered": 1,
+      "shipped": 1,
+      "quantity": 1,
+      "unit": "CASE",
+      "code": "CE1C",
+      "unitCost": 38.5,
+      "totalCost": 38.5
+    },
+    {
+      "name": "GRAPES GREEN SEEDLESS",
+      "department": "PRODUCE",
+      "ordered": 1,
+      "shipped": 1,
+      "quantity": 1,
+      "unit": "CASE",
+      "code": "GR01C",
+      "unitCost": 67.5,
+      "totalCost": 67.5
+    },
+    {
+      "name": "GRAPES RED SEEDLESS",
+      "department": "PRODUCE",
+      "ordered": 1,
+      "shipped": 0,
+      "quantity": 1,
+      "unit": "CASE",
+      "code": "GR02C",
+      "struckThrough": true,
+      "unitCost": 0.0,
+      "totalCost": 0.0
+    },
+    {
+      "name": "ROMAINE USA",
+      "department": "PRODUCE",
+      "ordered": 1,
+      "shipped": 1,
+      "quantity": 1,
+      "unit": "CASE",
+      "code": "RO1U",
+      "unitCost": 59.5,
+      "totalCost": 59.5
+    },
+    {
+      "name": "8x1LB STRAWBERRIES",
+      "department": "PRODUCE",
+      "ordered": 2,
+      "shipped": 2,
+      "quantity": 2,
+      "unit": "FLAT",
+      "code": "ST1F",
+      "unitCost": 84.75,
+      "totalCost": 169.5
+    },
+    {
+      "name": "10LB JALAPENO PEPPERS",
+      "department": "PRODUCE",
+      "ordered": 1,
+      "shipped": 1,
+      "quantity": 1,
+      "unit": "CASE",
+      "code": "PE09C",
+      "unitCost": 25.75,
+      "totalCost": 25.75
+    },
+    {
+      "name": "BLUEBERRIES 12X1 HALF PINT",
+      "department": "PRODUCE",
+      "ordered": 2,
+      "shipped": 2,
+      "quantity": 2,
+      "unit": "FLAT",
+      "code": "BL1FH",
+      "unitCost": 47.0,
+      "totalCost": 94.0
+    },
+    {
+      "name": "RASPBERRIES",
+      "department": "PRODUCE",
+      "ordered": 1,
+      "shipped": 1,
+      "quantity": 1,
+      "unit": "FLAT",
+      "code": "RA5F",
+      "unitCost": 44.75,
+      "totalCost": 44.75
+    },
+    {
+      "name": "FUEL SURCHARGE",
+      "department": "PRODUCE",
+      "ordered": 1,
+      "shipped": 1,
+      "quantity": 1,
+      "unit": "CHRG",
+      "code": "FUEL",
+      "unitCost": 0.0,
+      "totalCost": 0.0
+    }
+  ]
+}

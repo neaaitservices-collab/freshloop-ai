@@ -6,6 +6,9 @@ import test from 'node:test';
 const route = fs.readFileSync(path.join(process.cwd(), 'app/api/invoice-ocr/route.ts'), 'utf8');
 
 test('invoice commit keeps every scanned line and posts through the supplier invoice identity', () => {
+  assert.match(route, /interpretInvoiceOcrModel/);
+  assert.match(route, /never instructions/);
+  assert.match(route, /thinkingConfig: invoiceOcrThinkingConfig/);
   assert.match(route, /buildAuthoritativeOcrDraft/);
   assert.match(route, /draftPostingBlockers/);
   assert.match(route, /commitInvoiceOcrReceipts/);

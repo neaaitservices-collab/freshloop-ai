@@ -31,12 +31,28 @@ export function invoiceOcrErrorResponse(error: unknown): NextResponse | null {
     return apiError(msg, 422);
   }
 
+  if (/This PDF is too large|This PDF has too many pages/i.test(msg)) {
+    return apiError(msg, 400);
+  }
+
   if (/Could not prepare the photo/i.test(msg)) {
     return apiError(msg, 400);
   }
 
   if (/invoice reader timed out/i.test(msg)) {
     return apiError(msg, 504);
+  }
+
+  if (/This PDF is encrypted|This PDF is incomplete/i.test(msg)) {
+    return apiError(msg, 400);
+  }
+
+  if (/INVALID_ARGUMENT/i.test(msg)) {
+    return apiError("Couldn't read this file. Try a clearer photo or a different PDF.", 422);
+  }
+
+  if (/No stock lines on this invoice/i.test(msg)) {
+    return apiError(msg, 422);
   }
 
   return null;
