@@ -185,6 +185,36 @@ test('a mismatched line total is flagged and the unit cost is kept', () => {
   assert.equal(close.lineItems[0]?.unitCost, 1.11);
 });
 
+test('an invoice with only charges and zero lines is rejected before a draft', () => {
+  assert.throws(
+    () =>
+      interpretInvoiceOcrModel({
+        vendorName: 'North Market',
+        invoiceNumber: 'INV-0',
+        invoiceDate: '2026-11-08',
+        subtotal: 0,
+        lineItems: [
+          {
+            name: 'Old Bananas',
+            quantity: 0,
+            unit: 'cases',
+            unitCost: 0,
+            totalCost: 0,
+            struckThrough: true,
+          },
+          {
+            name: 'FUEL SURCHARGE',
+            quantity: 1,
+            unit: 'CHRG',
+            unitCost: 0,
+            totalCost: 0,
+          },
+        ],
+      }),
+    /No stock lines on this invoice/
+  );
+});
+
 test('a hand-written invoice fixture keeps stock math and drops non-stock lines', () => {
   const fixture = {
     vendorName: 'North Market',

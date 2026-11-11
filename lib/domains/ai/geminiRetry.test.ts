@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { generateContentWithFallback, geminiBackoffMs, shouldUseSdkAfterRest } from '@/lib/domains/ai/gemini';
+import { invoiceOcrErrorResponse } from '@/lib/domains/receiving/invoiceOcrErrors';
 import { invoiceOcrThinkingConfig } from '@/lib/domains/ai/geminiModels';
 
 test('a 429 triggers exactly one retry and does not use the SDK', async () => {
@@ -37,6 +38,46 @@ test('a 429 triggers exactly one retry and does not use the SDK', async () => {
       /429/
     );
     assert.equal(calls, 2);
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousKey == null) delete process.env.GEMINI_API_KEY;
+    else process.env.GEMINI_API_KEY = previousKey;
+  }
+});
+
+test('a model INVALID_ARGUMENT becomes a 422 read error', async () => {
+  const previousKey = process.env.GEMINI_API_KEY;
+  const previousFetch = globalThis.fetch;
+  process.env.GEMINI_API_KEY = 'test-key';
+  globalThis.fetch = async () =>
+    new Response('{"error":{"code":400,"status":"INVALID_ARGUMENT","message":"invalid pdf"}}', {
+      status: 400,
+    });
+  try {
+    let thrown: unknown;
+    try {
+      await generateContentWithFallback(
+        'read this invoice',
+        { data: 'abc', mimeType: 'application/pdf' },
+        ['gemini-3.8-flash'],
+        {
+          skipModelDiscovery: true,
+          maxModelsToTry: 1,
+          preferRestApi: true,
+          attemptTimeoutMs: 5000,
+          deadlineAtMs: Date.now() + 5000,
+        }
+      );
+    } catch (error) {
+      thrown = error;
+    }
+    assert.ok(thrown instanceof Error);
+    assert.match(thrown.message, /INVALID_ARGUMENT/);
+    const res = invoiceOcrErrorResponse(thrown);
+    assert.ok(res);
+    assert.equal(res.status, 422);
+    const body = await res.json();
+    assert.match(body.error, /Couldn't read this file/);
   } finally {
     globalThis.fetch = previousFetch;
     if (previousKey == null) delete process.env.GEMINI_API_KEY;

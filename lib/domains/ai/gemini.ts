@@ -483,10 +483,14 @@ export async function generateContentWithFallback(
   const timedOut =
     failures.length > 0 &&
     failures.every((line) => /timed out|time budget spent/i.test(line));
+  const invalidArgument = failures.some((line) => /400/.test(line) && /INVALID_ARGUMENT/i.test(line));
   throw new Error(
-    timedOut
-      ? 'The invoice reader timed out before a result came back. Try a closer photo of the line items.'
-      : rejected
+    invalidArgument
+      ? failures.find((line) => /400/.test(line) && /INVALID_ARGUMENT/i.test(line)) ||
+        "Couldn't read this file."
+      : timedOut
+        ? 'The invoice reader timed out before a result came back. Try a closer photo of the line items.'
+        : rejected
         ? 'The photo could not be read. The Gemini key on this store was rejected.'
         : modelUnavailable
           ? 'The vision model is unavailable on this API key. Set GEMINI_OCR_MODEL=gemini-3.8-flash and restart the dev server.'

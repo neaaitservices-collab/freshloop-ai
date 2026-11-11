@@ -54,6 +54,13 @@ function assertInvoicePdf(input: Buffer): void {
   if (input.length > INVOICE_PHOTO_MAX_BYTES) {
     throw new Error('This PDF is too large. Send a smaller file.');
   }
+  const text = input.toString('latin1');
+  if (text.includes('/Encrypt')) {
+    throw new Error('This PDF is encrypted. Send an unlocked copy.');
+  }
+  if (!text.includes('%%EOF')) {
+    throw new Error('This PDF is incomplete. The file has no ending marker.');
+  }
   const pages = invoicePdfPageCount(input);
   if (pages != null && pages > INVOICE_PDF_MAX_PAGES) {
     throw new Error(`This PDF has too many pages. Send ${INVOICE_PDF_MAX_PAGES} pages or fewer.`);

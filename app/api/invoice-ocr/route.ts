@@ -40,6 +40,7 @@ import {
 import { CATALOG_DEPARTMENTS, departmentPromptUnion } from '@/lib/domains/inventory/inventoryCatalog';
 import {
   INVOICE_OCR_JSON_ERROR,
+  INVOICE_OCR_NO_STOCK_ERROR,
   INVOICE_OCR_TEXT_LIMITS,
   interpretInvoiceOcrModel,
 } from '@/lib/domains/receiving/invoiceOcrModel';
@@ -792,6 +793,9 @@ export async function POST(req: NextRequest) {
         line_total_note: item.line_total_note ?? undefined,
       })),
     });
+    if (extracted.lineItems.length === 0) {
+      throw new Error(INVOICE_OCR_NO_STOCK_ERROR);
+    }
     const draft =
       ocrSource === 'sample' ? null : await saveInvoiceOcrDraft(actor.id, draftPayload);
 

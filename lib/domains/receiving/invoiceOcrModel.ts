@@ -10,6 +10,8 @@ import {
 export const INVOICE_OCR_JSON_ERROR =
   'The invoice text could not be parsed as structured JSON. Try a clearer photo of the line-item table.';
 
+export const INVOICE_OCR_NO_STOCK_ERROR = 'No stock lines on this invoice';
+
 /** Caps repeated in the OCR prompt and enforced on the model payload. */
 export const INVOICE_OCR_TEXT_LIMITS = {
   vendorName: 120,
@@ -357,6 +359,9 @@ export function interpretInvoiceOcrModel(raw: unknown): InterpretedInvoiceModel 
 
   const classified = lines.map((line, index) => classifyInvoiceLine(readLine(line, index + 1), line));
   const lineItems = classified.filter((line) => line.postsStock);
+  if (lineItems.length === 0) {
+    throw new Error(INVOICE_OCR_NO_STOCK_ERROR);
+  }
   const excludedLines = classified.filter((line) => !line.postsStock);
   const lineSum = Number(classified.reduce((sum, line) => sum + line.totalCost, 0).toFixed(2));
   const printedSubtotal = pick(record, 'subtotal', 'subTotal');

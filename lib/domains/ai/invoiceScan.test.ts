@@ -101,6 +101,16 @@ test('a PDF is sent through and a non-image is rejected', async () => {
     () => downscaleInvoicePhoto(hugePdf.toString('base64'), 'application/pdf'),
     /This PDF is too large/
   );
+  const encrypted = Buffer.from('%PDF-1.4\n/Encrypt 1 0 R\n%%EOF');
+  await assert.rejects(
+    () => downscaleInvoicePhoto(encrypted.toString('base64'), 'application/pdf'),
+    /This PDF is encrypted/
+  );
+  const truncated = Buffer.from('%PDF-1.4\n1 0 obj\n/Type /Page\nendobj\n');
+  await assert.rejects(
+    () => downscaleInvoicePhoto(truncated.toString('base64'), 'application/pdf'),
+    /no ending marker/
+  );
   await assert.rejects(
     () => downscaleInvoicePhoto(Buffer.from('GIF89a not an invoice').toString('base64'), 'image/gif'),
     /not a JPEG, PNG, or WebP/

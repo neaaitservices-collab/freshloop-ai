@@ -43,5 +43,17 @@ export function invoiceOcrErrorResponse(error: unknown): NextResponse | null {
     return apiError(msg, 504);
   }
 
+  if (/This PDF is encrypted|This PDF is incomplete/i.test(msg)) {
+    return apiError(msg, 400);
+  }
+
+  if (/INVALID_ARGUMENT/i.test(msg)) {
+    return apiError("Couldn't read this file. Try a clearer photo or a different PDF.", 422);
+  }
+
+  if (/No stock lines on this invoice/i.test(msg)) {
+    return apiError(msg, 422);
+  }
+
   return null;
 }
