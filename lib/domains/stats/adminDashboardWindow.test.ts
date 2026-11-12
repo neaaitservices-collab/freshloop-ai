@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { StatsScorecardRows } from '@/components/features/admin/AdminStats';
+import {
+  controlStatus,
+  lostSharePct,
+  WasteSemaphoreCard,
+} from '@/components/features/admin/WasteSemaphoreCard';
 import { statsRangeQuerySchema } from '@/lib/security/schemas/statsRange';
 import {
   ADMIN_DASHBOARD_WINDOW_LABEL,
@@ -90,32 +98,69 @@ test('old admin range params do not move the window', () => {
   }
 });
 
-test('the admin dashboard stops rendering range controls and keeps helpers', () => {
+test('the admin scorecard is one stats card driven by day week and month chips', () => {
   const dashboard = readFileSync('components/features/admin/AdminDashboard.tsx', 'utf8');
   const stats = readFileSync('components/features/admin/AdminStats.tsx', 'utf8');
   const figures = readFileSync('components/features/admin/DashboardFigures.tsx', 'utf8');
+  const semaphore = readFileSync('components/features/admin/WasteSemaphoreCard.tsx', 'utf8');
   const page = readFileSync('app/admin/page.tsx', 'utf8');
   const api = readFileSync('app/api/admin/stats/route.ts', 'utf8');
   const filter = readFileSync('components/features/admin/StatsDateFilter.tsx', 'utf8');
   const storeStats = readFileSync('lib/domains/stats/storeStats.ts', 'utf8');
+  const chart = readFileSync('components/features/admin/RescueOutcomeChart.tsx', 'utf8');
 
+  assert.match(dashboard, /AdminStatsCard/);
+  assert.equal(dashboard.includes('LazyRescueOutcomeChart'), false);
+  assert.equal(dashboard.includes('RescueOutcomeChart'), false);
+  assert.equal(dashboard.includes('AdminActionCenter'), false);
+  assert.equal(dashboard.includes('Rescue rate'), false);
   assert.equal(dashboard.includes('StatsDateFilter'), false);
-  assert.equal(dashboard.includes('Date range'), false);
-  assert.equal(dashboard.includes('Previous range'), false);
-  assert.equal(dashboard.includes('transferRangeLabel'), false);
-  assert.equal(dashboard.includes('cardRangeLabel'), false);
-  assert.match(dashboard, /rangeLabel=\{ADMIN_DASHBOARD_WINDOW_LABEL\}/);
   assert.equal(/\bkitchen\b/i.test(dashboard), false);
   assert.equal(/\bkitchen\b/i.test(stats), false);
+  assert.equal(/\bkitchen\b/i.test(semaphore), false);
 
-  assert.match(stats, /windowLabel=\{windowLabel\}/);
-  assert.match(stats, /detail="Now"/);
+  assert.match(stats, /Inventory value/);
+  assert.match(stats, /On hand now/);
+  assert.match(stats, /Scraps/);
+  assert.match(stats, /scrapBucketLabel/);
+  assert.match(stats, /Sales/);
+  assert.match(stats, /Subtracted from main inventory/);
+  assert.match(stats, /Rescued/);
+  assert.match(stats, />Lost</);
+  assert.match(stats, /Of rescued \+ discarded/);
+  assert.match(stats, /variant="chips"/);
+  assert.match(stats, /defaultPreset="week"/);
+  assert.equal(stats.includes('Rescue rate'), false);
+  assert.equal(stats.includes('wasteReductionPct'), false);
   assert.equal(stats.includes('cardRangeLabel'), false);
-  assert.equal(stats.includes('Value rescued (${'), false);
+  assert.equal(stats.includes('<details'), false);
 
-  assert.match(figures, /adminDashboardWindow\(\)\.statsQuery/);
+  assert.match(semaphore, /Waste traffic light/);
+  assert.match(semaphore, /Over goal/);
+  assert.match(semaphore, /On goal/);
+  assert.match(semaphore, /≤ \{CONTROL_LOST_GOAL_PCT\}%/);
+  assert.equal(semaphore.includes('Waiting for'), false);
+  assert.equal(semaphore.includes('POS'), false);
+  assert.equal(semaphore.includes('grossSales'), false);
+  assert.equal(semaphore.includes('Log POS'), false);
+
+  assert.match(figures, /preset=\$\{activePreset\}/);
+  assert.equal(figures.includes('LazyDepartmentAlertsChart'), false);
+  assert.equal(figures.includes('LazyRescueOutcomeChart'), false);
+  assert.equal(figures.includes('adminDashboardWindow().statsQuery'), false);
   assert.equal(figures.includes('transferRangeLabel'), false);
   assert.equal(figures.includes('statsQuery ='), false);
+  assert.match(figures, /short-dated/);
+  assert.match(figures, /below par/);
+  assert.match(figures, /row\.low > 0 \|\| row\.expiring > 0/);
+  assert.match(figures, /setInventoryValue\(result\.stats\.inventoryValue\)/);
+  assert.match(figures, /setInventoryValue\(initialStats\.inventoryValue\)/);
+
+  assert.match(filter, /variant === 'chips'/);
+  assert.match(filter, /aria-label="Stats range"/);
+  assert.match(filter, /export function StatsDateFilter/);
+  assert.match(filter, /last30StoreDays/);
+  assert.match(chart, /export function RescueOutcomeChart/);
 
   assert.match(page, /adminDashboardWindowIgnoringQuery\(/);
   assert.match(page, /getAdminStoreStatsBundle\(dashboardWindow\.range\)/);
@@ -125,13 +170,94 @@ test('the admin dashboard stops rendering range controls and keeps helpers', () 
 
   assert.match(api, /presetRange/);
   assert.match(api, /statsRangeQuerySchema/);
-  assert.match(filter, /export function StatsDateFilter/);
-  assert.match(filter, /last30StoreDays/);
 
+  assert.match(storeStats, /calculateRealTimeWastePct\(wasteKpiOptions\(transferRange\)\)/);
+  assert.match(storeStats, /endUtc\.getTime\(\) - 1/);
   const inventoryAt = storeStats.indexOf('let inventoryValue = 0;');
   const totalsAt = storeStats.indexOf('const cardTotals');
   assert.ok(inventoryAt !== -1 && totalsAt > inventoryAt);
   const inventoryBlock = storeStats.slice(inventoryAt, totalsAt);
   assert.equal(inventoryBlock.includes('transferRange'), false);
   assert.equal(inventoryBlock.includes('cardBounds'), false);
+  assert.equal(inventoryBlock.includes('wasteKpiOptions'), false);
+});
+
+test('lost percent is discarded over rescued plus discarded and lights a 10 percent goal', () => {
+  assert.equal(lostSharePct(0, 0), null);
+  assert.equal(lostSharePct(100, 0), 0);
+  assert.equal(lostSharePct(0, 50), 100);
+  assert.equal(lostSharePct(1032, 753.47), 42.2);
+  assert.equal(lostSharePct(90, 10), 10);
+  assert.equal(controlStatus(null), 'on');
+  assert.equal(controlStatus(10), 'on');
+  assert.equal(controlStatus(10.1), 'over');
+  assert.equal(controlStatus(42.2), 'over');
+});
+
+test('the scorecard renders control, inventory, scraps, sales, rescued, and lost once', () => {
+  const html = renderToStaticMarkup(
+    createElement(StatsScorecardRows, {
+      periodPending: false,
+      rescued: 1032,
+      lost: 753.47,
+      inventoryValue: 5533.6,
+      scrapDollars: 20.8,
+      scrapBuckets: 8,
+      sales: 0,
+    })
+  );
+  const control = html.indexOf('Control');
+  const inventory = html.indexOf('Inventory value');
+  const scraps = html.indexOf('Scraps');
+  const sales = html.indexOf('Sales');
+  const rescued = html.indexOf('Rescued');
+  const lost = html.indexOf('>Lost<');
+  assert.ok(control >= 0 && control < inventory);
+  assert.ok(inventory < scraps && scraps < sales && sales < rescued && rescued < lost);
+  assert.match(html, /Over goal/);
+  assert.match(html, /≤ 10%/);
+  assert.match(html, /On hand now/);
+  assert.match(html, /\$5,533\.60/);
+  assert.match(html, /\$20\.80/);
+  assert.match(html, /8 buckets/);
+  assert.match(html, /Subtracted from main inventory/);
+  assert.match(html, /\$0\.00/);
+  assert.match(html, /\$1,032/);
+  assert.match(html, /42\.2%/);
+  assert.match(html, /Of rescued \+ discarded/);
+  assert.equal(html.includes('Rescue rate'), false);
+  assert.equal(html.includes('Waiting for'), false);
+  assert.equal(html.includes('POS'), false);
+  assert.equal(html.includes('$5,433.60'), false);
+  assert.equal(html.includes('$1.00'), false);
+
+  const quiet = renderToStaticMarkup(
+    createElement(StatsScorecardRows, {
+      periodPending: false,
+      rescued: 0,
+      lost: 0,
+      inventoryValue: 10,
+      scrapDollars: 0,
+      scrapBuckets: 0,
+      sales: 0,
+    })
+  );
+  assert.match(quiet, /On goal/);
+  assert.match(quiet, /≤ 10%/);
+  assert.match(quiet, /0 buckets/);
+  assert.match(quiet, /\$0\.00/);
+  assert.match(quiet, />—</);
+  assert.equal(quiet.includes('Waiting for'), false);
+  assert.equal(quiet.includes('POS'), false);
+  assert.equal(quiet.includes('Rescue rate'), false);
+
+  const pending = renderToStaticMarkup(
+    createElement(WasteSemaphoreCard, { lostPct: null, pending: true })
+  );
+  assert.match(pending, /Updating/);
+  assert.match(pending, /≤ 10%/);
+  assert.match(pending, /Waste traffic light/);
+  assert.equal(pending.includes('On goal'), false);
+  assert.equal(pending.includes('Waiting for'), false);
+  assert.equal(pending.includes('POS'), false);
 });

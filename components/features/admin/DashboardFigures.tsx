@@ -1,15 +1,17 @@
 'use client';
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { AdminDashboard } from '@/components/features/admin/AdminDashboard';
-import { LazyDepartmentAlertsChart } from '@/components/charts/lazyCharts';
 import { DashboardCard } from '@/components/features/admin/DashboardCard';
-import type { StoreStats } from '@/lib/domains/stats/storeStatsTypes';
+import type { DepartmentAlert, StoreStats } from '@/lib/domains/stats/storeStatsTypes';
 import type { WasteKpiReport } from '@/lib/domains/inventory/ledger';
 import { subscribeInventoryUpdated } from '@/lib/domains/inventory/inventoryMoveClient';
-import { adminDashboardWindow } from '@/lib/domains/stats/adminDashboardWindow';
 import { subscribeKpiUpdated } from '@/lib/domains/stats/kpiEvents';
 import { FRESHLOOP_SETTINGS_UPDATED } from '@/lib/domains/stats/settingsEvents';
+
+const PERIOD_PRESETS = ['day', 'week', 'month'] as const;
+type PeriodPreset = (typeof PERIOD_PRESETS)[number];
 
 const inflightAdminStats = new Map<
   string,
@@ -47,9 +49,57 @@ function fetchAdminStats(query: string): Promise<{
   return promise;
 }
 
+function readPreset(value: string | null): PeriodPreset {
+  return PERIOD_PRESETS.includes(value as PeriodPreset) ? (value as PeriodPreset) : 'week';
+}
+
 export function DashboardFiguresSkeleton() {
   return (
-    <AdminDashboard stats={null} wasteKpi={null} refreshing className="animate-pulse" />
+    <div
+      aria-label="Admin dashboard"
+      aria-busy="true"
+      className="h-80 animate-pulse rounded-2xl border border-slate-800 bg-slate-900/60"
+    />
+  );
+}
+
+function DepartmentAlertList({
+  alerts,
+  known,
+}: {
+  alerts: DepartmentAlert[];
+  known: boolean;
+}) {
+  const rows = alerts.filter((row) => row.low > 0 || row.expiring > 0);
+  return (
+    <DashboardCard className="p-4" aria-label="Alerts">
+      <h2 className="text-base font-black text-slate-50">Alerts</h2>
+      {!known ? (
+        <div className="mt-3 h-8 animate-pulse rounded-lg bg-slate-800" />
+      ) : rows.length === 0 ? (
+        <p className="pt-3 text-sm text-slate-400">No department alerts.</p>
+      ) : (
+        <ul className="mt-3 space-y-3">
+          {rows.map((row) => (
+            <li key={row.department}>
+              <p className="text-sm font-black text-slate-50">{row.department}</p>
+              <div className="mt-1.5 flex flex-wrap gap-1.5">
+                {row.low > 0 ? (
+                  <span className="rounded-lg bg-amber-950 px-2 py-1 text-xs font-bold text-amber-300">
+                    {row.low} below par
+                  </span>
+                ) : null}
+                {row.expiring > 0 ? (
+                  <span className="rounded-lg bg-rose-950 px-2 py-1 text-xs font-bold text-rose-300">
+                    {row.expiring} short-dated
+                  </span>
+                ) : null}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </DashboardCard>
   );
 }
 
@@ -62,44 +112,61 @@ export function DashboardFigures({
   initialWasteKpi?: WasteKpiReport | null;
   rangeError?: string | null;
 }) {
-  const expectsServerStats = initialStats !== null;
-  const [stats, setStats] = useState<StoreStats | null>(initialStats);
-  const [wasteKpi, setWasteKpi] = useState<WasteKpiReport | null>(initialWasteKpi);
+  // The server bundle is the fixed 30-day window. Chip totals come from the preset fetch.
+  void initialWasteKpi;
+  const params = useSearchParams();
+  const preset = readPreset(params.get('preset'));
+  const [inventoryValue, setInventoryValue] = useState<number | null>(
+    initialStats?.inventoryValue ?? null
+  );
+  const [alerts, setAlerts] = useState<DepartmentAlert[]>(initialStats?.departmentAlerts ?? []);
+  const [alertsKnown, setAlertsKnown] = useState(initialStats != null);
+  const [period, setPeriod] = useState<{
+    preset: PeriodPreset;
+    stats: StoreStats;
+    wasteKpi: WasteKpiReport | null;
+  } | null>(null);
   const [statsRefreshing, setStatsRefreshing] = useState(false);
   const [statsError, setStatsError] = useState<string | null>(null);
+  const requestId = useRef(0);
 
   useEffect(() => {
-    setStats(initialStats);
+    if (!initialStats) return;
+    setInventoryValue(initialStats.inventoryValue);
+    setAlerts(initialStats.departmentAlerts);
+    setAlertsKnown(true);
   }, [initialStats]);
 
-  useEffect(() => {
-    setWasteKpi(initialWasteKpi);
-  }, [initialWasteKpi]);
-
   const refreshStats = useCallback(async (opts?: { silent?: boolean }) => {
+    const ticket = ++requestId.current;
+    const activePreset = preset;
     if (!opts?.silent) setStatsRefreshing(true);
     setStatsError(null);
     try {
-      const result = await fetchAdminStats(adminDashboardWindow().statsQuery);
+      const result = await fetchAdminStats(`preset=${activePreset}`);
+      if (ticket !== requestId.current) return;
       if (result.error) {
         setStatsError(result.error);
         return;
       }
       if (result.stats) {
-        setStats(result.stats);
-      }
-      if (result.wasteKpi) {
-        setWasteKpi(result.wasteKpi);
+        setInventoryValue(result.stats.inventoryValue);
+        setAlerts(result.stats.departmentAlerts);
+        setAlertsKnown(true);
+        setPeriod({
+          preset: activePreset,
+          stats: result.stats,
+          wasteKpi: result.wasteKpi ?? null,
+        });
       }
     } finally {
-      if (!opts?.silent) setStatsRefreshing(false);
+      if (ticket === requestId.current) setStatsRefreshing(false);
     }
-  }, []);
+  }, [preset]);
 
   useEffect(() => {
-    if (initialStats !== null) return;
-    void refreshStats({ silent: true });
-  }, [refreshStats, initialStats]);
+    void refreshStats();
+  }, [refreshStats]);
 
   useEffect(() => {
     let debounceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -132,8 +199,10 @@ export function DashboardFigures({
     };
   }, [refreshStats]);
 
+  const readyPeriod = period != null && period.preset === preset ? period : null;
+
   return (
-    <section className="space-y-6" aria-label="Store KPI dashboard">
+    <section className="space-y-4" aria-label="Store KPI dashboard">
       {rangeError ? (
         <p className="rounded-xl border border-rose-900/50 bg-rose-950/30 px-4 py-3 text-sm text-rose-200">
           {rangeError}
@@ -146,22 +215,12 @@ export function DashboardFigures({
       ) : null}
 
       <AdminDashboard
-        stats={stats}
-        wasteKpi={wasteKpi}
-        refreshing={statsRefreshing}
-        showActionLoadingPlaceholders={!expectsServerStats && stats === null}
-        chartLoading={statsRefreshing}
+        stats={readyPeriod ? readyPeriod.stats : null}
+        wasteKpi={readyPeriod ? readyPeriod.wasteKpi : null}
+        inventoryValue={inventoryValue}
+        refreshing={statsRefreshing && readyPeriod == null}
       />
-
-      {stats ? (
-        <DashboardCard className="p-4 sm:p-6">
-          <h2 className="text-sm font-black text-slate-100">Alerts by department</h2>
-          <p className="mt-1 text-xs text-slate-400">SKUs below par and short-dated by department.</p>
-          <div className="mt-4">
-            <LazyDepartmentAlertsChart data={stats.departmentAlerts} compact />
-          </div>
-        </DashboardCard>
-      ) : null}
+      <DepartmentAlertList alerts={alerts} known={alertsKnown} />
     </section>
   );
 }

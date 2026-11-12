@@ -191,6 +191,21 @@ export function applyWasteKpiToStoreStats(stats: StoreStats, wasteKpi: WasteKpiR
   };
 }
 
+/**
+ * Waste SQL treats `endDate` as inclusive. Chart ranges are half-open, so the
+ * waste window stops one millisecond before `endUtc`. No range keeps the
+ * default lookback. Inventory value does not use this window.
+ */
+function wasteKpiOptions(
+  transferRange?: StoreInstantRange | null
+): { startDate: Date; endDate: Date } | undefined {
+  if (!transferRange) return undefined;
+  return {
+    startDate: transferRange.startUtc,
+    endDate: new Date(transferRange.endUtc.getTime() - 1),
+  };
+}
+
 /** Admin dashboard: inventory/chart stats + live waste KPI in one round-trip. */
 export async function getAdminStoreStatsBundle(
   transferRange?: StoreInstantRange | null
@@ -200,7 +215,7 @@ export async function getAdminStoreStatsBundle(
 }> {
   const [baseStats, wasteKpi] = await Promise.all([
     getStoreStats(transferRange),
-    calculateRealTimeWastePct(),
+    calculateRealTimeWastePct(wasteKpiOptions(transferRange)),
   ]);
   return { stats: applyWasteKpiToStoreStats(baseStats, wasteKpi), wasteKpi };
 }

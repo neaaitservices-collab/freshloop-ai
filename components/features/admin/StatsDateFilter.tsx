@@ -37,11 +37,14 @@ export function StatsDateFilter({
   defaultPreset = null,
   heading = 'Production transfers',
   compact = false,
+  variant = 'full',
 }: {
   defaultPreset?: 'day' | 'week' | 'month' | null;
   heading?: string;
   /** Desktop header slot: chips stay on one row and align to the end. */
   compact?: boolean;
+  /** Scorecard header: Day / Week / Month only. */
+  variant?: 'full' | 'chips';
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -92,6 +95,37 @@ export function StatsDateFilter({
   };
 
   const label = bounds ? formatCardRangeLabel(bounds.from, bounds.to) : 'Last 30 days';
+
+  if (variant === 'chips') {
+    const chip =
+      preset === 'day' || preset === 'week' || preset === 'month' ? preset : 'week';
+    const chipLabel = formatCardRangeLabel(presetRange(chip).from, presetRange(chip).to);
+    return (
+      <div className="flex flex-col items-end">
+        <div
+          className="inline-flex rounded-xl border border-slate-800 bg-slate-950 p-0.5"
+          role="group"
+          aria-label="Stats range"
+        >
+          {CHIPS.map(([id, text]) => (
+            <button
+              key={id}
+              type="button"
+              aria-pressed={chip === id}
+              onClick={() => writeRange('', '', id)}
+              className={cn(
+                'rounded-lg px-2.5 py-1.5 text-xs font-bold',
+                chip === id ? 'bg-slate-800 text-slate-50' : 'text-slate-400'
+              )}
+            >
+              {text}
+            </button>
+          ))}
+        </div>
+        <p className="pt-1.5 text-right text-xs font-semibold text-slate-400">{chipLabel}</p>
+      </div>
+    );
+  }
 
   return (
     <div className={cn('w-full space-y-2', compact ? 'w-auto' : 'lg:ml-auto lg:w-auto')}>
