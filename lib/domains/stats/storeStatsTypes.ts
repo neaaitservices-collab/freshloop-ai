@@ -26,6 +26,15 @@ export interface DepartmentAlert {
   expiring: number;
 }
 
+/** Scorecard figures for one Day / Week / Month range. Inventory value is not included. */
+export interface AdminPeriodFigures {
+  rescuedValue: number;
+  lostValue: number;
+  scrapDollars: number;
+  scrapBuckets: number;
+  sales: number;
+}
+
 export interface StoreStats {
   rescuedValue: number;
   /** 30-day retail $ lost to floor discard (excludes volumetric scrap). */

@@ -7,23 +7,22 @@ import {
 import { loadDepartmentRefState } from '@/lib/domains/catalog/departmentRefStore';
 import type { WasteKpiReport } from '@/lib/domains/inventory/ledger';
 import { calculateRealTimeWastePct } from '@/lib/domains/inventory/ledger';
-import { isInboundProductionTransfer } from '@/lib/domains/inventory/kitchenInbox';
+import { SCRAP_VOLUMETRIC_BUCKET_KIND } from '@/lib/domains/inventory/volumetricScrapLedger';
 import { belowParSkus, isBelowPar, outOfStockSkus } from '@/lib/domains/inventory/lowStock';
 import { getStockLevels } from '@/lib/domains/inventory/stock';
-import type { DepartmentAlert, StoreStats } from '@/lib/domains/stats/storeStatsTypes';
+import type { AdminPeriodFigures, DepartmentAlert, StoreStats } from '@/lib/domains/stats/storeStatsTypes';
 import { findLatestStoreSetting } from '@/lib/domains/stats/storeSettingSelect';
-import { summarizeRescueWindow } from '@/lib/domains/stats/rescueCards';
-import { DEFAULT_KPI_LOOKBACK_DAYS, kpiLookbackRange } from '@/lib/domains/stats/wasteKpi';
-import { formatCardRangeLabel, last30StoreDays, torontoRange } from '@/lib/domains/stats/storeTime';
+import { rescueRatePct } from '@/lib/domains/stats/rescueCards';
 import {
-  enumerateYmd,
-  formatBucketLabel,
-  formatRangeLabel,
-  torontoYmd,
-  type StoreInstantRange,
-} from '@/lib/domains/stats/storeTime';
+  scrapBucketInputsFromSettings,
+  scrapTotalsForBucketCount,
+} from '@/lib/domains/stats/scrapBucketEconomics';
+import { formatCardRangeLabel, formatRangeLabel, last30StoreDays, torontoRange } from '@/lib/domains/stats/storeTime';
+import type { StoreInstantRange } from '@/lib/domains/stats/storeTime';
+import { fromCents } from '@/lib/utils/money';
 
 export type {
+  AdminPeriodFigures,
   DepartmentAlert,
   RescueOutcomeDay,
   RescueSlice,
@@ -33,12 +32,6 @@ export type {
 
 function money(value: number): number {
   return Number(value.toFixed(2));
-}
-
-function unitRetail(retailPrice: number | null | undefined, unitCost: number): number {
-  if (typeof retailPrice === 'number' && retailPrice > 0) return retailPrice;
-  if (unitCost > 0) return unitCost;
-  return 0;
 }
 
 interface RangeDayTotal {
@@ -153,19 +146,15 @@ export async function loadRangeChart(range: StoreInstantRange): Promise<RangeCha
   };
 }
 
-function dayKey(date: Date): string {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-}
-
 /** Same 60s window as the stock-level cache, so admin and orders do not age out apart. */
 const CACHE_MS = 60_000;
+const PERIOD_CACHE_MS = 15_000;
 let cachedStats: { at: number; value: Promise<StoreStats> } | null = null;
+const periodCache = new Map<string, { at: number; value: Promise<AdminPeriodFigures> }>();
 
 export function invalidateStoreStats(): void {
   cachedStats = null;
+  periodCache.clear();
 }
 
 export function getStoreStats(transferRange?: StoreInstantRange | null): Promise<StoreStats> {
@@ -220,6 +209,178 @@ export async function getAdminStoreStatsBundle(
   return { stats: applyWasteKpiToStoreStats(baseStats, wasteKpi), wasteKpi };
 }
 
+/**
+ * Day / Week / Month scorecard only: rescued, lost, scraps, and sales.
+ * Does not read on-hand inventory, alerts, or the transfer-chart series.
+ * Rescue uses the half-open chart window. Scraps and sales use the same
+ * inclusive end as calculateRealTimeWastePct (`endUtc - 1ms`).
+ */
+export function getAdminPeriodFigures(range: StoreInstantRange): Promise<AdminPeriodFigures> {
+  const key = `${range.startUtc.toISOString()}|${range.endUtc.toISOString()}`;
+  const now = Date.now();
+  const hit = periodCache.get(key);
+  if (hit && now - hit.at < PERIOD_CACHE_MS) return hit.value;
+  const value = loadAdminPeriodFigures(range).catch((error: unknown) => {
+    periodCache.delete(key);
+    throw error;
+  });
+  periodCache.set(key, { at: now, value });
+  return value;
+}
+
+async function loadPeriodRescueTotals(range: StoreInstantRange) {
+  const rows = await prisma.$queryRaw<
+    Array<{
+      recovered: number;
+      lost: number;
+      rescue_units: number;
+      discard_units: number;
+    }>
+  >`
+    SELECT
+      COALESCE(SUM(
+        CASE
+          WHEN t."Transaction_Type" = 'Rescue'
+            AND t."To_Location" = 'Kitchen_Prep'
+            AND t."Qty_Change" > 0
+          THEN t."Qty_Change" * (
+            CASE
+              WHEN p."retailPrice" IS NOT NULL AND p."retailPrice" > 0 THEN p."retailPrice"
+              WHEN t."Unit_Cost_At_Time" > 0 THEN t."Unit_Cost_At_Time"
+              ELSE 0
+            END
+          )
+          ELSE 0
+        END
+      ), 0)::float8 AS recovered,
+      COALESCE(SUM(
+        CASE
+          WHEN t."Transaction_Type" = 'Waste'
+            AND (t."Reference_ID" IS NULL OR t."Reference_ID" NOT LIKE ${`${VOLUMETRIC_SCRAP_REF_PREFIX}%`})
+            AND (
+              t.notes IS NULL
+              OR (
+                position('volumetric scrap' in lower(t.notes)) = 0
+                AND position('cubeta' in lower(t.notes)) = 0
+              )
+            )
+          THEN abs(t."Qty_Change") * (
+            CASE
+              WHEN p."retailPrice" IS NOT NULL AND p."retailPrice" > 0 THEN p."retailPrice"
+              WHEN t."Unit_Cost_At_Time" > 0 THEN t."Unit_Cost_At_Time"
+              ELSE 0
+            END
+          )
+          ELSE 0
+        END
+      ), 0)::float8 AS lost,
+      COALESCE(SUM(
+        CASE
+          WHEN t."Transaction_Type" = 'Rescue'
+            AND t."To_Location" = 'Kitchen_Prep'
+            AND t."Qty_Change" > 0
+          THEN t."Qty_Change"
+          ELSE 0
+        END
+      ), 0)::float8 AS rescue_units,
+      COALESCE(SUM(
+        CASE
+          WHEN t."Transaction_Type" = 'Waste'
+            AND (t."Reference_ID" IS NULL OR t."Reference_ID" NOT LIKE ${`${VOLUMETRIC_SCRAP_REF_PREFIX}%`})
+            AND (
+              t.notes IS NULL
+              OR (
+                position('volumetric scrap' in lower(t.notes)) = 0
+                AND position('cubeta' in lower(t.notes)) = 0
+              )
+            )
+          THEN abs(t."Qty_Change")
+          ELSE 0
+        END
+      ), 0)::float8 AS discard_units
+    FROM "Inventory_Transactions" t
+    JOIN products p ON p.id = t."Product_ID"
+    WHERE t."timestamp" >= ${range.startUtc}
+      AND t."timestamp" < ${range.endUtc}
+      AND t."Transaction_Type" IN ('Rescue', 'Waste')
+  `;
+  const row = rows[0];
+  const rescued = Number(row?.recovered ?? 0);
+  const lost = Number(row?.lost ?? 0);
+  return {
+    rescued,
+    lost,
+    rescueUnits: Number(row?.rescue_units ?? 0),
+    discardUnits: Number(row?.discard_units ?? 0),
+    rate: rescueRatePct(rescued, lost),
+  };
+}
+
+async function loadPeriodScrapBuckets(startDate: Date, endDate: Date): Promise<number> {
+  const volumetricPrefix = `${VOLUMETRIC_SCRAP_REF_PREFIX}%`;
+  const volumetricKind = `%${SCRAP_VOLUMETRIC_BUCKET_KIND}%`;
+  const rows = await prisma.$queryRaw<Array<{ buckets: number }>>`
+    SELECT COALESCE(SUM(
+      CASE
+        WHEN "Reference_ID" LIKE ${volumetricPrefix}
+          OR COALESCE("notes", '') LIKE ${volumetricKind}
+          OR LOWER(COALESCE("notes", '')) LIKE '%volumetric scrap%'
+          OR LOWER(COALESCE("notes", '')) LIKE '%cubeta%'
+        THEN COALESCE("scrap_bucket_count", ABS("Qty_Change"))
+        ELSE 0
+      END
+    ), 0)::float8 AS buckets
+    FROM "Inventory_Transactions"
+    WHERE "Transaction_Type" = 'Waste'
+      AND "timestamp" >= ${startDate}
+      AND "timestamp" <= ${endDate}
+  `;
+  return Number(rows[0]?.buckets ?? 0);
+}
+
+async function loadPeriodSalesCents(startDate: Date, endDate: Date): Promise<number> {
+  const rows = await prisma.$queryRaw<Array<{ cents: number }>>`
+    SELECT COALESCE(SUM(
+      CASE
+        WHEN "Qty_Change" < 0
+          AND "realized_line_revenue" IS NOT NULL
+          AND "realized_line_revenue" >= 0
+        THEN ROUND(("realized_line_revenue" * 100)::numeric)
+        ELSE 0
+      END
+    ), 0)::float8 AS cents
+    FROM "Inventory_Transactions"
+    WHERE "timestamp" >= ${startDate}
+      AND "timestamp" <= ${endDate}
+      AND "Transaction_Type" IN ('Sale', 'POS_Sale')
+  `;
+  return Number(rows[0]?.cents ?? 0);
+}
+
+async function loadAdminPeriodFigures(range: StoreInstantRange): Promise<AdminPeriodFigures> {
+  const endDate = new Date(range.endUtc.getTime() - 1);
+  const [rescue, bucketUnits, salesCents, setting] = await Promise.all([
+    loadPeriodRescueTotals(range),
+    loadPeriodScrapBuckets(range.startUtc, endDate),
+    loadPeriodSalesCents(range.startUtc, endDate),
+    findLatestStoreSetting(),
+  ]);
+  const scrapInputs = scrapBucketInputsFromSettings({
+    scrapBucketVolumeL: setting?.scrapBucketVolumeL ?? 20,
+    estimatedWeightPerLiterKg: setting?.estimatedWeightPerLiterKg ?? 0.65,
+    defaultScrapCostPerKg: setting?.defaultScrapCostPerKg ?? 3.5,
+  });
+  const volumetricScrapBucketsCount = Number(bucketUnits.toFixed(2));
+  const scrap = scrapTotalsForBucketCount(volumetricScrapBucketsCount, scrapInputs);
+  return {
+    rescuedValue: money(rescue.rescued),
+    lostValue: money(rescue.lost),
+    scrapDollars: scrap.totalDollars,
+    scrapBuckets: volumetricScrapBucketsCount,
+    sales: fromCents(salesCents),
+  };
+}
+
 async function loadStatProducts(tableReady: boolean) {
   const where = { isManufactured: false, catalogActive: true } as const;
   const select = {
@@ -248,18 +409,11 @@ async function loadStatProducts(tableReady: boolean) {
 async function loadStoreStats(transferRange?: StoreInstantRange | null): Promise<StoreStats> {
   const now = new Date();
   const horizon = new Date(now.getTime() + 48 * 60 * 60 * 1000);
-  const weekStart = new Date(now);
-  weekStart.setHours(0, 0, 0, 0);
-  weekStart.setDate(weekStart.getDate() - 6);
   const rolling = last30StoreDays(now);
   const cardBounds = transferRange ?? torontoRange(rolling.from, rolling.to);
-  const { startDate: lookbackStart, endDate: lookbackEnd } = kpiLookbackRange(
-    DEFAULT_KPI_LOOKBACK_DAYS,
-    now
-  );
   const departmentState = await loadDepartmentRefState();
 
-  const [products, stockLevels, expirations, movements, setting, pendingCredits, chartWindow] =
+  const [products, stockLevels, expirations, setting, pendingCredits, rescueTotals] =
     await Promise.all([
     loadStatProducts(departmentState.ready),
     getStockLevels(),
@@ -271,27 +425,11 @@ async function loadStoreStats(transferRange?: StoreInstantRange | null): Promise
       WHERE "expirationDate" IS NOT NULL
       ORDER BY "Product_ID", "timestamp" DESC
     `,
-    prisma.inventoryTransaction.findMany({
-      where: {
-        transactionType: { in: [TransactionType.Rescue, TransactionType.Waste] },
-        timestamp: { gte: lookbackStart, lte: lookbackEnd },
-      },
-      select: {
-        timestamp: true,
-        qtyChange: true,
-        unitCostAtTime: true,
-        transactionType: true,
-        toLocation: true,
-        notes: true,
-        referenceId: true,
-        product: { select: { retailPrice: true } },
-      },
-    }),
     findLatestStoreSetting(),
     prisma.receivingDisposition.count({
       where: { reason: 'NOT_RECEIVED', status: 'PENDING_CREDIT' },
     }),
-    loadRangeChart(cardBounds),
+    loadPeriodRescueTotals(cardBounds),
   ]);
 
   const levelById = new Map(stockLevels.map((row) => [row.productId, row]));
@@ -364,93 +502,9 @@ async function loadStoreStats(transferRange?: StoreInstantRange | null): Promise
     }
   }
 
-  const cardTotals = summarizeRescueWindow(chartWindow.totals);
+  const cardTotals = rescueTotals;
   const rescuedValue = cardTotals.rescued;
   const discardValue = cardTotals.lost;
-  const rescuedUnits = cardTotals.rescueUnits;
-  const discardedUnits = cardTotals.discardUnits;
-  const chartMovements = transferRange ? [] : movements;
-  const blankDay = () => ({
-    lost: 0,
-    recovered: 0,
-    rescueUnits: 0,
-    discardUnits: 0,
-  });
-  const legacyDays = Array.from({ length: 7 }, (_, index) => {
-    const date = new Date(weekStart);
-    date.setDate(weekStart.getDate() + index);
-    return {
-      key: dayKey(date),
-      label: date.toLocaleDateString(undefined, { weekday: 'short' }),
-      ...blankDay(),
-    };
-  });
-  const rangeDays = transferRange
-    ? enumerateYmd(transferRange.from, transferRange.to).map((ymd) => ({
-        key: ymd,
-        label: formatBucketLabel(ymd),
-        ...blankDay(),
-      }))
-    : legacyDays;
-  const legacyIndex = new Map(legacyDays.map((day, index) => [day.key, index]));
-  const rangeIndex = new Map(rangeDays.map((day, index) => [day.key, index]));
-
-  const scoreMovement = (movement: (typeof movements)[number]) => {
-    const units = Math.abs(movement.qtyChange);
-    if (!(units > 0)) return null;
-    const retail = unitRetail(movement.product.retailPrice, movement.unitCostAtTime);
-    const amount = units * retail;
-    const isRescue = isInboundProductionTransfer(movement);
-    const isDiscard =
-      movement.transactionType === TransactionType.Waste &&
-      !movement.referenceId?.startsWith(VOLUMETRIC_SCRAP_REF_PREFIX) &&
-      !movement.notes?.toLowerCase().includes('volumetric scrap') &&
-      !movement.notes?.toLowerCase().includes('cubeta');
-    if (!isRescue && !isDiscard) return null;
-    return { units, amount, isRescue, isDiscard };
-  };
-
-  const addToDay = (
-    days: typeof legacyDays,
-    index: number | undefined,
-    scored: NonNullable<ReturnType<typeof scoreMovement>>
-  ) => {
-    if (index === undefined) return;
-    if (scored.isRescue) {
-      days[index].recovered += scored.amount;
-      days[index].rescueUnits += scored.units;
-    }
-    if (scored.isDiscard) {
-      days[index].lost += scored.amount;
-      days[index].discardUnits += scored.units;
-    }
-  };
-
-  for (const movement of chartMovements) {
-    const scored = scoreMovement(movement);
-    if (!scored) continue;
-    const key = transferRange ? torontoYmd(movement.timestamp) : dayKey(movement.timestamp);
-    addToDay(rangeDays, rangeIndex.get(key), scored);
-  }
-  if (transferRange) {
-    for (const movement of movements) {
-      const scored = scoreMovement(movement);
-      if (!scored) continue;
-      addToDay(legacyDays, legacyIndex.get(dayKey(movement.timestamp)), scored);
-    }
-  }
-  if (transferRange) {
-    const byDay = new Map(chartWindow.totals.map((row) => [row.day, row]));
-    for (const day of rangeDays) {
-      const row = byDay.get(day.key);
-      if (!row) continue;
-      day.recovered = row.recovered;
-      day.lost = row.lost;
-      day.rescueUnits = row.rescueUnits;
-      day.discardUnits = row.discardUnits;
-    }
-  }
-
   const wasteReductionPct = cardTotals.rate;
 
   return {
@@ -469,21 +523,12 @@ async function loadStoreStats(transferRange?: StoreInstantRange | null): Promise
     outOfStockCount: outOfStockSkus(stockLevels).length,
     pendingApprovalsCount: pendingCredits,
     rescueVsDiscard: [
-      { name: 'Production transfers', units: Number(rescuedUnits.toFixed(2)) },
-      { name: 'Discard', units: Number(discardedUnits.toFixed(2)) },
+      { name: 'Production transfers', units: Number(cardTotals.rescueUnits.toFixed(2)) },
+      { name: 'Discard', units: Number(cardTotals.discardUnits.toFixed(2)) },
     ],
-    revenueDays: legacyDays.map((day) => ({
-      label: day.label,
-      lost: money(day.lost),
-      recovered: money(day.recovered),
-    })),
-    outcomeDays: rangeDays.map((day) => ({
-      label: day.label,
-      recoveredUsd: money(day.recovered),
-      lostUsd: money(day.lost),
-      rescueUnits: Number(day.rescueUnits.toFixed(2)),
-      discardUnits: Number(day.discardUnits.toFixed(2)),
-    })),
+    // Day buckets only fed the transfer chart. The scorecard and executive KPIs use totals.
+    revenueDays: [],
+    outcomeDays: [],
     departmentAlerts: [
       ...slots.flatMap((slot) => {
         const bucket = alerts.get(slot.code);

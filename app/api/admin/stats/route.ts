@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getAdminStoreStatsBundle } from '@/lib/domains/stats/storeStats';
+import { getAdminPeriodFigures, getAdminStoreStatsBundle } from '@/lib/domains/stats/storeStats';
 import { apiErrorFromUnknown } from '@/lib/domains/ai/apiError';
 import { authErrorResponse } from '@/lib/auth/http';
 import { requireManagerStaff } from '@/lib/auth/guardRoute';
@@ -28,6 +28,30 @@ export async function GET(req: NextRequest) {
         ? { from: parsed.data.from, to: parsed.data.to }
         : null;
     const range = bounds ? torontoRange(bounds.from, bounds.to) : null;
+    const scope = req.nextUrl.searchParams.get('scope');
+    if (scope && scope !== 'period') {
+      return NextResponse.json(
+        { success: false, error: 'Unknown stats scope.' },
+        { status: 400 }
+      );
+    }
+    if (scope === 'period') {
+      if (!range) {
+        return NextResponse.json(
+          { success: false, error: 'Choose a date range.' },
+          { status: 400 }
+        );
+      }
+      const period = await getAdminPeriodFigures(range);
+      return NextResponse.json(
+        { success: true, period },
+        {
+          headers: {
+            'Cache-Control': 'private, max-age=10, stale-while-revalidate=20',
+          },
+        }
+      );
+    }
     const { stats, wasteKpi } = await getAdminStoreStatsBundle(range);
     return NextResponse.json(
       { success: true, stats, wasteKpi },

@@ -1,6 +1,6 @@
 'use client';
 
-import type { ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   CONTROL_LOST_GOAL_PCT,
   WasteSemaphoreCard,
@@ -8,8 +8,17 @@ import {
 } from '@/components/features/admin/WasteSemaphoreCard';
 import { StatsDateFilter } from '@/components/features/admin/StatsDateFilter';
 import { DashboardCard } from '@/components/features/admin/DashboardCard';
-import type { StoreStats } from '@/lib/domains/stats/storeStatsTypes';
+import { subscribeInventoryUpdated } from '@/lib/domains/inventory/inventoryMoveClient';
+import { subscribeKpiUpdated } from '@/lib/domains/stats/kpiEvents';
+import {
+  createPeriodLoader,
+  PERIOD_PRESETS,
+  type PeriodPreset,
+} from '@/lib/domains/stats/adminPeriodClient';
+import { FRESHLOOP_SETTINGS_UPDATED } from '@/lib/domains/stats/settingsEvents';
+import type { AdminPeriodFigures, StoreStats } from '@/lib/domains/stats/storeStatsTypes';
 import type { WasteKpiReport } from '@/lib/domains/inventory/ledger';
+import { cn } from '@/lib/utils/cn';
 
 export function formatScoreMoney(value: number, digits: 0 | 2): string {
   if (!Number.isFinite(value)) return digits === 0 ? '$0' : '$0.00';
@@ -124,30 +133,120 @@ export function StatsScorecardRows({
 
 export function AdminStatsCard({
   stats,
-  wasteKpi,
   inventoryValue = null,
 }: {
   stats: StoreStats | null;
-  wasteKpi: WasteKpiReport | null;
+  /** Kept for callers. Period scraps and sales come from the chip fetch, not this report. */
+  wasteKpi?: WasteKpiReport | null;
   /** Live on-hand total. Wins over `stats.inventoryValue` so the chip cannot replace it. */
   inventoryValue?: number | null;
 }) {
+  const loaderRef = useRef<ReturnType<typeof createPeriodLoader> | null>(null);
+  if (!loaderRef.current) loaderRef.current = createPeriodLoader();
+  const loader = loaderRef.current;
+  const [preset, setPreset] = useState<PeriodPreset>('week');
+  const [figures, setFigures] = useState<AdminPeriodFigures | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const presetRef = useRef(preset);
+  presetRef.current = preset;
   const onHand = inventoryValue ?? stats?.inventoryValue ?? null;
+  const showingPrevious = refreshing && figures != null;
+
+  const loadPreset = useCallback(
+    async (next: PeriodPreset) => {
+      const cached = loader.peek(next);
+      if (cached) {
+        setFigures(cached);
+        setRefreshing(false);
+        setError(null);
+        return;
+      }
+      setRefreshing(true);
+      setError(null);
+      const result = await loader.load(next);
+      if (presetRef.current !== next) return;
+      if (!result.ok) {
+        if (result.aborted) return;
+        setError(result.error);
+        setRefreshing(false);
+        return;
+      }
+      setFigures(result.figures);
+      setRefreshing(false);
+    },
+    [loader]
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      await loadPreset(preset);
+      if (cancelled) return;
+      await Promise.all(
+        PERIOD_PRESETS.filter((item) => item !== preset).map((item) => loader.prefetch(item))
+      );
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [preset, loadPreset, loader]);
+
+  useEffect(() => {
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+    const schedule = () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        debounceTimer = null;
+        loader.invalidate();
+        void loadPreset(presetRef.current);
+      }, 350);
+    };
+    const unsubInventory = subscribeInventoryUpdated((detail) => {
+      if (detail?.skipStatsRefresh) return;
+      schedule();
+    });
+    const unsubKpi = subscribeKpiUpdated(schedule);
+    window.addEventListener(FRESHLOOP_SETTINGS_UPDATED, schedule);
+    return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      unsubInventory();
+      unsubKpi();
+      window.removeEventListener(FRESHLOOP_SETTINGS_UPDATED, schedule);
+      loader.abort();
+    };
+  }, [loadPreset, loader]);
+
   return (
-    <DashboardCard className="p-4" aria-label="Stats">
+    <DashboardCard className="p-4" aria-label="Stats" aria-busy={showingPrevious || undefined}>
       <header className="flex items-start justify-between gap-3 pb-1">
-        <h2 className="pt-1 text-base font-black text-slate-50">Stats</h2>
-        <StatsDateFilter variant="chips" defaultPreset="week" />
+        <div>
+          <h2 className="pt-1 text-base font-black text-slate-50">Stats</h2>
+          {showingPrevious ? (
+            <p className="text-xs font-semibold text-slate-500" role="status">
+              Updating
+            </p>
+          ) : null}
+        </div>
+        <StatsDateFilter
+          variant="chips"
+          defaultPreset="week"
+          preset={preset}
+          onPresetChange={setPreset}
+        />
       </header>
-      <StatsScorecardRows
-        periodPending={stats == null}
-        rescued={stats?.rescuedValue ?? null}
-        lost={stats?.lostValue ?? null}
-        inventoryValue={onHand}
-        scrapDollars={wasteKpi?.volumetricScrapValue ?? null}
-        scrapBuckets={wasteKpi?.volumetricScrapBucketsCount ?? null}
-        sales={wasteKpi?.grossSalesRevenue ?? null}
-      />
+      {error ? <p className="pb-2 text-sm text-amber-200">{error}</p> : null}
+      <div className={cn(showingPrevious && 'opacity-80')}>
+        <StatsScorecardRows
+          periodPending={figures == null}
+          rescued={figures?.rescuedValue ?? null}
+          lost={figures?.lostValue ?? null}
+          inventoryValue={onHand}
+          scrapDollars={figures?.scrapDollars ?? null}
+          scrapBuckets={figures?.scrapBuckets ?? null}
+          sales={figures?.sales ?? null}
+        />
+      </div>
     </DashboardCard>
   );
 }

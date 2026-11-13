@@ -1,7 +1,6 @@
 'use client';
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { useSearchParams } from 'next/navigation';
 import { AdminDashboard } from '@/components/features/admin/AdminDashboard';
 import { DashboardCard } from '@/components/features/admin/DashboardCard';
 import type { DepartmentAlert, StoreStats } from '@/lib/domains/stats/storeStatsTypes';
@@ -9,9 +8,6 @@ import type { WasteKpiReport } from '@/lib/domains/inventory/ledger';
 import { subscribeInventoryUpdated } from '@/lib/domains/inventory/inventoryMoveClient';
 import { subscribeKpiUpdated } from '@/lib/domains/stats/kpiEvents';
 import { FRESHLOOP_SETTINGS_UPDATED } from '@/lib/domains/stats/settingsEvents';
-
-const PERIOD_PRESETS = ['day', 'week', 'month'] as const;
-type PeriodPreset = (typeof PERIOD_PRESETS)[number];
 
 const inflightAdminStats = new Map<
   string,
@@ -47,10 +43,6 @@ function fetchAdminStats(query: string): Promise<{
     });
   inflightAdminStats.set(query, promise);
   return promise;
-}
-
-function readPreset(value: string | null): PeriodPreset {
-  return PERIOD_PRESETS.includes(value as PeriodPreset) ? (value as PeriodPreset) : 'week';
 }
 
 export function DashboardFiguresSkeleton() {
@@ -112,20 +104,13 @@ export function DashboardFigures({
   initialWasteKpi?: WasteKpiReport | null;
   rangeError?: string | null;
 }) {
-  // The server bundle is the fixed 30-day window. Chip totals come from the preset fetch.
+  // Chip totals load inside the scorecard. This refresh is live inventory and alerts only.
   void initialWasteKpi;
-  const params = useSearchParams();
-  const preset = readPreset(params.get('preset'));
   const [inventoryValue, setInventoryValue] = useState<number | null>(
     initialStats?.inventoryValue ?? null
   );
   const [alerts, setAlerts] = useState<DepartmentAlert[]>(initialStats?.departmentAlerts ?? []);
   const [alertsKnown, setAlertsKnown] = useState(initialStats != null);
-  const [period, setPeriod] = useState<{
-    preset: PeriodPreset;
-    stats: StoreStats;
-    wasteKpi: WasteKpiReport | null;
-  } | null>(null);
   const [statsRefreshing, setStatsRefreshing] = useState(false);
   const [statsError, setStatsError] = useState<string | null>(null);
   const requestId = useRef(0);
@@ -137,13 +122,12 @@ export function DashboardFigures({
     setAlertsKnown(true);
   }, [initialStats]);
 
-  const refreshStats = useCallback(async (opts?: { silent?: boolean }) => {
+  const refreshLive = useCallback(async () => {
     const ticket = ++requestId.current;
-    const activePreset = preset;
-    if (!opts?.silent) setStatsRefreshing(true);
+    setStatsRefreshing(true);
     setStatsError(null);
     try {
-      const result = await fetchAdminStats(`preset=${activePreset}`);
+      const result = await fetchAdminStats('');
       if (ticket !== requestId.current) return;
       if (result.error) {
         setStatsError(result.error);
@@ -153,20 +137,11 @@ export function DashboardFigures({
         setInventoryValue(result.stats.inventoryValue);
         setAlerts(result.stats.departmentAlerts);
         setAlertsKnown(true);
-        setPeriod({
-          preset: activePreset,
-          stats: result.stats,
-          wasteKpi: result.wasteKpi ?? null,
-        });
       }
     } finally {
       if (ticket === requestId.current) setStatsRefreshing(false);
     }
-  }, [preset]);
-
-  useEffect(() => {
-    void refreshStats();
-  }, [refreshStats]);
+  }, []);
 
   useEffect(() => {
     let debounceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -174,7 +149,7 @@ export function DashboardFigures({
       if (debounceTimer) clearTimeout(debounceTimer);
       debounceTimer = setTimeout(() => {
         debounceTimer = null;
-        void refreshStats({ silent: true });
+        void refreshLive();
       }, 350);
     };
 
@@ -197,9 +172,7 @@ export function DashboardFigures({
       window.removeEventListener(FRESHLOOP_SETTINGS_UPDATED, scheduleRefresh);
       document.removeEventListener('visibilitychange', onVisible);
     };
-  }, [refreshStats]);
-
-  const readyPeriod = period != null && period.preset === preset ? period : null;
+  }, [refreshLive]);
 
   return (
     <section className="space-y-4" aria-label="Store KPI dashboard">
@@ -215,10 +188,10 @@ export function DashboardFigures({
       ) : null}
 
       <AdminDashboard
-        stats={readyPeriod ? readyPeriod.stats : null}
-        wasteKpi={readyPeriod ? readyPeriod.wasteKpi : null}
+        stats={initialStats}
+        wasteKpi={null}
         inventoryValue={inventoryValue}
-        refreshing={statsRefreshing && readyPeriod == null}
+        refreshing={statsRefreshing}
       />
       <DepartmentAlertList alerts={alerts} known={alertsKnown} />
     </section>

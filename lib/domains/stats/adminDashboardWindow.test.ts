@@ -107,6 +107,7 @@ test('the admin scorecard is one stats card driven by day week and month chips',
   const api = readFileSync('app/api/admin/stats/route.ts', 'utf8');
   const filter = readFileSync('components/features/admin/StatsDateFilter.tsx', 'utf8');
   const storeStats = readFileSync('lib/domains/stats/storeStats.ts', 'utf8');
+  const periodClient = readFileSync('lib/domains/stats/adminPeriodClient.ts', 'utf8');
   const chart = readFileSync('components/features/admin/RescueOutcomeChart.tsx', 'utf8');
 
   assert.match(dashboard, /AdminStatsCard/);
@@ -144,7 +145,9 @@ test('the admin scorecard is one stats card driven by day week and month chips',
   assert.equal(semaphore.includes('grossSales'), false);
   assert.equal(semaphore.includes('Log POS'), false);
 
-  assert.match(figures, /preset=\$\{activePreset\}/);
+  assert.equal(figures.includes('preset=${activePreset}'), false);
+  assert.equal(figures.includes('useSearchParams'), false);
+  assert.match(figures, /fetchAdminStats\(''\)/);
   assert.equal(figures.includes('LazyDepartmentAlertsChart'), false);
   assert.equal(figures.includes('LazyRescueOutcomeChart'), false);
   assert.equal(figures.includes('adminDashboardWindow().statsQuery'), false);
@@ -156,9 +159,22 @@ test('the admin scorecard is one stats card driven by day week and month chips',
   assert.match(figures, /setInventoryValue\(result\.stats\.inventoryValue\)/);
   assert.match(figures, /setInventoryValue\(initialStats\.inventoryValue\)/);
 
+  assert.match(stats, /scope=period|periodFiguresQuery|createPeriodLoader/);
+  assert.match(stats, /periodPending=\{figures == null\}/);
+  assert.equal(stats.includes('setFigures(null)'), false);
+  assert.match(stats, /Updating/);
+  assert.match(periodClient, /scope=period/);
+  assert.match(periodClient, /AbortController/);
+  assert.match(periodClient, /myTicket !== ticket/);
   assert.match(filter, /variant === 'chips'/);
   assert.match(filter, /aria-label="Stats range"/);
   assert.match(filter, /export function StatsDateFilter/);
+  assert.match(filter, /const selectChip/);
+  const selectChip = filter.slice(filter.indexOf('const selectChip'), filter.indexOf('const bounds'));
+  assert.equal(selectChip.includes('router'), false);
+  assert.equal(selectChip.includes('writeRange'), false);
+  assert.match(selectChip, /setChip\(id\)/);
+  assert.match(selectChip, /onPresetChange\?\.\(id\)/);
   assert.match(filter, /last30StoreDays/);
   assert.match(chart, /export function RescueOutcomeChart/);
 
@@ -170,8 +186,25 @@ test('the admin scorecard is one stats card driven by day week and month chips',
 
   assert.match(api, /presetRange/);
   assert.match(api, /statsRangeQuerySchema/);
+  assert.match(api, /scope === 'period'/);
+  assert.match(api, /getAdminPeriodFigures\(range\)/);
+  const periodCall = api.indexOf('getAdminPeriodFigures(range)');
+  const bundleCall = api.indexOf('getAdminStoreStatsBundle(range)');
+  assert.ok(periodCall !== -1 && bundleCall !== -1 && periodCall < bundleCall);
 
+  assert.match(storeStats, /export function getAdminPeriodFigures/);
   assert.match(storeStats, /calculateRealTimeWastePct\(wasteKpiOptions\(transferRange\)\)/);
+  const periodFn = storeStats.slice(
+    storeStats.indexOf('async function loadAdminPeriodFigures'),
+    storeStats.indexOf('async function loadStatProducts')
+  );
+  assert.match(periodFn, /Promise\.all/);
+  assert.equal(periodFn.includes('getStockLevels'), false);
+  assert.equal(periodFn.includes('outcomeDays'), false);
+  assert.equal(periodFn.includes('departmentAlerts'), false);
+  assert.equal(periodFn.includes('inventoryValue'), false);
+  assert.equal(periodFn.includes('findMany'), false);
+  assert.equal(storeStats.includes('inventoryTransaction.findMany'), false);
   assert.match(storeStats, /endUtc\.getTime\(\) - 1/);
   const inventoryAt = storeStats.indexOf('let inventoryValue = 0;');
   const totalsAt = storeStats.indexOf('const cardTotals');
