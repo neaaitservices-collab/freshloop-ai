@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import {
@@ -38,6 +38,8 @@ export function StatsDateFilter({
   heading = 'Production transfers',
   compact = false,
   variant = 'full',
+  preset: controlledPreset = null,
+  onPresetChange,
 }: {
   defaultPreset?: 'day' | 'week' | 'month' | null;
   heading?: string;
@@ -45,11 +47,31 @@ export function StatsDateFilter({
   compact?: boolean;
   /** Scorecard header: Day / Week / Month only. */
   variant?: 'full' | 'chips';
+  /** Selected chip. The scorecard owns this so the highlight does not wait on the URL. */
+  preset?: 'day' | 'week' | 'month' | null;
+  onPresetChange?: (preset: 'day' | 'week' | 'month') => void;
 }) {
   const router = useRouter();
   const pathname = usePathname();
   const params = useSearchParams();
   const [error, setError] = useState<string | null>(null);
+  const [chip, setChip] = useState<'day' | 'week' | 'month'>(
+    controlledPreset === 'day' || controlledPreset === 'week' || controlledPreset === 'month'
+      ? controlledPreset
+      : defaultPreset === 'day' || defaultPreset === 'week' || defaultPreset === 'month'
+        ? defaultPreset
+        : 'week'
+  );
+  useEffect(() => {
+    if (controlledPreset === 'day' || controlledPreset === 'week' || controlledPreset === 'month') {
+      setChip(controlledPreset);
+    }
+  }, [controlledPreset]);
+
+  const selectChip = (id: 'day' | 'week' | 'month') => {
+    setChip(id);
+    onPresetChange?.(id);
+  };
   const bounds = useMemo(
     () =>
       readBounds(params) ??
@@ -97,8 +119,6 @@ export function StatsDateFilter({
   const label = bounds ? formatCardRangeLabel(bounds.from, bounds.to) : 'Last 30 days';
 
   if (variant === 'chips') {
-    const chip =
-      preset === 'day' || preset === 'week' || preset === 'month' ? preset : 'week';
     const chipLabel = formatCardRangeLabel(presetRange(chip).from, presetRange(chip).to);
     return (
       <div className="flex flex-col items-end">
@@ -112,7 +132,7 @@ export function StatsDateFilter({
               key={id}
               type="button"
               aria-pressed={chip === id}
-              onClick={() => writeRange('', '', id)}
+              onClick={() => selectChip(id)}
               className={cn(
                 'rounded-lg px-2.5 py-1.5 text-xs font-bold',
                 chip === id ? 'bg-slate-800 text-slate-50' : 'text-slate-400'
