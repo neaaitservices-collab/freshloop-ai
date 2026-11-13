@@ -8,6 +8,46 @@ export type PeriodLoadResult =
   | { ok: false; aborted: true }
   | { ok: false; aborted: false; error: string };
 
+export type TaggedPeriodFigures = {
+  preset: PeriodPreset;
+  figures: AdminPeriodFigures;
+};
+
+/** Show a period only under the chip that loaded it. */
+export function figuresForSelectedPreset(
+  selected: PeriodPreset,
+  tagged: TaggedPeriodFigures | null
+): AdminPeriodFigures | null {
+  if (!tagged || tagged.preset !== selected) return null;
+  return tagged.figures;
+}
+
+/**
+ * Apply one period response to the selected chip.
+ * A failure drops figures that belong to a different chip so the new label
+ * cannot keep showing the previous range.
+ */
+export function applyPeriodLoad(
+  selected: PeriodPreset,
+  current: TaggedPeriodFigures | null,
+  result: PeriodLoadResult
+): { ignored: boolean; figures: TaggedPeriodFigures | null; error: string | null } {
+  if (!result.ok) {
+    if (result.aborted) return { ignored: true, figures: current, error: null };
+    return {
+      ignored: false,
+      figures: current?.preset === selected ? current : null,
+      error: result.error,
+    };
+  }
+  if (result.preset !== selected) return { ignored: true, figures: current, error: null };
+  return {
+    ignored: false,
+    figures: { preset: result.preset, figures: result.figures },
+    error: null,
+  };
+}
+
 const PERIOD_CLIENT_TTL_MS = 60_000;
 
 function isAbort(error: unknown): boolean {

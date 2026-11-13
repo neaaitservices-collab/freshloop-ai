@@ -160,8 +160,11 @@ test('the admin scorecard is one stats card driven by day week and month chips',
   assert.match(figures, /setInventoryValue\(initialStats\.inventoryValue\)/);
 
   assert.match(stats, /scope=period|periodFiguresQuery|createPeriodLoader/);
-  assert.match(stats, /periodPending=\{figures == null\}/);
-  assert.equal(stats.includes('setFigures(null)'), false);
+  assert.match(stats, /figuresForSelectedPreset\(preset, figures\)/);
+  assert.match(stats, /applyPeriodLoad/);
+  assert.match(stats, /role="alert"/);
+  assert.match(figures, /if \(initialStats\) return/);
+  assert.match(figures, /void refreshLive\(\)/);
   assert.match(stats, /Updating/);
   assert.match(periodClient, /scope=period/);
   assert.match(periodClient, /AbortController/);

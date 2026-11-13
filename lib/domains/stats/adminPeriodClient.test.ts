@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createPeriodLoader } from '@/lib/domains/stats/adminPeriodClient';
+import {
+  applyPeriodLoad,
+  createPeriodLoader,
+  figuresForSelectedPreset,
+} from '@/lib/domains/stats/adminPeriodClient';
 
 const FIGURES = {
   rescuedValue: 1,
@@ -87,6 +91,37 @@ test('prefetch does not cancel the period request already in flight', async () =
   assert.equal(result.ok, true);
   if (result.ok) assert.equal(result.figures.rescuedValue, 4);
   assert.equal(loader.peek('month')?.rescuedValue, 4);
+});
+
+test('a failed newer load does not keep the previous period under the new chip', async () => {
+  const fetchImpl: typeof fetch = async (input) => {
+    const url = String(input);
+    if (url.includes('preset=day')) {
+      return new Response(
+        JSON.stringify({ success: false, error: 'Could not refresh dashboard stats.' }),
+        { status: 500, headers: { 'content-type': 'application/json' } }
+      );
+    }
+    return jsonResponse({ ...FIGURES, rescuedValue: 7 });
+  };
+
+  const loader = createPeriodLoader(fetchImpl);
+  const week = await loader.load('week');
+  assert.equal(week.ok, true);
+  if (!week.ok) return;
+  const day = await loader.load('day');
+  assert.equal(day.ok, false);
+  if (!day.ok) assert.equal(day.aborted, false);
+  if (!day.ok && !day.aborted) assert.match(day.error, /Could not refresh dashboard stats/);
+
+  const previous = { preset: week.preset, figures: week.figures };
+  const applied = applyPeriodLoad('day', previous, day);
+  assert.equal(applied.ignored, false);
+  assert.equal(applied.figures, null);
+  assert.equal(applied.error, 'Could not refresh dashboard stats.');
+  assert.equal(figuresForSelectedPreset('day', applied.figures), null);
+  assert.equal(figuresForSelectedPreset('day', previous), null);
+  assert.equal(figuresForSelectedPreset('week', previous)?.rescuedValue, 7);
 });
 
 test('a period payload that includes inventory value is ignored', async () => {

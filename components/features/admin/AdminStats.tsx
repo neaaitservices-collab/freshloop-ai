@@ -11,12 +11,15 @@ import { DashboardCard } from '@/components/features/admin/DashboardCard';
 import { subscribeInventoryUpdated } from '@/lib/domains/inventory/inventoryMoveClient';
 import { subscribeKpiUpdated } from '@/lib/domains/stats/kpiEvents';
 import {
+  applyPeriodLoad,
   createPeriodLoader,
+  figuresForSelectedPreset,
   PERIOD_PRESETS,
   type PeriodPreset,
+  type TaggedPeriodFigures,
 } from '@/lib/domains/stats/adminPeriodClient';
 import { FRESHLOOP_SETTINGS_UPDATED } from '@/lib/domains/stats/settingsEvents';
-import type { AdminPeriodFigures, StoreStats } from '@/lib/domains/stats/storeStatsTypes';
+import type { StoreStats } from '@/lib/domains/stats/storeStatsTypes';
 import type { WasteKpiReport } from '@/lib/domains/inventory/ledger';
 import { cn } from '@/lib/utils/cn';
 
@@ -145,19 +148,27 @@ export function AdminStatsCard({
   if (!loaderRef.current) loaderRef.current = createPeriodLoader();
   const loader = loaderRef.current;
   const [preset, setPreset] = useState<PeriodPreset>('week');
-  const [figures, setFigures] = useState<AdminPeriodFigures | null>(null);
+  const [figures, setFigures] = useState<TaggedPeriodFigures | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const presetRef = useRef(preset);
+  const figuresRef = useRef(figures);
   presetRef.current = preset;
+  figuresRef.current = figures;
   const onHand = inventoryValue ?? stats?.inventoryValue ?? null;
-  const showingPrevious = refreshing && figures != null;
+  const visibleFigures = figuresForSelectedPreset(preset, figures);
+  const showingSameChip = refreshing && visibleFigures != null;
 
   const loadPreset = useCallback(
     async (next: PeriodPreset) => {
       const cached = loader.peek(next);
       if (cached) {
-        setFigures(cached);
+        const applied = applyPeriodLoad(next, figuresRef.current, {
+          ok: true,
+          preset: next,
+          figures: cached,
+        });
+        setFigures(applied.figures);
         setRefreshing(false);
         setError(null);
         return;
@@ -166,13 +177,10 @@ export function AdminStatsCard({
       setError(null);
       const result = await loader.load(next);
       if (presetRef.current !== next) return;
-      if (!result.ok) {
-        if (result.aborted) return;
-        setError(result.error);
-        setRefreshing(false);
-        return;
-      }
-      setFigures(result.figures);
+      const applied = applyPeriodLoad(next, figuresRef.current, result);
+      if (applied.ignored) return;
+      setFigures(applied.figures);
+      setError(applied.error);
       setRefreshing(false);
     },
     [loader]
@@ -218,11 +226,11 @@ export function AdminStatsCard({
   }, [loadPreset, loader]);
 
   return (
-    <DashboardCard className="p-4" aria-label="Stats" aria-busy={showingPrevious || undefined}>
+    <DashboardCard className="p-4" aria-label="Stats" aria-busy={showingSameChip || undefined}>
       <header className="flex items-start justify-between gap-3 pb-1">
         <div>
           <h2 className="pt-1 text-base font-black text-slate-50">Stats</h2>
-          {showingPrevious ? (
+          {showingSameChip ? (
             <p className="text-xs font-semibold text-slate-500" role="status">
               Updating
             </p>
@@ -235,16 +243,23 @@ export function AdminStatsCard({
           onPresetChange={setPreset}
         />
       </header>
-      {error ? <p className="pb-2 text-sm text-amber-200">{error}</p> : null}
-      <div className={cn(showingPrevious && 'opacity-80')}>
+      {error ? (
+        <p
+          role="alert"
+          className="mb-2 rounded-xl border border-rose-900/50 bg-rose-950/30 px-3 py-2 text-sm font-semibold text-rose-100"
+        >
+          {error}
+        </p>
+      ) : null}
+      <div className={cn(showingSameChip && 'opacity-80')}>
         <StatsScorecardRows
-          periodPending={figures == null}
-          rescued={figures?.rescuedValue ?? null}
-          lost={figures?.lostValue ?? null}
+          periodPending={visibleFigures == null}
+          rescued={visibleFigures?.rescuedValue ?? null}
+          lost={visibleFigures?.lostValue ?? null}
           inventoryValue={onHand}
-          scrapDollars={figures?.scrapDollars ?? null}
-          scrapBuckets={figures?.scrapBuckets ?? null}
-          sales={figures?.sales ?? null}
+          scrapDollars={visibleFigures?.scrapDollars ?? null}
+          scrapBuckets={visibleFigures?.scrapBuckets ?? null}
+          sales={visibleFigures?.sales ?? null}
         />
       </div>
     </DashboardCard>

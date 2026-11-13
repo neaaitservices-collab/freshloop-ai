@@ -144,6 +144,11 @@ export function DashboardFigures({
   }, []);
 
   useEffect(() => {
+    if (initialStats) return;
+    void refreshLive();
+  }, [initialStats, refreshLive]);
+
+  useEffect(() => {
     let debounceTimer: ReturnType<typeof setTimeout> | null = null;
     const scheduleRefresh = () => {
       if (debounceTimer) clearTimeout(debounceTimer);
