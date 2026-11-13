@@ -1,5 +1,5 @@
 import { PageIntro } from '@/components/layout/PageIntro';
-import { AdminViewTabs } from '@/components/features/admin/AdminViewTabs';
+import { AdminSectionHeader } from '@/components/features/admin/AdminSectionHeader';
 import { DepartmentAdminTable } from '@/components/features/admin/DepartmentAdminTable';
 import { PageMain } from '@/components/ui/layout';
 import { guardFreshPage } from '@/lib/auth/pageGuard';
@@ -16,7 +16,7 @@ export default async function AdminDepartmentsPage() {
 
   return (
     <PageMain className="py-6 sm:py-8">
-      <AdminViewTabs />
+      <AdminSectionHeader titleTag="p" />
       <div className="mt-6">
         <PageIntro
           step="Admin · Departments"

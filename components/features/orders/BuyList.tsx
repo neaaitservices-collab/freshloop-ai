@@ -27,6 +27,10 @@ import { fieldMatchesNeedle } from '@/lib/utils/searchNeedle';
 import { forecastApprovalLines, listedForecastLines, stockAlertCounts } from '@/lib/domains/inventory/lowStock';
 import { stockFromPar } from '@/lib/domains/inventory/parLevel';
 import type { StockLevel } from '@/lib/domains/inventory/stock';
+import {
+  rowsForOrderAlert,
+  type OrderAlertFocus,
+} from '@/lib/domains/orders/orderAlertLink';
 
 function casesLabel(value: number): string {
   return Number.isInteger(value) ? String(value) : value.toFixed(2);
@@ -73,7 +77,13 @@ function statusVariant(row: StockLevel, mark: LineMark | undefined): BadgeVarian
   return 'neutral';
 }
 
-export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null }) {
+export function BuyList({
+  levels: initialLevels,
+  alertFocus = null,
+}: {
+  levels: StockLevel[] | null;
+  alertFocus?: OrderAlertFocus | null;
+}) {
   const loading = initialLevels === null;
   const [levels, setLevels] = useState<StockLevel[]>(() => initialLevels ?? []);
   const [error, setError] = useState<string | null>(null);
@@ -81,6 +91,7 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
   const [savingId, setSavingId] = useState<string | null>(null);
   const [marks, setMarks] = useState<Record<string, LineMark>>({});
   const [supplierDirectory, setSupplierDirectory] = useState<SupplierDirectoryEntry[]>([]);
+  const [directoryReady, setDirectoryReady] = useState(false);
   const [drafts, setDrafts] = useState<PoDraft[]>([]);
   const [draftIndex, setDraftIndex] = useState(0);
   const [toast, setToast] = useState<string | null>(null);
@@ -118,6 +129,9 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
       })
       .catch(() => {
         /* Leave the recipient blank until someone types one. */
+      })
+      .finally(() => {
+        if (!cancelled) setDirectoryReady(true);
       });
     return () => {
       cancelled = true;
@@ -160,10 +174,10 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
     document.getElementById('po-email')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   }, [draftKey]);
 
-  const orderingLevels = useMemo(
-    () => levels.map((row) => (manualIds.includes(row.productId) ? placeOnOrder(row) : row)),
-    [levels, manualIds]
-  );
+  const orderingLevels = useMemo(() => {
+    const source = alertFocus ? rowsForOrderAlert(levels, alertFocus) : levels;
+    return source.map((row) => (manualIds.includes(row.productId) ? placeOnOrder(row) : row));
+  }, [levels, manualIds, alertFocus]);
   const supplierChoices = useMemo(
     () => [...new Set(levels.map((row) => row.supplier))].sort((a, b) => a.localeCompare(b)),
     [levels]
@@ -194,7 +208,32 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
     (filtered[supplier] ?? []).some((row) => needsAttention(row, marks[row.productId]))
   );
   const quietNames = supplierNames.filter((supplier) => !orderingNames.includes(supplier));
-  const listedNames = query.trim() ? supplierNames : orderingNames;
+  const listedNames = alertFocus || query.trim() ? supplierNames : orderingNames;
+
+  const alertDraftKey = alertFocus
+    ? `${alertFocus.alert}:${alertFocus.department}:${orderingLevels
+        .map((row) => row.productId)
+        .sort()
+        .join(',')}`
+    : '';
+  const alertDraftOpened = useRef('');
+
+  useEffect(() => {
+    if (!alertFocus || !directoryReady || !alertDraftKey || orderingLevels.length === 0) return;
+    if (alertDraftOpened.current === alertDraftKey) return;
+    alertDraftOpened.current = alertDraftKey;
+    const groupedRows = groupBySupplier(orderingLevels);
+    const next = draftsForSuppliers(
+      Object.keys(groupedRows).map((supplier) => ({
+        supplier,
+        rows: groupedRows[supplier] ?? [],
+      })),
+      supplierDirectory
+    ).filter((item) => item.productIds.length > 0);
+    if (next.length === 0) return;
+    setDrafts(next);
+    setDraftIndex(0);
+  }, [alertFocus, alertDraftKey, directoryReady, orderingLevels, supplierDirectory]);
 
   const activeOrders = useMemo(
     () =>
@@ -337,7 +376,7 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
 
   const needle = query.trim().toLowerCase();
   const matches = needle
-    ? levels
+    ? (alertFocus ? orderingLevels : levels)
         .filter(
           (row) =>
             fieldMatchesNeedle(row.name, needle) ||
@@ -349,7 +388,8 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
   const renderRows = (supplier: string, rows: StockLevel[]) => {
     const attention = rows.filter((row) => needsAttention(row, marks[row.productId]));
     const resting = rows.filter((row) => !needsAttention(row, marks[row.productId]));
-    const showResting = attention.length === 0 || stockOpen[supplier] || query.trim().length > 0;
+    const showResting =
+      Boolean(alertFocus) || attention.length === 0 || stockOpen[supplier] || query.trim().length > 0;
     const visible = showResting ? rows : attention;
 
     return (
@@ -556,6 +596,17 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
             </p>
           ) : null}
 
+          {alertFocus ? (
+            <p className="mt-4 rounded-xl border border-emerald-900/50 bg-emerald-950/30 px-4 py-3 text-sm text-emerald-100">
+              {alertFocus.name} ·{' '}
+              {alertFocus.alert === 'below-par'
+                ? `${orderingLevels.length} below par, filled to par on a new order.`
+                : alertFocus.alert === 'short-dated'
+                  ? `${orderingLevels.length} short-dated, on this order so the next order can be cut.`
+                  : `${orderingLevels.length} flagged. Below-par lines are filled to par. Short-dated lines are here to cut.`}
+            </p>
+          ) : null}
+
           <Card
             className={cn(
               'mt-5',
@@ -689,7 +740,7 @@ export function BuyList({ levels: initialLevels }: { levels: StockLevel[] | null
                 </Card>
               ) : null}
               {listedNames.map((supplier) => renderSupplier(supplier))}
-              {!loading && !query.trim() && quietNames.length > 0 ? (
+              {!loading && !query.trim() && !alertFocus && quietNames.length > 0 ? (
                 <Card className="overflow-hidden">
                   <button
                     type="button"

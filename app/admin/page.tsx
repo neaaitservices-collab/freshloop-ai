@@ -2,11 +2,10 @@ import { Suspense } from 'react';
 import { requireManagerStaff } from '@/lib/auth/guardRoute';
 import { FreshSessionSync } from '@/components/auth/FreshSessionSync';
 import { guardFreshPage } from '@/lib/auth/pageGuard';
-import { AccountPage } from '@/components/features/admin/AccountPage';
-import { StoreSettingsEntryCard } from '@/components/features/admin/StoreSettingsEntryCard';
-import { CaseBoard } from '@/components/features/inventory/CaseBoard';
+import { AdminSectionHeader } from '@/components/features/admin/AdminSectionHeader';
+import { CatalogBookmarkRedirect } from '@/components/features/admin/CatalogBookmarkRedirect';
 import { DashboardFigures, DashboardFiguresSkeleton } from '@/components/features/admin/DashboardFigures';
-import { getStockLevelsRsc } from '@/lib/domains/serverDataCache';
+import { PageMain } from '@/components/ui/layout';
 import { adminDashboardWindowIgnoringQuery } from '@/lib/domains/stats/adminDashboardWindow';
 import { getAdminStoreStatsBundle } from '@/lib/domains/stats/storeStats';
 
@@ -32,12 +31,6 @@ async function LiveFigures({
   return <DashboardFigures stats={stats} initialWasteKpi={wasteKpi} />;
 }
 
-async function LiveCases() {
-  await guardFreshPage('/admin');
-  const levels = await getStockLevelsRsc();
-  return <CaseBoard levels={levels} showReceipt />;
-}
-
 export default async function AdminPage({
   searchParams,
 }: {
@@ -46,20 +39,13 @@ export default async function AdminPage({
   const user = await guardFreshPage('/admin');
   await requireManagerStaff();
   return (
-    <>
+    <PageMain className="py-4 pb-24 sm:py-6">
       <FreshSessionSync user={user} />
-      <AccountPage
-      settings={<StoreSettingsEntryCard />}
-      figures={
-        <Suspense fallback={<DashboardFiguresSkeleton />}>
-          <LiveFigures searchParams={searchParams} />
-        </Suspense>
-      }
-    >
-      <Suspense fallback={<CaseBoard levels={null} showReceipt />}>
-        <LiveCases />
+      <CatalogBookmarkRedirect />
+      <AdminSectionHeader />
+      <Suspense fallback={<DashboardFiguresSkeleton />}>
+        <LiveFigures searchParams={searchParams} />
       </Suspense>
-    </AccountPage>
-    </>
+    </PageMain>
   );
 }

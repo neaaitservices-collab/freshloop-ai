@@ -9,7 +9,6 @@ const boundaries: Array<[string, string]> = [
   ['app/inventory/page.tsx', 'getStockLevels('],
   ['app/inventory/floor/page.tsx', 'getStockLevels('],
   ['app/admin/page.tsx', 'getAdminStoreStatsBundle('],
-  ['app/admin/page.tsx', 'getStockLevelsRsc('],
   ['app/admin/settings/page.tsx', 'getPlatformSettings('],
   ['app/admin/executive/page.tsx', 'getAdminStoreStatsBundle('],
   ['app/admin/suppliers/page.tsx', 'listSuppliers('],

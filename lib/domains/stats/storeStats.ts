@@ -465,7 +465,7 @@ async function loadStoreStats(transferRange?: StoreInstantRange | null): Promise
     })),
   });
   const alerts = new Map<string, DepartmentAlert>(
-    slots.map((slot) => [slot.code, { department: slot.name, low: 0, expiring: 0 }])
+    slots.map((slot) => [slot.code, { department: slot.name, code: slot.code, low: 0, expiring: 0 }])
   );
 
   for (const product of products) {
@@ -487,6 +487,7 @@ async function loadStoreStats(transferRange?: StoreInstantRange | null): Promise
     if (!bucket) {
       bucket = {
         department: resolved?.name ?? product.department,
+        code: departmentCode,
         low: 0,
         expiring: 0,
       };

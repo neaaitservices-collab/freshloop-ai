@@ -4,31 +4,47 @@ import test from 'node:test';
 import { locationLabel } from '@/lib/domains/inventory/locationLabel';
 import { batchActionLabel } from '@/lib/domains/manufacturing/batchActionLabel';
 import { navItemsForRole } from '@/lib/navigation/navItems';
-import { PHONE_NAV_BAR_COUNT, splitPhoneNav, visiblePhoneNavItems } from '@/lib/navigation/phoneNav';
+import { phoneBarItems, PHONE_NAV_HOMES, visiblePhoneNavItems } from '@/lib/navigation/phoneNav';
 import {
   isAdminViewTabActive,
   pushAdminView,
   selectedAdminViewHref,
 } from '@/components/features/admin/AdminViewTabs';
 
-test('phone nav keeps five items and parks the rest in More', () => {
-  const admin = navItemsForRole('ADMIN');
-  assert.ok(admin.length > PHONE_NAV_BAR_COUNT);
-  const split = splitPhoneNav(admin);
-  assert.equal(split.bar.length, PHONE_NAV_BAR_COUNT);
-  assert.deepEqual(
-    [...split.bar, ...split.more].map((item) => item.id),
-    admin.map((item) => item.id)
-  );
-  assert.equal(split.more.some((item) => item.label === 'Operations'), false);
-  assert.ok(split.more.some((item) => item.label === 'Orders'));
-
-  for (const role of ['FLOOR_STAFF', 'DELI_CHEF', 'RECEIVING_CLERK'] as const) {
-    const items = navItemsForRole(role);
-    const phone = splitPhoneNav(items);
-    assert.equal(phone.more.length, 0, role);
-    assert.equal(phone.bar.length, items.length, role);
+test('phone nav is Admin, Receive, Inventory, Production, and Voice', () => {
+  for (const role of ['ADMIN', 'STORE_MANAGER'] as const) {
+    const bar = phoneBarItems(navItemsForRole(role), true);
+    assert.deepEqual(
+      bar.map((item) => item.label),
+      ['Admin', 'Receive', 'Inventory', 'Production', 'Voice'],
+      role
+    );
+    assert.equal(bar.some((item) => item.label === 'Suppliers' || item.label === 'More'), false);
+    assert.equal(bar.some((item) => item.href === '/orders'), false);
+    assert.equal(bar.find((item) => item.id === 'inventory')?.href, '/inventory');
   }
+
+  const receiving = phoneBarItems(navItemsForRole('RECEIVING_CLERK'), true);
+  assert.deepEqual(
+    receiving.map((item) => item.label),
+    ['Profile', 'Receive', 'Stock']
+  );
+  assert.equal(receiving.some((item) => item.href === '/admin/suppliers'), false);
+
+  const floor = phoneBarItems(navItemsForRole('FLOOR_STAFF'), true);
+  assert.deepEqual(
+    floor.map((item) => item.href ?? item.id),
+    ['/profile', '/inventory/floor', 'voice']
+  );
+
+  const deli = phoneBarItems(navItemsForRole('DELI_CHEF'), true);
+  assert.deepEqual(
+    deli.map((item) => item.href ?? item.id),
+    ['/profile', '/inventory', '/production']
+  );
+
+  assert.equal(PHONE_NAV_HOMES.orders, '/admin/settings#orders');
+  assert.equal(PHONE_NAV_HOMES.suppliers, '/admin/suppliers');
 });
 
 const PHONE_POLISH_FILES = [
@@ -55,12 +71,13 @@ test('phone polish screens use at least 12px text', () => {
   }
 });
 
-test('admin view select pushes the chosen tab route', () => {
+test('admin views are inline tabs for Overview, ROI, Suppliers, and Departments', () => {
   assert.equal(selectedAdminViewHref('/admin'), '/admin');
   assert.equal(selectedAdminViewHref('/admin/executive'), '/admin/executive');
   assert.equal(selectedAdminViewHref('/admin/executive/detail'), '/admin/executive');
   assert.equal(selectedAdminViewHref('/admin/suppliers'), '/admin/suppliers');
   assert.equal(selectedAdminViewHref('/admin/departments'), '/admin/departments');
+  assert.equal(selectedAdminViewHref('/admin/settings'), '');
   assert.equal(selectedAdminViewHref('/receive'), '');
   assert.equal(isAdminViewTabActive('/admin/suppliers', '/admin'), false);
   assert.equal(isAdminViewTabActive('/admin', '/admin'), true);
@@ -69,28 +86,32 @@ test('admin view select pushes the chosen tab route', () => {
   const push = (href: string) => {
     pushed.push(href);
   };
+  pushAdminView(push, '/admin');
   pushAdminView(push, '/admin/suppliers');
   pushAdminView(push, '/production');
+  pushAdminView(push, '/admin/executive');
   pushAdminView(push, '/admin/departments');
-  assert.deepEqual(pushed, ['/admin/suppliers', '/admin/departments']);
+  assert.deepEqual(pushed, ['/admin', '/admin/suppliers', '/admin/executive', '/admin/departments']);
 
   const views = readFileSync('components/features/admin/AdminViewTabs.tsx', 'utf8');
-  assert.match(views, /<select/);
-  assert.match(views, /aria-label="Admin view"/);
-  assert.match(views, /min-h-11 w-full/);
-  assert.match(views, /sm:hidden/);
-  assert.match(views, /router\.push\(href\)/);
-  assert.match(views, /pushAdminView\(/);
-  assert.match(views, /hidden overflow-x-auto rounded-xl border border-slate-800 bg-slate-950\/80 p-1 sm:flex/);
+  assert.equal(views.includes('<select'), false);
+  assert.equal(views.includes('Operations'), false);
+  assert.match(views, /Overview/);
+  assert.match(views, /ROI/);
+  assert.match(views, /Suppliers/);
+  assert.match(views, /Departments/);
   assert.match(views, /aria-label="Admin views"/);
   assert.match(views, /aria-current=\{active \? 'page' : undefined\}/);
-  assert.match(views, /focus-visible:outline-solid/);
-  assert.match(views, /focus-visible:outline-2/);
-  assert.match(views, /shrink-0 rounded-lg px-3 py-2 text-xs font-black transition/);
-  assert.match(views, /bg-emerald-400 text-slate-950/);
-  assert.equal(views.includes('grid-cols-2'), false);
+  assert.match(views, /border-emerald-400 text-slate-50/);
+  assert.match(views, /min-h-11/);
   assert.equal(/\bkitchen\b/i.test(views), false);
   assert.equal(/text-\[(?:8|9|10|11)px\]/.test(views), false);
+
+  const header = readFileSync('components/features/admin/AdminSectionHeader.tsx', 'utf8');
+  assert.match(header, /href="\/admin\/settings"/);
+  assert.match(header, /aria-label="Settings"/);
+  assert.match(header, />\s*Settings\s*</);
+  assert.equal(/\bkitchen\b/i.test(header), false);
 });
 
 test('phone nav omits Voice when there is no handler', () => {
@@ -101,8 +122,9 @@ test('phone nav omits Voice when there is no handler', () => {
   assert.equal(hidden.length, admin.length - 1);
   const shown = visiblePhoneNavItems(admin, true);
   assert.equal(shown.some((item) => item.id === 'voice'), true);
-  const split = splitPhoneNav(hidden);
-  assert.equal([...split.bar, ...split.more].some((item) => item.voice), false);
+  const bar = phoneBarItems(hidden, false);
+  assert.equal(bar.some((item) => item.voice), false);
+  assert.equal(bar.some((item) => item.id === 'voice'), false);
 });
 
 test('location labels are display-only and production locations share one name', () => {

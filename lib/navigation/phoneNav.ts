@@ -1,5 +1,16 @@
-/** Phone bar shows this many destinations. The rest open in More. */
-export const PHONE_NAV_BAR_COUNT = 5;
+/** Phone bar destinations, in the order the admin phone shows them. */
+export const PHONE_BAR_IDS = ['account', 'receive', 'inventory', 'production', 'voice'] as const;
+
+export type PhoneBarId = (typeof PHONE_BAR_IDS)[number];
+
+/**
+ * Destinations that used to sit on the phone bar or under More, and where they live now.
+ * Suppliers is an Admin tab. Orders was the only item that lived only under More.
+ */
+export const PHONE_NAV_HOMES = {
+  suppliers: '/admin/suppliers',
+  orders: '/admin/settings#orders',
+} as const;
 
 /** Voice without a handler would leave an empty phone-nav cell. */
 export function visiblePhoneNavItems<T extends { voice?: boolean }>(
@@ -10,12 +21,15 @@ export function visiblePhoneNavItems<T extends { voice?: boolean }>(
   return items.filter((item) => !item.voice);
 }
 
-export function splitPhoneNav<T>(items: readonly T[]): { bar: T[]; more: T[] } {
-  if (items.length <= PHONE_NAV_BAR_COUNT) {
-    return { bar: [...items], more: [] };
-  }
-  return {
-    bar: items.slice(0, PHONE_NAV_BAR_COUNT),
-    more: items.slice(PHONE_NAV_BAR_COUNT),
-  };
+/** The five phone destinations the role is allowed to open. No overflow menu. */
+export function phoneBarItems<T extends { id: string; voice?: boolean }>(
+  items: readonly T[],
+  hasVoiceHandler: boolean
+): T[] {
+  const visible = visiblePhoneNavItems(items, hasVoiceHandler);
+  const byId = new Map(visible.map((item) => [item.id, item]));
+  return PHONE_BAR_IDS.flatMap((id) => {
+    const item = byId.get(id);
+    return item ? [item] : [];
+  });
 }
