@@ -9,6 +9,7 @@ import type { WasteKpiReport } from '@/lib/domains/inventory/ledger';
 import { calculateRealTimeWastePct } from '@/lib/domains/inventory/ledger';
 import { SCRAP_VOLUMETRIC_BUCKET_KIND } from '@/lib/domains/inventory/volumetricScrapLedger';
 import { belowParSkus, isBelowPar, outOfStockSkus } from '@/lib/domains/inventory/lowStock';
+import { countsAsShortDatedAlert } from '@/lib/domains/orders/orderAlertLink';
 import { getStockLevels } from '@/lib/domains/inventory/stock';
 import type { AdminPeriodFigures, DepartmentAlert, StoreStats } from '@/lib/domains/stats/storeStatsTypes';
 import { findLatestStoreSetting } from '@/lib/domains/stats/storeSettingSelect';
@@ -408,7 +409,6 @@ async function loadStatProducts(tableReady: boolean) {
 
 async function loadStoreStats(transferRange?: StoreInstantRange | null): Promise<StoreStats> {
   const now = new Date();
-  const horizon = new Date(now.getTime() + 48 * 60 * 60 * 1000);
   const rolling = last30StoreDays(now);
   const cardBounds = transferRange ?? torontoRange(rolling.from, rolling.to);
   const departmentState = await loadDepartmentRefState();
@@ -497,7 +497,7 @@ async function loadStoreStats(transferRange?: StoreInstantRange | null): Promise
 
     const expiration = expirationById.get(product.id);
     if (level && level.onHand > 0 && level.daysRemaining <= level.pullDays) pulls += 1;
-    if (expiration && expiration.getTime() <= horizon.getTime()) {
+    if (countsAsShortDatedAlert({ onHand, expirationDate: expiration ?? null }, now)) {
       expiringWithin48h += 1;
       bucket.expiring += 1;
     }

@@ -1,4 +1,5 @@
 import type { StockLevel } from '@/lib/domains/inventory/stock';
+import { isOrderShortDated } from '@/lib/domains/orders/orderAlertLink';
 
 export type LineMark = 'approved' | 'sent';
 
@@ -55,6 +56,7 @@ export function orderLine(row: StockLevel): string {
   if (row.orderCases > 0) {
     return `${row.orderCases} ${caseWord(row.orderCases)} - ${row.name}`;
   }
+  if (isOrderShortDated(row)) return `Short-dated - ${row.name}`;
   return `In stock - ${row.name}`;
 }
 

@@ -2,7 +2,33 @@ import { departmentLabel } from '@/lib/domains/inventory/inventoryCatalog';
 import { isBelowPar } from '@/lib/domains/inventory/lowStock';
 
 /** Same 48-hour window the admin alert uses for "short-dated". */
-export const SHORT_DATED_DAYS = 2;
+export const SHORT_DATED_WINDOW_MS = 48 * 60 * 60 * 1000;
+
+export type ShortDatedAlertRow = {
+  onHand: number;
+  /** Recorded lot expiry. Shelf-life fallback is not an expiry. */
+  expirationDate?: Date | string | null;
+};
+
+/** True only when a stored expiry is at or before now + 48 hours. */
+export function isRecordedExpiryWithin48h(
+  expiration: Date | string | null | undefined,
+  now: Date = new Date()
+): boolean {
+  if (expiration == null || expiration === '') return false;
+  const time = expiration instanceof Date ? expiration.getTime() : new Date(expiration).getTime();
+  if (!Number.isFinite(time)) return false;
+  return time <= now.getTime() + SHORT_DATED_WINDOW_MS;
+}
+
+/** Admin chip and the order list share this. A null expiry is not short-dated. */
+export function countsAsShortDatedAlert(row: ShortDatedAlertRow, now: Date = new Date()): boolean {
+  return row.onHand > 0 && isRecordedExpiryWithin48h(row.expirationDate, now);
+}
+
+export function shortDatedChipCount(rows: readonly ShortDatedAlertRow[], now: Date = new Date()): number {
+  return rows.filter((row) => countsAsShortDatedAlert(row, now)).length;
+}
 
 export const ORDER_ALERT_KINDS = ['below-par', 'short-dated', 'flagged'] as const;
 
@@ -16,16 +42,14 @@ export interface OrderAlertFocus {
   alert: OrderAlertKind;
 }
 
-type AlertRow = {
+type AlertRow = ShortDatedAlertRow & {
   department: string;
   category?: string;
-  onHand: number;
   parUnits: number;
-  daysRemaining: number;
 };
 
-export function isOrderShortDated(row: { onHand: number; daysRemaining: number }): boolean {
-  return row.onHand > 0 && row.daysRemaining <= SHORT_DATED_DAYS;
+export function isOrderShortDated(row: ShortDatedAlertRow, now: Date = new Date()): boolean {
+  return countsAsShortDatedAlert(row, now);
 }
 
 export function parseOrderAlertSearch(input: {
@@ -65,17 +89,25 @@ export function matchesOrderDepartment(row: { department: string; category?: str
   return sameLabel(departmentLabel(row.department), key);
 }
 
-export function rowMatchesOrderAlert(row: AlertRow, focus: Pick<OrderAlertFocus, 'department' | 'alert'>): boolean {
+export function rowMatchesOrderAlert(
+  row: AlertRow,
+  focus: Pick<OrderAlertFocus, 'department' | 'alert'>,
+  now: Date = new Date()
+): boolean {
   if (!matchesOrderDepartment(row, focus.department)) return false;
   const below = isBelowPar(row);
-  const shortDated = isOrderShortDated(row);
+  const shortDated = isOrderShortDated(row, now);
   if (focus.alert === 'below-par') return below;
   if (focus.alert === 'short-dated') return shortDated;
   return below || shortDated;
 }
 
-export function rowsForOrderAlert<T extends AlertRow>(rows: readonly T[], focus: OrderAlertFocus): T[] {
-  return rows.filter((row) => rowMatchesOrderAlert(row, focus));
+export function rowsForOrderAlert<T extends AlertRow>(
+  rows: readonly T[],
+  focus: OrderAlertFocus,
+  now: Date = new Date()
+): T[] {
+  return rows.filter((row) => rowMatchesOrderAlert(row, focus, now));
 }
 
 export function orderAlertHint(low: number, expiring: number): string {

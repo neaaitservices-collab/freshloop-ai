@@ -4,11 +4,13 @@ import { draftForRows } from '@/components/features/orders/supplierMail';
 import { stockFromPar } from '@/lib/domains/inventory/parLevel';
 import type { StockLevel } from '@/lib/domains/inventory/stock';
 import {
+  countsAsShortDatedAlert,
   isOrderShortDated,
   orderAlertHint,
   orderAlertHref,
   parseOrderAlertSearch,
   rowsForOrderAlert,
+  shortDatedChipCount,
 } from '@/lib/domains/orders/orderAlertLink';
 
 function row(patch: Partial<StockLevel> & Pick<StockLevel, 'productId' | 'name' | 'department'>): StockLevel {
@@ -87,6 +89,7 @@ test('below par fills the order to par and short-dated stays on the order to cut
     parCases: 1,
     casePackSize: 6,
     daysRemaining: 1,
+    expirationDate: new Date(Date.now() + 12 * 60 * 60 * 1000),
   });
   const dairy = row({
     productId: 'milk',
@@ -115,7 +118,8 @@ test('below par fills the order to par and short-dated stays on the order to cut
     ['berries']
   );
   assert.equal(isOrderShortDated(shortRows[0]!), true);
-  assert.match(draftForRows('Valley', shortRows).body, /In stock - Berries/);
+  assert.match(draftForRows('Valley', shortRows).body, /Short-dated - Berries/);
+  assert.equal(draftForRows('Valley', shortRows).body.includes('In stock'), false);
 
   const flagged = rowsForOrderAlert(levels, { ...focus, alert: 'flagged' });
   assert.deepEqual(
@@ -126,4 +130,63 @@ test('below par fills the order to par and short-dated stays on the order to cut
     rowsForOrderAlert(levels, { department: 'Produce', name: 'Produce', alert: 'below-par' }).length,
     1
   );
+});
+
+test('short-dated chip count matches the order list and skips a null expiry', () => {
+  const now = new Date('2026-11-13T12:00:00.000Z');
+  const within = new Date(now.getTime() + 12 * 60 * 60 * 1000);
+  const later = new Date(now.getTime() + 72 * 60 * 60 * 1000);
+  const real = row({
+    productId: 'berries',
+    name: 'Berries',
+    department: 'PRODUCE',
+    onHand: 20,
+    parCases: 1,
+    casePackSize: 6,
+    daysRemaining: 1,
+    expirationDate: within,
+  });
+  const shelfOnly = row({
+    productId: 'greens',
+    name: 'Greens',
+    department: 'PRODUCE',
+    onHand: 12,
+    parCases: 1,
+    casePackSize: 6,
+    daysRemaining: 1,
+    expirationDate: null,
+  });
+  const laterExpiry = row({
+    productId: 'apples',
+    name: 'Apples',
+    department: 'PRODUCE',
+    onHand: 8,
+    parCases: 1,
+    casePackSize: 6,
+    daysRemaining: 4,
+    expirationDate: later,
+  });
+  const emptyShelf = row({
+    productId: 'pears',
+    name: 'Pears',
+    department: 'PRODUCE',
+    onHand: 0,
+    parCases: 2,
+    casePackSize: 6,
+    expirationDate: within,
+  });
+  const levels = [real, shelfOnly, laterExpiry, emptyShelf];
+  assert.equal(shelfOnly.daysRemaining <= 2, true);
+  assert.equal(countsAsShortDatedAlert(shelfOnly, now), false);
+  assert.equal(isOrderShortDated(shelfOnly, now), false);
+
+  const focus = parseOrderAlertSearch({ department: 'PRODUCE', alert: 'short-dated', name: 'Produce' });
+  assert.ok(focus);
+  const ordered = rowsForOrderAlert(levels, focus, now);
+  assert.equal(shortDatedChipCount(levels, now), ordered.length);
+  assert.deepEqual(
+    ordered.map((item) => item.productId),
+    ['berries']
+  );
+  assert.equal(ordered.some((item) => item.productId === 'greens'), false);
 });

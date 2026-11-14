@@ -1,14 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
-import { PageIntro } from '@/components/layout/PageIntro';
-import { AdminViewTabs } from '@/components/features/admin/AdminViewTabs';
-import { UserManagementTable } from '@/components/features/admin/UserManagementTable';
-import { ProfileForm } from '@/components/features/profile/PersonalProfile';
-import { CollapsibleSection } from '@/components/ui/CollapsibleSection';
-import { PageMain } from '@/components/ui/layout';
-import { useRole } from '@/components/auth/RoleProvider';
-import { isManager } from '@/lib/utils/roles';
+import { useEffect, useState } from 'react';
 import type { PlatformSettings } from '@/lib/domains/stats/platformSettings';
 import { dispatchSettingsUpdated } from '@/lib/domains/stats/settingsEvents';
 
@@ -281,73 +273,5 @@ export function SettingsForm({
         </div>
       )}
     </form>
-  );
-}
-
-export function AccountPage({
-  settings,
-  figures,
-  children,
-}: {
-  settings: React.ReactNode;
-  figures?: React.ReactNode;
-  children?: React.ReactNode;
-}) {
-  const { activeUser, loading } = useRole();
-  const manager = Boolean(activeUser && isManager(activeUser.role));
-  // Wait for Auth.js session before showing manager-only dashboard controls.
-  const showControls = !loading && manager;
-  const title = loading ? 'Account' : manager ? 'Admin' : 'Profile';
-
-  return (
-      <PageMain className="py-4 pb-24 sm:py-6">
-        {showControls ? (
-          <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-            <AdminViewTabs />
-          </div>
-        ) : (
-          <PageIntro
-            step="Account"
-            title={title}
-            description="Your name, email, and position."
-          />
-        )}
-        {showControls ? (
-          <>
-            <div className="space-y-6">{figures}</div>
-            <div className="mt-6 space-y-3">
-              {settings}
-              <CollapsibleSection
-                title="Personal profile"
-                description="Name and email"
-                defaultOpen={false}
-              >
-                <ProfileForm />
-              </CollapsibleSection>
-              <CollapsibleSection
-                title="Staff"
-                description="Team roster and permissions"
-                defaultOpen={false}
-              >
-                <UserManagementTable embedded />
-              </CollapsibleSection>
-              {children ? (
-                <CollapsibleSection
-                  anchorId="inventory-catalog"
-                  title="Inventory catalog"
-                  description="Stock & margin control — full SKU list from the database"
-                  defaultOpen={false}
-                >
-                  {children}
-                </CollapsibleSection>
-              ) : null}
-            </div>
-          </>
-        ) : (
-          <div className="mt-5">
-            <ProfileForm />
-          </div>
-        )}
-      </PageMain>
   );
 }
