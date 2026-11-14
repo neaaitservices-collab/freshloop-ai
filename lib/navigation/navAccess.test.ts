@@ -4,7 +4,7 @@ import test from 'node:test';
 import { decideFreshNavigation } from '@/lib/auth/pageAccess';
 import { staffUserFromRow, type StaffAuthRow } from '@/lib/auth/staffSnapshot';
 import { navItemsForRole } from '@/lib/navigation/navItems';
-import { ROLES, canVisit, type RoleName } from '@/lib/utils/roles';
+import { ROLES, canVisit, homeForRole, type RoleName } from '@/lib/utils/roles';
 
 function user(role: StaffAuthRow['role']) {
   return staffUserFromRow({
@@ -97,6 +97,27 @@ test('role-by-route matrix allows /profile for every signed-in role', () => {
         assert.equal(decision.action, 'redirect', `${role} ${path}`);
       }
     }
+  }
+});
+
+test('/admin/settings rejects non-managers', () => {
+  assert.deepEqual(decideFreshNavigation('/admin/settings', null), {
+    action: 'redirect',
+    location: '/login?callbackUrl=%2Fadmin%2Fsettings',
+  });
+  for (const role of ['RECEIVING_CLERK', 'FLOOR_STAFF', 'DELI_CHEF'] as const) {
+    const session = user(role);
+    assert.ok(session);
+    assert.equal(canVisit(role, '/admin/settings'), false, role);
+    assert.deepEqual(decideFreshNavigation('/admin/settings', session), {
+      action: 'redirect',
+      location: homeForRole(role),
+    });
+  }
+  for (const role of ['ADMIN', 'STORE_MANAGER'] as const) {
+    const session = user(role);
+    assert.ok(session);
+    assert.deepEqual(decideFreshNavigation('/admin/settings', session), { action: 'allow' }, role);
   }
 });
 

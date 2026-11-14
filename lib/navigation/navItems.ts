@@ -65,9 +65,7 @@ export function navItemsForRole(role: RoleName | null): NavItem[] {
   const visible = !role
     ? NAV_ITEMS.filter((item) => item.roles.includes('ADMIN'))
     : NAV_ITEMS.filter((item) => item.roles.includes(role));
-  const filtered =
-    role && isManager(role) ? visible.filter((item) => item.id !== 'inventory') : visible;
-  const presented = filtered.map((item) => presentNavItem(item, role));
+  const presented = visible.map((item) => presentNavItem(item, role));
   const permitted = role
     ? presented.filter((item) => !item.href || canVisit(role, item.href))
     : presented;

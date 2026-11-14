@@ -95,6 +95,11 @@ export interface StockLevel {
   isMarkdown: boolean;
   markdownPct?: number | null;
   daysRemaining: number;
+  /**
+   * Latest ledger expiration. Null when no transaction stored one.
+   * Short-dated alerts use this. `daysRemaining` still falls back to shelf life.
+   */
+  expirationDate?: Date | string | null;
   /** Read-only: units sold in the POS lookback window (Sale + POS_Sale). */
   posSoldInWindow?: number;
   posSalesDays?: number;
@@ -548,6 +553,7 @@ function stockLevelFromRow(
       regularRetailPrice: row.regularRetailPrice,
       daysRemaining: daysUntil(row.expirationDate, row.shelfLifeDays ?? 7),
     }),
+    expirationDate: row.expirationDate ?? null,
     pullSensitivityDays: pullOverride,
     pullDays,
     hasStockHistory: row.hasStockHistory === true,

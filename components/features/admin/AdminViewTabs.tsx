@@ -1,12 +1,12 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname, useRouter } from 'next/navigation';
+import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/utils/cn';
 
 const TABS = [
-  { href: '/admin/executive', label: 'Executive ROI' },
-  { href: '/admin', label: 'Operations' },
+  { href: '/admin', label: 'Overview' },
+  { href: '/admin/executive', label: 'ROI' },
   { href: '/admin/suppliers', label: 'Suppliers' },
   { href: '/admin/departments', label: 'Departments' },
 ] as const;
@@ -24,7 +24,7 @@ export function selectedAdminViewHref(pathname: string): AdminViewHref | '' {
   return TABS.find((tab) => isAdminViewTabActive(pathname, tab.href))?.href ?? '';
 }
 
-/** Client route change for the mobile admin-view select. Unknown values are ignored. */
+/** Client route change for an admin tab. Unknown values are ignored. */
 export function pushAdminView(push: (href: string) => void, href: string): void {
   const match = TABS.find((tab) => tab.href === href);
   if (match) push(match.href);
@@ -35,55 +35,32 @@ const focusRing =
 
 export function AdminViewTabs() {
   const pathname = usePathname();
-  const router = useRouter();
-  const selected = selectedAdminViewHref(pathname);
 
   return (
-    <>
-      <select
-        aria-label="Admin view"
-        className={cn(
-          'min-h-11 w-full rounded-xl border border-slate-800 bg-slate-950/80 px-3 text-base sm:text-xs font-black text-slate-100 sm:hidden',
-          focusRing
-        )}
-        value={selected}
-        onChange={(event) => {
-          pushAdminView((href) => router.push(href), event.target.value);
-        }}
-      >
-        {selected === '' ? (
-          <option value="" disabled>
-            Admin view
-          </option>
-        ) : null}
-        {TABS.map((tab) => (
-          <option key={tab.href} value={tab.href}>
-            {tab.label}
-          </option>
-        ))}
-      </select>
-      <nav
-        className="hidden overflow-x-auto rounded-xl border border-slate-800 bg-slate-950/80 p-1 sm:flex"
-        aria-label="Admin views"
-      >
+    <nav className="-mx-3 overflow-x-auto border-b border-slate-800 px-3 sm:mx-0 sm:px-0" aria-label="Admin views">
+      <ul className="flex gap-1.5">
         {TABS.map((tab) => {
           const active = isAdminViewTabActive(pathname, tab.href);
           return (
-            <Link
-              key={tab.href}
-              href={tab.href}
-              aria-current={active ? 'page' : undefined}
-              className={cn(
-                'shrink-0 rounded-lg px-3 py-2 text-xs font-black transition',
-                focusRing,
-                active ? 'bg-emerald-400 text-slate-950' : 'text-slate-400 hover:text-slate-200'
-              )}
-            >
-              {tab.label}
-            </Link>
+            <li key={tab.href} className="shrink-0">
+              <Link
+                href={tab.href}
+                prefetch={false}
+                aria-current={active ? 'page' : undefined}
+                className={cn(
+                  'inline-flex min-h-11 items-center whitespace-nowrap border-b-2 px-1 mr-2.5 py-2 text-[13px] font-bold',
+                  focusRing,
+                  active
+                    ? 'border-emerald-400 text-slate-50'
+                    : 'border-transparent text-slate-400 hover:text-slate-200'
+                )}
+              >
+                {tab.label}
+              </Link>
+            </li>
           );
         })}
-      </nav>
-    </>
+      </ul>
+    </nav>
   );
 }

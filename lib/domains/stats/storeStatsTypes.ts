@@ -22,6 +22,8 @@ export interface RescueOutcomeDay {
 
 export interface DepartmentAlert {
   department: string;
+  /** Stable department code used to open a prefiltered order. Display stays in `department`. */
+  code?: string;
   low: number;
   expiring: number;
 }

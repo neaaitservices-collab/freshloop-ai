@@ -6,7 +6,7 @@ import { Activity, ChefHat, Package, Settings, Warehouse } from 'lucide-react';
 
 const SHORTCUTS = [
   { href: '/receive', label: 'Receive', icon: Package },
-  { href: '/admin#inventory-catalog', label: 'Catalog', icon: Warehouse },
+  { href: '/inventory', label: 'Catalog', icon: Warehouse },
   { href: '/production', label: 'Production', icon: ChefHat },
   { href: '/operations', label: 'Full ledger', icon: Activity },
   { href: '/admin/settings', label: 'Store settings', icon: Settings },

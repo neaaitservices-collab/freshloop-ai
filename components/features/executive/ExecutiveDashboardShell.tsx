@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { PageIntro } from '@/components/layout/PageIntro';
-import { AdminViewTabs } from '@/components/features/admin/AdminViewTabs';
+import { AdminSectionHeader } from '@/components/features/admin/AdminSectionHeader';
 import { PageMain } from '@/components/ui/layout';
 
 export function ExecutiveDashboardShell({
@@ -12,11 +12,11 @@ export function ExecutiveDashboardShell({
 }) {
   return (
     <PageMain className="py-4 pb-24 sm:py-6">
+      <AdminSectionHeader titleTag="p" />
       <PageIntro
         step="Executive analytics"
         title="Business impact"
         description="Savings, ROI, and baseline vs optimized cost — tuned for leadership."
-        action={<AdminViewTabs />}
       />
       <div className="mt-4 space-y-4">{children}</div>
     </PageMain>

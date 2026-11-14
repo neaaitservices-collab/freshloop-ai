@@ -1,5 +1,5 @@
 import { PageIntro } from '@/components/layout/PageIntro';
-import { AdminViewTabs } from '@/components/features/admin/AdminViewTabs';
+import { AdminSectionHeader } from '@/components/features/admin/AdminSectionHeader';
 import { SupplierDirectory } from '@/components/features/suppliers/SupplierTable';
 import { PageMain } from '@/components/ui/layout';
 import { listSuppliers } from '@/lib/domains/suppliers/suppliers';
@@ -19,7 +19,7 @@ export default async function AdminSuppliersPage() {
 
   return (
     <PageMain className="py-6 sm:py-8">
-      <AdminViewTabs />
+      <AdminSectionHeader titleTag="p" />
       <div className="mt-6">
         <PageIntro
           step="Admin · Vendors"

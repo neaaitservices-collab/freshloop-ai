@@ -1,8 +1,10 @@
 'use client';
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import Link from 'next/link';
 import { AdminDashboard } from '@/components/features/admin/AdminDashboard';
 import { DashboardCard } from '@/components/features/admin/DashboardCard';
+import { orderAlertHint, orderAlertHref } from '@/lib/domains/orders/orderAlertLink';
 import type { DepartmentAlert, StoreStats } from '@/lib/domains/stats/storeStatsTypes';
 import type { WasteKpiReport } from '@/lib/domains/inventory/ledger';
 import { subscribeInventoryUpdated } from '@/lib/domains/inventory/inventoryMoveClient';
@@ -71,22 +73,46 @@ function DepartmentAlertList({
       ) : rows.length === 0 ? (
         <p className="pt-3 text-sm text-slate-400">No department alerts.</p>
       ) : (
-        <ul className="mt-3 space-y-3">
+        <ul className="mt-3 space-y-4">
           {rows.map((row) => (
-            <li key={row.department}>
-              <p className="text-sm font-black text-slate-50">{row.department}</p>
-              <div className="mt-1.5 flex flex-wrap gap-1.5">
-                {row.low > 0 ? (
-                  <span className="rounded-lg bg-amber-950 px-2 py-1 text-xs font-bold text-amber-300">
-                    {row.low} below par
-                  </span>
-                ) : null}
-                {row.expiring > 0 ? (
-                  <span className="rounded-lg bg-rose-950 px-2 py-1 text-xs font-bold text-rose-300">
-                    {row.expiring} short-dated
-                  </span>
-                ) : null}
+            <li key={row.code ?? row.department} className="flex items-start justify-between gap-3">
+              <div className="min-w-0 flex-1">
+                <h3 className="text-sm font-black text-slate-50">{row.department}</h3>
+                <div className="mt-1.5 flex flex-wrap gap-1.5">
+                  {row.low > 0 ? (
+                    <Link
+                      href={orderAlertHref({ code: row.code, department: row.department, alert: 'below-par' })}
+                      prefetch={false}
+                      className="inline-flex min-h-11 items-center rounded-lg bg-amber-950 px-2 py-1 text-xs font-bold text-amber-300"
+                    >
+                      {row.low} below par ›
+                    </Link>
+                  ) : null}
+                  {row.expiring > 0 ? (
+                    <Link
+                      href={orderAlertHref({
+                        code: row.code,
+                        department: row.department,
+                        alert: 'short-dated',
+                      })}
+                      prefetch={false}
+                      className="inline-flex min-h-11 items-center rounded-lg bg-rose-950 px-2 py-1 text-xs font-bold text-rose-300"
+                    >
+                      {row.expiring} short-dated ›
+                    </Link>
+                  ) : null}
+                </div>
+                <p className="mt-2 text-xs font-semibold leading-snug text-slate-500">
+                  {orderAlertHint(row.low, row.expiring)}
+                </p>
               </div>
+              <Link
+                href={orderAlertHref({ code: row.code, department: row.department, alert: 'flagged' })}
+                prefetch={false}
+                className="inline-flex min-h-11 shrink-0 items-center rounded-lg bg-emerald-400 px-2.5 text-xs font-extrabold text-slate-950"
+              >
+                Order ›
+              </Link>
             </li>
           ))}
         </ul>

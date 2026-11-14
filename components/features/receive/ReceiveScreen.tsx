@@ -369,12 +369,24 @@ export function ReceiveScreen({
                 {supplierLoadError}
               </p>
             ) : null}
-            <SupplierSelect
-              suppliers={suppliers}
-              value={selectedSupplierId}
-              onChange={changeSupplier}
-              label="Delivery supplier"
-            />
+            <div>
+              <SupplierSelect
+                suppliers={suppliers}
+                value={selectedSupplierId}
+                onChange={changeSupplier}
+                label="Delivery supplier"
+              />
+              <AddReceiveSupplier
+                onCreated={(supplier) => {
+                  setSuppliers((current) =>
+                    current.some((row) => row.id === supplier.id)
+                      ? current
+                      : [...current, supplier].sort((a, b) => a.name.localeCompare(b.name))
+                  );
+                  changeSupplier(supplier.id);
+                }}
+              />
+            </div>
             <label className="block text-sm text-slate-300">
               Department when the item is unclear
               <select
@@ -468,5 +480,83 @@ export function ReceiveScreen({
         }}
       />
     </>
+  );
+}
+
+/** Receiving staff add a supplier by name without the manager supplier directory. */
+function AddReceiveSupplier({ onCreated }: { onCreated: (supplier: SupplierRecord) => void }) {
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const save = async () => {
+    const next = name.trim();
+    if (!next) {
+      setError('Supplier name is required.');
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetch('/api/receiving-suppliers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: next }),
+      });
+      const json = (await res.json()) as {
+        success?: boolean;
+        supplier?: SupplierRecord;
+        error?: string;
+      };
+      if (!res.ok || !json.success || !json.supplier?.id) {
+        setError(json.error || 'Could not add that supplier.');
+        return;
+      }
+      onCreated(json.supplier);
+      setName('');
+      setOpen(false);
+    } catch {
+      setError('Could not add that supplier. Check the connection and try again.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!open) {
+    return (
+      <Button type="button" variant="secondary" className="mt-2" onClick={() => setOpen(true)}>
+        Add supplier
+      </Button>
+    );
+  }
+
+  return (
+    <form
+      className="mt-2 space-y-2"
+      onSubmit={(event) => {
+        event.preventDefault();
+        void save();
+      }}
+    >
+      <label className="block text-xs font-bold text-slate-400">
+        Supplier name
+        <input
+          required
+          value={name}
+          onChange={(event) => setName(event.target.value)}
+          className="mt-1 w-full min-h-11 rounded-xl border border-slate-700 bg-slate-950 px-3 text-sm text-slate-100"
+        />
+      </label>
+      {error ? <p className="text-sm text-amber-200">{error}</p> : null}
+      <div className="flex flex-wrap gap-2">
+        <Button type="submit" variant="success" disabled={saving}>
+          {saving ? 'Saving…' : 'Save supplier'}
+        </Button>
+        <Button type="button" variant="ghost" onClick={() => setOpen(false)}>
+          Cancel
+        </Button>
+      </div>
+    </form>
   );
 }
