@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { PLATFORM_DEFAULTS, type PlatformSettings } from '@/lib/domains/stats/platformSettings';
+import { PLATFORM_DEFAULTS, type PlatformSettings } from '@/lib/domains/stats/platformSettingsDefaults';
 import {
   FRESHLOOP_SETTINGS_UPDATED,
   readSettingsUpdatedEvent,

@@ -1,3 +1,5 @@
+import 'server-only';
+
 import { createRequire } from 'node:module';
 import { existsSync, statSync } from 'node:fs';
 import { join } from 'node:path';

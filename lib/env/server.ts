@@ -1,3 +1,5 @@
+import 'server-only';
+
 /**
  * Server-only environment helpers (Vercel / Supabase / Auth.js).
  */
