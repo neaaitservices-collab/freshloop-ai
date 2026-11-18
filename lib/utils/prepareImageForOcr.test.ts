@@ -4,10 +4,16 @@ import {
   OCR_IMAGE_MAX_EDGE,
   OCR_PDF_JPEG_QUALITY,
   OCR_PDF_MAX_PAGES,
+  OCR_UPLOAD_BODY_MAX_BYTES,
+  OCR_UPLOAD_TIGHTEN_QUALITY,
+  invoiceOcrUploadBytes,
+  limitInvoiceOcrUpload,
   ocrPayloadFitsUpload,
   pdfTooManyPagesMessage,
   prepareImageDataUrlForOcr,
   prepareImageFileForOcr,
+  reprepareEveryOcrPage,
+  type PreparedOcrFile,
 } from '@/lib/utils/prepareImageForOcr';
 
 function buildPdf(pageCount: number): Buffer {
@@ -48,14 +54,17 @@ test('createImageBitmap downscales a photo and marks the upload ready', async ()
   const previousDocument = globalThis.document;
   const sizes: Array<{ width: number; height: number }> = [];
   let closed = 0;
-  globalThis.createImageBitmap = async () =>
-    ({
+  let bitmapOptions: ImageBitmapOptions | undefined;
+  globalThis.createImageBitmap = (async (_source: ImageBitmapSource, options?: ImageBitmapOptions) => {
+    bitmapOptions = options;
+    return {
       width: 2400,
       height: 1600,
       close() {
         closed += 1;
       },
-    }) as unknown as ImageBitmap;
+    } as ImageBitmap;
+  }) as typeof createImageBitmap;
   globalThis.document = {
     createElement() {
       const canvas = {
@@ -80,6 +89,7 @@ test('createImageBitmap downscales a photo and marks the upload ready', async ()
     assert.equal(prepared.mimeType, 'image/webp');
     assert.equal(prepared.pages.length, 1);
     assert.equal(closed, 1);
+    assert.deepEqual(bitmapOptions, { imageOrientation: 'from-image' });
     assert.deepEqual(sizes[0], { width: OCR_IMAGE_MAX_EDGE, height: 800 });
   } finally {
     globalThis.createImageBitmap = previousBitmap;
@@ -93,6 +103,88 @@ test('an already small jpeg skips a second prepare', async () => {
   assert.equal(prepared.fitsUpload, true);
   assert.equal(prepared.pages.length, 1);
   assert.equal(prepared.mimeType, 'image/jpeg');
+});
+
+test('reprepare keeps every page or refuses the scan', async () => {
+  const small = `data:image/jpeg;base64,${Buffer.from('page').toString('base64')}`;
+  const ready: PreparedOcrFile = {
+    dataUrl: small,
+    mimeType: 'image/jpeg',
+    previewUrl: small,
+    fitsUpload: false,
+    pages: [0, 1, 2].map((index) => ({
+      dataUrl: `${small}${index}`,
+      mimeType: 'image/jpeg',
+    })),
+  };
+  const prepared = await reprepareEveryOcrPage(ready);
+  assert.equal(prepared.pages.length, 3);
+  assert.equal(prepared.pages[2]?.dataUrl, ready.pages[2]?.dataUrl);
+
+  const huge = `data:image/jpeg;base64,${'A'.repeat(1_800_001)}`;
+  await assert.rejects(
+    () =>
+      reprepareEveryOcrPage({
+        ...ready,
+        pages: [ready.pages[0], { dataUrl: huge, mimeType: 'image/jpeg' }],
+      }),
+    /every invoice page/
+  );
+});
+
+test('a dense 8-page upload is tightened once or refused', async () => {
+  const page = { dataUrl: `data:image/jpeg;base64,${'A'.repeat(600_000)}`, mimeType: 'image/jpeg' };
+  const pages = Array.from({ length: 8 }, () => page);
+  assert.ok(invoiceOcrUploadBytes(pages) > OCR_UPLOAD_BODY_MAX_BYTES);
+  await assert.rejects(() => limitInvoiceOcrUpload(pages), /too large to send/);
+
+  const previousDocument = globalThis.document;
+  const previousImage = globalThis.Image;
+  const qualities: number[] = [];
+  class FakeImage {
+    width = 1600;
+    height = 2200;
+    onload: (() => void) | null = null;
+    set src(_value: string) {
+      queueMicrotask(() => this.onload?.());
+    }
+  }
+  globalThis.Image = FakeImage as unknown as typeof Image;
+  const canvasFor = (payload: string) =>
+    ({
+      createElement() {
+        const canvas = {
+          width: 0,
+          height: 0,
+          getContext() {
+            return { drawImage() {} };
+          },
+          toDataURL(_mime: string, quality: number) {
+            qualities.push(quality);
+            return `data:image/jpeg;base64,${payload}`;
+          },
+        };
+        return canvas;
+      },
+    }) as unknown as Document;
+
+  try {
+    qualities.length = 0;
+    globalThis.document = canvasFor(Buffer.from('small').toString('base64'));
+    const fitted = await limitInvoiceOcrUpload(pages);
+    assert.equal(fitted.length, 8);
+    assert.ok(invoiceOcrUploadBytes(fitted) <= OCR_UPLOAD_BODY_MAX_BYTES);
+    assert.equal(qualities.length, 8);
+    assert.ok(qualities.every((quality) => quality === OCR_UPLOAD_TIGHTEN_QUALITY));
+
+    qualities.length = 0;
+    globalThis.document = canvasFor('B'.repeat(600_000));
+    await assert.rejects(() => limitInvoiceOcrUpload(pages), /too large to send/);
+    assert.equal(qualities.length, 8);
+  } finally {
+    globalThis.document = previousDocument;
+    globalThis.Image = previousImage;
+  }
 });
 
 test('pdf pages are capped at 8 before a model upload', async () => {

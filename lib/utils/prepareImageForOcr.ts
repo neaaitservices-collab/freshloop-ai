@@ -3,6 +3,16 @@ export const OCR_IMAGE_JPEG_QUALITY = 0.78;
 /** PDF pages use the same long edge as photos and the server JPEG quality. */
 export const OCR_PDF_JPEG_QUALITY = 0.72;
 export const OCR_PDF_MAX_PAGES = 8;
+/** Stay under Vercel's ~4.5MB function body limit. */
+export const OCR_UPLOAD_BODY_MAX_BYTES = 4 * 1024 * 1024;
+/** One tighter pass when the JSON body is over the cap. */
+export const OCR_UPLOAD_TIGHTEN_EDGE = 800;
+export const OCR_UPLOAD_TIGHTEN_QUALITY = 0.5;
+
+export const OCR_PAGES_NOT_READY_ERROR =
+  'Could not prepare every invoice page. Try a smaller photo or PDF.';
+export const OCR_UPLOAD_TOO_LARGE_ERROR =
+  'This invoice is too large to send. Try fewer pages or a closer photo.';
 
 export type OcrPageImage = { dataUrl: string; mimeType: string };
 
@@ -50,6 +60,19 @@ export function ocrPayloadFitsUpload(
 function dataUrlPayload(dataUrl: string): string {
   const match = dataUrl.match(/^data:[^;]+;base64,(.+)$/);
   return match?.[1] ?? '';
+}
+
+export function invoiceOcrUploadBody(pages: OcrPageImage[], demo = false) {
+  return {
+    imageBase64: demo ? '' : pages[0]?.dataUrl ?? '',
+    mimeType: pages[0]?.mimeType || 'image/jpeg',
+    pages: demo ? undefined : pages.map((page) => ({ imageBase64: page.dataUrl, mimeType: page.mimeType })),
+    demo,
+  };
+}
+
+export function invoiceOcrUploadBytes(pages: OcrPageImage[], demo = false): number {
+  return new TextEncoder().encode(JSON.stringify(invoiceOcrUploadBody(pages, demo))).length;
 }
 
 function pagesFitUpload(pages: OcrPageImage[], maxBase64Chars: number): boolean {
@@ -200,7 +223,7 @@ export async function prepareImageFileForOcr(
 
   if (typeof createImageBitmap === 'function') {
     try {
-      const bitmap = await createImageBitmap(file);
+      const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
       try {
         const encoded = drawToCanvas(
           bitmap,
@@ -221,6 +244,66 @@ export async function prepareImageFileForOcr(
   const raw = await readFileAsDataUrl(file);
   const prepared = await prepareImageDataUrlForOcr(raw, options);
   return { ...prepared, previewUrl: prepared.dataUrl };
+}
+
+/** Run the prepare pass on every page. A short result is a refusal, not a shorter invoice. */
+export async function reprepareEveryOcrPage(
+  ready: PreparedOcrFile,
+  options?: { maxEdge?: number; quality?: number; maxBase64Chars?: number }
+): Promise<PreparedOcrFile> {
+  if (ready.pages.length === 0) throw new Error(OCR_PAGES_NOT_READY_ERROR);
+  const maxBase64Chars = options?.maxBase64Chars ?? 1_800_000;
+  const pages: OcrPageImage[] = [];
+  for (const page of ready.pages) {
+    const prepared = await prepareImageDataUrlForOcr(page.dataUrl, options);
+    if (prepared.pages.length === 0) throw new Error(OCR_PAGES_NOT_READY_ERROR);
+    pages.push(...prepared.pages);
+  }
+  if (pages.length < ready.pages.length) throw new Error(OCR_PAGES_NOT_READY_ERROR);
+  const next = preparedFromPages(pages, maxBase64Chars, ready.previewUrl);
+  if (!next.fitsUpload) throw new Error(OCR_PAGES_NOT_READY_ERROR);
+  return next;
+}
+
+function loadImage(dataUrl: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error(OCR_UPLOAD_TOO_LARGE_ERROR));
+    img.src = dataUrl;
+  });
+}
+
+async function tightenOcrPage(page: OcrPageImage): Promise<OcrPageImage> {
+  if (typeof document === 'undefined' || typeof Image === 'undefined') {
+    throw new Error(OCR_UPLOAD_TOO_LARGE_ERROR);
+  }
+  const img = await loadImage(page.dataUrl);
+  const longest = Math.max(img.width, img.height);
+  const scale = longest > OCR_UPLOAD_TIGHTEN_EDGE ? OCR_UPLOAD_TIGHTEN_EDGE / longest : 1;
+  const width = Math.max(1, Math.round(img.width * scale));
+  const height = Math.max(1, Math.round(img.height * scale));
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error(OCR_UPLOAD_TOO_LARGE_ERROR);
+  ctx.drawImage(img, 0, 0, width, height);
+  const dataUrl = canvas.toDataURL('image/jpeg', OCR_UPLOAD_TIGHTEN_QUALITY);
+  if (!dataUrl.startsWith('data:image/jpeg')) throw new Error(OCR_UPLOAD_TOO_LARGE_ERROR);
+  return { dataUrl, mimeType: 'image/jpeg' };
+}
+
+/** If the POST body is over ~4MB, recompress every page once. Refuse when it is still too big. */
+export async function limitInvoiceOcrUpload(pages: OcrPageImage[]): Promise<OcrPageImage[]> {
+  if (pages.length === 0) throw new Error(OCR_UPLOAD_TOO_LARGE_ERROR);
+  if (invoiceOcrUploadBytes(pages) <= OCR_UPLOAD_BODY_MAX_BYTES) return pages;
+  const tightened: OcrPageImage[] = [];
+  for (const page of pages) tightened.push(await tightenOcrPage(page));
+  if (tightened.length < pages.length || invoiceOcrUploadBytes(tightened) > OCR_UPLOAD_BODY_MAX_BYTES) {
+    throw new Error(OCR_UPLOAD_TOO_LARGE_ERROR);
+  }
+  return tightened;
 }
 
 /** Downscale and re-encode invoice photos so OCR requests stay under serverless body limits. */

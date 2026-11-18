@@ -6,8 +6,12 @@ import { useRole } from '@/components/auth/RoleProvider';
 import { isManager } from '@/lib/utils/roles';
 import { DepartmentBadge } from '@/components/ui/DepartmentBadge';
 import {
-  prepareImageDataUrlForOcr,
+  invoiceOcrUploadBody,
+  limitInvoiceOcrUpload,
+  OCR_PAGES_NOT_READY_ERROR,
+  OCR_UPLOAD_TOO_LARGE_ERROR,
   prepareImageFileForOcr,
+  reprepareEveryOcrPage,
   type PreparedOcrFile,
 } from '@/lib/utils/prepareImageForOcr';
 import { AlertTriangle, ArrowRight, Camera, CheckCircle2, FileText, ImagePlus, Loader2, Sparkles, Upload, X } from 'lucide-react';
@@ -75,26 +79,33 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
     setScanError(null);
     try {
       let pages = ready?.pages ?? [];
-      if (!useDemo && ready && !ready.fitsUpload) {
+      if (!useDemo && ready) {
+        if (!ready.fitsUpload) {
+          setLoadingPhase('prepare');
+          const reprepared = await reprepareEveryOcrPage(ready);
+          if (generation !== scanGeneration.current) return;
+          preparedUpload.current = reprepared;
+          pages = reprepared.pages;
+        }
         setLoadingPhase('prepare');
-        const prepared = await prepareImageDataUrlForOcr(ready.dataUrl);
+        pages = await limitInvoiceOcrUpload(pages);
         if (generation !== scanGeneration.current) return;
-        preparedUpload.current = { ...prepared, previewUrl: prepared.previewUrl || prepared.dataUrl };
-        pages = prepared.pages;
+        const current = preparedUpload.current ?? ready;
+        preparedUpload.current = {
+          ...current,
+          dataUrl: pages[0]?.dataUrl ?? current.dataUrl,
+          mimeType: pages[0]?.mimeType || current.mimeType,
+          previewUrl: pages[0]?.dataUrl ?? current.previewUrl,
+          fitsUpload: true,
+          pages,
+        };
       }
 
       setLoadingPhase('ocr');
       const res = await fetch('/api/invoice-ocr', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          imageBase64: useDemo ? '' : pages[0]?.dataUrl ?? '',
-          mimeType: pages[0]?.mimeType || 'image/jpeg',
-          pages: useDemo
-            ? undefined
-            : pages.map((page) => ({ imageBase64: page.dataUrl, mimeType: page.mimeType })),
-          demo: useDemo,
-        }),
+        body: JSON.stringify(invoiceOcrUploadBody(pages, useDemo)),
       });
 
       if (generation !== scanGeneration.current) return;
@@ -132,6 +143,11 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
       setManagerApprovedCosts(false);
     } catch (err) {
       if (generation !== scanGeneration.current) return;
+      const message = err instanceof Error ? err.message : '';
+      if (message === OCR_PAGES_NOT_READY_ERROR || message === OCR_UPLOAD_TOO_LARGE_ERROR) {
+        setScanError(message);
+        return;
+      }
       console.error('Invoice OCR scan error:', err);
       setScanError('The scan did not reach the server. Check the connection and try again.');
     } finally {
