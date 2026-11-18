@@ -4,14 +4,14 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { FileText } from 'lucide-react';
 import { PageIntro } from '@/components/layout/PageIntro';
 import { YieldPricingDashboard } from '@/components/features/receive/YieldPricingDashboard';
-import { InvoiceUploadModal } from '@/components/features/invoices/InvoiceUploadModal';
+import { InvoicePageScanSheet } from '@/components/features/receive/InvoicePageScanSheet';
 import { SupplierSelect } from '@/components/features/suppliers/SupplierSelect';
 import { PageMain } from '@/components/ui/layout';
 import { Button } from '@/components/ui/Button';
 import { Card, CardBody } from '@/components/ui/Card';
 import type { ReceivingDeliveryListResult } from '@/lib/domains/receiving/receivingDeliveries';
-import type { InvoiceOcrResult } from '@/lib/types';
 import { restoredScanLogs, type RestoredInvoiceScan } from '@/lib/domains/receiving/openInvoiceScan';
+import type { ReceivingLog } from '@/lib/domains/receiving/yieldPricing';
 import {
   applyOpenScanChoice,
   clearOpenScanChoice,
@@ -20,7 +20,6 @@ import {
 } from '@/lib/domains/receiving/openInvoiceScanChoice';
 import {
   consumeStashedReceivingScan,
-  receivingLogsFromInvoice,
 } from '@/lib/domains/receiving/receivingBridge';
 import {
   INVOICE_IDENTITY_NETWORK_ERROR,
@@ -45,7 +44,6 @@ import {
   invoiceDateToday,
   pickDeliveryDay,
 } from '@/lib/domains/receiving/invoiceDatePicker';
-import type { ReceivingLog } from '@/lib/domains/receiving/yieldPricing';
 import type { SupplierRecord } from '@/lib/domains/suppliers/suppliers';
 import {
   receivingDepartment,
@@ -60,9 +58,11 @@ export function ReceiveScreen({
   initial: ReceivingDeliveryListResult;
   openScan?: RestoredInvoiceScan | null;
 }) {
-  const restoredLogs = openScan ? restoredScanLogs(openScan) : [];
+  const pageScanActive = Boolean(openScan?.pageScan);
+  const restoredLogs = openScan && !pageScanActive ? restoredScanLogs(openScan) : [];
   const openScanDraftId = openScan?.draftId?.trim() ?? '';
-  const [invoiceOpen, setInvoiceOpen] = useState(false);
+  const [invoiceOpen, setInvoiceOpen] = useState(pageScanActive);
+  const [liveScan, setLiveScan] = useState<RestoredInvoiceScan | null>(openScan ?? null);
   const [scannedLogs, setScannedLogs] = useState<ReceivingLog[]>(restoredLogs);
   const [scanNote, setScanNote] = useState<string | null>(
     restoredLogs.length ? SUPPLIER_REQUIRED_ERROR : null
@@ -76,7 +76,7 @@ export function ReceiveScreen({
   const [identityNonce, setIdentityNonce] = useState(0);
   const [identityHold, setIdentityHold] = useState<IdentityHoldState | null>(null);
   const [identityPhase, setIdentityPhase] = useState<InvoiceIdentityPhase>('idle');
-  const [scanVendorName, setScanVendorName] = useState(openScan?.vendorName?.trim() ?? '');
+  const [scanVendorName, setScanVendorName] = useState(restoredLogs.length ? openScan?.vendorName?.trim() ?? '' : '');
   const [dateDraft, setDateDraft] = useState('');
 
   const loadSuppliers = useCallback(() => {
@@ -132,33 +132,6 @@ export function ReceiveScreen({
       });
     }
   }, [loadSuppliers, openScanDraftId]);
-
-  const handleInvoiceImported = (result: InvoiceOcrResult) => {
-    const cleared = clearedInvoiceIdentity();
-    setDateDraft(cleared.dateDraft);
-    setIdentityHold(cleared.identityHold);
-    setScanVendorName(result.vendorName?.trim() ?? '');
-    const next = receivingLogsFromInvoice(result);
-    setScannedLogs(next);
-    if (result.supplierId) setSelectedSupplierId(result.supplierId);
-    setIdentityPhase(result.supplierId ? 'loading' : 'idle');
-    setScanNote(
-      next.length
-        ? result.supplierId
-          ? `${result.vendorName} · ${result.invoiceNumber} · identifying lines for the saved supplier`
-          : SUPPLIER_REQUIRED_ERROR
-        : null
-    );
-    if (result.draftId?.trim()) {
-      rememberOpenScanChoice({
-        draftId: result.draftId.trim(),
-        supplierId: result.supplierId ?? '',
-        manualReviewOverride: Boolean(result.manualReviewOverride),
-      });
-    }
-    setInvoiceOpen(false);
-    loadSuppliers();
-  };
 
   const invoiceIdentityKey = useMemo(
     () =>
@@ -502,19 +475,15 @@ export function ReceiveScreen({
           />
         </div>
       </PageMain>
-      <InvoiceUploadModal
-        isOpen={invoiceOpen}
+      <InvoicePageScanSheet
+        open={invoiceOpen}
         onClose={() => setInvoiceOpen(false)}
-        onInvoiceImported={handleInvoiceImported}
         suppliers={suppliers}
-        selectedSupplierId={selectedSupplierId}
-        onSupplierChange={setSelectedSupplierId}
-        onSupplierCreated={(supplier) => {
-          setSuppliers((current) =>
-            current.some((row) => row.id === supplier.id)
-              ? current
-              : [...current, supplier].sort((a, b) => a.name.localeCompare(b.name))
-          );
+        resume={liveScan}
+        onDiscarded={() => setLiveScan(null)}
+        onReceived={(vendorName) => {
+          setLiveScan(null);
+          setScanNote(vendorName ? `${vendorName} was received.` : 'Invoice received.');
         }}
       />
     </>

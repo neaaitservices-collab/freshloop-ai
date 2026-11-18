@@ -60,6 +60,8 @@ export interface InvoiceLineItemExtract {
   needsManualReview?: boolean;
   /** Server delivery UUID. The receiving board posts this id and does not mint another. */
   deliveryId?: string;
+  /** Page number on a multi-page invoice. */
+  page?: number;
 }
 
 export interface InvoiceOcrResult {
