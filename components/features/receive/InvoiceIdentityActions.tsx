@@ -2,6 +2,7 @@
 
 import React from 'react';
 import { Button } from '@/components/ui/Button';
+import { InvoiceDateField } from '@/components/features/receive/InvoiceDateField';
 import {
   actionsForIdentityHold,
   firstRenamePair,
@@ -28,15 +29,7 @@ export function InvoiceIdentityActions({
   return (
     <div className="space-y-3">
       {hold.code === 'DATE_REQUIRED' && onDateDraft ? (
-        <label className="block text-xs text-slate-300">
-          Invoice date from the paper
-          <input
-            value={dateDraft ?? ''}
-            onChange={(event) => onDateDraft(event.target.value)}
-            placeholder="YYYY-MM-DD"
-            className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
-          />
-        </label>
+        <InvoiceDateField value={dateDraft ?? ''} onChange={onDateDraft} />
       ) : null}
       {pair ? (
         <p className="text-xs text-amber-100">
