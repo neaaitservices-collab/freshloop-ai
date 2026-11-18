@@ -5,7 +5,15 @@ import { InvoiceOcrResult } from '@/lib/types';
 import { useRole } from '@/components/auth/RoleProvider';
 import { isManager } from '@/lib/utils/roles';
 import { DepartmentBadge } from '@/components/ui/DepartmentBadge';
-import { prepareImageDataUrlForOcr, prepareImageFileForOcr } from '@/lib/utils/prepareImageForOcr';
+import {
+  invoiceOcrUploadBody,
+  limitInvoiceOcrUpload,
+  OCR_PAGES_NOT_READY_ERROR,
+  OCR_UPLOAD_TOO_LARGE_ERROR,
+  prepareImageFileForOcr,
+  reprepareEveryOcrPage,
+  type PreparedOcrFile,
+} from '@/lib/utils/prepareImageForOcr';
 import { AlertTriangle, ArrowRight, Camera, CheckCircle2, FileText, ImagePlus, Loader2, Sparkles, Upload, X } from 'lucide-react';
 import { ModalBody, ModalFooter, ModalHeader, ModalShell, ScrollTable } from '@/components/ui/layout';
 import type { SupplierRecord } from '@/lib/domains/suppliers/suppliers';
@@ -38,7 +46,7 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
   const [loading, setLoading] = useState(false);
   const [loadingPhase, setLoadingPhase] = useState<'prepare' | 'ocr' | null>(null);
   const scanGeneration = useRef(0);
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const preparedUpload = useRef<PreparedOcrFile | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [rawPreviewUrl, setRawPreviewUrl] = useState<string | null>(null);
   const [compressingImage, setCompressingImage] = useState(false);
@@ -59,9 +67,10 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
 
   const busyWithImage = compressingImage || loading;
 
-  const runInvoiceScan = useCallback(async (useDemo: boolean, previewDataUrl?: string | null) => {
+  const runInvoiceScan = useCallback(async (useDemo: boolean) => {
     const generation = ++scanGeneration.current;
-    if (!useDemo && !previewDataUrl) {
+    const ready = preparedUpload.current;
+    if (!useDemo && !ready) {
       setScanError('Take a photo of the invoice, or choose one from your photos.');
       return;
     }
@@ -69,25 +78,34 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
     setLoading(true);
     setScanError(null);
     try {
-      let imageBase64 = '';
-      let mimeType = selectedFile?.type || 'image/jpeg';
-      if (!useDemo && previewDataUrl) {
+      let pages = ready?.pages ?? [];
+      if (!useDemo && ready) {
+        if (!ready.fitsUpload) {
+          setLoadingPhase('prepare');
+          const reprepared = await reprepareEveryOcrPage(ready);
+          if (generation !== scanGeneration.current) return;
+          preparedUpload.current = reprepared;
+          pages = reprepared.pages;
+        }
         setLoadingPhase('prepare');
-        const prepared = await prepareImageDataUrlForOcr(previewDataUrl);
+        pages = await limitInvoiceOcrUpload(pages);
         if (generation !== scanGeneration.current) return;
-        imageBase64 = prepared.dataUrl;
-        mimeType = prepared.mimeType;
+        const current = preparedUpload.current ?? ready;
+        preparedUpload.current = {
+          ...current,
+          dataUrl: pages[0]?.dataUrl ?? current.dataUrl,
+          mimeType: pages[0]?.mimeType || current.mimeType,
+          previewUrl: pages[0]?.dataUrl ?? current.previewUrl,
+          fitsUpload: true,
+          pages,
+        };
       }
 
       setLoadingPhase('ocr');
       const res = await fetch('/api/invoice-ocr', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          imageBase64: useDemo ? '' : imageBase64,
-          mimeType,
-          demo: useDemo,
-        }),
+        body: JSON.stringify(invoiceOcrUploadBody(pages, useDemo)),
       });
 
       if (generation !== scanGeneration.current) return;
@@ -125,6 +143,11 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
       setManagerApprovedCosts(false);
     } catch (err) {
       if (generation !== scanGeneration.current) return;
+      const message = err instanceof Error ? err.message : '';
+      if (message === OCR_PAGES_NOT_READY_ERROR || message === OCR_UPLOAD_TOO_LARGE_ERROR) {
+        setScanError(message);
+        return;
+      }
       console.error('Invoice OCR scan error:', err);
       setScanError('The scan did not reach the server. Check the connection and try again.');
     } finally {
@@ -133,16 +156,16 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
         setLoadingPhase(null);
       }
     }
-  }, [selectedFile]);
+  }, []);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    setSelectedFile(file);
     setScanError(null);
     setOcrResult(null);
     setManagerApprovedCosts(false);
     setPreviewUrl(null);
+    preparedUpload.current = null;
     setCompressingImage(true);
     setLoading(true);
     setLoadingPhase('prepare');
@@ -151,9 +174,10 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
     setRawPreviewUrl(instant);
     void prepareImageFileForOcr(file)
       .then((prepared) => {
+        preparedUpload.current = prepared;
         setCompressingImage(false);
         setPreviewUrl(prepared.previewUrl);
-        void runInvoiceScan(false, prepared.dataUrl);
+        void runInvoiceScan(false);
       })
       .catch((err: unknown) => {
         console.error('Invoice image prepare error:', err);
@@ -172,7 +196,7 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
     if (rawPreviewUrl?.startsWith('blob:')) URL.revokeObjectURL(rawPreviewUrl);
     setRawPreviewUrl(null);
     setCompressingImage(false);
-    setSelectedFile(null);
+    preparedUpload.current = null;
     setScanError(null);
     setSupplierChoice(null);
     setCreatingSupplier(false);
@@ -183,7 +207,7 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
   };
 
   const handleScanInvoice = (useDemo: boolean = false) => {
-    void runInvoiceScan(useDemo, previewUrl);
+    void runInvoiceScan(useDemo);
   };
 
   const flaggedInvoice = Boolean(ocrResult?.requiresManagerApproval);

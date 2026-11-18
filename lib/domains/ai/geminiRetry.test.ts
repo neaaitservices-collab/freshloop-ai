@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { generateContentWithFallback, geminiBackoffMs, shouldUseSdkAfterRest } from '@/lib/domains/ai/gemini';
+import { generateContentWithFallback, geminiBackoffMs, geminiInlineImages, shouldUseSdkAfterRest } from '@/lib/domains/ai/gemini';
 import { invoiceOcrErrorResponse } from '@/lib/domains/receiving/invoiceOcrErrors';
 import { invoiceOcrThinkingConfig } from '@/lib/domains/ai/geminiModels';
 
@@ -78,6 +78,53 @@ test('a model INVALID_ARGUMENT becomes a 422 read error', async () => {
     assert.equal(res.status, 422);
     const body = await res.json();
     assert.match(body.error, /Couldn't read this file/);
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousKey == null) delete process.env.GEMINI_API_KEY;
+    else process.env.GEMINI_API_KEY = previousKey;
+  }
+});
+
+test('several page images are one generateContent call', async () => {
+  assert.equal(geminiInlineImages([{ data: 'a', mimeType: 'image/jpeg' }, { data: 'b', mimeType: 'image/jpeg' }]).length, 2);
+  const previousKey = process.env.GEMINI_API_KEY;
+  const previousFetch = globalThis.fetch;
+  process.env.GEMINI_API_KEY = 'test-key';
+  let body = '';
+  globalThis.fetch = async (_url, init) => {
+    body = String(init?.body ?? '');
+    return new Response(
+      JSON.stringify({ candidates: [{ content: { parts: [{ text: '{"ok":true}' }] } }] }),
+      { status: 200 }
+    );
+  };
+  try {
+    const result = await generateContentWithFallback(
+      'read this invoice',
+      [
+        { data: 'page-one', mimeType: 'image/jpeg' },
+        { data: 'page-two', mimeType: 'image/jpeg' },
+      ],
+      ['gemini-3.8-flash'],
+      {
+        skipModelDiscovery: true,
+        maxModelsToTry: 1,
+        preferRestApi: true,
+        attemptTimeoutMs: 5000,
+        deadlineAtMs: Date.now() + 5000,
+      }
+    );
+    assert.equal(result.modelUsed, 'gemini-3.8-flash');
+    const parts = JSON.parse(body).contents[0].parts.filter(
+      (part: { inlineData?: { data?: string } }) => part.inlineData
+    );
+    assert.deepEqual(
+      parts.map((part: { inlineData: { data: string; mimeType: string } }) => part.inlineData),
+      [
+        { data: 'page-one', mimeType: 'image/jpeg' },
+        { data: 'page-two', mimeType: 'image/jpeg' },
+      ]
+    );
   } finally {
     globalThis.fetch = previousFetch;
     if (previousKey == null) delete process.env.GEMINI_API_KEY;

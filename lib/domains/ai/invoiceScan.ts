@@ -116,7 +116,32 @@ export function geminiFailureDetail(error: unknown): string {
   return 'request failed';
 }
 
-/** Resize a photo. A PDF is size-checked and sent through unchanged. */
+/**
+ * Downscale each page image for one Gemini call.
+ * A raw PDF is still checked (magic bytes, encryption, ending marker, page count, size)
+ * and is not attached to the model. The browser sends JPEG pages instead.
+ */
+export async function prepareInvoicePagesForModel(
+  pages: Array<{ base64: string; mimeType?: string }>
+): Promise<Array<{ data: string; mimeType: 'image/jpeg' }>> {
+  if (pages.length === 0) {
+    throw new Error('Could not prepare the photo. The upload was empty.');
+  }
+  if (pages.length > INVOICE_PDF_MAX_PAGES) {
+    throw new Error(`This PDF has too many pages. Send ${INVOICE_PDF_MAX_PAGES} pages or fewer.`);
+  }
+  const prepared: Array<{ data: string; mimeType: 'image/jpeg' }> = [];
+  for (const page of pages) {
+    const one = await downscaleInvoicePhoto(page.base64, page.mimeType || 'image/jpeg');
+    if (one.mimeType !== 'image/jpeg') {
+      throw new Error('Could not prepare the photo. Send the PDF as page images and try again.');
+    }
+    prepared.push({ data: one.data, mimeType: 'image/jpeg' });
+  }
+  return prepared;
+}
+
+/** Resize a photo. A raw PDF is checked and returned unchanged for those checks. */
 export async function downscaleInvoicePhoto(
   base64: string,
   _mimeType: string

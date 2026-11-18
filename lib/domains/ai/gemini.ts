@@ -80,6 +80,16 @@ type GeminiContentPart =
   | { text: string }
   | { inlineData: { data: string; mimeType: string } };
 
+export type GeminiInlineImage = { data: string; mimeType: string };
+
+/** One image, or several page images for a single generateContent call. */
+export function geminiInlineImages(
+  inlinePart?: GeminiInlineImage | GeminiInlineImage[]
+): GeminiInlineImage[] {
+  if (!inlinePart) return [];
+  return Array.isArray(inlinePart) ? inlinePart : [inlinePart];
+}
+
 function getGenAIClient(apiKey: string): { client: GeminiSdkClient } | null {
   try {
     const safeRequire = new Function(
@@ -211,14 +221,14 @@ async function tryGeminiRestGenerateContent(
   modelName: string,
   apiKey: string,
   promptText: string,
-  inlinePart: { data: string; mimeType: string } | undefined,
+  inlineParts: GeminiInlineImage[],
   genConfig: Record<string, unknown>,
   remember: (model: string, detail: string) => void,
   signal?: AbortSignal,
   deadlineAtMs?: number
 ): Promise<{ text: string | null; rateLimited: boolean }> {
-  const parts: any[] = [{ text: promptText }];
-  if (inlinePart) {
+  const parts: GeminiContentPart[] = [{ text: promptText }];
+  for (const inlinePart of inlineParts) {
     parts.push({ inlineData: inlinePart });
   }
   const payload = JSON.stringify({
@@ -304,7 +314,7 @@ function tryGeminiSdkGenerateContent(
   apiKey: string,
   modelName: string,
   promptText: string,
-  inlinePart: { data: string; mimeType: string } | undefined,
+  inlineParts: GeminiInlineImage[],
   genConfig: Record<string, unknown>,
   remember: (model: string, detail: string) => void,
   signal?: AbortSignal
@@ -317,14 +327,9 @@ function tryGeminiSdkGenerateContent(
         model: modelName,
         generationConfig: genConfig,
       });
-      const parts: any[] = [{ text: promptText }];
-      if (inlinePart) {
-        parts.push({
-          inlineData: {
-            data: inlinePart.data,
-            mimeType: inlinePart.mimeType,
-          },
-        });
+      const parts: GeminiContentPart[] = [{ text: promptText }];
+      for (const inlinePart of inlineParts) {
+        parts.push({ inlineData: inlinePart });
       }
       const result = await model.generateContent(parts, signal ? { signal } : undefined);
       const text = result.response.text();
@@ -338,7 +343,7 @@ function tryGeminiSdkGenerateContent(
 
 export async function generateContentWithFallback(
   promptText: string,
-  inlinePart?: { data: string; mimeType: string },
+  inlinePart?: GeminiInlineImage | GeminiInlineImage[],
   preferredModels: string[] = [...GEMINI_FLASH_MODEL_FALLBACKS],
   options?: GenerateContentOptions
 ): Promise<{ text: string; modelUsed: string }> {
@@ -355,7 +360,8 @@ export async function generateContentWithFallback(
   };
 
   const genConfig = buildGenerationConfig(options);
-  const preferRest = Boolean(options?.preferRestApi && inlinePart);
+  const images = geminiInlineImages(inlinePart);
+  const preferRest = Boolean(options?.preferRestApi && images.length > 0);
 
   const maxTry = options?.maxModelsToTry ?? 4;
   let modelsToTry: string[];
@@ -399,7 +405,7 @@ export async function generateContentWithFallback(
             modelName,
             apiKey,
             promptText,
-            inlinePart,
+            images,
             genConfig,
             remember,
             signal,
@@ -414,7 +420,7 @@ export async function generateContentWithFallback(
               apiKey,
               modelName,
               promptText,
-              inlinePart,
+              images,
               genConfig,
               remember,
               signal
@@ -429,7 +435,7 @@ export async function generateContentWithFallback(
             apiKey,
             modelName,
             promptText,
-            inlinePart,
+            images,
             genConfig,
             remember,
             signal
@@ -443,7 +449,7 @@ export async function generateContentWithFallback(
               modelName,
               apiKey,
               promptText,
-              inlinePart,
+              images,
               genConfig,
               remember,
               signal,

@@ -14,6 +14,7 @@ import {
   INVOICE_PHOTO_MAX_BYTES,
   INVOICE_PHOTO_MAX_EDGE,
   invoicePhotoWithinPixelCap,
+  prepareInvoicePagesForModel,
 } from '@/lib/domains/ai/invoiceScan';
 import { invoiceOcrModelCandidates, INVOICE_OCR_FLASH_MODEL } from '@/lib/domains/ai/geminiModels';
 
@@ -134,10 +135,44 @@ test('a PDF is sent through and a non-image is rejected', async () => {
   );
 });
 
+test('page images are sent together and a raw PDF is checked then refused', async () => {
+  const jpeg = await sharp({
+    create: { width: 40, height: 20, channels: 3, background: { r: 9, g: 9, b: 9 } },
+  })
+    .jpeg()
+    .toBuffer();
+  const pages = await prepareInvoicePagesForModel([
+    { base64: jpeg.toString('base64'), mimeType: 'image/jpeg' },
+    { base64: jpeg.toString('base64'), mimeType: 'image/jpeg' },
+  ]);
+  assert.equal(pages.length, 2);
+  assert.equal(pages.every((page) => page.mimeType === 'image/jpeg'), true);
+  const pdf = Buffer.from('%PDF-1.4\n1 0 obj\n/Type /Page\nendobj\n%%EOF');
+  await assert.rejects(
+    () => prepareInvoicePagesForModel([{ base64: pdf.toString('base64'), mimeType: 'application/pdf' }]),
+    /Send the PDF as page images/
+  );
+  const encrypted = Buffer.from('%PDF-1.4\n/Encrypt 1 0 R\n%%EOF');
+  await assert.rejects(
+    () => prepareInvoicePagesForModel([{ base64: encrypted.toString('base64'), mimeType: 'application/pdf' }]),
+    /This PDF is encrypted/
+  );
+  await assert.rejects(
+    () => prepareInvoicePagesForModel(Array.from({ length: INVOICE_PDF_MAX_PAGES + 1 }, () => ({ base64: jpeg.toString('base64') }))),
+    /too many pages/
+  );
+});
+
 test('invoice route sends one prepared flash attempt inside the time budget', () => {
   const route = fs.readFileSync(path.join(process.cwd(), 'app/api/invoice-ocr/route.ts'), 'utf8');
+  const scan = fs.readFileSync(path.join(process.cwd(), 'lib/domains/ai/invoiceScan.ts'), 'utf8');
   const gemini = fs.readFileSync(path.join(process.cwd(), 'lib/domains/ai/gemini.ts'), 'utf8');
-  assert.match(route, /downscaleInvoicePhoto/);
+  assert.match(route, /prepareInvoicePagesForModel/);
+  assert.match(route, /logInvoiceOcrMs\('prep'/);
+  assert.match(route, /logInvoiceOcrMs\('model'/);
+  assert.match(route, /logInvoiceOcrMs\('parse'/);
+  assert.match(route, /logInvoiceOcrMs\('save'/);
+  assert.match(scan, /downscaleInvoicePhoto/);
   assert.match(route, /maxModelsToTry: 1/);
   assert.match(route, /attemptTimeoutMs: INVOICE_OCR_ATTEMPT_TIMEOUT_MS/);
   assert.match(route, /deadlineAtMs: scanStartedAt \+ INVOICE_OCR_TOTAL_BUDGET_MS/);
