@@ -173,6 +173,12 @@ export interface OcrDraftLine {
   line_total_mismatch?: boolean;
   line_total_note?: string;
   review_reasons?: OcrReviewReasonCode[];
+  /** Source page on a multi-page scan. Single-page drafts omit it. */
+  page?: number;
+  /** Printed item code, used to spot a line repeated on the next page. */
+  code?: string;
+  /** Printed unit, kept for the review screen. Commit uses quantity_kind. */
+  unit?: string;
 }
 
 export interface OcrDraftPayload {
@@ -186,6 +192,22 @@ export interface OcrDraftPayload {
   totalAmount: number;
   departmentBreakdown: Record<string, number>;
   lines: OcrDraftLine[];
+  /** Set on a multi-page scan. Images are not stored; a failed page is retaken. */
+  scanStatus?: 'scanning' | 'ready' | 'failed';
+  scanAudited?: boolean;
+  clientScanId?: string;
+  pageCount?: number;
+  scanPages?: unknown;
+  dedupedCount?: number;
+  dedupedFrom?: number[];
+  dedupeUndone?: boolean;
+  totalsFromPage?: number | null;
+  /** Absent when the page did not print a subtotal. Never a coerced blank. */
+  printedSubtotal?: number;
+  printedHst?: number;
+  printedPst?: number;
+  pageScanBlockers?: string[];
+  pageScanReviewFlags?: string[];
 }
 
 /** Commit uses the stored scan. Client confidence and cost flags are not an input. */

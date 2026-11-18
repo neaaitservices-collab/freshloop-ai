@@ -1,12 +1,33 @@
 import type { Department } from '@prisma/client';
 import type { OcrDraftLine, OcrDraftPayload } from '@/lib/domains/receiving/invoiceOcrCommit';
+import { duplicateNoteForScan, readStoredPageScan } from '@/lib/domains/receiving/invoicePageScan';
 import { gateStoredOcrDraft } from '@/lib/domains/receiving/sampleReceivingGuard';
 import { receivingLogsFromInvoice } from '@/lib/domains/receiving/receivingBridge';
 import type { ReceivingLog } from '@/lib/domains/receiving/yieldPricing';
 import type { InvoiceOcrResult } from '@/lib/types';
 
+export interface RestoredPageScan {
+  scanStatus: 'scanning' | 'ready' | 'failed';
+  scanAudited: boolean;
+  pageCount: number;
+  pages: Array<{ index: number; status: 'pending' | 'scanning' | 'read' | 'failed'; error?: string }>;
+  dedupedCount: number;
+  dedupedFrom: number[];
+  totalsFromPage: number | null;
+  duplicateNote: string;
+  printedSubtotal?: number;
+  printedHst?: number;
+  printedPst?: number;
+  blockers: string[];
+  reviewFlags: string[];
+  clientScanId?: string;
+  invoiceDateNeedsConfirm?: boolean;
+  invoiceDateConfirmReason?: string;
+}
+
 export interface RestoredInvoiceScan extends InvoiceOcrResult {
   postedLineIndexes: number[];
+  pageScan?: RestoredPageScan;
 }
 
 const DEPARTMENTS = new Set<Department>([
@@ -45,7 +66,8 @@ function departmentOf(value: unknown): Department {
 function readPayload(raw: unknown): OcrDraftPayload | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
   const payload = raw as Partial<OcrDraftPayload>;
-  if (!Array.isArray(payload.lines) || payload.lines.length === 0) return null;
+  const scan = readStoredPageScan(raw);
+  if (!Array.isArray(payload.lines) || (payload.lines.length === 0 && !scan)) return null;
   return {
     vendorName: typeof payload.vendorName === 'string' ? payload.vendorName : '',
     invoiceNumber: typeof payload.invoiceNumber === 'string' ? payload.invoiceNumber : '',
@@ -55,7 +77,11 @@ function readPayload(raw: unknown): OcrDraftPayload | null {
       payload.departmentBreakdown && typeof payload.departmentBreakdown === 'object'
         ? payload.departmentBreakdown
         : {},
-    lines: payload.lines as OcrDraftLine[],
+    lines: (Array.isArray(payload.lines) ? payload.lines : []) as OcrDraftLine[],
+    ...(payload.invoiceDateNeedsConfirm ? { invoiceDateNeedsConfirm: true } : {}),
+    ...(typeof payload.invoiceDateConfirmReason === 'string'
+      ? { invoiceDateConfirmReason: payload.invoiceDateConfirmReason }
+      : {}),
   };
 }
 
@@ -108,8 +134,11 @@ export function invoiceResultFromStoredDraft(row: {
       lineConfidence: line.line_confidence,
       requires_approval: line.requires_approval === true,
       needsManualReview: line.requires_approval === true,
+      ...(typeof line.page === 'number' ? { page: line.page } : {}),
+      ...(line.unit ? { unit: line.quantity_kind === 'cases' ? 'cases' : line.unit } : {}),
     };
   });
+  const restoredPage = pageScanOf(row.payload);
   return {
     vendorName: payload.vendorName.trim(),
     invoiceNumber: payload.invoiceNumber.trim(),
@@ -120,6 +149,38 @@ export function invoiceResultFromStoredDraft(row: {
     draftId: row.id,
     postedLineIndexes: postedLineIndexesOf(row.payload),
     ...(supplierId ? { supplierId } : {}),
+    ...(restoredPage ? { pageScan: restoredPage } : {}),
+  };
+}
+
+function pageScanOf(raw: unknown): RestoredInvoiceScan['pageScan'] {
+  const scan = readStoredPageScan(raw);
+  if (!scan) return undefined;
+  return {
+    scanStatus: scan.scanStatus,
+    scanAudited: scan.scanAudited,
+    pageCount: scan.pageCount,
+    pages: scan.scanPages.map((page) => ({
+      index: page.index,
+      status: page.status,
+      ...(page.error ? { error: page.error } : {}),
+    })),
+    dedupedCount: scan.dedupedCount,
+    dedupedFrom: scan.dedupedFrom,
+    totalsFromPage: scan.totalsFromPage,
+    duplicateNote: duplicateNoteForScan(scan),
+    ...(scan.printedSubtotal !== undefined ? { printedSubtotal: scan.printedSubtotal } : {}),
+    ...(scan.printedHst !== undefined ? { printedHst: scan.printedHst } : {}),
+    ...(scan.printedPst !== undefined ? { printedPst: scan.printedPst } : {}),
+    blockers: scan.pageScanBlockers,
+    reviewFlags: scan.pageScanReviewFlags,
+    ...(scan.clientScanId ? { clientScanId: scan.clientScanId } : {}),
+    ...(scan.invoiceDateNeedsConfirm
+      ? {
+          invoiceDateNeedsConfirm: true,
+          ...(scan.invoiceDateConfirmReason ? { invoiceDateConfirmReason: scan.invoiceDateConfirmReason } : {}),
+        }
+      : {}),
   };
 }
 

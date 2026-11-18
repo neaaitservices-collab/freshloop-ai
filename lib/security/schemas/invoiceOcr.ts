@@ -1,5 +1,7 @@
 import { Department } from '@prisma/client';
 import { z } from 'zod';
+import { INVOICE_PDF_MAX_PAGES } from '@/lib/domains/ai/invoiceScan';
+import { numericInput } from '@/lib/security/numericInput';
 
 export const invoiceOcrResolutionsSchema = z
   .object({
@@ -47,3 +49,49 @@ export const invoiceOcrCommitBodySchema = z
   .strict();
 
 export type InvoiceOcrCommitBody = z.infer<typeof invoiceOcrCommitBodySchema>;
+
+const invoicePageImageSchema = z
+  .object({
+    index: numericInput(z.number().int().min(1).max(INVOICE_PDF_MAX_PAGES)),
+    imageBase64: z.string().trim().min(1),
+    mimeType: z.string().trim().min(1).max(128).optional(),
+  })
+  .strict();
+
+export const invoicePageScanBodySchema = z
+  .object({
+    clientScanId: z.string().uuid(),
+    pageCount: numericInput(z.number().int().min(1).max(INVOICE_PDF_MAX_PAGES)),
+    pages: z.array(invoicePageImageSchema).min(1).max(INVOICE_PDF_MAX_PAGES),
+  })
+  .strict()
+  .superRefine((body, ctx) => {
+    const seen = new Set<number>();
+    for (const page of body.pages) {
+      if (page.index > body.pageCount) {
+        ctx.addIssue({ code: 'custom', message: 'Page index is outside this invoice.', path: ['pages'] });
+      }
+      if (seen.has(page.index)) {
+        ctx.addIssue({ code: 'custom', message: 'Each page index can be sent once.', path: ['pages'] });
+      }
+      seen.add(page.index);
+    }
+  });
+
+export const invoicePageRetryBodySchema = z
+  .object({
+    retryPage: z.literal(true),
+    draftId: z.string().trim().min(1).max(128),
+    page: invoicePageImageSchema,
+  })
+  .strict();
+
+export const invoicePageUndoBodySchema = z
+  .object({
+    undoDedupe: z.literal(true),
+    draftId: z.string().trim().min(1).max(128),
+  })
+  .strict();
+
+export type InvoicePageScanBody = z.infer<typeof invoicePageScanBodySchema>;
+export type InvoicePageRetryBody = z.infer<typeof invoicePageRetryBodySchema>;

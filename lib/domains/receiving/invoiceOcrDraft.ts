@@ -1,5 +1,6 @@
 import type { Department } from '@prisma/client';
 import { lineNeedsManualReview } from '@/lib/domains/receiving/invoiceOcrConfidence';
+import { MAX_RECEIVING_BATCH_SIZE } from '@/lib/domains/receiving/receivingLogPost';
 import {
   quantityKindForInvoiceUnit,
   type OcrDraftLine,
@@ -191,10 +192,34 @@ export function draftPostingBlockers(
     | 'invoiceDateNeedsConfirm'
     | 'invoiceDateConfirmReason'
     | 'lines'
+    | 'scanStatus'
+    | 'scanAudited'
+    | 'pageScanBlockers'
+    | 'pageScanReviewFlags'
   >,
   options: { actorIsManager: boolean; manualReviewOverride: boolean }
 ): string[] {
   const blockers: string[] = [];
+  if (payload.scanStatus === 'scanning' || (payload.scanStatus === 'ready' && payload.scanAudited !== true)) {
+    blockers.push('This invoice is still being read.');
+  }
+  if (payload.scanStatus === 'failed') {
+    blockers.push('A page was not read. Retake that page before confirming.');
+  }
+  for (const blocker of payload.pageScanBlockers ?? []) {
+    if (blocker.trim()) blockers.push(blocker);
+  }
+  const managerMayResolveEarly = options.manualReviewOverride && options.actorIsManager;
+  if (!managerMayResolveEarly) {
+    for (const flag of payload.pageScanReviewFlags ?? []) {
+      if (flag.trim()) blockers.push(flag);
+    }
+  }
+  if (payload.lines.length > MAX_RECEIVING_BATCH_SIZE) {
+    blockers.push(
+      `This invoice has ${payload.lines.length} lines. ${MAX_RECEIVING_BATCH_SIZE} lines is the maximum.`
+    );
+  }
   if (!payload.vendorName.trim()) blockers.push('Vendor name was not read.');
   if (!payload.invoiceNumber.trim()) blockers.push('Invoice number was not read.');
   if (!payload.invoiceDate?.trim()) blockers.push('Invoice date was not read.');
@@ -217,7 +242,7 @@ export function draftPostingBlockers(
     blockers.push(`Line ${index + 1} is unresolved (${reasons.join(', ')}).`);
   });
   if (payload.lines.length === 0) blockers.push('The scan has no invoice lines.');
-  return blockers;
+  return [...new Set(blockers)];
 }
 
 function withoutReason(reasons: OcrReviewReason[] | undefined, reason: OcrReviewReason): OcrReviewReason[] {
@@ -252,7 +277,16 @@ function recomputeDraftEconomics(payload: OcrDraftPayload): OcrDraftPayload {
       ((departmentBreakdown[department] ?? 0) + extended).toFixed(2)
     );
   }
-  return { ...payload, totalAmount, departmentBreakdown };
+  const printed = printedInvoiceTotal(payload);
+  return { ...payload, totalAmount: printed ?? totalAmount, departmentBreakdown };
+}
+
+/** Printed subtotal plus any tax that was actually read. A blank tax is not stored as 0. */
+function printedInvoiceTotal(payload: OcrDraftPayload): number | undefined {
+  if (typeof payload.printedSubtotal !== 'number') return undefined;
+  const hst = typeof payload.printedHst === 'number' ? payload.printedHst : 0;
+  const pst = typeof payload.printedPst === 'number' ? payload.printedPst : 0;
+  return Number((payload.printedSubtotal + hst + pst).toFixed(2));
 }
 
 /**
