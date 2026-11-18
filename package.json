@@ -9,7 +9,7 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test 'lib/**/*.test.ts'",
+    "test": "node --import tsx --import ./lib/testing/register-server-only.mjs --test 'lib/**/*.test.ts'",
     "ci": "npm run lint && npm run typecheck && npm run test && npm run build",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
@@ -33,6 +33,7 @@
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "recharts": "^3.10.1",
+    "server-only": "^0.0.1",
     "sharp": "^0.35.5",
     "tailwind-merge": "^3.7.0",
     "zod": "^3.25.76"
