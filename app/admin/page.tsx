@@ -6,14 +6,10 @@ import { AdminSectionHeader } from '@/components/features/admin/AdminSectionHead
 import { CatalogBookmarkRedirect } from '@/components/features/admin/CatalogBookmarkRedirect';
 import { DashboardFigures, DashboardFiguresSkeleton } from '@/components/features/admin/DashboardFigures';
 import { PageMain } from '@/components/ui/layout';
-import { adminDashboardWindowIgnoringQuery } from '@/lib/domains/stats/adminDashboardWindow';
+import { resolveAdminDateSearch } from '@/lib/domains/stats/adminDateRange';
 import { getAdminStoreStatsBundle } from '@/lib/domains/stats/storeStats';
 
 export const dynamic = 'force-dynamic';
-
-function oneParam(value: string | string[] | undefined): string | undefined {
-  return typeof value === 'string' && value.trim() ? value : undefined;
-}
 
 async function LiveFigures({
   searchParams,
@@ -21,12 +17,7 @@ async function LiveFigures({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   await guardFreshPage('/admin');
-  const raw = await searchParams;
-  const dashboardWindow = adminDashboardWindowIgnoringQuery({
-    preset: oneParam(raw.preset),
-    from: oneParam(raw.from),
-    to: oneParam(raw.to),
-  });
+  const dashboardWindow = resolveAdminDateSearch(await searchParams);
   const { stats, wasteKpi } = await getAdminStoreStatsBundle(dashboardWindow.range);
   return <DashboardFigures stats={stats} initialWasteKpi={wasteKpi} />;
 }
@@ -42,7 +33,7 @@ export default async function AdminPage({
     <PageMain className="py-4 pb-24 sm:py-6">
       <FreshSessionSync user={user} />
       <CatalogBookmarkRedirect />
-      <AdminSectionHeader />
+      <AdminSectionHeader dateFilter />
       <Suspense fallback={<DashboardFiguresSkeleton />}>
         <LiveFigures searchParams={searchParams} />
       </Suspense>

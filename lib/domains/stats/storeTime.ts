@@ -163,14 +163,36 @@ export function calendarMonthContaining(ymd: string): { from: string; to: string
   return { from: formatYmd(year, month, 1), to: formatYmd(year, month, last) };
 }
 
-export function presetRange(
-  preset: 'day' | 'week' | 'month',
-  now = new Date()
-): { from: string; to: string } {
+/** day/week/month stay for older links. Chips use today/last7/mtd/lastMonth. */
+export const STORE_RANGE_PRESETS = ['day', 'week', 'month', 'today', 'last7', 'mtd', 'lastMonth'] as const;
+export type StoreRangePreset = (typeof STORE_RANGE_PRESETS)[number];
+
+export const ADMIN_DATE_PRESETS = ['today', 'last7', 'mtd', 'lastMonth'] as const;
+export type AdminDatePreset = (typeof ADMIN_DATE_PRESETS)[number];
+export const DEFAULT_ADMIN_DATE_PRESET: AdminDatePreset = 'mtd';
+
+export function previousCalendarMonth(ymd: string): { from: string; to: string } {
+  const [year, month] = ymd.split('-').map(Number);
+  const prev = new Date(Date.UTC(year, month - 2, 1));
+  return calendarMonthContaining(formatYmd(prev.getUTCFullYear(), prev.getUTCMonth() + 1, 1));
+}
+
+export function presetRange(preset: StoreRangePreset, now = new Date()): { from: string; to: string } {
   const today = torontoToday(now);
-  if (preset === 'day') return { from: today, to: today };
+  if (preset === 'day' || preset === 'today') return { from: today, to: today };
   if (preset === 'week') return sundayWeekContaining(today);
+  if (preset === 'last7') return { from: addCalendarDays(today, -6), to: today };
+  if (preset === 'lastMonth') return previousCalendarMonth(today);
+  if (preset === 'mtd') {
+    const [year, month] = today.split('-').map(Number);
+    return { from: formatYmd(year, month, 1), to: today };
+  }
   return calendarMonthContaining(today);
+}
+
+/** Exact UTC bounds plus the Toronto calendar day, so a "today" entry expires at midnight. */
+export function statsBoundsCacheKey(range: StoreInstantRange, now = new Date()): string {
+  return `${range.startUtc.toISOString()}|${range.endUtc.toISOString()}|${torontoToday(now)}`;
 }
 
 export function shiftStoreRange(
@@ -220,6 +242,11 @@ export function formatCardRangeLabel(from: string, to: string): string {
   }
   if (from.slice(0, 4) === to.slice(0, 4)) return `${start}–${end}`;
   return `${formatRangeLabel(from, to)}`;
+}
+
+/** Card caption with the store clock, such as Nov 1–18 · Toronto. */
+export function formatAdminRangeLabel(from: string, to: string): string {
+  return `${formatCardRangeLabel(from, to)} · Toronto`;
 }
 
 export function formatRangeLabel(from: string, to: string): string {

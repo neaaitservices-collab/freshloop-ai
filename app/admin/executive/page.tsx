@@ -3,22 +3,38 @@ import { ExecutiveDashboard } from '@/components/features/executive/ExecutiveDas
 import { ExecutiveDashboardShell } from '@/components/features/executive/ExecutiveDashboardShell';
 import { ExecutiveDashboardSkeleton } from '@/components/features/executive/ExecutiveDashboard';
 import { guardFreshPage } from '@/lib/auth/pageGuard';
+import { resolveAdminDateSearch } from '@/lib/domains/stats/adminDateRange';
 import { getAdminStoreStatsBundle } from '@/lib/domains/stats/storeStats';
 
 export const dynamic = 'force-dynamic';
 
-async function LiveExecutiveDashboard() {
+async function LiveExecutiveDashboard({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   await guardFreshPage('/admin/executive');
-  const { stats, wasteKpi } = await getAdminStoreStatsBundle();
-  return <ExecutiveDashboard initialStats={stats} initialWasteKpi={wasteKpi} />;
+  const dashboardWindow = resolveAdminDateSearch(await searchParams);
+  const { stats, wasteKpi } = await getAdminStoreStatsBundle(dashboardWindow.range);
+  return (
+    <ExecutiveDashboard
+      initialStats={stats}
+      initialWasteKpi={wasteKpi}
+      rangeDays={dashboardWindow.dayCount}
+    />
+  );
 }
 
-export default async function ExecutiveAnalyticsPage() {
+export default async function ExecutiveAnalyticsPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   await guardFreshPage('/admin/executive');
   return (
     <ExecutiveDashboardShell>
       <Suspense fallback={<ExecutiveDashboardSkeleton />}>
-        <LiveExecutiveDashboard />
+        <LiveExecutiveDashboard searchParams={searchParams} />
       </Suspense>
     </ExecutiveDashboardShell>
   );

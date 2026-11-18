@@ -1,7 +1,8 @@
 'use client';
 
+import { Suspense } from 'react';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useSearchParams } from 'next/navigation';
 import { cn } from '@/lib/utils/cn';
 
 const TABS = [
@@ -30,10 +31,24 @@ export function pushAdminView(push: (href: string) => void, href: string): void 
   if (match) push(match.href);
 }
 
+const DATE_KEYS = ['preset', 'from', 'to'] as const;
+
+/** Overview and ROI keep the shared date query. Other admin tabs do not. */
+export function adminViewHref(href: string, params: { get(name: string): string | null }): string {
+  if (href !== '/admin' && href !== '/admin/executive') return href;
+  const next = new URLSearchParams();
+  for (const key of DATE_KEYS) {
+    const value = params.get(key);
+    if (value) next.set(key, value);
+  }
+  const query = next.toString();
+  return query ? `${href}?${query}` : href;
+}
+
 const focusRing =
   'focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-400';
 
-export function AdminViewTabs() {
+function AdminViewTabLinks({ hrefFor }: { hrefFor: (href: AdminViewHref) => string }) {
   const pathname = usePathname();
 
   return (
@@ -44,7 +59,7 @@ export function AdminViewTabs() {
           return (
             <li key={tab.href} className="shrink-0">
               <Link
-                href={tab.href}
+                href={hrefFor(tab.href)}
                 prefetch={false}
                 aria-current={active ? 'page' : undefined}
                 className={cn(
@@ -62,5 +77,18 @@ export function AdminViewTabs() {
         })}
       </ul>
     </nav>
+  );
+}
+
+function AdminViewTabsLive() {
+  const params = useSearchParams();
+  return <AdminViewTabLinks hrefFor={(href) => adminViewHref(href, params)} />;
+}
+
+export function AdminViewTabs() {
+  return (
+    <Suspense fallback={<AdminViewTabLinks hrefFor={(href) => href} />}>
+      <AdminViewTabsLive />
+    </Suspense>
   );
 }

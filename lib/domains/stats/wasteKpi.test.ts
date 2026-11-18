@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { torontoRange } from '@/lib/domains/stats/storeTime';
 import {
   computeWastePct,
   DEFAULT_KPI_LOOKBACK_DAYS,
+  halfOpenWasteBounds,
   kpiLookbackRange,
   MIN_GROSS_SALES_FOR_WASTE_RATIO,
   officialWastePctLabel,
@@ -41,4 +43,14 @@ test('kpiLookbackRange spans DEFAULT_KPI_LOOKBACK_DAYS inclusive', () => {
   const inclusiveCalendarDays =
     (utcMidnight(endDate) - utcMidnight(startDate)) / (24 * 60 * 60 * 1000) + 1;
   assert.equal(inclusiveCalendarDays, DEFAULT_KPI_LOOKBACK_DAYS);
+});
+
+test('a passed store range stays half-open and does not clip the end by a millisecond', () => {
+  const range = torontoRange('2026-03-08', '2026-03-08');
+  const bounds = halfOpenWasteBounds(range);
+  assert.equal(bounds.endExclusive, true);
+  assert.equal(bounds.startDate.toISOString(), range.startUtc.toISOString());
+  assert.equal(bounds.endDate.toISOString(), range.endUtc.toISOString());
+  assert.equal(bounds.endDate.toISOString(), '2026-03-09T04:00:00.000Z');
+  assert.notEqual(bounds.endDate.getTime(), range.endUtc.getTime() - 1);
 });
