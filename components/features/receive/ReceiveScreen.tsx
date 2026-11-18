@@ -38,7 +38,13 @@ import {
   clearInvoiceDeliveryIds,
   type InvoiceIdentityPhase,
 } from '@/lib/domains/receiving/invoiceReceiveSave';
+import { InvoiceDateField } from '@/components/features/receive/InvoiceDateField';
 import { InvoiceIdentityActions } from '@/components/features/receive/InvoiceIdentityActions';
+import {
+  INVOICE_DATE_WARNING,
+  invoiceDateToday,
+  pickDeliveryDay,
+} from '@/lib/domains/receiving/invoiceDatePicker';
 import type { ReceivingLog } from '@/lib/domains/receiving/yieldPricing';
 import type { SupplierRecord } from '@/lib/domains/suppliers/suppliers';
 import {
@@ -300,6 +306,28 @@ export function ReceiveScreen({
 
   const openDraftId = scannedLogs.find((log) => log.draftId)?.draftId ?? '';
 
+  const applyDeliveryDay = (ymd: string) => {
+    const next = pickDeliveryDay(
+      { dateDraft, warning: scanNote, sheetOpen: true },
+      ymd,
+      invoiceDateToday()
+    );
+    if (!next.accepted) return;
+    setDateDraft(next.dateDraft);
+    if (next.warning !== scanNote) setScanNote(next.warning);
+  };
+
+  const dateChosen = dateDraft.trim().length > 0;
+  const showingDateWarning = scanNote === INVOICE_DATE_WARNING;
+  const otherHold = Boolean(identityHold && identityHold.code !== 'DATE_REQUIRED');
+  const quietConfirmed = dateChosen && !showingDateWarning && !otherHold && scanNote === null;
+  const scanCardTone =
+    showingDateWarning || otherHold
+      ? 'border-amber-800/50 bg-amber-950/20'
+      : quietConfirmed
+        ? 'border-slate-800 bg-slate-900/70'
+        : 'border-emerald-800/40 bg-emerald-950/20';
+
   const forgetStoredScan = async (draftId: string) => {
     if (!draftId) {
       clearOpenScanChoice();
@@ -409,19 +437,29 @@ export function ReceiveScreen({
             </p>
           </CardBody>
         </Card>
-        {scanNote ? (
-          <Card className={`mt-3 ${identityHold ? 'border-amber-800/50 bg-amber-950/20' : 'border-emerald-800/40 bg-emerald-950/20'}`}>
+        {scanNote || dateChosen ? (
+          <Card className={`mt-3 ${scanCardTone}`}>
             <CardBody className="space-y-3 py-3 text-sm">
-              <p className={identityHold ? 'font-semibold text-amber-100' : 'font-semibold text-emerald-400/90'}>
-                {scanNote}
-              </p>
+              {scanNote ? (
+                <p
+                  className={
+                    showingDateWarning || otherHold
+                      ? 'font-semibold text-amber-100'
+                      : 'font-semibold text-emerald-400/90'
+                  }
+                >
+                  {scanNote}
+                </p>
+              ) : null}
               {identityHold ? (
                 <InvoiceIdentityActions
                   hold={identityHold}
                   dateDraft={dateDraft}
-                  onDateDraft={setDateDraft}
+                  onDateDraft={applyDeliveryDay}
                   onConfirm={confirmHold}
                 />
+              ) : dateChosen ? (
+                <InvoiceDateField value={dateDraft} onChange={applyDeliveryDay} />
               ) : null}
               {openDraftId ? (
                 <Button variant="secondary" className="py-2 text-xs" disabled={discarding} onClick={() => void discardScan()}>
@@ -445,7 +483,7 @@ export function ReceiveScreen({
             identityHold={identityHold}
             identityMessage={identityHold?.error ?? (identityPhase === 'failed' ? scanNote : null)}
             invoiceDateDraft={dateDraft}
-            onInvoiceDateDraft={setDateDraft}
+            onInvoiceDateDraft={applyDeliveryDay}
             onSupplierId={changeSupplier}
             onSupplierCreated={(supplier) => {
               setSuppliers((current) =>
