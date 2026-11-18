@@ -18,6 +18,8 @@ import {
 } from '@/lib/domains/receiving/deliveryIdentity';
 import { sampleReceivingRejection } from '@/lib/domains/receiving/sampleReceivingGuard';
 import { getSupplierNameById } from '@/lib/domains/suppliers/suppliers';
+import { z } from 'zod';
+import { numericInput } from '@/lib/security/numericInput';
 import {
   calculateYieldQuote,
   resolveTargetMargin,
@@ -136,16 +138,50 @@ function parseCaseRetail(raw: number | null | undefined): number | undefined {
   return Number(raw);
 }
 
-export function validateReceivingLogPostInput(body: Partial<ReceivingLogPostInput>): {
+const caseCostSchema = numericInput(z.number().finite().min(0).max(1_000_000));
+const currentRetailPriceSchema = numericInput(z.number().finite());
+const finiteNumberSchema = numericInput(z.number().finite());
+
+function blankMoney(value: unknown): boolean {
+  return value == null || (typeof value === 'string' && value.trim() === '');
+}
+
+/** Blank case cost or retail price is a validation error, never a stored 0. */
+export function receivingCaseCostAndRetailError(body: {
+  caseCost?: unknown;
+  currentRetailPrice?: unknown;
+}): string | null {
+  if (blankMoney(body.caseCost)) return 'Case cost is required.';
+  if (!finiteNumberSchema.safeParse(body.caseCost).success) {
+    return 'Receiving and pricing numbers must be finite.';
+  }
+  if (!caseCostSchema.safeParse(body.caseCost).success) {
+    return 'Case cost must be zero or greater and at most 1,000,000.';
+  }
+  if (blankMoney(body.currentRetailPrice)) return 'Retail price is required.';
+  if (!currentRetailPriceSchema.safeParse(body.currentRetailPrice).success) {
+    return 'Receiving and pricing numbers must be finite.';
+  }
+  return null;
+}
+
+export function validateReceivingLogPostInput(
+  body: Omit<Partial<ReceivingLogPostInput>, 'caseCost' | 'currentRetailPrice'> & {
+    caseCost?: unknown;
+    currentRetailPrice?: unknown;
+  }
+): {
   ok: true;
   input: ReceivingLogPostInput;
 } | { ok: false; error: string } {
+  const moneyError = receivingCaseCostAndRetailError(body);
+  if (moneyError) return { ok: false, error: moneyError };
   const itemName = body.itemName?.trim() ?? '';
   const casesReceived = Number(body.casesReceived);
-  const caseCost = Number(body.caseCost);
+  const caseCost = caseCostSchema.parse(body.caseCost);
   const packSize = Number(body.packSize);
   const splitFactor = Number(body.splitFactor);
-  const currentRetailPrice = Number(body.currentRetailPrice);
+  const currentRetailPrice = currentRetailPriceSchema.parse(body.currentRetailPrice);
   const retailUnit = body.retailUnit as RetailUnit;
   const marginMode: MarginMode =
     body.marginMode === '35' || body.marginMode === '40' || body.marginMode === 'custom'
@@ -156,7 +192,7 @@ export function validateReceivingLogPostInput(body: Partial<ReceivingLogPostInpu
   if (!RETAIL_UNITS.includes(retailUnit)) {
     return { ok: false, error: 'retailUnit must be units, quarts, or lbs.' };
   }
-  if (![casesReceived, caseCost, packSize, splitFactor, currentRetailPrice].every(Number.isFinite)) {
+  if (![casesReceived, packSize, splitFactor].every(Number.isFinite)) {
     return { ok: false, error: 'Receiving and pricing numbers must be finite.' };
   }
   if (packSize <= 0 || splitFactor <= 0 || packSize > 1_000_000 || splitFactor > 1_000_000) {

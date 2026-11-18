@@ -40,6 +40,11 @@ import {
   type PullSensitivityDays,
 } from '@/lib/domains/inventory/pullSensitivity';
 import { cn } from '@/lib/utils/cn';
+import { z } from 'zod';
+import { numericInput } from '@/lib/security/numericInput';
+
+const parCasesInput = numericInput(z.number().finite().min(0).max(999));
+const physicalCasesInput = numericInput(z.number().finite().min(0).max(1_000_000));
 
 const INPUT =
   'mt-2 min-h-11 w-full rounded-xl border border-slate-700/90 bg-slate-950 px-3.5 py-2.5 text-sm text-slate-100 outline-none transition focus:border-emerald-500/45 focus:ring-1 focus:ring-emerald-500/20';
@@ -174,11 +179,11 @@ export function ItemSettingsModal({
   const [caseCostInput, setCaseCostInput] = useState('');
   const [currentCaseFloor, setCurrentCaseFloor] = useState('');
 
+  const customParParsed = useMemo(() => parCasesInput.safeParse(customParCases), [customParCases]);
   const effectiveParCases = useMemo(() => {
     if (followStorePar) return storeDefaultParCases;
-    const raw = Number(customParCases);
-    return normalizeParCases(Number.isFinite(raw) ? raw : storeDefaultParCases);
-  }, [followStorePar, customParCases, storeDefaultParCases]);
+    return customParParsed.success ? normalizeParCases(customParParsed.data) : storeDefaultParCases;
+  }, [followStorePar, customParParsed, storeDefaultParCases]);
 
   const applyPresetUnitPrice = useCallback((mode: MarginMode, unitCost: number) => {
     if (mode !== '35' && mode !== '40') return;
@@ -425,10 +430,14 @@ export function ItemSettingsModal({
   const sellUnit = retailUnitForUnitType(row.unitType);
   const systemUnits = row.onHand;
   const systemCases = row.onHandCases;
-  const physicalCasesNum = toNumber(physicalCases);
-  const physicalUnitsPreview = physicalCasesNum * ledgerUnitsPerCase;
-  const overrideDiffersFromLedger = Math.abs(physicalCasesNum - systemCases) >= 0.01;
-  const physicalCaseHint = formatFractionalCases(physicalUnitsPreview, ledgerUnitsPerCase);
+  const physicalParsed = physicalCasesInput.safeParse(physicalCases);
+  const physicalCasesNum = physicalParsed.success ? physicalParsed.data : null;
+  const overrideDiffersFromLedger =
+    physicalCasesNum !== null && Math.abs(physicalCasesNum - systemCases) >= 0.01;
+  const physicalCaseHint =
+    physicalCasesNum === null
+      ? { primary: 'Enter the counted cases.', detail: 'Blank is not saved as zero.' }
+      : formatFractionalCases(physicalCasesNum * ledgerUnitsPerCase, ledgerUnitsPerCase);
 
   return (
     <ModalShell open zIndexClass="z-[110]" width="lg" onClose={onClose}>
@@ -562,7 +571,14 @@ export function ItemSettingsModal({
                     setError(null);
                     const parCases = followStorePar
                       ? storeDefaultParCases
-                      : normalizeParCases(Number(customParCases));
+                      : customParParsed.success
+                        ? normalizeParCases(customParParsed.data)
+                        : null;
+                    if (parCases === null) {
+                      setError('Enter an order minimum, or use the store default.');
+                      setBusy(null);
+                      return;
+                    }
                     void onSaveMetadata({
                       department,
                       supplier,
@@ -631,12 +647,12 @@ export function ItemSettingsModal({
                         After apply (draft)
                       </span>
                       <CaseCountCell
-                        unitsOnHand={physicalUnitsPreview}
+                        unitsOnHand={physicalCasesNum === null ? 0 : physicalCasesNum * ledgerUnitsPerCase}
                         unitsPerCase={ledgerUnitsPerCase}
                         emphasis="physical"
                       />
                       <span className="font-mono text-right text-xs text-emerald-300/90">
-                        {formatUnits(physicalUnitsPreview)} {sellUnit}
+                        {formatUnits(physicalCasesNum === null ? 0 : physicalCasesNum * ledgerUnitsPerCase)} {sellUnit}
                       </span>
                     </div>
                   ) : null}
@@ -688,8 +704,12 @@ export function ItemSettingsModal({
                   <button
                     type="button"
                     aria-busy={busy === 'stock'}
-                    disabled={!canOverride || busy === 'stock' || physicalCasesNum < 0}
+                    disabled={!canOverride || busy === 'stock' || physicalCasesNum === null}
                     onClick={() => {
+                      if (physicalCasesNum === null) {
+                        setError('Enter the cases on hand. A blank field is not saved as zero.');
+                        return;
+                      }
                       setBusy('stock');
                       setError(null);
                       void onUpdatePhysicalCount(physicalCasesNum)

@@ -5,12 +5,14 @@ import { Loader2, X } from 'lucide-react';
 import type { PlatformSettings } from '@/lib/domains/stats/platformSettings';
 import { dispatchSettingsUpdated } from '@/lib/domains/stats/settingsEvents';
 import Link from 'next/link';
-import {
-  scrapBucketInputsFromSettings,
-  scrapDollarsPerBucket,
-} from '@/lib/domains/stats/scrapBucketEconomics';
+import { scrapDollarsPerBucket } from '@/lib/domains/stats/scrapBucketEconomics';
 import { ScrapBucketFormulaSummary } from '@/components/features/admin/WasteFormulaBreakdown';
 import { ModalBody, ModalFooter, ModalHeader, ModalShell } from '@/components/ui/layout';
+import { z } from 'zod';
+import { numericInput } from '@/lib/security/numericInput';
+
+const positiveSetting = numericInput(z.number().finite().positive());
+const scrapCostSetting = numericInput(z.number().finite().min(0));
 
 const FIELD =
   'mt-1 w-full min-h-11 rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-slate-100';
@@ -25,6 +27,9 @@ export function ScrapBucketSettingsModal({
   bucketCount: number;
 }) {
   const [draft, setDraft] = useState<PlatformSettings | null>(null);
+  const [volumeL, setVolumeL] = useState('');
+  const [densityKgPerL, setDensityKgPerL] = useState('');
+  const [costPerKg, setCostPerKg] = useState('');
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -40,7 +45,11 @@ export function ScrapBucketSettingsModal({
         setError(json.error || 'Could not load settings.');
         return;
       }
-      setDraft(json.settings as PlatformSettings);
+      const settings = json.settings as PlatformSettings;
+      setDraft(settings);
+      setVolumeL(String(settings.scrapBucketVolumeL));
+      setDensityKgPerL(String(settings.estimatedWeightPerLiterKg));
+      setCostPerKg(String(settings.defaultScrapCostPerKg));
     } catch {
       setError('Could not load settings.');
     } finally {
@@ -52,10 +61,17 @@ export function ScrapBucketSettingsModal({
     if (open) void load();
   }, [open, load]);
 
-  const scrapInputs = useMemo(
-    () => (draft ? scrapBucketInputsFromSettings(draft) : null),
-    [draft]
-  );
+  const scrapInputs = useMemo(() => {
+    const volume = positiveSetting.safeParse(volumeL);
+    const density = positiveSetting.safeParse(densityKgPerL);
+    const cost = scrapCostSetting.safeParse(costPerKg);
+    if (!volume.success || !density.success || !cost.success) return null;
+    return {
+      volumeL: volume.data,
+      densityKgPerL: density.data,
+      costPerKg: cost.data,
+    };
+  }, [volumeL, densityKgPerL, costPerKg]);
   const costPerBucket = scrapInputs ? scrapDollarsPerBucket(scrapInputs) : 0;
 
   const save = async () => {
@@ -67,14 +83,23 @@ export function ScrapBucketSettingsModal({
       const res = await fetch('/api/admin/settings', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(draft),
+        body: JSON.stringify({
+          ...draft,
+          scrapBucketVolumeL: volumeL,
+          estimatedWeightPerLiterKg: densityKgPerL,
+          defaultScrapCostPerKg: costPerKg,
+        }),
       });
       const json = await res.json();
       if (!res.ok || !json.success) {
         setError(json.error || 'Could not save.');
         return;
       }
-      setDraft(json.settings as PlatformSettings);
+      const saved = json.settings as PlatformSettings;
+      setDraft(saved);
+      setVolumeL(String(saved.scrapBucketVolumeL));
+      setDensityKgPerL(String(saved.estimatedWeightPerLiterKg));
+      setCostPerKg(String(saved.defaultScrapCostPerKg));
       setMessage('Scrap defaults saved.');
       dispatchSettingsUpdated(json.settings as PlatformSettings);
       window.dispatchEvent(new CustomEvent('freshloop-inventory-updated'));
@@ -140,10 +165,8 @@ export function ScrapBucketSettingsModal({
                   type="number"
                   min="0.1"
                   step="0.1"
-                  value={draft.scrapBucketVolumeL}
-                  onChange={(e) =>
-                    setDraft({ ...draft, scrapBucketVolumeL: Number(e.target.value) })
-                  }
+                  value={volumeL}
+                  onChange={(e) => setVolumeL(e.target.value)}
                   className={FIELD}
                 />
                 <span className="mt-1 block text-[11px] font-normal leading-snug text-slate-500">
@@ -158,10 +181,8 @@ export function ScrapBucketSettingsModal({
                   type="number"
                   min="0.01"
                   step="0.01"
-                  value={draft.estimatedWeightPerLiterKg}
-                  onChange={(e) =>
-                    setDraft({ ...draft, estimatedWeightPerLiterKg: Number(e.target.value) })
-                  }
+                  value={densityKgPerL}
+                  onChange={(e) => setDensityKgPerL(e.target.value)}
                   className={FIELD}
                 />
                 <span className="mt-1 block text-[11px] font-normal leading-snug text-slate-500">
@@ -177,10 +198,8 @@ export function ScrapBucketSettingsModal({
                   type="number"
                   min="0"
                   step="0.01"
-                  value={draft.defaultScrapCostPerKg}
-                  onChange={(e) =>
-                    setDraft({ ...draft, defaultScrapCostPerKg: Number(e.target.value) })
-                  }
+                  value={costPerKg}
+                  onChange={(e) => setCostPerKg(e.target.value)}
                   className={FIELD}
                 />
                 <span className="mt-1 block text-[11px] font-normal leading-snug text-slate-500">
