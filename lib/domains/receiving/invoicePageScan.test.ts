@@ -13,6 +13,8 @@ import { invoicePageScanBodySchema } from '@/lib/security/schemas/invoiceOcr';
 import {
   beginPageReread,
   chunkPages,
+  confirmInvoiceDateResolution,
+  continuablePendingIndexes,
   createScanPages,
   dedupeCrossPageLines,
   DIFFERENT_INVOICES_BLOCKER,
@@ -20,6 +22,8 @@ import {
   finalizeReadyScan,
   initialPageScan,
   INVOICE_PAGE_ATTEMPT_BUDGET_MS,
+  InvoiceScanRequestError,
+  invoiceReviewHardBlocked,
   INVOICE_PAGE_BATCH_SIZE,
   INVOICE_PAGE_LINE_MAX,
   INVOICE_PAGE_MAX,
@@ -29,13 +33,18 @@ import {
   lineIdentityKey,
   markPagesScanning,
   mergeReadPages,
+  nextRemainingIndexes,
   nextSuppliedWave,
   nextWaveDelayMs,
+  parseRetryAfterDelayMs,
   readOptionalMoney,
+  readPostedInvoiceDate,
   readPrintedMoneyFields,
+  retryAfterPlan,
   readStoredPageScan,
   recordPageFailure,
   recordPageRead,
+  scanStepAfterClientFailure,
   settleStaleScanningPages,
   undoCrossPageDedupe,
   undoDedupeOnScan,
@@ -329,4 +338,112 @@ test('a scanning draft is restored and cannot be confirmed until it is audited',
     scanAudited: false,
   };
   assert.match(draftPostingBlockers(payload, { actorIsManager: false, manualReviewOverride: false }).join(' '), /still being read/);
+});
+
+test('a later wave failure keeps read pages and Continue sends the pending photos', () => {
+  const pages = [
+    { index: 1, status: 'read' },
+    { index: 2, status: 'read' },
+    { index: 3, status: 'read' },
+    { index: 4, status: 'pending' },
+    { index: 5, status: 'pending' },
+    { index: 6, status: 'pending' },
+    { index: 7, status: 'pending' },
+    { index: 8, status: 'failed' },
+  ];
+  const photos = [1, 2, 3, 4, 5, 6, 7];
+  const pending = continuablePendingIndexes(pages, photos);
+  assert.deepEqual(pending, [4, 5, 6, 7]);
+  assert.equal(scanStepAfterClientFailure({ hasDraft: true, continuableIndexes: pending }), 'scanning');
+  assert.equal(scanStepAfterClientFailure({ hasDraft: false, continuableIndexes: [] }), 'pages');
+  assert.deepEqual(chunkPages(pending, INVOICE_PAGE_BATCH_SIZE), [
+    [4, 5, 6],
+    [7],
+  ]);
+  assert.deepEqual(
+    nextRemainingIndexes('scanning', [7, 8], (index) => photos.includes(index)),
+    [7]
+  );
+  assert.equal(nextRemainingIndexes('failed', [7], () => true), null);
+  assert.equal(nextRemainingIndexes('ready', [], () => true), null);
+  assert.deepEqual(continuablePendingIndexes([{ index: 8, status: 'failed' }], [8]), []);
+
+  const sheet = fs.readFileSync(path.join(process.cwd(), 'components/features/receive/InvoicePageScanSheet.tsx'), 'utf8');
+  const noteAt = sheet.indexOf('view.duplicateNote');
+  const supplierAt = sheet.indexOf('<SupplierSelect');
+  assert.ok(noteAt > 0 && supplierAt > noteAt);
+  assert.match(sheet, /Continue scan/);
+  assert.match(sheet, /retryAfterPlan\(response\.headers\.get\('Retry-After'\)\)/);
+});
+
+test('Retry-After is waited when it is short and shown when it is long', () => {
+  const now = Date.parse('2026-11-18T12:00:00.000Z');
+  assert.equal(parseRetryAfterDelayMs(null, now), null);
+  assert.equal(parseRetryAfterDelayMs('   ', now), null);
+  assert.equal(parseRetryAfterDelayMs('nope', now), null);
+  assert.equal(parseRetryAfterDelayMs('3', now), 3_000);
+  assert.equal(parseRetryAfterDelayMs(new Date(now + 12_000).toUTCString(), now), 12_000);
+  const short = retryAfterPlan('3', now);
+  assert.equal(short.waitNow, true);
+  assert.equal(short.waitMs, 3_000);
+  assert.match(short.message, /3 seconds/);
+  const long = retryAfterPlan('120', now);
+  assert.equal(long.waitNow, false);
+  assert.equal(long.waitMs, 120_000);
+  assert.match(long.message, /120 seconds/);
+  assert.equal(new InvoiceScanRequestError(long.message, long.waitMs, now).retryAfterMs, 120_000);
+  assert.equal(new InvoiceScanRequestError(long.message, long.waitMs, now).continueAtMs, now + 120_000);
+  assert.equal(new InvoiceScanRequestError('busy', null, now).continueAtMs, null);
+});
+
+test('a date disagreement stays until the clerk confirms the picker', () => {
+  const posted = readPostedInvoiceDate({
+    invoiceDate: '2026-11-13',
+    invoiceDateNeedsConfirm: true,
+    invoiceDateConfirmReason: 'Pages do not agree on the invoice date. Pick the date from the paper.',
+    data: { invoiceDate: '2026-11-01', invoiceDateNeedsConfirm: false },
+  });
+  assert.equal(posted.invoiceDate, '2026-11-13');
+  assert.equal(posted.invoiceDateNeedsConfirm, true);
+  assert.match(posted.invoiceDateConfirmReason ?? '', /do not agree/);
+  assert.equal(readPostedInvoiceDate({ data: { invoiceDate: '2026-11-13' } }).invoiceDateNeedsConfirm, false);
+  const fromDraft = readPostedInvoiceDate({
+    data: { invoiceDate: '2026-11-13', invoiceDateNeedsConfirm: true, invoiceDateConfirmReason: 'Pages do not agree on the invoice date.' },
+  });
+  assert.equal(fromDraft.invoiceDateNeedsConfirm, true);
+  assert.equal(fromDraft.invoiceDate, '2026-11-13');
+
+  assert.equal(confirmInvoiceDateResolution({ dateConfirmed: false, dateDraft: '2026-11-13' }), undefined);
+  assert.deepEqual(confirmInvoiceDateResolution({ dateConfirmed: true, dateDraft: ' 2026-11-13 ' }), {
+    invoiceDate: '2026-11-13',
+  });
+  assert.equal(confirmInvoiceDateResolution({ dateConfirmed: true, dateDraft: '   ' }), undefined);
+
+  assert.equal(
+    invoiceReviewHardBlocked({
+      blockers: ['Pages do not agree on the invoice date. Pick the date from the paper.'],
+      invoiceDateNeedsConfirm: true,
+      dateConfirmed: false,
+    }),
+    true
+  );
+  assert.equal(
+    invoiceReviewHardBlocked({
+      blockers: ['Pages do not agree on the invoice date. Pick the date from the paper.'],
+      invoiceDateNeedsConfirm: true,
+      dateConfirmed: true,
+    }),
+    false
+  );
+  assert.equal(
+    invoiceReviewHardBlocked({
+      blockers: [DIFFERENT_INVOICES_BLOCKER],
+      invoiceDateNeedsConfirm: false,
+      dateConfirmed: true,
+    }),
+    true
+  );
+
+  const run = fs.readFileSync(path.join(process.cwd(), 'lib/domains/receiving/invoicePageScanRun.ts'), 'utf8');
+  assert.match(run, /invoiceDateNeedsConfirm: payload\.invoiceDateNeedsConfirm === true/);
 });

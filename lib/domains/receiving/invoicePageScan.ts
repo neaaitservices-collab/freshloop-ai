@@ -782,3 +782,131 @@ export function readStoredPageScan(raw: unknown): PageScanRecord | null {
       : [],
   };
 }
+
+/** Wait inside the request only when Retry-After is short enough to stay on this screen. */
+export const INVOICE_SCAN_RETRY_WAIT_MAX_MS = 15_000;
+
+export class InvoiceScanRequestError extends Error {
+  readonly retryAfterMs: number | null;
+  /** Epoch milliseconds when Continue may run again. Null when there is nothing to wait for. */
+  readonly continueAtMs: number | null;
+
+  constructor(message: string, retryAfterMs: number | null = null, nowMs = Date.now()) {
+    super(message);
+    this.name = 'InvoiceScanRequestError';
+    this.retryAfterMs = retryAfterMs;
+    this.continueAtMs = retryAfterMs != null && retryAfterMs > 0 ? nowMs + retryAfterMs : null;
+  }
+}
+
+/** Retry-After as delay milliseconds. A delta is seconds. An HTTP date is time from now. Blank is missing. */
+export function parseRetryAfterDelayMs(header: string | null | undefined, nowMs = Date.now()): number | null {
+  if (header == null) return null;
+  const trimmed = header.trim();
+  if (!trimmed) return null;
+  if (/^\d+$/.test(trimmed)) return Number(trimmed) * 1000;
+  const dated = Date.parse(trimmed);
+  if (!Number.isNaN(dated)) return Math.max(0, dated - nowMs);
+  return null;
+}
+
+export function retryAfterMessage(waitMs: number | null): string {
+  if (waitMs == null || waitMs <= 0) return 'The reader is busy. Continue the scan in a moment.';
+  const seconds = Math.max(1, Math.ceil(waitMs / 1000));
+  return `The reader is busy. Continue scan in ${seconds} ${seconds === 1 ? 'second' : 'seconds'}.`;
+}
+
+/** A short Retry-After is waited inside the request. A longer one is shown, and Continue stays off until it passes. */
+export function retryAfterPlan(
+  header: string | null | undefined,
+  nowMs = Date.now(),
+  maxWaitMs = INVOICE_SCAN_RETRY_WAIT_MAX_MS
+): { waitMs: number | null; waitNow: boolean; message: string } {
+  const waitMs = parseRetryAfterDelayMs(header, nowMs);
+  return {
+    waitMs,
+    waitNow: waitMs != null && waitMs > 0 && waitMs <= maxWaitMs,
+    message: retryAfterMessage(waitMs),
+  };
+}
+
+export function continuablePendingIndexes(
+  pages: Array<{ index: number; status: string }>,
+  imageIndexes: Iterable<number>
+): number[] {
+  const have = new Set(imageIndexes);
+  return pages
+    .filter((page) => page.status === 'pending' && have.has(page.index))
+    .map((page) => page.index)
+    .sort((a, b) => a - b);
+}
+
+/** After a wave fails, stay on the scan when a draft or a photo for a waiting page is still here. */
+export function scanStepAfterClientFailure(input: {
+  hasDraft: boolean;
+  continuableIndexes: number[];
+}): 'scanning' | 'pages' {
+  if (input.hasDraft || input.continuableIndexes.length > 0) return 'scanning';
+  return 'pages';
+}
+
+/** Next indexes for the same wave loop. A finished or failed scan stops. */
+export function nextRemainingIndexes(
+  status: string,
+  pendingIndexes: number[],
+  hasImage: (index: number) => boolean
+): number[] | null {
+  if (status !== 'scanning') return null;
+  const next = pendingIndexes.filter((index) => hasImage(index));
+  return next.length > 0 ? next : null;
+}
+
+export interface PostedInvoiceDateState {
+  invoiceDate: string;
+  invoiceDateNeedsConfirm: boolean;
+  invoiceDateConfirmReason?: string;
+}
+
+/** Date disagreement comes from the draft. A missing flag stays false. */
+export function readPostedInvoiceDate(json: Record<string, unknown>): PostedInvoiceDateState {
+  const data =
+    json.data && typeof json.data === 'object' && !Array.isArray(json.data)
+      ? (json.data as Record<string, unknown>)
+      : null;
+  const invoiceDate =
+    typeof json.invoiceDate === 'string'
+      ? json.invoiceDate
+      : typeof data?.invoiceDate === 'string'
+        ? data.invoiceDate
+        : '';
+  const reasonRaw = json.invoiceDateConfirmReason ?? data?.invoiceDateConfirmReason;
+  const invoiceDateNeedsConfirm = json.invoiceDateNeedsConfirm === true || data?.invoiceDateNeedsConfirm === true;
+  return {
+    invoiceDate,
+    invoiceDateNeedsConfirm,
+    ...(typeof reasonRaw === 'string' && reasonRaw.trim() ? { invoiceDateConfirmReason: reasonRaw.trim() } : {}),
+  };
+}
+
+/** The prefilled page-1 date is not a resolution. Only a picker confirm or change is. */
+export function confirmInvoiceDateResolution(input: {
+  dateConfirmed: boolean;
+  dateDraft: string;
+}): { invoiceDate: string } | undefined {
+  const invoiceDate = input.dateDraft.trim();
+  if (!input.dateConfirmed || !invoiceDate) return undefined;
+  return { invoiceDate };
+}
+
+export function invoiceReviewHardBlocked(input: {
+  blockers: string[];
+  invoiceDateNeedsConfirm: boolean;
+  dateConfirmed: boolean;
+}): boolean {
+  if (input.invoiceDateNeedsConfirm && !input.dateConfirmed) return true;
+  return input.blockers.some(
+    (blocker) =>
+      blocker === DIFFERENT_INVOICES_BLOCKER ||
+      /still being read|Retake that page|lines is the maximum|no invoice lines/i.test(blocker)
+  );
+}

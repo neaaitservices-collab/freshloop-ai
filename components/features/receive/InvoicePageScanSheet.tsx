@@ -11,11 +11,18 @@ import type { RestoredInvoiceScan } from '@/lib/domains/receiving/openInvoiceSca
 import { INVOICE_DATE_WARNING } from '@/lib/domains/receiving/invoiceDatePicker';
 import { formatInvoiceDeliveryDay } from '@/lib/domains/receiving/invoiceDatePicker';
 import {
-  DIFFERENT_INVOICES_BLOCKER,
+  confirmInvoiceDateResolution,
+  continuablePendingIndexes,
   duplicateRemovalNote,
   INVOICE_PAGE_BATCH_SIZE,
   INVOICE_PAGE_MAX,
+  InvoiceScanRequestError,
+  invoiceReviewHardBlocked,
+  nextRemainingIndexes,
   PAGE_CAP_MESSAGE,
+  readPostedInvoiceDate,
+  retryAfterPlan,
+  scanStepAfterClientFailure,
   type InvoicePageStatus,
 } from '@/lib/domains/receiving/invoicePageScan';
 import { matchSupplierByName } from '@/lib/domains/suppliers/supplierInvoiceMatch';
@@ -102,6 +109,7 @@ export function InvoicePageScanSheet({
   const clientScanId = useRef('');
   const resumedId = useRef<string | null>(null);
   const localImages = useRef<Map<number, OcrPageImage>>(new Map());
+  const viewRef = useRef<ScanView | null>(null);
 
   const [step, setStep] = useState<Step>('choose');
   const [pages, setPages] = useState<LocalPage[]>([]);
@@ -110,19 +118,29 @@ export function InvoicePageScanSheet({
   const [view, setView] = useState<ScanView | null>(null);
   const [supplierId, setSupplierId] = useState('');
   const [dateDraft, setDateDraft] = useState('');
+  const [dateConfirmed, setDateConfirmed] = useState(false);
   const [showAllLines, setShowAllLines] = useState(false);
   const [managerApproved, setManagerApproved] = useState(false);
   const [working, setWorking] = useState(false);
+  const [continueAt, setContinueAt] = useState<number | null>(null);
+  const [nowMs, setNowMs] = useState(() => Date.now());
+
+  const rememberView = (next: ScanView | null) => {
+    viewRef.current = next;
+    setView(next);
+  };
 
   const resetLocal = () => {
     setStep('choose');
     setPages([]);
     setError(null);
-    setView(null);
+    rememberView(null);
     setSupplierId('');
     setDateDraft('');
+    setDateConfirmed(false);
     setShowAllLines(false);
     setManagerApproved(false);
+    setContinueAt(null);
     localImages.current = new Map();
     clientScanId.current = '';
   };
@@ -134,8 +152,9 @@ export function InvoicePageScanSheet({
     resumedId.current = id;
     clientScanId.current = resume.pageScan.clientScanId ?? '';
     const next = viewFromRestored(resume);
-    setView(next);
+    rememberView(next);
     setDateDraft(next.invoiceDate);
+    setDateConfirmed(false);
     setStep(next.status === 'ready' ? 'review' : 'scanning');
     setError(null);
   }, [open, resume]);
@@ -156,6 +175,7 @@ export function InvoicePageScanSheet({
         if (stopped || !response.ok || !json.draft?.pageScan) return;
         if (json.draft.draftId !== view.draftId) return;
         const next = viewFromRestored(json.draft);
+        viewRef.current = next;
         setView(next);
         if (next.status === 'ready') {
           setDateDraft((current) => current || next.invoiceDate);
@@ -171,6 +191,12 @@ export function InvoicePageScanSheet({
       clearInterval(timer);
     };
   }, [open, step, view?.draftId]);
+
+  useEffect(() => {
+    if (continueAt == null) return;
+    const timer = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [continueAt]);
 
   const appendPrepared = (incoming: OcrPageImage[], previews: string[]) => {
     setPages((current) => {
@@ -217,7 +243,7 @@ export function InvoicePageScanSheet({
   const applyPost = (json: Record<string, unknown>) => {
     const next = viewFromPost(json);
     if (!next) return;
-    setView(next);
+    rememberView(next);
     if (next.status === 'ready') {
       setDateDraft((current) => current || next.invoiceDate);
       setStep('review');
@@ -226,23 +252,83 @@ export function InvoicePageScanSheet({
     }
   };
 
+  const noteScanFailure = (err: unknown) => {
+    setContinueAt(err instanceof InvoiceScanRequestError ? err.continueAtMs : null);
+    setError(err instanceof Error ? err.message : 'The scan did not reach the server. Check the connection and try again.');
+    const current = viewRef.current;
+    const continuable = continuablePendingIndexes(current?.pages ?? [], localImages.current.keys());
+    setStep(scanStepAfterClientFailure({ hasDraft: Boolean(current?.draftId), continuableIndexes: continuable }));
+  };
+
   const postJson = async (body: unknown) => {
-    const response = await fetch('/api/invoice-ocr', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    const json = (await response.json()) as Record<string, unknown>;
+    const send = async () => {
+      const response = await fetch('/api/invoice-ocr', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      let json: Record<string, unknown> = {};
+      try {
+        json = (await response.json()) as Record<string, unknown>;
+      } catch {
+        json = {};
+      }
+      return { response, json };
+    };
+    let { response, json } = await send();
+    if (response.status === 429) {
+      const plan = retryAfterPlan(response.headers.get('Retry-After'));
+      if (plan.waitNow && plan.waitMs != null) {
+        setError(plan.message);
+        await new Promise((resolve) => setTimeout(resolve, plan.waitMs ?? 0));
+        ({ response, json } = await send());
+      }
+      if (response.status === 429) {
+        const again = retryAfterPlan(response.headers.get('Retry-After'));
+        throw new InvoiceScanRequestError(again.message, again.waitMs);
+      }
+    }
     if (!response.ok || json.success === false) {
       throw new Error(typeof json.error === 'string' ? json.error : 'The invoice could not be read.');
     }
+    setContinueAt(null);
+    setError(null);
     return json;
+  };
+
+  const runWaves = async (pageCount: number, startIndexes: number[]) => {
+    let remaining = startIndexes;
+    let previous = '';
+    for (let guard = 0; guard < INVOICE_PAGE_MAX && remaining.length > 0; guard += 1) {
+      const signature = remaining.join(',');
+      if (signature === previous) break;
+      previous = signature;
+      const wave = remaining.slice(0, INVOICE_PAGE_BATCH_SIZE);
+      const json = await postJson({
+        clientScanId: clientScanId.current,
+        pageCount,
+        pages: wave.map((index) => ({
+          index,
+          imageBase64: localImages.current.get(index)?.dataUrl ?? '',
+          mimeType: localImages.current.get(index)?.mimeType || 'image/jpeg',
+        })),
+      });
+      applyPost(json);
+      const status = typeof json.status === 'string' ? json.status : 'scanning';
+      const pending = Array.isArray(json.pendingIndexes)
+        ? json.pendingIndexes.filter((index): index is number => typeof index === 'number')
+        : [];
+      const next = nextRemainingIndexes(status, pending, (index) => localImages.current.has(index));
+      if (!next) break;
+      remaining = next;
+    }
   };
 
   const startScan = async () => {
     if (pages.length === 0 || preparing) return;
     setWorking(true);
     setError(null);
+    setContinueAt(null);
     setStep('scanning');
     try {
       const packed = await limitInvoiceOcrUpload(pages.map((page) => ({ dataUrl: page.dataUrl, mimeType: page.mimeType })));
@@ -255,35 +341,26 @@ export function InvoicePageScanSheet({
       setPages(ready);
       localImages.current = new Map(ready.map((page, index) => [index + 1, { dataUrl: page.dataUrl, mimeType: page.mimeType }]));
       if (!clientScanId.current) clientScanId.current = crypto.randomUUID();
-      let remaining = ready.map((_, index) => index + 1);
-      let previous = '';
-      for (let guard = 0; guard < INVOICE_PAGE_MAX && remaining.length > 0; guard += 1) {
-        const signature = remaining.join(',');
-        if (signature === previous) break;
-        previous = signature;
-        const wave = remaining.slice(0, INVOICE_PAGE_BATCH_SIZE);
-        const json = await postJson({
-          clientScanId: clientScanId.current,
-          pageCount: ready.length,
-          pages: wave.map((index) => ({
-            index,
-            imageBase64: ready[index - 1]?.dataUrl ?? '',
-            mimeType: ready[index - 1]?.mimeType || 'image/jpeg',
-          })),
-        });
-        applyPost(json);
-        const status = json.status;
-        const pending = Array.isArray(json.pendingIndexes)
-          ? json.pendingIndexes.filter((index): index is number => typeof index === 'number')
-          : [];
-        if (status !== 'scanning') break;
-        const next = pending.filter((index) => ready[index - 1]);
-        if (next.length === 0) break;
-        remaining = next;
-      }
+      await runWaves(ready.length, ready.map((_, index) => index + 1));
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'The scan did not reach the server. Check the connection and try again.');
-      setStep(view ? 'scanning' : 'pages');
+      noteScanFailure(err);
+    } finally {
+      setWorking(false);
+    }
+  };
+
+  const continueScan = async () => {
+    const current = viewRef.current;
+    const pending = continuablePendingIndexes(current?.pages ?? [], localImages.current.keys());
+    if (!current?.draftId || pending.length === 0 || !clientScanId.current) return;
+    setWorking(true);
+    setError(null);
+    setContinueAt(null);
+    setStep('scanning');
+    try {
+      await runWaves(current.pageCount, pending);
+    } catch (err) {
+      noteScanFailure(err);
     } finally {
       setWorking(false);
     }
@@ -359,11 +436,12 @@ export function InvoicePageScanSheet({
     setWorking(true);
     setError(null);
     try {
+      const dateResolution = confirmInvoiceDateResolution({ dateConfirmed, dateDraft });
       const json = await postJson({
         confirmCommit: true,
         draftId: view.draftId,
         supplierId,
-        ...(dateDraft.trim() ? { resolutions: { invoiceDate: dateDraft.trim() } } : {}),
+        ...(dateResolution ? { resolutions: dateResolution } : {}),
         ...(managerApproved && manager ? { manualReviewOverride: true } : {}),
       });
       if (json.committed !== true && json.success !== true) {
@@ -396,9 +474,13 @@ export function InvoicePageScanSheet({
 
   const chips = view?.pages ?? [];
   const readCount = chips.filter((chip) => chip.status === 'read').length;
-  const hardBlock = (view?.blockers ?? []).some((blocker) =>
-    blocker === DIFFERENT_INVOICES_BLOCKER || /still being read|Retake that page|lines is the maximum|no invoice lines/i.test(blocker)
-  );
+  const continuable = continuablePendingIndexes(chips, localImages.current.keys());
+  const continueWaitMs = continueAt == null ? 0 : Math.max(0, continueAt - nowMs);
+  const hardBlock = invoiceReviewHardBlocked({
+    blockers: view?.blockers ?? [],
+    invoiceDateNeedsConfirm: view?.invoiceDateNeedsConfirm === true,
+    dateConfirmed,
+  });
 
   return (
     <div className="fixed inset-0 z-[80] flex items-end justify-center bg-slate-950/80 md:items-center" role="presentation">
@@ -605,6 +687,14 @@ export function InvoicePageScanSheet({
 
           {step === 'review' && view ? (
             <div className="space-y-4">
+              {view.duplicateNote ? (
+                <div className="flex items-center justify-between gap-3 rounded-xl border border-emerald-700/70 bg-emerald-950/40 px-3 py-3 text-sm font-semibold text-emerald-50">
+                  <span>{view.duplicateNote}</span>
+                  <button type="button" className="min-h-11 shrink-0 font-bold text-emerald-200 underline" disabled={working} onClick={() => void undo()}>
+                    Undo
+                  </button>
+                </div>
+              ) : null}
               <SupplierSelect suppliers={suppliers} value={supplierId} onChange={setSupplierId} label="Supplier" />
               <div>
                 <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Invoice # · date</p>
@@ -613,25 +703,27 @@ export function InvoicePageScanSheet({
                   {view.invoiceDate ? ` · ${formatInvoiceDeliveryDay(view.invoiceDate) || view.invoiceDate}` : ''}
                 </p>
                 <div className="mt-2">
-                  <InvoiceDateField value={dateDraft} onChange={setDateDraft} />
+                  <InvoiceDateField
+                    value={dateDraft}
+                    onChange={(ymd) => {
+                      setDateDraft(ymd);
+                      setDateConfirmed(true);
+                    }}
+                  />
                 </div>
-                {view.invoiceDateNeedsConfirm ? (
-                  <p className="mt-2 text-xs text-amber-200">{view.invoiceDateConfirmReason || INVOICE_DATE_WARNING}</p>
+                {view.invoiceDateNeedsConfirm && !dateConfirmed ? (
+                  <p className="mt-2 text-sm font-semibold text-amber-200">
+                    {view.invoiceDateConfirmReason || INVOICE_DATE_WARNING}
+                  </p>
                 ) : null}
               </div>
-              {view.duplicateNote ? (
-                <div className="flex items-center justify-between gap-3 rounded-xl border border-emerald-800/50 bg-emerald-950/30 px-3 py-2 text-sm text-emerald-100">
-                  <span>{view.duplicateNote}</span>
-                  <button type="button" className="min-h-11 shrink-0 font-bold text-emerald-200 underline" disabled={working} onClick={() => void undo()}>
-                    Undo
-                  </button>
-                </div>
-              ) : null}
-              {view.blockers.length > 0 ? (
+              {view.blockers.some((blocker) => !/do not agree on the invoice date/i.test(blocker)) ? (
                 <ul className="space-y-1 rounded-xl border border-amber-800/50 bg-amber-950/30 px-3 py-2 text-sm text-amber-100">
-                  {view.blockers.map((blocker) => (
-                    <li key={blocker}>{blocker}</li>
-                  ))}
+                  {view.blockers
+                    .filter((blocker) => !/do not agree on the invoice date/i.test(blocker))
+                    .map((blocker) => (
+                      <li key={blocker}>{blocker}</li>
+                    ))}
                 </ul>
               ) : null}
               <ul className="divide-y divide-slate-800 rounded-2xl border border-slate-800">
@@ -703,9 +795,22 @@ export function InvoicePageScanSheet({
             </>
           ) : null}
           {step === 'scanning' ? (
-            <Button variant="secondary" className="w-full" disabled={working} onClick={() => void discardScan()}>
-              Discard scan
-            </Button>
+            <>
+              {continuable.length > 0 ? (
+                <Button
+                  className="flex-1 bg-emerald-400 text-slate-950 hover:bg-emerald-300"
+                  disabled={working || continueWaitMs > 0}
+                  onClick={() => void continueScan()}
+                >
+                  {continueWaitMs > 0
+                    ? `Continue in ${Math.ceil(continueWaitMs / 1000)}s`
+                    : `Continue scan · ${continuable.length} ${continuable.length === 1 ? 'page' : 'pages'}`}
+                </Button>
+              ) : null}
+              <Button variant="secondary" className={continuable.length > 0 ? '' : 'w-full'} disabled={working} onClick={() => void discardScan()}>
+                Discard scan
+              </Button>
+            </>
           ) : null}
           {step === 'review' ? (
             <>
@@ -903,8 +1008,7 @@ function viewFromPost(json: Record<string, unknown>): ScanView | null {
     reviewFlags: Array.isArray(json.reviewFlags) ? json.reviewFlags.filter((item): item is string => typeof item === 'string') : [],
     vendorName: typeof data?.vendorName === 'string' ? data.vendorName : '',
     invoiceNumber: typeof data?.invoiceNumber === 'string' ? data.invoiceNumber : '',
-    invoiceDate: typeof data?.invoiceDate === 'string' ? data.invoiceDate : '',
-    invoiceDateNeedsConfirm: false,
+    ...readPostedInvoiceDate({ ...json, ...(data ? { data } : {}) }),
     lines: asLines(data?.lineItems),
   };
 }
