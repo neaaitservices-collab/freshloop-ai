@@ -66,8 +66,8 @@ export async function POST(req: NextRequest) {
 
     // Create or find manufactured output Product
     const retailPriceNum =
-      Number.isFinite(Number(targetRetailPrice)) && Number(targetRetailPrice) > 0
-        ? Number(Number(targetRetailPrice).toFixed(2))
+      targetRetailPrice !== undefined && targetRetailPrice > 0
+        ? Number(targetRetailPrice.toFixed(2))
         : 6.99;
 
     const unitTypeEnum = (
@@ -77,16 +77,12 @@ export async function POST(req: NextRequest) {
     ) as UnitType;
 
     const laborHoursNum =
-      Number.isFinite(Number(laborHours)) && Number(laborHours) >= 0
-        ? Number(Number(laborHours).toFixed(2))
-        : 0;
+      laborHours !== undefined && laborHours >= 0 ? Number(laborHours.toFixed(2)) : 0;
     const laborRateNum =
-      Number.isFinite(Number(laborRate)) && Number(laborRate) > 0
-        ? Number(Number(laborRate).toFixed(2))
-        : null;
+      laborRate !== undefined && laborRate > 0 ? Number(laborRate.toFixed(2)) : null;
     const packagingNum =
-      Number.isFinite(Number(packagingCostPerUnit)) && Number(packagingCostPerUnit) >= 0
-        ? Number(Number(packagingCostPerUnit).toFixed(4))
+      packagingCostPerUnit !== undefined && packagingCostPerUnit >= 0
+        ? Number(packagingCostPerUnit.toFixed(4))
         : 0;
 
     const createdRecipe = await prisma.$transaction(async (tx) => {

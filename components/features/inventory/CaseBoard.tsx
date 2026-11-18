@@ -22,6 +22,10 @@ import {
 import type { StockLevel } from "@/lib/domains/inventory/stock";
 import { fieldMatchesNeedle } from "@/lib/utils/searchNeedle";
 import { AdminInventoryWorkspace } from "@/components/features/inventory/AdminInventoryWorkspace";
+import { z } from "zod";
+import { numericInput } from "@/lib/security/numericInput";
+
+const casesOnHandInput = numericInput(z.number().finite().min(0).max(1_000_000));
 
 function casesLabel(value: number): string {
   return Number.isInteger(value) ? String(value) : value.toFixed(2);
@@ -34,6 +38,11 @@ function retailUnitFor(unitType: string): RetailUnit {
 function toNumber(raw: string): number {
   const parsed = Number(raw);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function casesOnHandOrNull(raw: string): number | null {
+  const parsed = casesOnHandInput.safeParse(raw);
+  return parsed.success ? parsed.data : null;
 }
 
 function shelfTone(days: number): { dot: string; text: string } {
@@ -222,6 +231,11 @@ export function CaseBoard({
 
   const updateStock = async () => {
     if (!selected || !activeUser || !canOverride) return;
+    const cases = casesOnHandOrNull(casesOnHand);
+    if (cases === null) {
+      setErrorMessage("Enter the cases on hand. A blank field is not saved as zero.");
+      return;
+    }
     setSavingStock(true);
     setStockMessage(null);
     setErrorMessage(null);
@@ -231,7 +245,7 @@ export function CaseBoard({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           productId: selected.productId,
-          casesOnHand: toNumber(casesOnHand),
+          casesOnHand: cases,
         }),
       });
       const json = await response.json();
@@ -666,7 +680,7 @@ function StockOverride({
       <button
         type="button"
         onClick={onUpdate}
-        disabled={savingStock || toNumber(casesOnHand) < 0}
+        disabled={savingStock || casesOnHandOrNull(casesOnHand) === null}
         className="mt-3 flex w-full items-center justify-center rounded-xl bg-[#3E5C78] px-4 py-2.5 text-sm font-black text-slate-50 transition hover:bg-[#4E7090] disabled:cursor-not-allowed disabled:bg-slate-800 disabled:text-slate-500"
       >
         {savingStock ? "Updating…" : "Update Stock"}

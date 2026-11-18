@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { numericInput } from '@/lib/security/numericInput';
 import { optionalSafeText, productIdSchema, safeText } from '@/lib/security/schemas/common';
 
 const recipeIngredientSchema = z
@@ -14,12 +15,12 @@ const recipeCoreSchema = z.object({
   category: optionalSafeText(100),
   yieldPortions: z.number().finite().positive().max(100_000),
   portionSize: optionalSafeText(64),
-  targetRetailPrice: z.number().finite().min(0).max(1_000_000).optional(),
+  targetRetailPrice: numericInput(z.number().finite().min(0).max(1_000_000)).optional(),
   instructions: optionalSafeText(8000),
   outputUnit: optionalSafeText(32),
-  laborHours: z.number().finite().min(0).max(10_000).optional(),
-  laborRate: z.number().finite().min(0).max(10_000).optional(),
-  packagingCostPerUnit: z.number().finite().min(0).max(1_000_000).optional(),
+  laborHours: numericInput(z.number().finite().min(0).max(10_000)).optional(),
+  laborRate: numericInput(z.number().finite().min(0).max(10_000)).optional(),
+  packagingCostPerUnit: numericInput(z.number().finite().min(0).max(1_000_000)).optional(),
   ingredients: z.array(recipeIngredientSchema).min(1).max(100),
 });
 

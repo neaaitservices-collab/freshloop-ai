@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { numericInput } from '@/lib/security/numericInput';
 import { optionalSafeText, productIdSchema, safeText } from '@/lib/security/schemas/common';
 
 const clientMutationIdSchema = z.string().trim().min(8).max(128).optional();
@@ -7,7 +8,7 @@ export const inventoryMoveBodySchema = z
   .object({
     productId: productIdSchema,
     action: z.enum(['rescue', 'waste', 'kitchen_waste', 'markdown']),
-    quantity: z.number().finite().positive().max(1_000_000).optional(),
+    quantity: numericInput(z.number().finite().positive().max(1_000_000)).optional(),
     discountPct: z.number().finite().min(0).max(100).optional(),
     clientMutationId: clientMutationIdSchema,
   })
@@ -23,7 +24,7 @@ export const inventoryLevelsPatchSchema = z
   .object({
     productId: productIdSchema,
     action: z.enum(['rescue', 'waste', 'markdown']).optional(),
-    parCases: z.number().finite().min(0).max(100_000).optional(),
+    parCases: numericInput(z.number().finite().min(0).max(100_000)).optional(),
     supplier: optionalSafeText(200),
     packSize: z.number().finite().positive().max(1_000_000).optional(),
     splitFactor: z.number().finite().positive().max(1_000_000).optional(),
@@ -31,7 +32,7 @@ export const inventoryLevelsPatchSchema = z
     retailPrice: z.number().finite().min(0).max(1_000_000).optional(),
     caseRetailPrice: z.union([z.number().finite().min(0).max(1_000_000), z.null()]).optional(),
     caseCost: z.number().finite().min(0).max(1_000_000).optional(),
-    casesOnHand: z.number().finite().min(0).max(1_000_000).optional(),
+    casesOnHand: numericInput(z.number().finite().min(0).max(1_000_000)).optional(),
     quantity: z.number().finite().positive().max(1_000_000).optional(),
     discountPct: z.number().finite().min(0).max(100).optional(),
     department: optionalSafeText(64),

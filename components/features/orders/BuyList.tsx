@@ -31,6 +31,10 @@ import {
   rowsForOrderAlert,
   type OrderAlertFocus,
 } from '@/lib/domains/orders/orderAlertLink';
+import { z } from 'zod';
+import { numericInput } from '@/lib/security/numericInput';
+
+const parCasesInput = numericInput(z.number().finite().min(0).max(999));
 
 function casesLabel(value: number): string {
   return Number.isInteger(value) ? String(value) : value.toFixed(2);
@@ -268,8 +272,10 @@ export function BuyList({
   );
 
   const changePar = (productId: string, raw: string) => {
-    const parCases = raw === '' ? 0 : Number(raw);
-    if (!Number.isFinite(parCases)) return;
+    window.clearTimeout(saveTimers.current[productId]);
+    const parsed = parCasesInput.safeParse(raw);
+    if (!parsed.success) return;
+    const parCases = parsed.data;
     let nextRow: StockLevel | null = null;
     setLevels((current) =>
       current.map((row) => {
@@ -278,7 +284,6 @@ export function BuyList({
         return nextRow;
       })
     );
-    window.clearTimeout(saveTimers.current[productId]);
     saveTimers.current[productId] = window.setTimeout(() => {
       if (nextRow) void savePar(nextRow);
     }, 400);
@@ -318,6 +323,15 @@ export function BuyList({
 
   const onThisOrder = (row: StockLevel) =>
     marks[row.productId] === 'sent' || manualIds.includes(row.productId) || row.low;
+
+  const commitPar = (row: StockLevel, raw: string) => {
+    window.clearTimeout(saveTimers.current[row.productId]);
+    const parsed = parCasesInput.safeParse(raw);
+    if (!parsed.success) return;
+    const next = withPar(row, parsed.data);
+    setLevels((current) => current.map((item) => (item.productId === row.productId ? next : item)));
+    void savePar(next);
+  };
 
   const savePar = async (row: StockLevel) => {
     setSavingId(row.productId);
@@ -416,7 +430,7 @@ export function BuyList({
                   row={row}
                   saving={savingId === row.productId}
                   onChange={changePar}
-                  onCommit={(value) => void savePar(withPar(row, Number(value)))}
+                  onCommit={(value) => commitPar(row, value)}
                 />
               </div>
               <LineActions
@@ -470,7 +484,7 @@ export function BuyList({
                       row={row}
                       saving={savingId === row.productId}
                       onChange={changePar}
-                      onCommit={(value) => void savePar(withPar(row, Number(value)))}
+                      onCommit={(value) => commitPar(row, value)}
                     />
                   </td>
                   <td className="px-4 py-2.5">
@@ -936,6 +950,13 @@ function ParForecastField({
   onChange: (productId: string, raw: string) => void;
   onCommit: (raw: string) => void;
 }) {
+  const [draft, setDraft] = useState(() => String(row.parCases));
+  const focused = useRef(false);
+
+  useEffect(() => {
+    if (!focused.current) setDraft(String(row.parCases));
+  }, [row.parCases, row.productId]);
+
   return (
     <label className="inline-flex flex-col items-center">
       <span className="sr-only">Alert level for {row.name}</span>
@@ -946,9 +967,27 @@ function ParForecastField({
         step={1}
         inputMode="numeric"
         aria-label={`Alert level for ${row.name}`}
-        value={row.parCases}
-        onChange={(event) => onChange(row.productId, event.target.value)}
-        onBlur={(event) => onCommit(event.target.value)}
+        value={draft}
+        onFocus={() => {
+          focused.current = true;
+        }}
+        onChange={(event) => {
+          const raw = event.target.value;
+          setDraft(raw);
+          onChange(row.productId, raw);
+        }}
+        onBlur={(event) => {
+          focused.current = false;
+          const raw = event.target.value;
+          const parsed = parCasesInput.safeParse(raw);
+          if (!parsed.success) {
+            onChange(row.productId, raw);
+            setDraft(String(row.parCases));
+            return;
+          }
+          setDraft(String(parsed.data));
+          onCommit(String(parsed.data));
+        }}
         onKeyDown={(event) => {
           if (event.key === 'Enter') event.currentTarget.blur();
         }}

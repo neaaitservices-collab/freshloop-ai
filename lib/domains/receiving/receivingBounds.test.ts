@@ -16,6 +16,25 @@ const baseLine = {
   externalLogId: '33333333-3333-4333-8333-333333333333',
 };
 
+test('receiving rejects a blank case cost and retail price', () => {
+  const blankCost = validateReceivingLogPostInput({ ...baseLine, caseCost: '' });
+  assert.equal(blankCost.ok, false);
+  const blankRetail = validateReceivingLogPostInput({ ...baseLine, currentRetailPrice: ' ' });
+  assert.equal(blankRetail.ok, false);
+  const zeroCost = validateReceivingLogPostInput({ ...baseLine, caseCost: 0 });
+  assert.equal(zeroCost.ok, true);
+  const numericString = validateReceivingLogPostInput({
+    ...baseLine,
+    caseCost: '10.5',
+    currentRetailPrice: '1.5',
+  });
+  assert.equal(numericString.ok, true);
+  if (numericString.ok) {
+    assert.equal(numericString.input.caseCost, 10.5);
+    assert.equal(numericString.input.currentRetailPrice, 1.5);
+  }
+});
+
 test('receiving rejects a negative case cost and an unbounded quantity', () => {
   const negative = validateReceivingLogPostInput({ ...baseLine, caseCost: -1 });
   assert.equal(negative.ok, false);

@@ -18,6 +18,8 @@ import { cn } from '@/lib/utils/cn';
 import { fieldMatchesNeedle } from '@/lib/utils/searchNeedle';
 import { canOverrideInventoryStock } from '@/lib/auth/staffCapabilities';
 import type { StockLevel } from '@/lib/domains/inventory/stock';
+import { z } from 'zod';
+import { numericInput } from '@/lib/security/numericInput';
 import {
   calculateYieldQuote,
   formatCurrency,
@@ -41,6 +43,13 @@ function retailUnitFor(unitType: string): RetailUnit {
 function toNumber(raw: string): number {
   const parsed = Number(raw);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+const casesOnHandInput = numericInput(z.number().finite().min(0).max(1_000_000));
+
+function casesOnHandOrNull(raw: string): number | null {
+  const parsed = casesOnHandInput.safeParse(raw);
+  return parsed.success ? parsed.data : null;
 }
 
 function currentMargin(row: StockLevel): number | null {
@@ -282,9 +291,13 @@ export function InventoryMasterDetail({
 
   const updateStock = async () => {
     if (!selected || !activeUser || !canOverride) return;
+    const cases = casesOnHandOrNull(casesOnHand);
+    if (cases === null) {
+      onError('Enter the cases on hand. A blank field is not saved as zero.');
+      return;
+    }
     setSavingStock(true);
     onError('');
-    const cases = toNumber(casesOnHand);
     const body = {
       productId: selected.productId,
       casesOnHand: cases,
@@ -529,7 +542,7 @@ export function InventoryMasterDetail({
                   <Button
                     variant="secondary"
                     className="min-h-12 w-full"
-                    disabled={savingStock}
+                    disabled={savingStock || casesOnHandOrNull(casesOnHand) === null}
                     onClick={() => void updateStock()}
                   >
                     {savingStock ? 'Updating…' : 'Update stock'}

@@ -76,6 +76,31 @@ test('price change alert accepts 0 through 100 and rejects anything outside', ()
   }
 });
 
+test('settings save rejects a blank numeric string instead of storing 0', async () => {
+  setManagerStaffTestAuth(async () => user('ADMIN'));
+  try {
+    for (const [field, label] of [
+      ['defaultScrapCostPerKg', /Scrap cost/],
+      ['targetWastePct', /Waste target/],
+      ['priceChangeThresholdPct', /Price change alert/],
+    ] as const) {
+      const response = await PATCH(
+        new NextRequest('http://localhost/api/admin/settings', {
+          method: 'PATCH',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ ...settingsBody(8), [field]: field === 'priceChangeThresholdPct' ? ' ' : '' }),
+        })
+      );
+      const body = (await response.json()) as { success?: boolean; error?: string };
+      assert.equal(response.status, 400, field);
+      assert.equal(body.success, false);
+      assert.match(body.error ?? '', label);
+    }
+  } finally {
+    setManagerStaffTestAuth(null);
+  }
+});
+
 test('settings save keeps the manager guard and rejects a bad price change alert', async () => {
   const route = fs.readFileSync(path.join(process.cwd(), 'app/api/admin/settings/route.ts'), 'utf8');
   const form = fs.readFileSync(path.join(process.cwd(), 'components/features/admin/AccountPage.tsx'), 'utf8');

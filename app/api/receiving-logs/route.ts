@@ -7,6 +7,7 @@ import {
   postReceivingLogToInventory,
   receivingLineHttpStatus,
   receivingValidationHttpStatus,
+  receivingCaseCostAndRetailError,
   validateReceivingLogPostInput,
 } from '@/lib/domains/receiving/receivingLogPost';
 import { getSupplierNameById } from '@/lib/domains/suppliers/suppliers';
@@ -91,6 +92,11 @@ export async function POST(req: NextRequest) {
         },
         { status }
       );
+    }
+
+    const moneyError = receivingCaseCostAndRetailError(body);
+    if (moneyError) {
+      return NextResponse.json({ success: false, error: moneyError }, { status: 400 });
     }
 
     const validated = validateReceivingLogPostInput(body as Parameters<typeof validateReceivingLogPostInput>[0]);

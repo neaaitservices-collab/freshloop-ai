@@ -54,21 +54,19 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
     );
 
     const retailPriceNum =
-      Number.isFinite(Number(targetRetailPrice)) && Number(targetRetailPrice) > 0
-        ? Number(Number(targetRetailPrice).toFixed(2))
+      targetRetailPrice !== undefined && targetRetailPrice > 0
+        ? Number(targetRetailPrice.toFixed(2))
         : existing.targetRetailPrice;
 
     const laborHoursNum =
-      Number.isFinite(Number(laborHours)) && Number(laborHours) >= 0
-        ? Number(Number(laborHours).toFixed(2))
+      laborHours !== undefined && laborHours >= 0
+        ? Number(laborHours.toFixed(2))
         : existing.laborHours;
     const laborRateNum =
-      Number.isFinite(Number(laborRate)) && Number(laborRate) > 0
-        ? Number(Number(laborRate).toFixed(2))
-        : existing.laborRate;
+      laborRate !== undefined && laborRate > 0 ? Number(laborRate.toFixed(2)) : existing.laborRate;
     const packagingNum =
-      Number.isFinite(Number(packagingCostPerUnit)) && Number(packagingCostPerUnit) >= 0
-        ? Number(Number(packagingCostPerUnit).toFixed(4))
+      packagingCostPerUnit !== undefined && packagingCostPerUnit >= 0
+        ? Number(packagingCostPerUnit.toFixed(4))
         : existing.packagingCostPerUnit;
 
     const updated = await prisma.$transaction(async (tx) => {

@@ -1,4 +1,4 @@
-import { z, type ZodType } from 'zod';
+import { z, type ZodTypeAny } from 'zod';
 
 export class InvalidJsonBodyError extends Error {
   constructor(message = 'Request body must be valid JSON.') {
@@ -7,7 +7,7 @@ export class InvalidJsonBodyError extends Error {
   }
 }
 
-export async function parseJsonBody<T>(req: Request, schema: ZodType<T>): Promise<T> {
+export async function parseJsonBody<T extends ZodTypeAny>(req: Request, schema: T): Promise<z.output<T>> {
   let raw: unknown;
   try {
     raw = await req.json();

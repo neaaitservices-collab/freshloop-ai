@@ -96,11 +96,11 @@ export function ManualRecipeCreatorModal({
             setCategory(raw.category ?? 'Prepared Hot Meal');
             setYieldPortions(raw.yieldPortions ?? 10);
             setOutputUnit(raw.outputProduct?.unitType ?? 'TUB');
-            setTargetRetailPrice(raw.targetRetailPrice ?? 7.99);
+            setTargetRetailPrice(raw.targetRetailPrice ?? '');
             setInstructions(raw.instructions ?? '');
-            setLaborHours(raw.laborHours ?? 0.5);
-            setLaborRate(raw.laborRate ?? 17.6);
-            setPackagingCostPerUnit(raw.packagingCostPerUnit ?? 1);
+            setLaborHours(raw.laborHours ?? '');
+            setLaborRate(raw.laborRate ?? '');
+            setPackagingCostPerUnit(raw.packagingCostPerUnit ?? '');
             const bom = raw.bomLines ?? [];
             if (bom.length > 0) {
               setLines(
@@ -219,6 +219,13 @@ export function ManualRecipeCreatorModal({
       return;
     }
 
+    const optionalNumber = (value: number | ''): number | undefined =>
+      typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+    const laborHoursValue = optionalNumber(laborHours);
+    const laborRateValue = optionalNumber(laborRate);
+    const packagingValue = optionalNumber(packagingCostPerUnit);
+    const retailPriceValue = optionalNumber(targetRetailPrice);
+
     setSubmitting(true);
     try {
       const payload = {
@@ -226,12 +233,11 @@ export function ManualRecipeCreatorModal({
         category,
         yieldPortions,
         outputUnit,
-        targetRetailPrice: price,
         instructions,
-        laborHours: typeof laborHours === 'number' ? laborHours : 0,
-        laborRate: typeof laborRate === 'number' ? laborRate : 17.6,
-        packagingCostPerUnit:
-          typeof packagingCostPerUnit === 'number' ? packagingCostPerUnit : 0,
+        ...(retailPriceValue !== undefined ? { targetRetailPrice: retailPriceValue } : {}),
+        ...(laborHoursValue !== undefined ? { laborHours: laborHoursValue } : {}),
+        ...(laborRateValue !== undefined ? { laborRate: laborRateValue } : {}),
+        ...(packagingValue !== undefined ? { packagingCostPerUnit: packagingValue } : {}),
         ingredients: validIngredients,
       };
 
