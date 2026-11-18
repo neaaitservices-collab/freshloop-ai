@@ -22,16 +22,18 @@ import {
 export function InvoiceDateField({
   value,
   onChange,
+  label = INVOICE_DATE_FIELD_LABEL,
 }: {
   value: string;
   onChange: (ymd: string) => void;
+  label?: string;
 }) {
   const titleId = useId();
   const [open, setOpen] = useState(false);
   const [month, setMonth] = useState(() => invoiceDateToday());
   const today = invoiceDateToday();
-  const label = invoiceDateButtonLabel(value);
-  const unset = label === PICK_DELIVERY_DAY_LABEL;
+  const buttonLabel = invoiceDateButtonLabel(value);
+  const unset = buttonLabel === PICK_DELIVERY_DAY_LABEL;
   const model = deliveryMonthModel(month, today);
 
   const close = useCallback(() => setOpen(false), []);
@@ -52,13 +54,13 @@ export function InvoiceDateField({
 
   return (
     <div>
-      <p className="text-xs font-bold text-slate-300">{INVOICE_DATE_FIELD_LABEL}</p>
+      <p className="text-xs font-bold text-slate-300">{label}</p>
       <button
         type="button"
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-label={
-          unset ? `${INVOICE_DATE_FIELD_LABEL}. ${PICK_DELIVERY_DAY_LABEL}` : `${INVOICE_DATE_FIELD_LABEL}. ${label}`
+          unset ? `${label}. ${PICK_DELIVERY_DAY_LABEL}` : `${label}. ${buttonLabel}`
         }
         onClick={openSheet}
         className={cn(
@@ -67,7 +69,7 @@ export function InvoiceDateField({
           open ? 'border-emerald-400' : 'border-slate-700'
         )}
       >
-        <span>{label}</span>
+        <span>{buttonLabel}</span>
         <span className="ml-2 text-[11px] text-slate-400" aria-hidden>
           ▾
         </span>
@@ -84,7 +86,7 @@ export function InvoiceDateField({
         <div className="min-h-0 overflow-y-auto px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-2">
           <div className="mx-auto mb-2.5 mt-1 h-1.5 w-11 rounded-full bg-slate-700" />
           <h2 id={titleId} className="mb-3 text-center text-base font-extrabold text-slate-50">
-            {INVOICE_DATE_FIELD_LABEL}
+            {label}
           </h2>
           <div className="mb-3.5 flex gap-2">
             <button

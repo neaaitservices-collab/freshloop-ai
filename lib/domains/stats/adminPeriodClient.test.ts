@@ -124,6 +124,55 @@ test('a failed newer load does not keep the previous period under the new chip',
   assert.equal(figuresForSelectedPreset('week', previous)?.rescuedValue, 7);
 });
 
+test('the period cache misses after Toronto midnight', async () => {
+  let now = new Date('2026-06-15T03:30:00.000Z');
+  let calls = 0;
+  const fetchImpl: typeof fetch = async (input) => {
+    calls += 1;
+    const url = String(input);
+    assert.equal(url.includes('scope=period'), true);
+    assert.equal(url.includes('from=2026-06-01'), true);
+    assert.equal(url.includes('to=2026-06-10'), true);
+    assert.equal(url.includes('preset='), false);
+    return jsonResponse(FIGURES);
+  };
+  const loader = createPeriodLoader(fetchImpl, () => now);
+  const request = { from: '2026-06-01', to: '2026-06-10' };
+  const first = await loader.load(request);
+  const second = await loader.load(request);
+  assert.equal(calls, 1);
+  assert.equal(first.ok, true);
+  assert.equal(second.ok, true);
+  assert.equal(loader.peek(request)?.sales, FIGURES.sales);
+
+  now = new Date('2026-06-15T04:30:00.000Z');
+  const third = await loader.load(request);
+  assert.equal(calls, 2);
+  assert.equal(third.ok, true);
+
+  const todayNow = new Date('2026-03-08T03:30:00.000Z');
+  let todayCalls = 0;
+  const todayFetch: typeof fetch = async (input) => {
+    todayCalls += 1;
+    assert.equal(String(input).includes('preset=today'), true);
+    return jsonResponse({ ...FIGURES, rescuedValue: todayCalls });
+  };
+  let clock = todayNow;
+  const todayLoader = createPeriodLoader(todayFetch, () => clock);
+  await todayLoader.load('today');
+  await todayLoader.load('today');
+  assert.equal(todayCalls, 1);
+  clock = new Date('2026-03-08T05:30:00.000Z');
+  const rolled = await todayLoader.load('today');
+  assert.equal(todayCalls, 2);
+  assert.equal(rolled.ok, true);
+  if (rolled.ok) assert.equal(rolled.figures.rescuedValue, 2);
+
+  const inverted = await todayLoader.load({ from: '2026-06-10', to: '2026-06-01' });
+  assert.equal(inverted.ok, false);
+  if (!inverted.ok) assert.equal(inverted.aborted, false);
+});
+
 test('a period payload that includes inventory value is ignored', async () => {
   const fetchImpl: typeof fetch = async () =>
     jsonResponse({

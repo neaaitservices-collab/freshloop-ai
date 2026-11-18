@@ -1,23 +1,25 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useSearchParams } from 'next/navigation';
 import {
   CONTROL_LOST_GOAL_PCT,
   WasteSemaphoreCard,
   lostSharePct,
 } from '@/components/features/admin/WasteSemaphoreCard';
-import { StatsDateFilter } from '@/components/features/admin/StatsDateFilter';
 import { DashboardCard } from '@/components/features/admin/DashboardCard';
 import { subscribeInventoryUpdated } from '@/lib/domains/inventory/inventoryMoveClient';
 import { subscribeKpiUpdated } from '@/lib/domains/stats/kpiEvents';
+import { adminPeriodRequest } from '@/lib/domains/stats/adminDateRange';
 import {
   applyPeriodLoad,
   createPeriodLoader,
   figuresForSelectedPreset,
-  PERIOD_PRESETS,
-  type PeriodPreset,
+  periodRequestId,
+  type PeriodRangeRequest,
   type TaggedPeriodFigures,
 } from '@/lib/domains/stats/adminPeriodClient';
+import { ADMIN_DATE_PRESETS } from '@/lib/domains/stats/storeTime';
 import { FRESHLOOP_SETTINGS_UPDATED } from '@/lib/domains/stats/settingsEvents';
 import type { StoreStats } from '@/lib/domains/stats/storeStatsTypes';
 import type { WasteKpiReport } from '@/lib/domains/inventory/ledger';
@@ -134,38 +136,49 @@ export function StatsScorecardRows({
   );
 }
 
-export function AdminStatsCard({
+function AdminStatsLive({
   stats,
   inventoryValue = null,
 }: {
   stats: StoreStats | null;
-  /** Kept for callers. Period scraps and sales come from the chip fetch, not this report. */
+  /** Kept for callers. Period scraps and sales come from the range fetch, not this report. */
   wasteKpi?: WasteKpiReport | null;
-  /** Live on-hand total. Wins over `stats.inventoryValue` so the chip cannot replace it. */
+  /** Live on-hand total. Wins over `stats.inventoryValue` so the range cannot replace it. */
   inventoryValue?: number | null;
 }) {
+  const params = useSearchParams();
+  const presetParam = params.get('preset');
+  const fromParam = params.get('from');
+  const toParam = params.get('to');
+  const request = useMemo(
+    () => adminPeriodRequest({ preset: presetParam, from: fromParam, to: toParam }),
+    [presetParam, fromParam, toParam]
+  );
+  const preset = periodRequestId(request);
   const loaderRef = useRef<ReturnType<typeof createPeriodLoader> | null>(null);
   if (!loaderRef.current) loaderRef.current = createPeriodLoader();
   const loader = loaderRef.current;
-  const [preset, setPreset] = useState<PeriodPreset>('week');
   const [figures, setFigures] = useState<TaggedPeriodFigures | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const presetRef = useRef(preset);
+  const requestRef = useRef(request);
+  const selectedRef = useRef(preset);
   const figuresRef = useRef(figures);
-  presetRef.current = preset;
+  requestRef.current = request;
+  selectedRef.current = preset;
   figuresRef.current = figures;
   const onHand = inventoryValue ?? stats?.inventoryValue ?? null;
   const visibleFigures = figuresForSelectedPreset(preset, figures);
   const showingSameChip = refreshing && visibleFigures != null;
 
   const loadPreset = useCallback(
-    async (next: PeriodPreset) => {
+    async (next: PeriodRangeRequest) => {
+      const id = periodRequestId(next);
       const cached = loader.peek(next);
       if (cached) {
-        const applied = applyPeriodLoad(next, figuresRef.current, {
+        const applied = applyPeriodLoad(id, figuresRef.current, {
           ok: true,
-          preset: next,
+          preset: id,
           figures: cached,
         });
         setFigures(applied.figures);
@@ -176,8 +189,8 @@ export function AdminStatsCard({
       setRefreshing(true);
       setError(null);
       const result = await loader.load(next);
-      if (presetRef.current !== next) return;
-      const applied = applyPeriodLoad(next, figuresRef.current, result);
+      if (selectedRef.current !== id) return;
+      const applied = applyPeriodLoad(id, figuresRef.current, result);
       if (applied.ignored) return;
       setFigures(applied.figures);
       setError(applied.error);
@@ -189,16 +202,16 @@ export function AdminStatsCard({
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      await loadPreset(preset);
+      await loadPreset(request);
       if (cancelled) return;
       await Promise.all(
-        PERIOD_PRESETS.filter((item) => item !== preset).map((item) => loader.prefetch(item))
+        ADMIN_DATE_PRESETS.filter((item) => item !== preset).map((item) => loader.prefetch(item))
       );
     })();
     return () => {
       cancelled = true;
     };
-  }, [preset, loadPreset, loader]);
+  }, [preset, request, loadPreset, loader]);
 
   useEffect(() => {
     let debounceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -207,7 +220,7 @@ export function AdminStatsCard({
       debounceTimer = setTimeout(() => {
         debounceTimer = null;
         loader.invalidate();
-        void loadPreset(presetRef.current);
+        void loadPreset(requestRef.current);
       }, 350);
     };
     const unsubInventory = subscribeInventoryUpdated((detail) => {
@@ -236,12 +249,6 @@ export function AdminStatsCard({
             </p>
           ) : null}
         </div>
-        <StatsDateFilter
-          variant="chips"
-          defaultPreset="week"
-          preset={preset}
-          onPresetChange={setPreset}
-        />
       </header>
       {error ? (
         <p
@@ -263,5 +270,23 @@ export function AdminStatsCard({
         />
       </div>
     </DashboardCard>
+  );
+}
+
+export function AdminStatsCard(props: {
+  stats: StoreStats | null;
+  wasteKpi?: WasteKpiReport | null;
+  inventoryValue?: number | null;
+}) {
+  return (
+    <Suspense
+      fallback={
+        <DashboardCard className="p-4" aria-label="Stats" aria-busy="true">
+          <h2 className="pt-1 text-base font-black text-slate-50">Stats</h2>
+        </DashboardCard>
+      }
+    >
+      <AdminStatsLive {...props} />
+    </Suspense>
   );
 }

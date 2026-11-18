@@ -1,11 +1,11 @@
 import { z } from 'zod';
-import { calendarDaysInclusive, isValidYmd } from '@/lib/domains/stats/storeTime';
+import { calendarDaysInclusive, isValidYmd, STORE_RANGE_PRESETS } from '@/lib/domains/stats/storeTime';
 
 export const STATS_RANGE_MAX_DAYS = 366;
 
 export const statsRangeQuerySchema = z
   .object({
-    preset: z.enum(['day', 'week', 'month']).optional(),
+    preset: z.enum(STORE_RANGE_PRESETS).optional(),
     from: z
       .string()
       .regex(/^\d{4}-\d{2}-\d{2}$/, 'from must be YYYY-MM-DD.')

@@ -13,7 +13,7 @@ export function AdminDashboard({
 }: {
   stats: StoreStats | null;
   wasteKpi: WasteKpiReport | null;
-  /** Live on-hand dollars. Independent of the Day / Week / Month chip. */
+  /** Live on-hand dollars. Independent of the date range. */
   inventoryValue?: number | null;
   refreshing?: boolean;
   className?: string;

@@ -16,6 +16,22 @@ export function kpiLookbackRange(
 }
 
 /**
+ * Half-open [startUtc, endUtc) for a caller-supplied store range.
+ * kpiLookbackRange stays an inclusive lookback and is not used here.
+ */
+export function halfOpenWasteBounds(range: { startUtc: Date; endUtc: Date }): {
+  startDate: Date;
+  endDate: Date;
+  endExclusive: true;
+} {
+  return {
+    startDate: range.startUtc,
+    endDate: range.endUtc,
+    endExclusive: true,
+  };
+}
+
+/**
  * Headline for the admin waste card. A null ratio (sales under the floor) stays a dash.
  * Callers must not substitute an unofficial percentage in that case.
  */

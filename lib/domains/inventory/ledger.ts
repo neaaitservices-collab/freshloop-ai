@@ -97,6 +97,11 @@ export interface WasteCalculationOptions {
   startDate?: Date;
   endDate?: Date;
   /**
+   * When true, `endDate` is exclusive. The default lookback stays inclusive
+   * (`timestamp <= endDate`). A store range passes the half-open end.
+   */
+  endExclusive?: boolean;
+  /**
    * Optional additional count of 20L volumetric scrap buckets to include in the calculation
    * on top of any volumetric scrap entries already persisted in Inventory_Transactions.
    */
@@ -730,9 +735,12 @@ export async function calculateRealTimeWastePct(
     const defaultRange = kpiLookbackRange();
     const startDate = options?.startDate ?? defaultRange.startDate;
     const endDate = options?.endDate ?? defaultRange.endDate;
+    const endExclusive = options?.endExclusive === true;
     const volumetricPrefix = `${VOLUMETRIC_SCRAP_REF_PREFIX}%`;
     const volumetricKind = `%${SCRAP_VOLUMETRIC_BUCKET_KIND}%`;
-    const wasteTimeSql = Prisma.sql`AND "timestamp" >= ${startDate} AND "timestamp" <= ${endDate}`;
+    const wasteTimeSql = endExclusive
+      ? Prisma.sql`AND "timestamp" >= ${startDate} AND "timestamp" < ${endDate}`
+      : Prisma.sql`AND "timestamp" >= ${startDate} AND "timestamp" <= ${endDate}`;
 
     const [storeSetting, wasteAggRows, saleLines] = await Promise.all([
       findLatestStoreSetting(),
@@ -766,7 +774,9 @@ export async function calculateRealTimeWastePct(
         where: {
           transactionType: { in: [TransactionType.Sale, TransactionType.POS_Sale] },
           qtyChange: { lt: 0 },
-          timestamp: { gte: startDate, lte: endDate },
+          timestamp: endExclusive
+            ? { gte: startDate, lt: endDate }
+            : { gte: startDate, lte: endDate },
         },
         select: {
           transactionType: true,

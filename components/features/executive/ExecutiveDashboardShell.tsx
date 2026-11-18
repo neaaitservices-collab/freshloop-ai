@@ -12,7 +12,7 @@ export function ExecutiveDashboardShell({
 }) {
   return (
     <PageMain className="py-4 pb-24 sm:py-6">
-      <AdminSectionHeader titleTag="p" />
+      <AdminSectionHeader titleTag="p" dateFilter />
       <PageIntro
         step="Executive analytics"
         title="Business impact"

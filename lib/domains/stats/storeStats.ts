@@ -18,7 +18,14 @@ import {
   scrapBucketInputsFromSettings,
   scrapTotalsForBucketCount,
 } from '@/lib/domains/stats/scrapBucketEconomics';
-import { formatCardRangeLabel, formatRangeLabel, last30StoreDays, torontoRange } from '@/lib/domains/stats/storeTime';
+import { halfOpenWasteBounds } from '@/lib/domains/stats/wasteKpi';
+import {
+  formatCardRangeLabel,
+  formatRangeLabel,
+  last30StoreDays,
+  statsBoundsCacheKey,
+  torontoRange,
+} from '@/lib/domains/stats/storeTime';
 import type { StoreInstantRange } from '@/lib/domains/stats/storeTime';
 import { fromCents } from '@/lib/utils/money';
 
@@ -151,22 +158,35 @@ export async function loadRangeChart(range: StoreInstantRange): Promise<RangeCha
 const CACHE_MS = 60_000;
 const PERIOD_CACHE_MS = 15_000;
 let cachedStats: { at: number; value: Promise<StoreStats> } | null = null;
+const rangedStatsCache = new Map<string, { at: number; value: Promise<StoreStats> }>();
 const periodCache = new Map<string, { at: number; value: Promise<AdminPeriodFigures> }>();
 
 export function invalidateStoreStats(): void {
   cachedStats = null;
+  rangedStatsCache.clear();
   periodCache.clear();
 }
 
 export function getStoreStats(transferRange?: StoreInstantRange | null): Promise<StoreStats> {
-  if (transferRange) return loadStoreStats(transferRange);
+  if (!transferRange) {
+    const now = Date.now();
+    if (cachedStats && now - cachedStats.at < CACHE_MS) return cachedStats.value;
+    const value = loadStoreStats().catch((error: unknown) => {
+      cachedStats = null;
+      throw error;
+    });
+    cachedStats = { at: now, value };
+    return value;
+  }
+  const key = statsBoundsCacheKey(transferRange);
   const now = Date.now();
-  if (cachedStats && now - cachedStats.at < CACHE_MS) return cachedStats.value;
-  const value = loadStoreStats().catch((error: unknown) => {
-    cachedStats = null;
+  const hit = rangedStatsCache.get(key);
+  if (hit && now - hit.at < CACHE_MS) return hit.value;
+  const value = loadStoreStats(transferRange).catch((error: unknown) => {
+    rangedStatsCache.delete(key);
     throw error;
   });
-  cachedStats = { at: now, value };
+  rangedStatsCache.set(key, { at: now, value });
   return value;
 }
 
@@ -182,18 +202,12 @@ export function applyWasteKpiToStoreStats(stats: StoreStats, wasteKpi: WasteKpiR
 }
 
 /**
- * Waste SQL treats `endDate` as inclusive. Chart ranges are half-open, so the
- * waste window stops one millisecond before `endUtc`. No range keeps the
- * default lookback. Inventory value does not use this window.
+ * A passed range is half-open [startUtc, endUtc). No range keeps
+ * kpiLookbackRange. Inventory value does not use this window.
  */
-function wasteKpiOptions(
-  transferRange?: StoreInstantRange | null
-): { startDate: Date; endDate: Date } | undefined {
+function wasteKpiOptions(transferRange?: StoreInstantRange | null) {
   if (!transferRange) return undefined;
-  return {
-    startDate: transferRange.startUtc,
-    endDate: new Date(transferRange.endUtc.getTime() - 1),
-  };
+  return halfOpenWasteBounds(transferRange);
 }
 
 /** Admin dashboard: inventory/chart stats + live waste KPI in one round-trip. */
@@ -211,13 +225,12 @@ export async function getAdminStoreStatsBundle(
 }
 
 /**
- * Day / Week / Month scorecard only: rescued, lost, scraps, and sales.
+ * Scorecard period: rescued, lost, scraps, and sales.
  * Does not read on-hand inventory, alerts, or the transfer-chart series.
- * Rescue uses the half-open chart window. Scraps and sales use the same
- * inclusive end as calculateRealTimeWastePct (`endUtc - 1ms`).
+ * Rescue, scraps, and sales all use [startUtc, endUtc).
  */
 export function getAdminPeriodFigures(range: StoreInstantRange): Promise<AdminPeriodFigures> {
-  const key = `${range.startUtc.toISOString()}|${range.endUtc.toISOString()}`;
+  const key = statsBoundsCacheKey(range);
   const now = Date.now();
   const hit = periodCache.get(key);
   if (hit && now - hit.at < PERIOD_CACHE_MS) return hit.value;
@@ -317,7 +330,7 @@ async function loadPeriodRescueTotals(range: StoreInstantRange) {
   };
 }
 
-async function loadPeriodScrapBuckets(startDate: Date, endDate: Date): Promise<number> {
+async function loadPeriodScrapBuckets(range: StoreInstantRange): Promise<number> {
   const volumetricPrefix = `${VOLUMETRIC_SCRAP_REF_PREFIX}%`;
   const volumetricKind = `%${SCRAP_VOLUMETRIC_BUCKET_KIND}%`;
   const rows = await prisma.$queryRaw<Array<{ buckets: number }>>`
@@ -333,13 +346,13 @@ async function loadPeriodScrapBuckets(startDate: Date, endDate: Date): Promise<n
     ), 0)::float8 AS buckets
     FROM "Inventory_Transactions"
     WHERE "Transaction_Type" = 'Waste'
-      AND "timestamp" >= ${startDate}
-      AND "timestamp" <= ${endDate}
+      AND "timestamp" >= ${range.startUtc}
+      AND "timestamp" < ${range.endUtc}
   `;
   return Number(rows[0]?.buckets ?? 0);
 }
 
-async function loadPeriodSalesCents(startDate: Date, endDate: Date): Promise<number> {
+async function loadPeriodSalesCents(range: StoreInstantRange): Promise<number> {
   const rows = await prisma.$queryRaw<Array<{ cents: number }>>`
     SELECT COALESCE(SUM(
       CASE
@@ -351,19 +364,18 @@ async function loadPeriodSalesCents(startDate: Date, endDate: Date): Promise<num
       END
     ), 0)::float8 AS cents
     FROM "Inventory_Transactions"
-    WHERE "timestamp" >= ${startDate}
-      AND "timestamp" <= ${endDate}
+    WHERE "timestamp" >= ${range.startUtc}
+      AND "timestamp" < ${range.endUtc}
       AND "Transaction_Type" IN ('Sale', 'POS_Sale')
   `;
   return Number(rows[0]?.cents ?? 0);
 }
 
 async function loadAdminPeriodFigures(range: StoreInstantRange): Promise<AdminPeriodFigures> {
-  const endDate = new Date(range.endUtc.getTime() - 1);
   const [rescue, bucketUnits, salesCents, setting] = await Promise.all([
     loadPeriodRescueTotals(range),
-    loadPeriodScrapBuckets(range.startUtc, endDate),
-    loadPeriodSalesCents(range.startUtc, endDate),
+    loadPeriodScrapBuckets(range),
+    loadPeriodSalesCents(range),
     findLatestStoreSetting(),
   ]);
   const scrapInputs = scrapBucketInputsFromSettings({

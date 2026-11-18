@@ -1,7 +1,7 @@
 /**
- * Fixed admin dashboard window.
+ * Fixed last-30-day window.
  * Day bounds match last30StoreDays + torontoRange (America/Toronto, half-open).
- * Leftover /admin?preset=&from=&to= links are ignored here; the stats API still honors them.
+ * Overview and ROI use resolveAdminDateRange instead of this window.
  */
 
 import {
@@ -14,12 +14,6 @@ import {
 
 export const ADMIN_DASHBOARD_WINDOW_DAYS = 30;
 export const ADMIN_DASHBOARD_WINDOW_LABEL = 'Last 30 days';
-
-export type IgnoredDashboardRangeQuery = {
-  preset?: string | null;
-  from?: string | null;
-  to?: string | null;
-};
 
 export type AdminDashboardWindow = {
   from: string;
@@ -46,13 +40,4 @@ export function adminDashboardWindow(now = new Date()): AdminDashboardWindow {
     dayCount: calendarDaysInclusive(bounds.from, bounds.to),
     days,
   };
-}
-
-/** Old dashboard range params stay in the URL and do not move this window. */
-export function adminDashboardWindowIgnoringQuery(
-  query?: IgnoredDashboardRangeQuery | null,
-  now = new Date()
-): AdminDashboardWindow {
-  void query;
-  return adminDashboardWindow(now);
 }

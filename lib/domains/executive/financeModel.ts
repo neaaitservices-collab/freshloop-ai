@@ -13,26 +13,29 @@ function roundMoney(value: number): number {
   return Number(value.toFixed(2));
 }
 
-function lookbackToMonthlyFactor(): number {
-  return 30 / DEFAULT_KPI_LOOKBACK_DAYS;
+/** Scale a period to a 30-day month. A missing or empty length stays on the 30-day lookback. */
+export function monthlyFactorFromLookback(rangeDays?: number): number {
+  const days = rangeDays == null ? DEFAULT_KPI_LOOKBACK_DAYS : rangeDays;
+  if (!Number.isFinite(days) || days <= 0) return 30 / DEFAULT_KPI_LOOKBACK_DAYS;
+  return 30 / days;
 }
 
-/** Scale ledger window metrics to approximate calendar month. */
-export function monthlyFactorFromLookback(): number {
-  return lookbackToMonthlyFactor();
+function finiteNumber(value: number | null | undefined): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
 export function buildExecutiveKpis(
   inputs: ExecutiveLiveInputs,
-  scenario: ExecutiveScenario
+  scenario: ExecutiveScenario,
+  rangeDays?: number
 ): ExecutiveKpiSummary {
   const { stats, wasteKpi } = inputs;
-  const monthScale = monthlyFactorFromLookback();
+  const monthScale = monthlyFactorFromLookback(rangeDays);
 
-  const rescueValueUsd = roundMoney((stats?.rescuedValue ?? 0) * monthScale);
-  const baselineWasteUsd = roundMoney((wasteKpi?.totalWasteValue ?? 0) * monthScale);
-  const targetWastePct = wasteKpi?.targetWastePct ?? stats?.targetWastePct ?? 10;
-  const baselineWastePct = wasteKpi?.wastePct ?? stats?.wastePct ?? null;
+  const rescueValueUsd = roundMoney((finiteNumber(stats?.rescuedValue) ?? 0) * monthScale);
+  const baselineWasteUsd = roundMoney((finiteNumber(wasteKpi?.totalWasteValue) ?? 0) * monthScale);
+  const targetWastePct = finiteNumber(wasteKpi?.targetWastePct) ?? finiteNumber(stats?.targetWastePct) ?? 10;
+  const baselineWastePct = finiteNumber(wasteKpi?.wastePct) ?? finiteNumber(stats?.wastePct);
 
   const shrinkReduction = Math.min(100, Math.max(0, scenario.shrinkReductionPct)) / 100;
   const wasteFromScenario =
@@ -48,7 +51,7 @@ export function buildExecutiveKpis(
   const monthlySavingsUsd = roundMoney(wasteCostAvoidedUsd + laborSavingsUsd);
   const projectedAnnualRoiUsd = roundMoney(monthlySavingsUsd * 12);
 
-  const rescueRate = stats?.wasteReductionPct ?? 0;
+  const rescueRate = finiteNumber(stats?.wasteReductionPct) ?? 0;
   const operationalEfficiencyPct = Number(
     Math.min(99.9, rescueRate + scenario.wasteImprovementPts * 2 + shrinkReduction * 10).toFixed(1)
   );
@@ -73,10 +76,12 @@ export function buildExecutiveKpis(
 
 export function buildCostVarianceSeries(
   inputs: ExecutiveLiveInputs,
-  scenario: ExecutiveScenario
+  scenario: ExecutiveScenario,
+  rangeDays?: number
 ): CostVariancePoint[] {
-  const monthScale = monthlyFactorFromLookback();
-  const anchorBaseline = roundMoney((inputs.wasteKpi?.totalWasteValue ?? 4200) * monthScale + 8000);
+  const monthScale = monthlyFactorFromLookback(rangeDays);
+  const wasteAnchor = finiteNumber(inputs.wasteKpi?.totalWasteValue) ?? 4200;
+  const anchorBaseline = roundMoney(wasteAnchor * monthScale + 8000);
   const optimizationRate =
     Math.min(0.45, scenario.shrinkReductionPct / 100 + scenario.wasteImprovementPts * 0.02);
 

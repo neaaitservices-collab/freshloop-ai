@@ -13,7 +13,6 @@ import { statsRangeQuerySchema } from '@/lib/security/schemas/statsRange';
 import {
   ADMIN_DASHBOARD_WINDOW_LABEL,
   adminDashboardWindow,
-  adminDashboardWindowIgnoringQuery,
 } from '@/lib/domains/stats/adminDashboardWindow';
 import {
   calendarDaysInclusive,
@@ -79,33 +78,16 @@ test('Toronto day boundaries inside the window match torontoRange across DST', (
   assert.equal(fall.range.startUtc.toISOString(), torontoRange(fall.from, fall.to).startUtc.toISOString());
 });
 
-test('old admin range params do not move the window', () => {
-  const now = new Date('2026-11-02T16:00:00.000Z');
-  const fixed = adminDashboardWindow(now);
-  const cases = [
-    undefined,
-    null,
-    {},
-    { preset: 'day' },
-    { preset: 'week' },
-    { preset: 'month' },
-    { preset: 'not-a-preset', from: 'nope', to: '' },
-    { from: '2020-01-01', to: '2020-01-07' },
-    { preset: 'day', from: '2024-06-15', to: '2024-06-15' },
-  ];
-  for (const query of cases) {
-    assert.deepEqual(adminDashboardWindowIgnoringQuery(query, now), fixed);
-  }
-});
-
-test('the admin scorecard is one stats card driven by day week and month chips', () => {
+test('the admin scorecard follows the shared date range and keeps on-hand live', () => {
   const dashboard = readFileSync('components/features/admin/AdminDashboard.tsx', 'utf8');
   const stats = readFileSync('components/features/admin/AdminStats.tsx', 'utf8');
   const figures = readFileSync('components/features/admin/DashboardFigures.tsx', 'utf8');
   const semaphore = readFileSync('components/features/admin/WasteSemaphoreCard.tsx', 'utf8');
   const page = readFileSync('app/admin/page.tsx', 'utf8');
+  const executive = readFileSync('app/admin/executive/page.tsx', 'utf8');
   const api = readFileSync('app/api/admin/stats/route.ts', 'utf8');
   const filter = readFileSync('components/features/admin/StatsDateFilter.tsx', 'utf8');
+  const header = readFileSync('components/features/admin/AdminSectionHeader.tsx', 'utf8');
   const storeStats = readFileSync('lib/domains/stats/storeStats.ts', 'utf8');
   const periodClient = readFileSync('lib/domains/stats/adminPeriodClient.ts', 'utf8');
   const chart = readFileSync('components/features/admin/RescueOutcomeChart.tsx', 'utf8');
@@ -129,8 +111,10 @@ test('the admin scorecard is one stats card driven by day week and month chips',
   assert.match(stats, /Rescued/);
   assert.match(stats, />Lost</);
   assert.match(stats, /Of rescued \+ discarded/);
-  assert.match(stats, /variant="chips"/);
-  assert.match(stats, /defaultPreset="week"/);
+  assert.match(stats, /useSearchParams/);
+  assert.match(stats, /Suspense/);
+  assert.equal(stats.includes('StatsDateFilter'), false);
+  assert.equal(stats.includes("variant='full'"), false);
   assert.equal(stats.includes('Rescue rate'), false);
   assert.equal(stats.includes('wasteReductionPct'), false);
   assert.equal(stats.includes('cardRangeLabel'), false);
@@ -169,20 +153,31 @@ test('the admin scorecard is one stats card driven by day week and month chips',
   assert.match(periodClient, /scope=period/);
   assert.match(periodClient, /AbortController/);
   assert.match(periodClient, /myTicket !== ticket/);
-  assert.match(filter, /variant === 'chips'/);
+  assert.match(periodClient, /statsBoundsCacheKey/);
   assert.match(filter, /aria-label="Stats range"/);
-  assert.match(filter, /export function StatsDateFilter/);
-  assert.match(filter, /const selectChip/);
-  const selectChip = filter.slice(filter.indexOf('const selectChip'), filter.indexOf('const bounds'));
-  assert.equal(selectChip.includes('router'), false);
-  assert.equal(selectChip.includes('writeRange'), false);
-  assert.match(selectChip, /setChip\(id\)/);
-  assert.match(selectChip, /onPresetChange\?\.\(id\)/);
-  assert.match(filter, /last30StoreDays/);
+  assert.match(filter, /Today/);
+  assert.match(filter, /Last 7 days/);
+  assert.match(filter, /Month to date/);
+  assert.match(filter, /Last month/);
+  assert.match(filter, /Custom/);
+  assert.match(filter, /InvoiceDateField/);
+  assert.match(filter, /Suspense/);
+  assert.match(filter, /export function AdminDateFilter/);
+  assert.equal(filter.includes("variant = 'full'"), false);
+  assert.equal(filter.includes('variant === \'full\''), false);
+  assert.equal(/\bkitchen\b/i.test(filter), false);
+  assert.match(header, /AdminDateFilter/);
+  assert.match(header, /dateFilter/);
+  assert.equal(/\bkitchen\b/i.test(header), false);
   assert.match(chart, /export function RescueOutcomeChart/);
 
-  assert.match(page, /adminDashboardWindowIgnoringQuery\(/);
+  assert.match(page, /resolveAdminDateSearch\(/);
+  assert.match(page, /dateFilter/);
+  assert.equal(page.includes('adminDashboardWindowIgnoringQuery'), false);
   assert.match(page, /getAdminStoreStatsBundle\(dashboardWindow\.range\)/);
+  assert.match(executive, /resolveAdminDateSearch\(/);
+  assert.match(executive, /getAdminStoreStatsBundle\(dashboardWindow\.range\)/);
+  assert.match(executive, /rangeDays=\{dashboardWindow\.dayCount\}/);
   assert.equal(page.includes('presetRange'), false);
   assert.equal(page.includes('statsRangeQuerySchema'), false);
   assert.equal(page.includes('rangeError'), false);
@@ -197,6 +192,9 @@ test('the admin scorecard is one stats card driven by day week and month chips',
 
   assert.match(storeStats, /export function getAdminPeriodFigures/);
   assert.match(storeStats, /calculateRealTimeWastePct\(wasteKpiOptions\(transferRange\)\)/);
+  assert.match(storeStats, /halfOpenWasteBounds\(transferRange\)/);
+  assert.equal(storeStats.includes('endUtc.getTime() - 1'), false);
+  assert.match(storeStats, /"timestamp" < \$\{range\.endUtc\}/);
   const periodFn = storeStats.slice(
     storeStats.indexOf('async function loadAdminPeriodFigures'),
     storeStats.indexOf('async function loadStatProducts')
@@ -208,7 +206,6 @@ test('the admin scorecard is one stats card driven by day week and month chips',
   assert.equal(periodFn.includes('inventoryValue'), false);
   assert.equal(periodFn.includes('findMany'), false);
   assert.equal(storeStats.includes('inventoryTransaction.findMany'), false);
-  assert.match(storeStats, /endUtc\.getTime\(\) - 1/);
   const inventoryAt = storeStats.indexOf('let inventoryValue = 0;');
   const totalsAt = storeStats.indexOf('const cardTotals');
   assert.ok(inventoryAt !== -1 && totalsAt > inventoryAt);

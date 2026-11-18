@@ -2,13 +2,20 @@
 
 import Link from 'next/link';
 import { Settings } from 'lucide-react';
+import { AdminDateFilter } from '@/components/features/admin/StatsDateFilter';
 import { AdminViewTabs } from '@/components/features/admin/AdminViewTabs';
 
 const focusRing =
   'focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-400';
 
 /** Admin title, the Settings page, and the inline section tabs. */
-export function AdminSectionHeader({ titleTag = 'h1' }: { titleTag?: 'h1' | 'p' }) {
+export function AdminSectionHeader({
+  titleTag = 'h1',
+  dateFilter = false,
+}: {
+  titleTag?: 'h1' | 'p';
+  dateFilter?: boolean;
+}) {
   const Title = titleTag;
   return (
     <header className="mb-3">
@@ -25,6 +32,7 @@ export function AdminSectionHeader({ titleTag = 'h1' }: { titleTag?: 'h1' | 'p' 
         </Link>
       </div>
       <AdminViewTabs />
+      {dateFilter ? <AdminDateFilter /> : null}
     </header>
   );
 }

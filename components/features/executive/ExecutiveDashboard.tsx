@@ -24,6 +24,7 @@ import {
 } from '@/lib/domains/executive/types';
 import type { StoreStats } from '@/lib/domains/stats/storeStatsTypes';
 import type { WasteKpiReport } from '@/lib/domains/inventory/ledger';
+import { DEFAULT_KPI_LOOKBACK_DAYS } from '@/lib/domains/stats/wasteKpi';
 import { formatCurrency } from '@/lib/domains/receiving/yieldPricing';
 
 const CostVarianceChart = dynamic(
@@ -40,9 +41,11 @@ const CostVarianceChart = dynamic(
 export function ExecutiveDashboard({
   initialStats,
   initialWasteKpi,
+  rangeDays = DEFAULT_KPI_LOOKBACK_DAYS,
 }: {
   initialStats: StoreStats | null;
   initialWasteKpi: WasteKpiReport | null;
+  rangeDays?: number;
 }) {
   const [scenario, setScenario] = useState<ExecutiveScenario>(DEFAULT_EXECUTIVE_SCENARIO);
 
@@ -52,13 +55,13 @@ export function ExecutiveDashboard({
   );
 
   const kpis = useMemo(
-    () => buildExecutiveKpis(liveInputs, scenario),
-    [liveInputs, scenario]
+    () => buildExecutiveKpis(liveInputs, scenario, rangeDays),
+    [liveInputs, scenario, rangeDays]
   );
 
   const varianceSeries = useMemo(
-    () => buildCostVarianceSeries(liveInputs, scenario),
-    [liveInputs, scenario]
+    () => buildCostVarianceSeries(liveInputs, scenario, rangeDays),
+    [liveInputs, scenario, rangeDays]
   );
 
   const insights = useMemo(
