@@ -14,6 +14,8 @@
 -- including GitHub Actions (role `ci`). Missing roles are skipped so
 -- `prisma migrate deploy` still applies.
 
+SET lock_timeout = '5s';
+
 DO $$
 DECLARE
   api_role text;
