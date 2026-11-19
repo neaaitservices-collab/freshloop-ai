@@ -241,15 +241,22 @@ export function planSupplierMatchWrites(
   return writes;
 }
 
-/** P2021, or Postgres saying supplier_product_matches is not there yet. */
+function errorText(value: unknown): string {
+  return typeof value === 'string' ? value : '';
+}
+
+/** True only for a missing supplier_product_matches table, not any other relation. */
 export function isMissingSupplierProductMatches(error: unknown): boolean {
   if (typeof error !== 'object' || error === null) return false;
   const code = 'code' in error ? String((error as { code?: unknown }).code ?? '') : '';
-  const message = 'message' in error ? String((error as { message?: unknown }).message ?? '') : '';
-  const meta = 'meta' in error ? JSON.stringify((error as { meta?: unknown }).meta ?? '') : '';
-  const blob = `${message}\n${meta}`.toLowerCase();
-  if (code === 'P2021' || code === '42P01') return true;
-  return blob.includes('supplier_product_matches') && blob.includes('does not exist');
+  if (code !== 'P2021' && code !== '42P01') return false;
+  const message = 'message' in error ? errorText((error as { message?: unknown }).message) : '';
+  const meta =
+    'meta' in error && (error as { meta?: unknown }).meta && typeof (error as { meta?: unknown }).meta === 'object'
+      ? ((error as { meta: { table?: unknown; modelName?: unknown } }).meta)
+      : {};
+  const named = `${message}\n${errorText(meta.table)}\n${errorText(meta.modelName)}`.toLowerCase();
+  return named.includes('supplier_product_matches');
 }
 
 function warnMissingSupplierProductMatches(): void {

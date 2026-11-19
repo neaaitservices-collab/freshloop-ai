@@ -499,6 +499,36 @@ test('scan and commit treat a missing supplier match table as no links', async (
   assert.match(String(warnings[0]?.[0]), /supplier_product_matches is not in this database yet/);
 });
 
+test('a P2021 that names another table is re-thrown', async () => {
+  const other = Object.assign(new Error('The table `public.products` does not exist in the current database.'), {
+    code: 'P2021',
+    meta: { table: 'public.products', modelName: 'Product' },
+  });
+  await assert.rejects(
+    () =>
+      loadActiveSupplierProductLinks('deodato', {
+        supplierProductMatch: {
+          findMany: async () => {
+            throw other;
+          },
+        },
+      } as never),
+    (error: unknown) => error === other
+  );
+  const unnamed = Object.assign(new Error('The table does not exist in the current database.'), { code: 'P2021' });
+  await assert.rejects(
+    () =>
+      loadActiveSupplierProductLinks('deodato', {
+        supplierProductMatch: {
+          findMany: async () => {
+            throw unnamed;
+          },
+        },
+      } as never),
+    (error: unknown) => error === unnamed
+  );
+});
+
 test('remember and unlink skip a missing table without aborting the stock transaction', async () => {
   const sql: string[] = [];
   let updates = 0;

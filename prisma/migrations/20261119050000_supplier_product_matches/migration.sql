@@ -10,7 +10,6 @@
 -- 20261118040000_db_lockdown. The whole migration is one transaction so a
 -- failed statement cannot leave a half-built table. Prisma must not open a
 -- second transaction around this file.
--- prisma migrate disable transaction
 
 BEGIN;
 
