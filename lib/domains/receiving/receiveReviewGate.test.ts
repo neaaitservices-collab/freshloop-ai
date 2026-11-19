@@ -46,11 +46,12 @@ test('the manager checkbox shows for a price jump even when reviewFlags is empty
 
 test('a clerk cannot confirm a price jump, and the 409 reason stays visible', () => {
   const blockers = ['Line 1 is unresolved (cost_guardrail).'];
-  assert.equal(clerkCannotConfirm({ manager: false, lines: [priceJump], blockers }), true);
-  assert.equal(clerkCannotConfirm({ manager: true, lines: [priceJump], blockers }), false);
+  assert.equal(clerkCannotConfirm({ manager: false, reviewFlags: [], lines: [priceJump], blockers }), true);
+  assert.equal(clerkCannotConfirm({ manager: true, reviewFlags: [], lines: [priceJump], blockers }), false);
   assert.equal(
     clerkCannotConfirm({
       manager: false,
+      reviewFlags: [],
       lines: [],
       blockers: ['Line 2 is unresolved (low_confidence).'],
     }),
@@ -62,9 +63,9 @@ test('a clerk cannot confirm a price jump, and the 409 reason stays visible', ()
   );
   assert.equal(lineBlockerNeedsManager('Line 4 is unresolved (quantity_unreadable).'), false);
   const pack = 'Line 3 pack is 10 and split is 2. A manager must confirm a pack change.';
-  assert.equal(needsManagerSignoff({ lines: [], blockers: [pack] }), false);
-  assert.equal(clerkCannotConfirm({ manager: false, lines: [], blockers: [pack] }), true);
-  assert.equal(needsManagerSignoff({ lines: [fuzzy], blockers: [] }), false);
+  assert.equal(needsManagerSignoff({ reviewFlags: [], lines: [], blockers: [pack] }), false);
+  assert.equal(clerkCannotConfirm({ manager: false, reviewFlags: [], lines: [], blockers: [pack] }), true);
+  assert.equal(needsManagerSignoff({ reviewFlags: [], lines: [fuzzy], blockers: [] }), false);
   assert.match(clerkManagerReviewCopy({ lines: [priceJump], blockers }), /\(cost guardrail\)/);
   assert.equal(CLERK_MANAGER_REASON.includes('kitchen'), false);
   assert.equal(
@@ -84,19 +85,21 @@ test('a clerk cannot confirm a price jump, and the 409 reason stays visible', ()
 
 const subtotalFlag = 'Invoice subtotal 10.00 does not match the line sum 8.00.';
 
-test('a clerk with only a subtotal flag can still confirm', () => {
-  assert.equal(showManagerOverride({ manager: true, reviewFlags: [subtotalFlag], lines: [] }), true);
-  assert.equal(showManagerOverride({ manager: false, reviewFlags: [subtotalFlag], lines: [] }), false);
-  assert.equal(needsManagerSignoff({ lines: [], blockers: [subtotalFlag] }), false);
-  assert.equal(clerkCannotConfirm({ manager: false, lines: [], blockers: [subtotalFlag] }), false);
+test('a receiver with only a subtotal flag cannot confirm', () => {
+  const reviewFlags = [subtotalFlag];
+  const signoff = needsManagerSignoff({ reviewFlags, lines: [], blockers: [] });
+  const showOverride = showManagerOverride({ manager: true, reviewFlags, lines: [] });
+  assert.equal(showOverride, true);
+  assert.equal(showManagerOverride({ manager: false, reviewFlags, lines: [] }), false);
+  assert.equal(signoff, true);
+  assert.equal(clerkCannotConfirm({ manager: false, reviewFlags, lines: [], blockers: [] }), true);
   assert.equal(
-    clerkCannotConfirm({
-      manager: false,
-      lines: [{ requiresApproval: false }],
-      blockers: [subtotalFlag],
-    }),
-    false
+    clerkCannotConfirm({ manager: false, reviewFlags, lines: [{ requiresApproval: false }], blockers: [] }),
+    true
   );
+  const managerBlocked = clerkCannotConfirm({ manager: true, reviewFlags, lines: [], blockers: [] });
+  assert.equal(managerBlocked || (showOverride && signoff && !false), true);
+  assert.equal(managerBlocked || (showOverride && signoff && !true), false);
 });
 
 test('an unmatched printed vendor renders the new-supplier button', () => {

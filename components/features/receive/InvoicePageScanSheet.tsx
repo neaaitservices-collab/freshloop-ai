@@ -604,6 +604,7 @@ export function InvoicePageScanSheet({
   const clerkBlocked = view
     ? clerkCannotConfirm({
         manager,
+        reviewFlags: view.reviewFlags,
         lines: view.lines,
         blockers: view.blockers,
       })
