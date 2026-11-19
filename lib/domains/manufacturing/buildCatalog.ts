@@ -50,17 +50,31 @@ function lineFromSnapshot(
   standardQtyPerBatch: number,
   unit: string,
   fallbackMac: number,
-  allowVariance: boolean
+  allowVariance: boolean,
+  costSources?: {
+    movingAverageCost?: number | null;
+    standardCost?: number | null;
+  }
 ) {
   const snap = snapshots.get(ingredientProductId);
   const mac = snap && snap.unitCost > 0 ? snap.unitCost : fallbackMac;
   const stock = snap?.prepStock ?? 0;
+  const movingAverageCost =
+    costSources && 'movingAverageCost' in costSources
+      ? costSources.movingAverageCost ?? null
+      : snap && snap.unitCost > 0
+        ? Number(snap.unitCost.toFixed(4))
+        : null;
+  const catalogStandardCost =
+    costSources && 'standardCost' in costSources ? costSources.standardCost ?? null : null;
   return {
     ingredientProductId,
     name,
     standardQtyPerBatch,
     unit,
     movingAvgUnitCost: Number(mac.toFixed(4)),
+    movingAverageCost,
+    catalogStandardCost,
     allowVariance,
     availableKitchenStock: Number(stock.toFixed(2)),
   };
@@ -79,9 +93,12 @@ function mapFallbackToKitchenRecipe(
       bi.requiredQty,
       String(bi.unit),
       bi.defaultMacCost,
-      bi.allowVariance
+      bi.allowVariance,
+      { standardCost: bi.defaultMacCost, movingAverageCost: null }
     )
   );
+  const recipeLaborRate =
+    entry.laborRatePerHour != null && entry.laborRatePerHour > 0 ? entry.laborRatePerHour : null;
 
   return {
     recipeId: entry.id,
@@ -94,7 +111,8 @@ function mapFallbackToKitchenRecipe(
     targetRetailPrice: entry.targetRetailPrice,
     prepTimeMinutes: 25,
     laborHours: entry.laborHours ?? 0,
-    laborRatePerHour: entry.laborRatePerHour ?? defaultLaborRate,
+    laborRatePerHour: recipeLaborRate ?? defaultLaborRate,
+    recipeLaborRate,
     packagingCostPerUnit: entry.packagingCostPerUnit ?? 0,
     bom,
     fallback: true,
@@ -119,9 +137,19 @@ function mapDbRecipesToKitchenDefinitions(
           Number(bi.quantityRequired ?? 0),
           bi.unit ?? bi.ingredientProduct.unitType,
           bi.ingredientProduct.standardCost ?? 2,
-          true
+          true,
+          {
+            standardCost:
+              bi.ingredientProduct.standardCost == null
+                ? null
+                : Number(bi.ingredientProduct.standardCost),
+          }
         )
       );
+      const recipeLaborRate =
+        dbRecipe.laborRate != null && Number(dbRecipe.laborRate) > 0
+          ? Number(dbRecipe.laborRate)
+          : null;
 
       byPrimaryId.set(dbRecipe.id, {
         recipeId: dbRecipe.id,
@@ -135,6 +163,7 @@ function mapDbRecipesToKitchenDefinitions(
         prepTimeMinutes: 25,
         laborHours: Number(dbRecipe.laborHours ?? 0),
         laborRatePerHour: Number(dbRecipe.laborRate ?? defaultLaborRate),
+        recipeLaborRate,
         packagingCostPerUnit: Number(dbRecipe.packagingCostPerUnit ?? 0),
         bom,
         fallback: false,

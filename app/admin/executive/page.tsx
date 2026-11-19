@@ -21,6 +21,7 @@ async function LiveExecutiveDashboard({
       initialStats={stats}
       initialWasteKpi={wasteKpi}
       rangeDays={dashboardWindow.dayCount}
+      grossSalesRevenue={wasteKpi.grossSalesRevenue}
     />
   );
 }

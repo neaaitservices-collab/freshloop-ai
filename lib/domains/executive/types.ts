@@ -19,6 +19,19 @@ export const DEFAULT_EXECUTIVE_SCENARIO: ExecutiveScenario = {
   shrinkReductionPct: 15,
 };
 
+/** Shown on ROI figures that still use the default assumed scenario. */
+export const ROI_ESTIMATE_LABEL = 'Estimate';
+
+/** True when every slider is still the assumed scenario, not a staff-adjusted one. */
+export function executiveScenarioIsDefault(scenario: ExecutiveScenario): boolean {
+  return (
+    scenario.wasteImprovementPts === DEFAULT_EXECUTIVE_SCENARIO.wasteImprovementPts &&
+    scenario.laborHoursSavedPerWeek === DEFAULT_EXECUTIVE_SCENARIO.laborHoursSavedPerWeek &&
+    scenario.laborRatePerHour === DEFAULT_EXECUTIVE_SCENARIO.laborRatePerHour &&
+    scenario.shrinkReductionPct === DEFAULT_EXECUTIVE_SCENARIO.shrinkReductionPct
+  );
+}
+
 export interface ExecutiveKpiSummary {
   monthlySavingsUsd: number;
   projectedAnnualRoiUsd: number;
