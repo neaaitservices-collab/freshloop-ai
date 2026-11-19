@@ -2,6 +2,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { OcrSupplierCreateButton } from '@/components/features/receive/OcrSupplierCreateButton';
 import {
   CLERK_MANAGER_REASON,
   clerkCannotConfirm,
@@ -43,12 +46,11 @@ test('the manager checkbox shows for a price jump even when reviewFlags is empty
 
 test('a clerk cannot confirm a price jump, and the 409 reason stays visible', () => {
   const blockers = ['Line 1 is unresolved (cost_guardrail).'];
-  assert.equal(clerkCannotConfirm({ manager: false, reviewFlags: [], lines: [priceJump], blockers }), true);
-  assert.equal(clerkCannotConfirm({ manager: true, reviewFlags: [], lines: [priceJump], blockers }), false);
+  assert.equal(clerkCannotConfirm({ manager: false, lines: [priceJump], blockers }), true);
+  assert.equal(clerkCannotConfirm({ manager: true, lines: [priceJump], blockers }), false);
   assert.equal(
     clerkCannotConfirm({
       manager: false,
-      reviewFlags: [],
       lines: [],
       blockers: ['Line 2 is unresolved (low_confidence).'],
     }),
@@ -60,9 +62,9 @@ test('a clerk cannot confirm a price jump, and the 409 reason stays visible', ()
   );
   assert.equal(lineBlockerNeedsManager('Line 4 is unresolved (quantity_unreadable).'), false);
   const pack = 'Line 3 pack is 10 and split is 2. A manager must confirm a pack change.';
-  assert.equal(needsManagerSignoff({ reviewFlags: [], lines: [], blockers: [pack] }), false);
-  assert.equal(clerkCannotConfirm({ manager: false, reviewFlags: [], lines: [], blockers: [pack] }), true);
-  assert.equal(needsManagerSignoff({ reviewFlags: [], lines: [fuzzy], blockers: [] }), false);
+  assert.equal(needsManagerSignoff({ lines: [], blockers: [pack] }), false);
+  assert.equal(clerkCannotConfirm({ manager: false, lines: [], blockers: [pack] }), true);
+  assert.equal(needsManagerSignoff({ lines: [fuzzy], blockers: [] }), false);
   assert.match(clerkManagerReviewCopy({ lines: [priceJump], blockers }), /\(cost guardrail\)/);
   assert.equal(CLERK_MANAGER_REASON.includes('kitchen'), false);
   assert.equal(
@@ -78,6 +80,57 @@ test('a clerk cannot confirm a price jump, and the 409 reason stays visible', ()
     }),
     'Line 1 is unresolved (cost_guardrail). Line 2 is unresolved (low_confidence).'
   );
+});
+
+const subtotalFlag = 'Invoice subtotal 10.00 does not match the line sum 8.00.';
+
+test('a clerk with only a subtotal flag can still confirm', () => {
+  assert.equal(showManagerOverride({ manager: true, reviewFlags: [subtotalFlag], lines: [] }), true);
+  assert.equal(showManagerOverride({ manager: false, reviewFlags: [subtotalFlag], lines: [] }), false);
+  assert.equal(needsManagerSignoff({ lines: [], blockers: [subtotalFlag] }), false);
+  assert.equal(clerkCannotConfirm({ manager: false, lines: [], blockers: [subtotalFlag] }), false);
+  assert.equal(
+    clerkCannotConfirm({
+      manager: false,
+      lines: [{ requiresApproval: false }],
+      blockers: [subtotalFlag],
+    }),
+    false
+  );
+});
+
+test('an unmatched printed vendor renders the new-supplier button', () => {
+  const unmatched = renderToStaticMarkup(
+    createElement(OcrSupplierCreateButton, {
+      vendorName: 'Northwind Baking',
+      suppliers: [{ id: 'sup-1', name: 'Acme Foods' }],
+      creating: false,
+      onCreate: () => {},
+    })
+  );
+  assert.match(unmatched, /Add (&quot;|")Northwind Baking(&quot;|") as new supplier/);
+  assert.equal(unmatched.includes('<button'), true);
+  assert.equal(/\bkitchen\b/i.test(unmatched), false);
+
+  const matched = renderToStaticMarkup(
+    createElement(OcrSupplierCreateButton, {
+      vendorName: 'Acme Foods',
+      suppliers: [{ id: 'sup-1', name: 'Acme Foods' }],
+      creating: false,
+      onCreate: () => {},
+    })
+  );
+  assert.equal(matched, '');
+
+  const blank = renderToStaticMarkup(
+    createElement(OcrSupplierCreateButton, {
+      vendorName: '   ',
+      suppliers: [],
+      creating: false,
+      onCreate: () => {},
+    })
+  );
+  assert.equal(blank, '');
 });
 
 test('the receive sheet wires the override checkbox and the new-supplier button', () => {
@@ -96,10 +149,7 @@ test('the receive sheet wires the override checkbox and the new-supplier button'
   assert.match(sheet, /lineBlockerNeedsManager\(blocker\)/);
   assert.match(sheet, /invoiceRequestErrorMessage\(response\.status, json\)/);
   assert.match(sheet, /manualReviewOverride: true/);
-  assert.match(sheet, /matchSupplierByName\(view\.vendorName, suppliers\)/);
-  assert.match(sheet, /status === 'none'/);
-  assert.match(sheet, /addOcrSupplierLabel\(view\.vendorName\)/);
-  assert.match(sheet, /\/api\/receiving-suppliers/);
+  assert.match(sheet, /<OcrSupplierCreateButton/);
   assert.match(sheet, /JSON\.stringify\(\{ name: printedSupplierName\(view\.vendorName\) \}\)/);
   assert.match(sheet, /setSupplierId\(json\.supplier\.id\)/);
   assert.match(sheet, /onSupplierCreated\?\.\(json\.supplier\)/);

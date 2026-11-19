@@ -35,22 +35,21 @@ function overrideBlocker(blocker: string): boolean {
   return /cost_guardrail|low_confidence/i.test(blocker);
 }
 
-/** A clerk cannot post these. A manager posts them only with manualReviewOverride. */
+/**
+ * Price jumps and low confidence need a manager override.
+ * A subtotal mismatch stays on the manager checkbox only. It does not block a clerk.
+ */
 export function needsManagerSignoff(input: {
-  reviewFlags: readonly string[];
   lines: readonly { requiresApproval?: boolean }[];
   blockers: readonly string[];
 }): boolean {
   return (
-    input.reviewFlags.length > 0 ||
-    input.lines.some((line) => line.requiresApproval === true) ||
-    input.blockers.some(overrideBlocker)
+    input.lines.some((line) => line.requiresApproval === true) || input.blockers.some(overrideBlocker)
   );
 }
 
 export function clerkCannotConfirm(input: {
   manager: boolean;
-  reviewFlags: readonly string[];
   lines: readonly { requiresApproval?: boolean }[];
   blockers: readonly string[];
 }): boolean {

@@ -5,6 +5,7 @@ import { Camera, Check, GripVertical, ImagePlus, Loader2, X } from 'lucide-react
 import { useRouter } from 'next/navigation';
 import { useRole } from '@/components/auth/RoleProvider';
 import { InvoiceDateField } from '@/components/features/receive/InvoiceDateField';
+import { OcrSupplierCreateButton } from '@/components/features/receive/OcrSupplierCreateButton';
 import { SupplierSelect } from '@/components/features/suppliers/SupplierSelect';
 import { Button } from '@/components/ui/Button';
 import type { RestoredInvoiceScan } from '@/lib/domains/receiving/openInvoiceScan';
@@ -26,11 +27,7 @@ import {
   type InvoicePageStatus,
 } from '@/lib/domains/receiving/invoicePageScan';
 import { selectInvoiceHeaderTotal } from '@/lib/domains/receiving/invoiceHeaderTotal';
-import {
-  addOcrSupplierLabel,
-  matchSupplierByName,
-  printedSupplierName,
-} from '@/lib/domains/suppliers/supplierInvoiceMatch';
+import { matchSupplierByName, printedSupplierName } from '@/lib/domains/suppliers/supplierInvoiceMatch';
 import {
   clerkCannotConfirm,
   clerkManagerReviewCopy,
@@ -607,7 +604,6 @@ export function InvoicePageScanSheet({
   const clerkBlocked = view
     ? clerkCannotConfirm({
         manager,
-        reviewFlags: view.reviewFlags,
         lines: view.lines,
         blockers: view.blockers,
       })
@@ -839,18 +835,13 @@ export function InvoicePageScanSheet({
                 </div>
               ) : null}
               <SupplierSelect suppliers={suppliers} value={supplierId} onChange={setSupplierId} label="Supplier" />
-              {matchSupplierByName(view.vendorName, suppliers).status === 'none' &&
-              addOcrSupplierLabel(view.vendorName) ? (
-                <Button
-                  type="button"
-                  variant="secondary"
-                  className="w-full"
-                  disabled={creatingSupplier || working}
-                  onClick={() => void addPrintedSupplier()}
-                >
-                  {creatingSupplier ? 'Adding supplier…' : addOcrSupplierLabel(view.vendorName)}
-                </Button>
-              ) : null}
+              <OcrSupplierCreateButton
+                vendorName={view.vendorName}
+                suppliers={suppliers}
+                creating={creatingSupplier}
+                disabled={working}
+                onCreate={() => void addPrintedSupplier()}
+              />
               <div>
                 <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Invoice # · date</p>
                 <p className="mt-1 font-mono text-sm tabular-nums text-slate-100">
