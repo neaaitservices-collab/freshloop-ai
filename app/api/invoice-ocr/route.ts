@@ -26,7 +26,7 @@ import { authErrorResponse } from '@/lib/auth/http';
 import { requireReceivingStaff } from '@/lib/auth/guardRoute';
 import { gateStoredOcrDraft } from '@/lib/domains/receiving/sampleReceivingGuard';
 import { findLatestStoreSetting } from '@/lib/domains/stats/storeSettingSelect';
-import { matchProductWithScore } from '@/lib/domains/inventory/productMatching';
+import { fuzzyCandidatesNeedCheck } from '@/lib/domains/receiving/invoiceLineReview';
 import {
   loadActiveSupplierProductLinksForVendor,
   matchInvoiceLine,
@@ -143,6 +143,7 @@ export interface InvoiceOcrLineItemWithGuardrail {
   printed_name: string | null;
   match_source: InvoiceMatchSource | null;
   match_printed_value: string | null;
+  fuzzy_ambiguous?: boolean;
 }
 
 export interface InvoiceOcrApiResponse {
@@ -273,7 +274,7 @@ function evaluateCostGuardrailSync(
   macPerBaseUnit: number | undefined,
   thresholdPct: number = 20.0,
   ocrSource: 'sample' | 'photo' = 'photo',
-  match: { source: InvoiceMatchSource | null; printedValue: string | null } = {
+  match: { source: InvoiceMatchSource | null; printedValue: string | null; fuzzyAmbiguous?: boolean } = {
     source: null,
     printedValue: null,
   }
@@ -379,6 +380,7 @@ function evaluateCostGuardrailSync(
     printed_name: printedMatchValue(rawItem.name),
     match_source: match.source,
     match_printed_value: match.printedValue,
+    ...(match.fuzzyAmbiguous ? { fuzzy_ambiguous: true } : {}),
   };
 }
 
@@ -390,24 +392,20 @@ async function evaluateCostGuardrailsBatch(
   links: readonly SupplierProductLinkRef[] = []
 ): Promise<InvoiceOcrLineItemWithGuardrail[]> {
   const matches = lineItems.map((rawItem) => {
-    const hit = links.length
-      ? matchInvoiceLine({
-          code: rawItem.code,
-          name: rawItem.name,
-          printedName: rawItem.name,
-          links,
-          catalog,
-        })
-      : null;
-    const fuzzy = hit ? null : matchProductWithScore(rawItem.name, catalog);
-    const matchedProduct = hit?.product ?? fuzzy?.product ?? null;
-    const matchScore = hit?.score ?? fuzzy?.score ?? null;
+    const hit = matchInvoiceLine({
+      code: rawItem.code,
+      name: rawItem.name,
+      printedName: rawItem.name,
+      links,
+      catalog,
+    });
     return {
       rawItem,
-      matchedProduct,
-      matchScore,
-      source: hit?.source ?? (fuzzy ? 'name' : null),
-      printedValue: hit?.printedValue ?? null,
+      matchedProduct: hit.product,
+      matchScore: hit.score,
+      source: hit.source,
+      printedValue: hit.printedValue,
+      fuzzyAmbiguous: hit.source === 'name' && fuzzyCandidatesNeedCheck(hit.score, hit.runnerUpScore),
     };
   });
   const productIds = matches
@@ -415,7 +413,7 @@ async function evaluateCostGuardrailsBatch(
     .filter((id): id is string => Boolean(id));
   const macMap = await getMovingAverageCostMap(productIds);
 
-  return matches.map(({ rawItem, matchedProduct, matchScore, source, printedValue }) =>
+  return matches.map(({ rawItem, matchedProduct, matchScore, source, printedValue, fuzzyAmbiguous }) =>
     evaluateCostGuardrailSync(
       rawItem,
       matchedProduct,
@@ -423,7 +421,7 @@ async function evaluateCostGuardrailsBatch(
       matchedProduct ? macMap.get(matchedProduct.id) : undefined,
       thresholdPct,
       ocrSource,
-      { source, printedValue }
+      { source, printedValue, fuzzyAmbiguous }
     )
   );
 }
@@ -762,6 +760,7 @@ async function auditMultiPageLines(scan: PageScanRecord, lines: InvoicePageLine[
       match_source: item.match_source,
       match_printed_value: item.match_printed_value,
       matched_product_name: item.matched_product_name,
+      fuzzy_ambiguous: item.fuzzy_ambiguous,
     })),
   });
 }
@@ -977,6 +976,7 @@ export async function POST(req: NextRequest) {
     if (isInvoicePageScanRequest(rawBody)) {
       const outcome = await runInvoicePageScan({
         staffId: actor.id,
+        actorIsManager: actor.role === 'ADMIN' || actor.role === 'STORE_MANAGER',
         body: rawBody,
         readPage: (page) =>
           extractInvoicePageForBatch({
@@ -1112,6 +1112,7 @@ export async function POST(req: NextRequest) {
         match_source: item.match_source,
         match_printed_value: item.match_printed_value,
         matched_product_name: item.matched_product_name,
+        fuzzy_ambiguous: item.fuzzy_ambiguous,
       })),
     });
     if (extracted.lineItems.length === 0) {

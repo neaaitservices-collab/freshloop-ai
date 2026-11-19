@@ -26,6 +26,7 @@ import {
   planSupplierMatchWrites,
   reapplySupplierLinks,
 } from '@/lib/domains/receiving/supplierProductMatch';
+import { withDefaultCreateNew } from '@/lib/domains/receiving/invoiceLineReview';
 import {
   invoiceLinePostInput,
   resolveSupplierInvoice,
@@ -257,6 +258,8 @@ export interface OcrDraftLine {
   /** Printed code or name from the saved link, for the badge. */
   match_printed_value?: string;
   matched_product_name?: string;
+  /** Two fuzzy candidates were too close. The clerk may Check; posting is not blocked for this alone. */
+  fuzzy_ambiguous?: boolean;
   product_picked?: boolean;
   remember?: boolean;
   unlink_match?: boolean;
@@ -385,9 +388,10 @@ export async function commitInvoiceOcrReceipts(input: {
     throw new Error('No confirmed invoice lines to receive.');
   }
   const supplierIdEarly = input.invoiceMeta?.supplierId?.trim() ?? '';
-  const confirmedItems = supplierIdEarly
+  const relinked = supplierIdEarly
     ? await reapplyCommitLines(input.confirmedItems, supplierIdEarly)
     : input.confirmedItems;
+  const confirmedItems = withDefaultCreateNew(relinked);
   const sampleReason = sampleInvoiceCommitRejection({
     invoiceNumber: input.invoiceMeta?.invoiceNumber,
   });
@@ -498,8 +502,12 @@ export async function commitInvoiceOcrReceipts(input: {
             );
           }
         }
+        const nameCatalog = await tx.product.findMany({
+          where: { isManufactured: false },
+          select: { id: true, name: true },
+        });
         const settled = await settleCommitPosts(posts, (post) =>
-          postReceivingLogToInventory(post, input.staffId, supplierName, tx, true)
+          postReceivingLogToInventory(post, input.staffId, supplierName, tx, true, nameCatalog)
         );
         const postedRows = settled.postedRows;
         const receipts = settled.receipts;

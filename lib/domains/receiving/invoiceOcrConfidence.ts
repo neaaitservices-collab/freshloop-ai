@@ -17,13 +17,13 @@ export function normalizeExtractionConfidence(raw: unknown, source: 'sample' | '
   return source === 'sample' ? 0.95 : 0.78;
 }
 
-export function combineLineConfidence(extraction: number, match: number | null): number {
+/**
+ * Review confidence is the OCR extraction score alone.
+ * A catalog match is not folded in and is not a reason to hold the line.
+ */
+export function combineLineConfidence(extraction: number, _match: number | null): number {
   const ext = Math.min(1, Math.max(0, extraction));
-  if (match === null) {
-    return Number((ext * 0.72).toFixed(4));
-  }
-  const m = Math.min(1, Math.max(0, match));
-  return Number((ext * 0.45 + m * 0.55).toFixed(4));
+  return Number(ext.toFixed(4));
 }
 
 export function lineNeedsManualReview(lineConfidence: number): boolean {

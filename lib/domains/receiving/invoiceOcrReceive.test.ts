@@ -702,11 +702,11 @@ test('a $0 line is returned for review and is not sent to stock', async () => {
   if (zero && zero.stock.posted === false) assert.match(zero.stock.reason ?? '', /review only/);
 });
 
-test('a manager override still blocks a line with no matched product', async () => {
+test('an unmatched line posts as a new item instead of blocking', async () => {
   const draft = storedDraft();
   const payload = draft.payload as OcrDraftPayload;
   payload.lines[0]!.product_id = '';
-  let wrote = false;
+  const posted: InvoiceOcrPostEntry[] = [];
   const outcome = await receiveAcceptedInvoiceOcr({
     actorId: 'manager-1',
     actorIsManager: true,
@@ -720,17 +720,16 @@ test('a manager override still blocks a line with no matched product', async () 
     },
     deps: {
       findDraft: async () => draft,
-      postLines: async () => {
-        wrote = true;
+      postLines: async (input) => {
+        posted.push(...input.entries);
         return [];
       },
     },
   });
-  assert.equal(wrote, false);
-  assert.equal(outcome.ok, false);
-  if (outcome.ok) return;
-  assert.equal(outcome.status, 409);
-  assert.match(outcome.error, /not matched to a catalog product/);
+  assert.equal(outcome.ok, true);
+  assert.equal(posted.length, 1);
+  assert.equal(posted[0]?.line.productId, undefined);
+  assert.equal(posted[0]?.line.itemName, 'Honeycrisp Apples');
 });
 
 test('an unaccepted draft is rejected', async () => {

@@ -167,27 +167,75 @@ export function catalogDuplicateScore(itemName: string, productName: string): nu
   return Number((forward * 60 + reverse * 40).toFixed(2));
 }
 
+/** Fuzzy hits below this are ignored. Close Check uses the same bar. */
+export const PRODUCT_MATCH_MIN_SCORE = 52;
+
 export function matchProductWithScore<T extends { name: string }>(
   itemName: string,
   products: T[],
   options?: { minScore?: number }
-): { product: T; score: number } | null {
-  const minScore = options?.minScore ?? 52;
+): { product: T; score: number; runnerUpScore: number | null } | null {
+  const minScore = options?.minScore ?? PRODUCT_MATCH_MIN_SCORE;
   const trimmed = itemName.trim();
   if (!trimmed) return null;
 
   let best: { product: T; score: number; pref: number } | null = null;
+  let runnerUpScore: number | null = null;
 
   for (const product of products) {
     const score = scoreProductMatch(trimmed, product.name);
     if (score < minScore) continue;
     const pref = catalogNamePreference(product.name);
     if (!best || score > best.score || (score === best.score && pref > best.pref)) {
+      if (best) runnerUpScore = best.score;
       best = { product, score, pref };
+      continue;
     }
+    if (runnerUpScore === null || score > runnerUpScore) runnerUpScore = score;
   }
 
-  return best ? { product: best.product, score: best.score } : null;
+  return best ? { product: best.product, score: best.score, runnerUpScore } : null;
+}
+
+/**
+ * Same normalized name in this store's catalog, before the fuzzy pass.
+ * Stops a new invoice line from creating a second product for a name already on the shelf.
+ */
+export function matchNormalizedProductName<T extends { name: string }>(
+  itemName: string,
+  products: readonly T[]
+): T | null {
+  const key = normalizeProductNameForMatch(itemName);
+  if (!key) return null;
+  for (const product of products) {
+    if (normalizeProductNameForMatch(product.name) === key) return product;
+  }
+  return null;
+}
+
+/** Exact normalized name, then the existing fuzzy match. */
+export function selectPurchaseProductByName<T extends { name: string }>(
+  itemName: string,
+  products: readonly T[]
+): T | null {
+  return matchNormalizedProductName(itemName, products) ?? matchProduct(itemName, [...products]);
+}
+
+/**
+ * One catalog row per normalized name inside a single invoice.
+ * `catalog` is this store's purchasable products plus rows created earlier on the same invoice.
+ */
+export function claimPurchaseProduct(
+  itemName: string,
+  catalog: { id: string; name: string }[],
+  mintId: () => string
+): { id: string; name: string; created: boolean } {
+  const name = itemName.trim();
+  const existing = selectPurchaseProductByName(name, catalog);
+  if (existing) return { id: existing.id, name: existing.name, created: false };
+  const created = { id: mintId(), name };
+  catalog.push(created);
+  return { id: created.id, name: created.name, created: true };
 }
 
 export function matchProduct<T extends { name: string }>(

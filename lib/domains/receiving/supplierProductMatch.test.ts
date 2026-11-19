@@ -285,7 +285,7 @@ test('a clerk pick is stored on the draft and a rename keeps the printed name', 
   assert.equal(draftPostingBlockers(creating, { actorIsManager: false, manualReviewOverride: false }).some((row) => /not matched/.test(row)), false);
   assert.equal(
     draftPostingBlockers(draft, { actorIsManager: true, manualReviewOverride: true }).some((row) => /not matched/.test(row)),
-    true
+    false
   );
 });
 

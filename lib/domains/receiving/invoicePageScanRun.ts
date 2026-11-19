@@ -45,6 +45,8 @@ export interface InvoicePageImage {
 
 export interface InvoicePageScanRunner {
   staffId: string;
+  /** Store manager or admin. A clerk stays on the clerk blocker path. */
+  actorIsManager?: boolean;
   body: unknown;
   now?: Date;
   readPage: (page: InvoicePageImage) => Promise<PageFact>;
@@ -131,11 +133,11 @@ async function loadOwned(staffId: string, draftId: string) {
   return row;
 }
 
-function responseFor(draftId: string, payload: OcrDraftPayload): ScanResponse {
+function responseFor(draftId: string, payload: OcrDraftPayload, actorIsManager: boolean): ScanResponse {
   const scan = readStoredPageScan(payload);
   const status = scan?.scanStatus ?? 'scanning';
   const http = status === 'scanning' ? 202 : 200;
-  const blockers = draftPostingBlockers(payload, { actorIsManager: false, manualReviewOverride: false });
+  const blockers = draftPostingBlockers(payload, { actorIsManager, manualReviewOverride: false });
   const pages = (scan?.scanPages ?? []).map((page) => ({
     index: page.index,
     status: page.status,
@@ -186,6 +188,14 @@ function responseFor(draftId: string, payload: OcrDraftPayload): ScanResponse {
         printedName: line.printed_name ?? line.line_name ?? null,
         matchSource: line.match_source ?? null,
         matchPrintedValue: line.match_printed_value ?? null,
+        quantityUnreadable: line.quantity_unreadable === true,
+        costUnreadable: line.cost_unreadable === true,
+        nameUnreadable: line.name_unreadable === true,
+        unitInvalid: line.unit_invalid === true,
+        lineTotalMismatch: line.line_total_mismatch === true,
+        departmentAssumed: line.department_assumed === true,
+        fuzzyAmbiguous: line.fuzzy_ambiguous === true,
+        createNew: line.create_new === true,
         lineConfidence: line.line_confidence,
         needsManualReview:
           line.requires_approval === true ||
@@ -407,7 +417,7 @@ async function continueScan(runner: InvoicePageScanRunner, now: Date): Promise<S
   const images = new Map(body.pages.map((page) => [page.index, page]));
   const wave = await readWave(runner, draftId, scan, images, now.getTime(), lines);
   const payload = await finishIfReady(runner, draftId, wave.scan, wave.lines);
-  return responseFor(draftId, payload);
+  return responseFor(draftId, payload, runner.actorIsManager === true);
 }
 
 async function retryScan(runner: InvoicePageScanRunner, now: Date): Promise<ScanResponse> {
@@ -447,7 +457,7 @@ async function retryScan(runner: InvoicePageScanRunner, now: Date): Promise<Scan
     ? recordPageRead(begun.scan, body.page.index, begun.attempt, fact, iso(new Date()))
     : recordPageFailure(begun.scan, body.page.index, begun.attempt, failure, iso(new Date()));
   const payload = await finishIfReady(runner, row.id, next, []);
-  return responseFor(row.id, payload);
+  return responseFor(row.id, payload, runner.actorIsManager === true);
 }
 
 async function undoScan(runner: InvoicePageScanRunner, now: Date): Promise<ScanResponse> {
@@ -464,7 +474,7 @@ async function undoScan(runner: InvoicePageScanRunner, now: Date): Promise<ScanR
   }
   const undone = undoDedupeOnScan(stored);
   const payload = await auditAndSave(runner, row.id, undone);
-  return responseFor(row.id, payload);
+  return responseFor(row.id, payload, runner.actorIsManager === true);
 }
 
 async function findByClientScan(staffId: string, clientScanId: string, now: Date) {

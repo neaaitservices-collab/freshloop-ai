@@ -368,7 +368,9 @@ export async function postReceivingLogToInventory(
   supplierName: string | null,
   db?: LotTx,
   /** Set after the batch already loaded the catalogue and checked every line. */
-  departmentChecked = false
+  departmentChecked = false,
+  /** Shared across one invoice so two new lines with the same name create one product. */
+  nameCatalog?: { id: string; name: string }[]
 ): Promise<ReceivingLogPostResult> {
   const sampleReason = sampleReceivingRejection(input);
   if (sampleReason) {
@@ -418,38 +420,42 @@ export async function postReceivingLogToInventory(
   }
 
   try {
-    const stock = await postReceipt({
-      itemName: input.itemName,
-      productId: input.productId,
-      casesReceived: input.casesReceived,
-      caseCost: input.caseCost,
-      packSize: input.packSize,
-      splitFactor: input.splitFactor,
-      retailPrice: input.currentRetailPrice,
-      ...(caseRetailPrice !== undefined ? { caseRetailPrice } : {}),
-      retailUnit: input.retailUnit,
-      staffId: actorId,
-      targetMargin,
-      supplier: supplierName,
-      department: input.department,
-      departmentAssumed: input.departmentAssumed,
-      category: input.category,
-      screenDepartment: input.screenDepartment,
-      externalLogId: input.externalLogId,
-      delivery: input.externalLogId
-        ? {
-            payloadHash: receivingDeliveryPayloadHash({
-              itemName: input.itemName,
+    const stock = await postReceipt(
+      {
+        itemName: input.itemName,
+        productId: input.productId,
+        casesReceived: input.casesReceived,
+        caseCost: input.caseCost,
+        packSize: input.packSize,
+        splitFactor: input.splitFactor,
+        retailPrice: input.currentRetailPrice,
+        ...(caseRetailPrice !== undefined ? { caseRetailPrice } : {}),
+        retailUnit: input.retailUnit,
+        staffId: actorId,
+        targetMargin,
+        supplier: supplierName,
+        department: input.department,
+        departmentAssumed: input.departmentAssumed,
+        category: input.category,
+        screenDepartment: input.screenDepartment,
+        externalLogId: input.externalLogId,
+        delivery: input.externalLogId
+          ? {
+              payloadHash: receivingDeliveryPayloadHash({
+                itemName: input.itemName,
+                productId: input.productId,
+                casesReceived: input.casesReceived,
+                caseCost: input.caseCost,
+                packSize: input.packSize,
+                splitFactor: input.splitFactor,
+              }),
               productId: input.productId,
-              casesReceived: input.casesReceived,
-              caseCost: input.caseCost,
-              packSize: input.packSize,
-              splitFactor: input.splitFactor,
-            }),
-            productId: input.productId,
-          }
-        : undefined,
-    }, db);
+            }
+          : undefined,
+      },
+      db,
+      nameCatalog
+    );
 
     return {
       externalLogId: input.externalLogId,
