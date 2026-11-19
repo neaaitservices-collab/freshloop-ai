@@ -18,7 +18,8 @@ import {
 } from '@/lib/domains/receiving/deliveryIdentity';
 import { sampleReceivingRejection } from '@/lib/domains/receiving/sampleReceivingGuard';
 import { getSupplierNameById } from '@/lib/domains/suppliers/suppliers';
-import { z } from 'zod';
+import { Prisma } from '@prisma/client';
+import { z, ZodError } from 'zod';
 import { numericInput } from '@/lib/security/numericInput';
 import {
   calculateYieldQuote,
@@ -34,6 +35,96 @@ import {
 import { receivingDepartment } from '@/lib/domains/inventory/receivingDepartment';
 
 export const MAX_RECEIVING_BATCH_SIZE = 80;
+
+export const STOCK_NOT_UPDATED = 'Stock was not updated.';
+export const UNMATCHED_PRODUCT_REASON = 'This line is not matched to a catalog product.';
+export const MISSING_LOCATION_REASON = 'A stock location is missing for this receipt.';
+export const RECEIVING_VALIDATION_REASON = 'A receiving field failed validation.';
+/** A read $0 line stays on the invoice for review and never becomes a stock receipt. */
+export const ZERO_DOLLAR_REVIEW_REASON =
+  'This $0 line is for review only and was not posted to stock.';
+
+/** Explicit numeric zero. A blank cost stays a validation error. */
+export function isZeroDollarReceivingLine(line: { caseCost?: unknown }): boolean {
+  return typeof line.caseCost === 'number' && Number.isFinite(line.caseCost) && line.caseCost === 0;
+}
+
+function looksLikeInternalDetail(message: string): boolean {
+  return (
+    message.length > 180 ||
+    /[\r\n]/.test(message) ||
+    /prisma|invocation|\bselect\b|\binsert\b|\bupdate\b|\bdelete\b|constraint|violates|postgres|\bsql\b|\bP\d{4}\b|clientVersion|stack trace|\bat\s+\S+\.(?:ts|js)/i.test(
+      message
+    )
+  );
+}
+
+function prismaLabels(error: { message?: string; meta?: unknown }): string {
+  const meta =
+    error.meta && typeof error.meta === 'object' ? (error.meta as Record<string, unknown>) : {};
+  return [error.message, meta.field_name, meta.constraint, meta.modelName, meta.cause, meta.target]
+    .filter((part) => part != null)
+    .map((part) => (typeof part === 'string' ? part : JSON.stringify(part)))
+    .join(' ');
+}
+
+function mentionsProduct(text: string): boolean {
+  return /product/i.test(text);
+}
+
+function mentionsLocation(text: string): boolean {
+  return /location/i.test(text);
+}
+
+/**
+ * Client copy for a failed receipt. Server logs keep the original error.
+ * Stack traces, SQL, and Prisma codes stay off the response.
+ */
+export function receivingPostFailureReason(error: unknown): string {
+  if (error instanceof InventoryLedgerError) {
+    const message = error.message.trim();
+    return message && !looksLikeInternalDetail(message) ? message : STOCK_NOT_UPDATED;
+  }
+  if (error instanceof ZodError) {
+    const issue = error.issues[0];
+    if (!issue) return RECEIVING_VALIDATION_REASON;
+    const path = issue.path.length > 0 ? `${issue.path.join('.')}: ` : '';
+    const message = `${path}${issue.message}`.trim();
+    return message && !looksLikeInternalDetail(message) ? message : RECEIVING_VALIDATION_REASON;
+  }
+  if (error instanceof Prisma.PrismaClientKnownRequestError) {
+    const labels = prismaLabels(error);
+    if (error.code === 'P2003' || error.code === 'P2025') {
+      if (mentionsProduct(labels)) return UNMATCHED_PRODUCT_REASON;
+      if (mentionsLocation(labels)) return MISSING_LOCATION_REASON;
+      return STOCK_NOT_UPDATED;
+    }
+    if (error.code === 'P2002') return 'This delivery is already recorded.';
+    return STOCK_NOT_UPDATED;
+  }
+  if (
+    error instanceof Prisma.PrismaClientValidationError ||
+    error instanceof Prisma.PrismaClientInitializationError
+  ) {
+    const labels = error.message;
+    if (mentionsLocation(labels)) return MISSING_LOCATION_REASON;
+    if (mentionsProduct(labels)) return UNMATCHED_PRODUCT_REASON;
+    if (error instanceof Prisma.PrismaClientValidationError) return RECEIVING_VALIDATION_REASON;
+    return STOCK_NOT_UPDATED;
+  }
+  if (error instanceof Error) {
+    const message = error.message.trim();
+    if (!message || looksLikeInternalDetail(message)) return STOCK_NOT_UPDATED;
+    if (mentionsProduct(message) && /not found|not matched|unmatched|no matching|unknown/i.test(message)) {
+      return UNMATCHED_PRODUCT_REASON;
+    }
+    if (mentionsLocation(message) && /missing|not found|invalid|required/i.test(message)) {
+      return MISSING_LOCATION_REASON;
+    }
+    if (/required|must be|invalid|greater than|at most|finite|validation/i.test(message)) return message;
+  }
+  return STOCK_NOT_UPDATED;
+}
 
 export interface ReceivingLogPostInput {
   itemName: string;
@@ -103,7 +194,9 @@ export async function receivingDepartmentGaps(
   lines: ReceivingLogPostInput[],
   supplierName: string | null
 ): Promise<ReceivingDepartmentFieldError[]> {
-  const postable = lines.filter((line) => !sampleReceivingRejection(line));
+  const postable = lines.filter(
+    (line) => !sampleReceivingRejection(line) && !isZeroDollarReceivingLine(line)
+  );
   if (postable.length === 0) return [];
   const catalog = await prisma.product.findMany({
     where: { isManufactured: false },
@@ -284,6 +377,13 @@ export async function postReceivingLogToInventory(
       stock: { posted: false, reason: sampleReason },
     };
   }
+  if (isZeroDollarReceivingLine(input)) {
+    return {
+      externalLogId: input.externalLogId,
+      itemName: input.itemName,
+      stock: { posted: false, reason: ZERO_DOLLAR_REVIEW_REASON },
+    };
+  }
   if (!departmentChecked) {
     await assertReceivingDepartmentsChosen([input], supplierName);
   }
@@ -368,7 +468,7 @@ export async function postReceivingLogToInventory(
     return {
       externalLogId: input.externalLogId,
       itemName: input.itemName,
-      stock: { posted: false, reason: 'Stock was not updated.' },
+      stock: { posted: false, reason: receivingPostFailureReason(error) },
     };
   }
 }
@@ -380,12 +480,20 @@ export interface ReceivingBatchSlot {
 }
 
 /** Unreadable quantities stay out of the post list so one blank line does not reject the batch. */
-export function splitUnreadReceivingLines<T extends { casesReceived?: number; itemName?: string; externalLogId?: string }>(
-  rows: T[]
-): { unread: ReceivingBatchSlot[]; rest: T[] } {
+export function splitUnreadReceivingLines<
+  T extends { casesReceived?: number; caseCost?: unknown; itemName?: string; externalLogId?: string }
+>(rows: T[]): { unread: ReceivingBatchSlot[]; rest: T[] } {
   const unread: ReceivingBatchSlot[] = [];
   const rest: T[] = [];
   for (const row of rows) {
+    if (isZeroDollarReceivingLine(row)) {
+      unread.push({
+        externalLogId: row.externalLogId,
+        itemName: row.itemName?.trim() || 'Line',
+        stock: { posted: false, reason: ZERO_DOLLAR_REVIEW_REASON },
+      });
+      continue;
+    }
     if (Number(row.casesReceived) > 0) {
       rest.push(row);
       continue;

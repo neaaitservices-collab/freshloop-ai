@@ -1,6 +1,10 @@
 import type { Department } from '@prisma/client';
 import { lineNeedsManualReview } from '@/lib/domains/receiving/invoiceOcrConfidence';
-import { MAX_RECEIVING_BATCH_SIZE } from '@/lib/domains/receiving/receivingLogPost';
+import { selectInvoiceHeaderTotal } from '@/lib/domains/receiving/invoiceHeaderTotal';
+import {
+  MAX_RECEIVING_BATCH_SIZE,
+  ZERO_DOLLAR_REVIEW_REASON,
+} from '@/lib/domains/receiving/receivingLogPost';
 import {
   quantityKindForInvoiceUnit,
   type OcrDraftLine,
@@ -70,6 +74,29 @@ export interface OcrDraftResolution {
   }>;
 }
 
+/** A catalog id is the match. A blank id stays blocked even after a manager override. */
+export function lineHasMatchedProduct(line: { product_id?: string | null }): boolean {
+  return Boolean(line.product_id?.trim());
+}
+
+/**
+ * A cost that was read as $0. An unreadable cost is a different gap and stays blocked.
+ * These lines stay on the draft for review and are not stock receipts.
+ */
+export function isZeroDollarDraftLine(line: {
+  unit_cost?: number;
+  cost_unreadable?: boolean;
+}): boolean {
+  if (line.cost_unreadable === true) return false;
+  return typeof line.unit_cost === 'number' && Number.isFinite(line.unit_cost) && line.unit_cost === 0;
+}
+
+function lineExtendedAmount(line: { quantity: number; unit_cost: number }): number {
+  const quantity = line.quantity > 0 ? line.quantity : 0;
+  const cost = Number.isFinite(line.unit_cost) ? line.unit_cost : 0;
+  return Number((quantity * cost).toFixed(2));
+}
+
 function isUnreadName(name: string | undefined): boolean {
   const trimmed = name?.trim() ?? '';
   return !trimmed || trimmed.startsWith('Unread line ');
@@ -87,9 +114,11 @@ export function reviewReasonsForLine(line: {
   cost_unreadable?: boolean;
   unit_invalid?: boolean;
   line_total_mismatch?: boolean;
+  unit_cost?: number;
   review_reasons?: OcrReviewReason[];
 }): OcrReviewReason[] {
   if (line.review_reasons) return [...line.review_reasons];
+  if (isZeroDollarDraftLine(line)) return [];
   const reasons: OcrReviewReason[] = [];
   const name = line.line_name ?? line.item_name;
   if (line.name_unreadable || isUnreadName(name)) reasons.push('name_unreadable');
@@ -111,6 +140,8 @@ export function buildAuthoritativeOcrDraft(input: {
   invoiceDateNeedsConfirm?: boolean;
   invoiceDateConfirmReason?: string | null;
   totalAmount: number;
+  /** Printed subtotal from the page. Absent when the page did not print one. */
+  printedSubtotal?: number;
   departmentBreakdown: Record<string, number>;
   lines: AuditedDraftSourceLine[];
 }): OcrDraftPayload {
@@ -121,9 +152,14 @@ export function buildAuthoritativeOcrDraft(input: {
     const costUnreadable = line.cost_unreadable === true;
     const unitInvalid = line.unit_invalid === true;
     const lineTotalMismatch = line.line_total_mismatch === true;
+    const zeroDollar = isZeroDollarDraftLine({
+      unit_cost: line.unit_cost,
+      cost_unreadable: costUnreadable,
+    });
     const review_reasons = reviewReasonsForLine({
       line_name: line.item_name,
       quantity: line.quantity,
+      unit_cost: line.unit_cost,
       line_confidence: line.line_confidence,
       requires_approval: line.requires_approval,
       department_assumed: departmentAssumed,
@@ -150,11 +186,20 @@ export function buildAuthoritativeOcrDraft(input: {
       cost_unreadable: costUnreadable,
       unit_invalid: unitInvalid,
       line_total_mismatch: lineTotalMismatch,
-      ...(line.line_total_note ? { line_total_note: line.line_total_note } : {}),
+      ...(line.line_total_note
+        ? { line_total_note: line.line_total_note }
+        : zeroDollar
+          ? { line_total_note: ZERO_DOLLAR_REVIEW_REASON }
+          : {}),
       review_reasons,
     };
   });
   const confirmReason = input.invoiceDateConfirmReason?.trim() ?? '';
+  const lineAmounts = lines.map((line) => lineExtendedAmount(line));
+  const totalAmount = selectInvoiceHeaderTotal({
+    printedSubtotal: input.printedSubtotal,
+    lineAmounts: lineAmounts.length > 0 ? lineAmounts : [input.totalAmount],
+  });
   return {
     vendorName: input.vendorName.trim(),
     invoiceNumber: input.invoiceNumber.trim(),
@@ -165,7 +210,10 @@ export function buildAuthoritativeOcrDraft(input: {
           ...(confirmReason ? { invoiceDateConfirmReason: confirmReason } : {}),
         }
       : {}),
-    totalAmount: input.totalAmount,
+    totalAmount,
+    ...(typeof input.printedSubtotal === 'number' && Number.isFinite(input.printedSubtotal)
+      ? { printedSubtotal: input.printedSubtotal }
+      : {}),
     departmentBreakdown: input.departmentBreakdown,
     lines,
   };
@@ -230,6 +278,10 @@ export function draftPostingBlockers(
   }
   const managerMayResolve = options.manualReviewOverride && options.actorIsManager;
   payload.lines.forEach((line, index) => {
+    if (isZeroDollarDraftLine(line)) return;
+    if (!lineHasMatchedProduct(line)) {
+      blockers.push(`Line ${index + 1} is not matched to a catalog product.`);
+    }
     const reasons = unresolvedLineReasons(line, managerMayResolve);
     if (line.pack_needs_manager && !line.pack_edited_by && !options.actorIsManager) {
       const pack = line.case_pack_size ?? 1;
@@ -268,25 +320,23 @@ function recomputeDraftEconomics(payload: OcrDraftPayload): OcrDraftPayload {
     DELI_KITCHEN: 0,
     GROCERY: 0,
   };
-  let totalAmount = 0;
+  const lineAmounts: number[] = [];
   for (const line of payload.lines) {
-    const extended = Number(((line.quantity > 0 ? line.quantity : 0) * line.unit_cost).toFixed(2));
-    totalAmount = Number((totalAmount + extended).toFixed(2));
+    const extended = lineExtendedAmount(line);
+    lineAmounts.push(extended);
     const department = line.department ?? 'PRODUCE';
     departmentBreakdown[department] = Number(
       ((departmentBreakdown[department] ?? 0) + extended).toFixed(2)
     );
   }
-  const printed = printedInvoiceTotal(payload);
-  return { ...payload, totalAmount: printed ?? totalAmount, departmentBreakdown };
-}
-
-/** Printed subtotal plus any tax that was actually read. A blank tax is not stored as 0. */
-function printedInvoiceTotal(payload: OcrDraftPayload): number | undefined {
-  if (typeof payload.printedSubtotal !== 'number') return undefined;
-  const hst = typeof payload.printedHst === 'number' ? payload.printedHst : 0;
-  const pst = typeof payload.printedPst === 'number' ? payload.printedPst : 0;
-  return Number((payload.printedSubtotal + hst + pst).toFixed(2));
+  return {
+    ...payload,
+    totalAmount: selectInvoiceHeaderTotal({
+      printedSubtotal: payload.printedSubtotal,
+      lineAmounts,
+    }),
+    departmentBreakdown,
+  };
 }
 
 /**

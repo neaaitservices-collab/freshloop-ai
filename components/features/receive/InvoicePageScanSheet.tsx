@@ -25,6 +25,7 @@ import {
   scanStepAfterClientFailure,
   type InvoicePageStatus,
 } from '@/lib/domains/receiving/invoicePageScan';
+import { selectInvoiceHeaderTotal } from '@/lib/domains/receiving/invoiceHeaderTotal';
 import { matchSupplierByName } from '@/lib/domains/suppliers/supplierInvoiceMatch';
 import type { SupplierRecord } from '@/lib/domains/suppliers/suppliers';
 import type { InvoiceLineItemExtract } from '@/lib/types';
@@ -922,10 +923,14 @@ function money(value: number | undefined): string {
 }
 
 function invoiceTotal(view: ScanView): number | undefined {
-  if (typeof view.printedSubtotal !== 'number') return undefined;
-  const hst = typeof view.printedHst === 'number' ? view.printedHst : 0;
-  const pst = typeof view.printedPst === 'number' ? view.printedPst : 0;
-  return Number((view.printedSubtotal + hst + pst).toFixed(2));
+  const lineAmounts = view.lines.map((line) => line.totalCost);
+  const hasLine = lineAmounts.some((amount) => typeof amount === 'number' && Number.isFinite(amount));
+  const hasPrinted = typeof view.printedSubtotal === 'number' && view.printedSubtotal > 0;
+  if (!hasPrinted && !hasLine) return undefined;
+  return selectInvoiceHeaderTotal({
+    printedSubtotal: view.printedSubtotal,
+    lineAmounts,
+  });
 }
 
 function asLines(value: unknown): ReviewLine[] {

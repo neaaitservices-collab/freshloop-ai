@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { interpretInvoiceOcrModel } from '@/lib/domains/receiving/invoiceOcrModel';
 import { numericInput } from '@/lib/security/numericInput';
 
 /**
@@ -164,20 +165,44 @@ export function readPrintedMoneyFields(raw: unknown): {
   };
 }
 
-/** Item codes only when every raw row survived as a stock line, so indexes still match. */
+/**
+ * Supplier codes for the stock lines the invoice parser kept, in that same order.
+ * Shipped-0 and charge rows are left out with the same check as `interpretInvoiceOcrModel`,
+ * so a code stays on the row that survived.
+ */
 export function codesIfUnfiltered(raw: unknown, stockCount: number): Array<string | undefined> {
   const blanks = Array.from({ length: stockCount }, () => undefined);
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return blanks;
   const record = raw as Record<string, unknown>;
   const lines = record.lineItems ?? record.line_items;
-  if (!Array.isArray(lines) || lines.length !== stockCount) return blanks;
-  return lines.map((line) => {
-    if (!line || typeof line !== 'object' || Array.isArray(line)) return undefined;
-    const code = (line as { code?: unknown }).code;
-    if (typeof code !== 'string') return undefined;
-    const trimmed = code.trim();
-    return trimmed || undefined;
-  });
+  if (!Array.isArray(lines)) return blanks;
+  const kept = lines.filter((line) => linePostsStock(line));
+  if (kept.length !== stockCount) return blanks;
+  return kept.map(readLineCode);
+}
+
+function readLineCode(line: unknown): string | undefined {
+  if (!line || typeof line !== 'object' || Array.isArray(line)) return undefined;
+  const code = (line as { code?: unknown }).code;
+  if (typeof code !== 'string') return undefined;
+  const trimmed = code.trim();
+  return trimmed || undefined;
+}
+
+/** True when this raw row would be one of `interpretInvoiceOcrModel(...).lineItems`. */
+function linePostsStock(line: unknown): boolean {
+  try {
+    return (
+      interpretInvoiceOcrModel({
+        vendorName: 'Supplier',
+        invoiceNumber: '1',
+        invoiceDate: '2026-01-01',
+        lineItems: [line],
+      }).lineItems.length > 0
+    );
+  } catch {
+    return false;
+  }
 }
 
 export function chunkPages<T>(items: T[], size = INVOICE_PAGE_BATCH_SIZE): T[][] {

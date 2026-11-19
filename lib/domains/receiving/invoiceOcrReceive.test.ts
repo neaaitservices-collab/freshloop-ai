@@ -560,6 +560,81 @@ test('a tampered client payload is ignored and the stored draft is posted', asyn
   assert.notEqual(posted[0]?.line.caseCost, 0.01);
 });
 
+test('a $0 line is returned for review and is not sent to stock', async () => {
+  const draft = storedDraft();
+  const payload = draft.payload as OcrDraftPayload;
+  payload.lines.push({
+    product_id: 'sku-free',
+    quantity: 1,
+    quantity_kind: 'cases',
+    unit_cost: 0,
+    line_name: 'Shipped zero greens',
+    department: 'PRODUCE',
+    case_pack_size: 1,
+    line_confidence: 0.99,
+    requires_approval: false,
+  });
+  const posted: InvoiceOcrPostEntry[] = [];
+  const outcome = await receiveAcceptedInvoiceOcr({
+    actorId: 'clerk-1',
+    actorIsManager: true,
+    body: {
+      invoiceOcr: true,
+      draftId: 'draft-1',
+      acceptDraft: true,
+      manualReviewOverride: true,
+      supplierId: 'sup-1',
+      items: [
+        browserCopy(),
+        browserCopy({
+          draftLineIndex: 1,
+          externalLogId: '44444444-4444-4444-8444-444444444444',
+        }),
+      ],
+    },
+    deps: deps(draft, posted),
+  });
+  assert.equal(outcome.ok, true);
+  if (!outcome.ok) return;
+  assert.equal(posted.length, 1);
+  assert.equal(posted[0]?.line.caseCost, 12);
+  const zero = outcome.results.find((row) => row.itemName === 'Shipped zero greens');
+  assert.ok(zero);
+  assert.equal(zero?.stock.posted, false);
+  if (zero && zero.stock.posted === false) assert.match(zero.stock.reason ?? '', /review only/);
+});
+
+test('a manager override still blocks a line with no matched product', async () => {
+  const draft = storedDraft();
+  const payload = draft.payload as OcrDraftPayload;
+  payload.lines[0]!.product_id = '';
+  let wrote = false;
+  const outcome = await receiveAcceptedInvoiceOcr({
+    actorId: 'manager-1',
+    actorIsManager: true,
+    body: {
+      invoiceOcr: true,
+      draftId: 'draft-1',
+      acceptDraft: true,
+      manualReviewOverride: true,
+      supplierId: 'sup-1',
+      items: [browserCopy()],
+    },
+    deps: {
+      findDraft: async () => draft,
+      postLines: async () => {
+        wrote = true;
+        return [];
+      },
+    },
+  });
+  assert.equal(wrote, false);
+  assert.equal(outcome.ok, false);
+  if (outcome.ok) return;
+  assert.equal(outcome.status, 409);
+  assert.match(outcome.error, /not matched to a catalog product/);
+});
+
 test('an unaccepted draft is rejected', async () => {
   let wrote = false;
   const outcome = await receiveAcceptedInvoiceOcr({

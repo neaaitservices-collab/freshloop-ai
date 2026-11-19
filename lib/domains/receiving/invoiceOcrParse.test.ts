@@ -239,6 +239,11 @@ test('mixed draft keeps the unreadable line and blocks the whole commit', () => 
     { actorIsManager: true, manualReviewOverride: true }
   );
   assert.equal(resolved.lines[1]?.department_assumed, false);
+  assert.match(
+    draftPostingBlockers(resolved, { actorIsManager: true, manualReviewOverride: true }).join(' '),
+    /not matched to a catalog product/
+  );
+  resolved.lines[1]!.product_id = 'lemons';
   const still = draftPostingBlockers(resolved, { actorIsManager: false, manualReviewOverride: false });
   assert.equal(still.length, 0);
   const assumedOnly = buildAuthoritativeOcrDraft({
