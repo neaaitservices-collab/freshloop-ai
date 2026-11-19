@@ -9,6 +9,7 @@ import { GEMINI_FLASH_MODEL_FALLBACKS } from '@/lib/domains/ai/geminiModels';
 import { departmentPromptUnion } from '@/lib/domains/inventory/inventoryCatalog';
 import { selectInvoiceHeaderTotal } from '@/lib/domains/receiving/invoiceHeaderTotal';
 import { interpretInvoiceOcrModel } from '@/lib/domains/receiving/invoiceOcrModel';
+import { readOptionalMoney, readPrintedMoneyFields } from '@/lib/domains/receiving/invoicePageScan';
 
 /**
  * Parses model output that should be JSON (handles markdown fences and common wrappers).
@@ -538,7 +539,10 @@ function getMockVoiceResult(spokenText?: string): VoiceLoggerResult {
 
 /**
  * Printed header amount for `selectInvoiceHeaderTotal`.
- * The parsed subtotal wins. When the page did not print one, a numeric totalAmount is the printed total.
+ * The parsed subtotal wins. When the page did not print one, a numeric totalAmount is used
+ * only when hst, pst, and gst are missing or 0. hst and pst use the parser's names
+ * (`hst`/`HST`, `pst`/`PST`); gst uses the same money read (`gst`/`GST`).
+ * Tax above 0 returns null so the header falls back to the line sum.
  * InvoiceOcrResult has no separate subtotal field, so the header total carries this value.
  */
 function printedInvoiceAmount(raw: unknown, interpretedSubtotal: number | null): number | null {
@@ -546,7 +550,14 @@ function printedInvoiceAmount(raw: unknown, interpretedSubtotal: number | null):
     return interpretedSubtotal;
   }
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
-  const total = (raw as Record<string, unknown>).totalAmount;
+  const record = raw as Record<string, unknown>;
+  const money = readPrintedMoneyFields(record);
+  const gst = readOptionalMoney(record.gst ?? record.GST);
+  const taxAboveZero = [money.hst, money.pst, gst].some(
+    (amount) => typeof amount === 'number' && amount > 0
+  );
+  if (taxAboveZero) return null;
+  const total = record.totalAmount;
   if (typeof total === 'number' && Number.isFinite(total)) return total;
   return null;
 }
@@ -572,8 +583,11 @@ Analyze this invoice image and extract structured data in JSON format adhering s
   "invoiceNumber": "string",
   "invoiceDate": "YYYY-MM-DD",
   "orderDate": "another printed date such as the order date, copied as printed, or empty",
-  "totalAmount": number (printed invoice total, copied exactly as printed),
-  "subtotal": number (printed subtotal, copied exactly as printed, or omit when the invoice has none),
+  "totalAmount": number (printed subtotal before tax, copied exactly as printed),
+  "subtotal": number | null (printed subtotal, copied exactly as printed, or null when not printed; never computed),
+  "hst": number | null (printed HST, copied exactly as printed, or null when not printed; never computed),
+  "pst": number | null (printed PST, copied exactly as printed, or null when not printed; never computed),
+  "gst": number | null (printed GST, copied exactly as printed, or null when not printed; never computed),
   "departmentBreakdown": {
     "PRODUCE": number,
     "DAIRY": number,
@@ -605,7 +619,7 @@ Classification rules:
 - Classify oils, spices, canned goods, sauces, grains as "PANTRY".
 - Classify household paper, soap, detergent, and packaged grocery as "GROCERY".
 - Classify prepared foods, deli, and rotisserie as "DELI_KITCHEN".
-totalAmount is the printed invoice total and subtotal is the printed subtotal. Copy both exactly as printed on the invoice. Never compute or adjust them to match the line items or the department totals. Omit subtotal when the invoice does not print one. Return a code for every line. Include rows that shipped 0 at $0.00 and set their quantity to 0. Those rows are review-only. Format costs as float numbers.`;
+totalAmount is the printed subtotal before tax. subtotal, hst, pst, and gst are each copied exactly as printed, or null when not printed, and never computed. Never compute or adjust them to match the line items or the department totals. Return a code for every line. Include rows that shipped 0 at $0.00 and set their quantity to 0. Those rows are review-only. Format costs as float numbers.`;
 
     const cleanData = base64Image.includes(',') ? base64Image.split(',')[1] : base64Image;
 
