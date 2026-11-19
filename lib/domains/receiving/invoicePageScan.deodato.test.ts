@@ -323,6 +323,12 @@ describe('Deodato header total from the invoice reader', { concurrency: 1 }, () 
     assert.notEqual(read.totalAmount, 113);
   });
 
+  test('a raw response with no subtotal, hst 13, and total 113 uses the line sum', async () => {
+    const read = await readFakeModel(hundredDollarInvoice({ hst: 13, totalAmount: 113 }));
+    assert.equal(read.totalAmount, 100);
+    assert.notEqual(read.totalAmount, 113);
+  });
+
   test('uses the line sum when hst is present and the subtotal was omitted', async () => {
     const hst = await readFakeModel(hundredDollarInvoice({ hst: 13, totalAmount: 113 }));
     assert.equal(hst.totalAmount, 100);
