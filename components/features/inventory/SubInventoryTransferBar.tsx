@@ -110,7 +110,7 @@ export function floorWasteConfirmDetails(input: {
   item: string;
   quantityLabel: string;
   location: 'Floor';
-  costLabel: string | null;
+  costLabel: string;
 } {
   const unitCost = input.unitCost;
   const costKnown = unitCost != null && Number.isFinite(unitCost) && unitCost > 0;
@@ -118,7 +118,7 @@ export function floorWasteConfirmDetails(input: {
     item: input.name,
     quantityLabel: `${formatUnits(input.quantity)} ${input.unit}`,
     location: 'Floor',
-    costLabel: costKnown ? formatCurrency(unitCost * input.quantity) : null,
+    costLabel: costKnown ? formatCurrency(unitCost * input.quantity) : 'Cost unknown',
   };
 }
 
@@ -316,7 +316,7 @@ export function FloorWasteConfirm({
   item: string;
   quantityLabel: string;
   location: string;
-  costLabel: string | null;
+  costLabel: string;
   busy?: boolean;
   onCancel: () => void;
   onConfirm: () => void;
@@ -346,12 +346,10 @@ export function FloorWasteConfirm({
           <dt className="text-slate-400">Location</dt>
           <dd>{location}</dd>
         </div>
-        {costLabel ? (
-          <div className="flex justify-between gap-3">
-            <dt className="text-slate-400">Cost</dt>
-            <dd className="font-mono font-bold tabular-nums">{costLabel}</dd>
-          </div>
-        ) : null}
+        <div className="flex justify-between gap-3">
+          <dt className="text-slate-400">Cost</dt>
+          <dd className="font-mono font-bold tabular-nums">{costLabel}</dd>
+        </div>
       </dl>
       <div className="mt-3 flex flex-wrap gap-2">
         <button
@@ -413,6 +411,7 @@ export function SubInventoryTransferBar({
   const [internalBusy, setInternalBusy] = useState(false);
   const floorQtyRef = useRef(floorQty);
   const kitchenQtyRef = useRef(kitchenQty);
+  const runInFlight = useRef(false);
 
   const busy = busyProp ?? internalBusy;
 
@@ -460,7 +459,8 @@ export function SubInventoryTransferBar({
       onError?.('Enter a quantity greater than zero.');
       return;
     }
-    if (busy) return;
+    if (busy || runInFlight.current) return;
+    runInFlight.current = true;
 
     const clientMutationId = action === 'sale' ? createClientMutationId() : undefined;
     setBusy(true);
@@ -503,6 +503,7 @@ export function SubInventoryTransferBar({
         message: transferSuccessMessage(action, row, result.level, result.units),
       });
     } finally {
+      runInFlight.current = false;
       setBusy(false);
     }
   };

@@ -111,6 +111,20 @@ export async function executeInventoryMove(input: {
   broadcast?: boolean;
 }): Promise<InventoryMoveResult & { queuedOffline?: boolean }> {
   const clientMutationId = input.clientMutationId ?? createClientMutationId();
+  if (
+    input.action === 'rescue' ||
+    input.action === 'waste' ||
+    input.action === 'kitchen_waste'
+  ) {
+    const quantity = input.quantity;
+    if (quantity == null || !Number.isFinite(quantity) || quantity <= 0 || quantity > SALE_QTY_MAX) {
+      return {
+        success: false,
+        action: input.action,
+        error: 'Quantity must be a positive number.',
+      };
+    }
+  }
   if (input.action === 'sale') {
     const quantity = Number(input.quantity);
     if (!Number.isFinite(quantity) || quantity <= 0 || quantity > SALE_QTY_MAX) {

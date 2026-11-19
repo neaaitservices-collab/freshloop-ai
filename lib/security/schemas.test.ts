@@ -58,6 +58,7 @@ describe('security schemas', () => {
     const move = inventoryMoveBodySchema.parse({
       productId: 'prod_1',
       action: 'waste',
+      quantity: 1,
       clientMutationId: 'offline-mut-001',
     });
     assert.equal(move.clientMutationId, 'offline-mut-001');
@@ -124,8 +125,13 @@ describe('security schemas', () => {
         `quantity ${String(quantity)}`
       );
     }
-    assert.equal(inventoryMoveBodySchema.parse({ ...base, quantity: '12' }).quantity, 12);
-    assert.equal(inventoryMoveBodySchema.parse({ ...base, quantity: '12.5' }).quantity, 12.5);
+    const whole = inventoryMoveBodySchema.parse({ ...base, quantity: '12' });
+    const fractional = inventoryMoveBodySchema.parse({ ...base, quantity: '12.5' });
+    assert.equal(whole.action, 'rescue');
+    assert.equal(fractional.action, 'rescue');
+    if (whole.action !== 'rescue' || fractional.action !== 'rescue') return;
+    assert.equal(whole.quantity, 12);
+    assert.equal(fractional.quantity, 12.5);
   });
 
   it('rejects a blank casesOnHand on inventory levels', () => {
