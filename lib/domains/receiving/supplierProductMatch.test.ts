@@ -5,6 +5,7 @@ import test from 'node:test';
 import { applyOcrDraftResolutions, buildAuthoritativeOcrDraft, draftPostingBlockers } from '@/lib/domains/receiving/invoiceOcrDraft';
 import { invoiceMatchResolutions } from '@/lib/domains/receiving/invoiceMatchChoice';
 import {
+  applySupplierMatchWrites,
   matchInvoiceLine,
   normalizeLineNameKey,
   normalizeSupplierCode,
@@ -317,11 +318,94 @@ test('the supplier match migration checks the key and grants nothing to the Data
     path.join(process.cwd(), 'prisma/migrations/20261119050000_supplier_product_matches/migration.sql'),
     'utf8'
   );
+  assert.match(sql, /SET lock_timeout = '5s';/);
   assert.match(sql, /CHECK \("match_type" IN \('code', 'name'\)\)/);
   assert.match(sql, /CHECK \("match_key" <> ''\)/);
+  assert.match(sql, /CHECK \(btrim\("printed_value"\) <> ''\)/);
   assert.match(sql, /ENABLE ROW LEVEL SECURITY/);
   assert.match(sql, /REVOKE ALL ON TABLE public\.supplier_product_matches FROM %I/);
   assert.equal(sql.includes('GRANT '), false);
   assert.equal(sql.includes('anon'), true);
   assert.equal(sql.includes('authenticated'), true);
+});
+
+function uniqueViolation(): Error {
+  const error = new Error('Unique constraint failed');
+  (error as { code?: string }).code = 'P2002';
+  return error;
+}
+
+test('a concurrent link upsert is saved as an update instead of failing the post', async () => {
+  const updates: Array<{
+    where: { supplierId_matchType_matchKey: { matchKey: string } };
+    data: { productId: string; printedValue: string };
+  }> = [];
+  let upserts = 0;
+  const db = {
+    supplierProductMatch: {
+      upsert: async () => {
+        upserts += 1;
+        throw uniqueViolation();
+      },
+      update: async (args: {
+        where: { supplierId_matchType_matchKey: { matchKey: string } };
+        data: { productId: string; printedValue: string };
+      }) => {
+        updates.push(args);
+        return { id: 'row' };
+      },
+      deleteMany: async () => ({ count: 0 }),
+    },
+  };
+  await applySupplierMatchWrites(db as never, 'deodato', 'clerk', [
+    { action: 'upsert', matchType: 'code', matchKey: 'AB12', printedValue: ' ab-12 ', productId: 'apples' },
+  ]);
+  assert.equal(upserts, 1);
+  assert.equal(updates.length, 1);
+  assert.equal(updates[0]?.where.supplierId_matchType_matchKey.matchKey, 'AB12');
+  assert.equal(updates[0]?.data.productId, 'apples');
+  assert.equal(updates[0]?.data.printedValue, 'ab-12');
+
+  await assert.rejects(
+    () =>
+      applySupplierMatchWrites(
+        {
+          supplierProductMatch: {
+            upsert: async () => {
+              throw uniqueViolation();
+            },
+            update: async () => {
+              throw new Error('still conflicting');
+            },
+            deleteMany: async () => ({ count: 0 }),
+          },
+        } as never,
+        'deodato',
+        'clerk',
+        [{ action: 'upsert', matchType: 'code', matchKey: 'AB12', printedValue: 'AB12', productId: 'apples' }]
+      ),
+    /still conflicting/
+  );
+
+  const other = new Error('connection lost');
+  await assert.rejects(
+    () =>
+      applySupplierMatchWrites(
+        {
+          supplierProductMatch: {
+            upsert: async () => {
+              throw other;
+            },
+            update: async () => {
+              throw new Error('update should not run');
+            },
+            deleteMany: async () => ({ count: 0 }),
+          },
+        } as never,
+        'deodato',
+        'clerk',
+        [{ action: 'upsert', matchType: 'code', matchKey: 'AB12', printedValue: 'AB12', productId: 'apples' }]
+      ),
+    /connection lost/
+  );
 });

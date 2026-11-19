@@ -285,6 +285,39 @@ export async function loadActiveSupplierProductLinksForVendor(vendorName: string
   return loadActiveSupplierProductLinks(match.supplier.id);
 }
 
+function isUniqueViolation(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    (error as { code?: string }).code === 'P2002'
+  );
+}
+
+type SavepointDb = {
+  $executeRawUnsafe?: (query: string) => Promise<unknown>;
+};
+
+/**
+ * A unique violation aborts the surrounding Postgres transaction.
+ * A savepoint lets the stock post continue after one retry.
+ * A test double with no raw executor just runs the write.
+ */
+async function withoutAbortingTransaction<T>(db: Db, run: () => Promise<T>): Promise<T> {
+  const execute = (db as SavepointDb).$executeRawUnsafe?.bind(db);
+  if (!execute) return run();
+  const savepoint = `spm_link_${Math.floor(Math.random() * 1_000_000_000)}`;
+  await execute(`SAVEPOINT ${savepoint}`);
+  try {
+    const result = await run();
+    await execute(`RELEASE SAVEPOINT ${savepoint}`);
+    return result;
+  } catch (error) {
+    await execute(`ROLLBACK TO SAVEPOINT ${savepoint}`);
+    throw error;
+  }
+}
+
 export async function applySupplierMatchWrites(
   db: Db,
   supplierId: string,
@@ -303,29 +336,35 @@ export async function applySupplierMatchWrites(
       continue;
     }
     const productId = write.productId?.trim() ?? '';
-    if (!productId || !write.printedValue) continue;
-    await db.supplierProductMatch.upsert({
-      where: {
-        supplierId_matchType_matchKey: {
-          supplierId: supplier,
-          matchType: write.matchType,
-          matchKey: write.matchKey,
-        },
-      },
-      create: {
+    const printedValue = printedMatchValue(write.printedValue);
+    if (!productId || !printedValue) continue;
+    const where = {
+      supplierId_matchType_matchKey: {
         supplierId: supplier,
         matchType: write.matchType,
         matchKey: write.matchKey,
-        printedValue: write.printedValue,
-        productId,
-        createdById: actor,
-        updatedById: actor,
       },
-      update: {
-        productId,
-        printedValue: write.printedValue,
-        updatedById: actor,
-      },
-    });
+    };
+    const update = { productId, printedValue, updatedById: actor };
+    try {
+      await withoutAbortingTransaction(db, () =>
+        db.supplierProductMatch.upsert({
+          where,
+          create: {
+            supplierId: supplier,
+            matchType: write.matchType,
+            matchKey: write.matchKey,
+            printedValue,
+            productId,
+            createdById: actor,
+            updatedById: actor,
+          },
+          update,
+        })
+      );
+    } catch (error) {
+      if (!isUniqueViolation(error)) throw error;
+      await db.supplierProductMatch.update({ where, data: update });
+    }
   }
 }

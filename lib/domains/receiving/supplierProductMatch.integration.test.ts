@@ -8,9 +8,36 @@ import {
 } from '@/lib/domains/receiving/supplierProductMatch';
 
 const databaseUrl = process.env.DATABASE_URL?.trim() ?? '';
-const hasDb = Boolean(databaseUrl) && process.env.FRESHLOOP_DB_TESTS !== '0';
 
-test('supplier product links stay on the test database and roll back with the post', { skip: !hasDb }, async (t) => {
+/** True only for the CI database named freshloop_ci. Any other DATABASE_URL skips. */
+function isFreshloopCiTestDatabase(url: string, dbTestsFlag: string | undefined): boolean {
+  if (!url.trim() || dbTestsFlag === '0') return false;
+  try {
+    const database = decodeURIComponent(new URL(url).pathname).replace(/^\/+/, '');
+    return database === 'freshloop_ci';
+  } catch {
+    return false;
+  }
+}
+
+const hasCiDb = isFreshloopCiTestDatabase(databaseUrl, process.env.FRESHLOOP_DB_TESTS);
+
+test('supplier match database test runs only when the database name is freshloop_ci', () => {
+  const ci = 'postgresql://ci:ci@127.0.0.1:5432/freshloop_ci?schema=public';
+  assert.equal(isFreshloopCiTestDatabase(ci, undefined), true);
+  assert.equal(isFreshloopCiTestDatabase(ci, '0'), false);
+  assert.equal(
+    isFreshloopCiTestDatabase('postgresql://u:p@db.supabase.co:6543/postgres?pgbouncer=true', undefined),
+    false
+  );
+  assert.equal(isFreshloopCiTestDatabase('postgresql://u:p@127.0.0.1:5432/freshloop', undefined), false);
+  assert.equal(
+    isFreshloopCiTestDatabase('postgresql://u:p@127.0.0.1:5432/freshloop_ci_backup', undefined),
+    false
+  );
+});
+
+test('supplier product links stay on the test database and roll back with the post', { skip: !hasCiDb }, async (t) => {
   try {
     await prisma.$connect();
   } catch {

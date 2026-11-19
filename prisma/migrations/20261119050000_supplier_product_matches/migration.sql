@@ -5,6 +5,11 @@
 -- Follows 20261118040000_db_lockdown: Prisma owns the table, anon and authenticated
 -- receive no grants, and row level security is enabled with no Data API policy.
 -- Those roles are absent on plain Postgres (GitHub Actions role `ci`). Missing roles are skipped.
+--
+-- The foreign keys lock products and suppliers. Same lock cap as
+-- 20261118040000_db_lockdown.
+
+SET lock_timeout = '5s';
 
 CREATE TABLE "supplier_product_matches" (
     "id" TEXT NOT NULL,
@@ -32,6 +37,8 @@ ALTER TABLE "supplier_product_matches" ADD CONSTRAINT "supplier_product_matches_
 ALTER TABLE "supplier_product_matches" ADD CONSTRAINT "supplier_product_matches_match_type_check" CHECK ("match_type" IN ('code', 'name'));
 
 ALTER TABLE "supplier_product_matches" ADD CONSTRAINT "supplier_product_matches_match_key_check" CHECK ("match_key" <> '');
+
+ALTER TABLE "supplier_product_matches" ADD CONSTRAINT "supplier_product_matches_printed_value_check" CHECK (btrim("printed_value") <> '');
 
 ALTER TABLE "supplier_product_matches" ENABLE ROW LEVEL SECURITY;
 
