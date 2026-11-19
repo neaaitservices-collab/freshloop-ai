@@ -4,15 +4,28 @@ import { optionalSafeText, productIdSchema, safeText } from '@/lib/security/sche
 
 const clientMutationIdSchema = z.string().trim().min(8).max(128).optional();
 
-export const inventoryMoveBodySchema = z
-  .object({
-    productId: productIdSchema,
-    action: z.enum(['rescue', 'waste', 'kitchen_waste', 'markdown']),
-    quantity: numericInput(z.number().finite().positive().max(1_000_000)).optional(),
-    discountPct: z.number().finite().min(0).max(100).optional(),
-    clientMutationId: clientMutationIdSchema,
-  })
-  .strip();
+const moveQuantity = numericInput(z.number().finite().positive().max(1_000_000));
+
+const moveIdentity = {
+  productId: productIdSchema,
+  clientMutationId: clientMutationIdSchema,
+};
+
+/** Rescue, waste, and production waste require a positive quantity. Markdown does not. */
+export const inventoryMoveBodySchema = z.discriminatedUnion('action', [
+  z.object({ ...moveIdentity, action: z.literal('rescue'), quantity: moveQuantity }).strip(),
+  z.object({ ...moveIdentity, action: z.literal('waste'), quantity: moveQuantity }).strip(),
+  z
+    .object({ ...moveIdentity, action: z.literal('kitchen_waste'), quantity: moveQuantity })
+    .strip(),
+  z
+    .object({
+      ...moveIdentity,
+      action: z.literal('markdown'),
+      discountPct: z.number().finite().min(0).max(100).optional(),
+    })
+    .strip(),
+]);
 
 export const volumetricScrapBodySchema = z
   .object({

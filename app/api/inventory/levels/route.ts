@@ -143,6 +143,12 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ success: true, action: 'markdown', level: marked.level });
     }
     if (body.action === 'rescue' || body.action === 'waste') {
+      if (!(typeof body.quantity === 'number' && body.quantity > 0)) {
+        return NextResponse.json(
+          { success: false, error: 'Quantity is required.' },
+          { status: 400 }
+        );
+      }
       const moved = await moveRetailStock(
         productId,
         body.action,
