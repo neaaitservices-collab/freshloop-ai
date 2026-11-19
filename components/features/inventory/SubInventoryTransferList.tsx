@@ -20,9 +20,9 @@ import { useRole } from '@/components/auth/RoleProvider';
 import { canManageBundleDeals, canViewSetBundlePromos } from '@/lib/auth/staffCapabilities';
 import { cn } from '@/lib/utils/cn';
 
+/** Default transfer quantity is 1. The full balance stays an explicit All choice. */
 export function suggestedPullQty(row: StockLevel): number {
-  if (row.onHand <= 0) return 0;
-  if (row.daysRemaining <= row.pullDays || row.low || row.isMarkdown) return row.onHand;
+  if (!(row.onHand > 0)) return 0;
   return Math.min(row.onHand, 1);
 }
 
