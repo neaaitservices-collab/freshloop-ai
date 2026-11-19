@@ -20,6 +20,7 @@ import {
   nextSuppliedWave,
   nextWaveDelayMs,
   overallScanStatus,
+  logInvoicePageReadFailure,
   pageFailureMessage,
   readStoredPageScan,
   recordPageFailure,
@@ -315,6 +316,7 @@ async function readWave(
       try {
         fact = await runner.readPage({ ...image, index: page.index });
       } catch (error) {
+        logInvoicePageReadFailure(error, page.index);
         failure = pageFailureMessage(error);
         limited = isRateLimited(error);
       }
@@ -441,6 +443,7 @@ async function retryScan(runner: InvoicePageScanRunner, now: Date): Promise<Scan
   try {
     fact = await runner.readPage(body.page);
   } catch (error) {
+    logInvoicePageReadFailure(error, body.page.index);
     failure = pageFailureMessage(error);
     if (isRateLimited(error)) {
       const wait = nextWaveDelayMs(true, geminiBackoffMs);
@@ -449,6 +452,7 @@ async function retryScan(runner: InvoicePageScanRunner, now: Date): Promise<Scan
         fact = await runner.readPage(body.page);
         failure = '';
       } catch (again) {
+        logInvoicePageReadFailure(again, body.page.index);
         failure = pageFailureMessage(again);
       }
     }

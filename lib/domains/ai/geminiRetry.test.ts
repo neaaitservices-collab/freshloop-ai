@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { generateContentWithFallback, geminiBackoffMs, geminiInlineImages, shouldUseSdkAfterRest } from '@/lib/domains/ai/gemini';
+import {
+  GeminiMaxTokensError,
+  generateContentWithFallback,
+  geminiBackoffMs,
+  geminiInlineImages,
+  shouldUseSdkAfterRest,
+} from '@/lib/domains/ai/gemini';
 import { invoiceOcrErrorResponse } from '@/lib/domains/receiving/invoiceOcrErrors';
 import { invoiceOcrThinkingConfig } from '@/lib/domains/ai/geminiModels';
 
@@ -40,6 +46,69 @@ test('a 429 triggers exactly one retry and does not use the SDK', async () => {
     assert.equal(calls, 2);
   } finally {
     globalThis.fetch = previousFetch;
+    if (previousKey == null) delete process.env.GEMINI_API_KEY;
+    else process.env.GEMINI_API_KEY = previousKey;
+  }
+});
+
+test('MAX_TOKENS is its own error and the partial invoice is not logged or retried', async () => {
+  const previousKey = process.env.GEMINI_API_KEY;
+  const previousFetch = globalThis.fetch;
+  const previousInfo = console.info;
+  const previousWarn = console.warn;
+  const previousError = console.error;
+  process.env.GEMINI_API_KEY = 'test-key';
+  const secret = 'SECRET_INVOICE_TEXT';
+  const logs: string[] = [];
+  const capture = (...args: unknown[]) => {
+    logs.push(args.map((part) => String(part)).join(' '));
+  };
+  console.info = capture;
+  console.warn = capture;
+  console.error = capture;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    return new Response(
+      JSON.stringify({
+        candidates: [
+          {
+            finishReason: 'MAX_TOKENS',
+            content: { parts: [{ text: `{"vendorName":"${secret}"}` }] },
+          },
+        ],
+      }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } }
+    );
+  };
+  try {
+    let thrown: unknown;
+    try {
+      await generateContentWithFallback(
+        'read this invoice',
+        { data: 'abc', mimeType: 'image/jpeg' },
+        ['gemini-3.8-flash'],
+        {
+          skipModelDiscovery: true,
+          maxModelsToTry: 1,
+          preferRestApi: true,
+          attemptTimeoutMs: 5000,
+          deadlineAtMs: Date.now() + 5000,
+        }
+      );
+    } catch (error) {
+      thrown = error;
+    }
+    assert.ok(thrown instanceof GeminiMaxTokensError);
+    assert.equal(thrown.finishReason, 'MAX_TOKENS');
+    assert.equal(thrown.message.includes(secret), false);
+    assert.equal(calls, 1);
+    assert.equal(logs.join('\n').includes(secret), false);
+  } finally {
+    globalThis.fetch = previousFetch;
+    console.info = previousInfo;
+    console.warn = previousWarn;
+    console.error = previousError;
     if (previousKey == null) delete process.env.GEMINI_API_KEY;
     else process.env.GEMINI_API_KEY = previousKey;
   }

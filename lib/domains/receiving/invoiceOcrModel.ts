@@ -88,7 +88,7 @@ function invoiceNumberSchema<T extends z.ZodTypeAny>(check: T) {
 
 export const invoiceOcrMoneySchema = invoiceNumberSchema(z.number().finite().nonnegative());
 export const invoiceOcrQuantitySchema = invoiceNumberSchema(z.number().finite().positive());
-/** Ordered and shipped counts may be zero. Received quantity uses shipped. */
+/** Shipped counts may be zero. Received quantity uses shipped. */
 export const invoiceOcrCountSchema = invoiceNumberSchema(z.number().finite().nonnegative());
 const invoiceOcrCasePackSchema = invoiceNumberSchema(z.number().finite().positive());
 export const invoiceOcrDepartmentSchema = z.enum(enumTuple(CATALOG_DEPARTMENTS));
@@ -103,7 +103,6 @@ export const invoiceOcrModelSchema = z.object({
   invoiceDate: z.string().trim().min(1).max(40),
   /** Another printed date, such as the order date. Copied as printed. */
   orderDate: z.string().trim().max(40).optional(),
-  terms: z.string().trim().max(40).optional(),
   subtotal: invoiceOcrMoneySchema.optional(),
   hst: invoiceOcrMoneySchema.optional(),
   pst: invoiceOcrMoneySchema.optional(),
@@ -112,7 +111,6 @@ export const invoiceOcrModelSchema = z.object({
       z.object({
         name: z.string().trim().min(1).max(INVOICE_OCR_TEXT_LIMITS.lineName),
         department: invoiceOcrDepartmentSchema,
-        ordered: invoiceOcrCountSchema.optional(),
         shipped: invoiceOcrCountSchema.optional(),
         quantity: invoiceOcrQuantitySchema.optional(),
         unit: z.string().trim().min(1).max(INVOICE_OCR_TEXT_LIMITS.unit),

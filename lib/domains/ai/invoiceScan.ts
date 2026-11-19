@@ -77,14 +77,19 @@ function assertInvoicePhotoBytes(input: Buffer): void {
   }
 }
 
-/** Per Gemini HTTP/SDK attempt. Kept inside the 20–25s window Nelson approved. */
-export const INVOICE_OCR_ATTEMPT_TIMEOUT_MS = 22_000;
+/**
+ * One Gemini attempt for an invoice page. A timed-out call leaves
+ * `INVOICE_OCR_TOTAL_BUDGET_MS - this` (2s), which cannot start another 40s call.
+ * The HTTP retry for a fast 429 stays inside this same abort signal.
+ */
+export const INVOICE_OCR_ATTEMPT_TIMEOUT_MS = 40_000;
 
 /**
- * Wall clock for the whole invoice model ladder. A timed-out attempt leaves
- * too little time to start another model.
+ * Deadline for that one attempt, measured after image prep.
+ * Pages in a wave each get this deadline at the same time. The wave's wall clock
+ * is the slowest page, plus prep and the response, not the page count times this.
  */
-export const INVOICE_OCR_TOTAL_BUDGET_MS = 25_000;
+export const INVOICE_OCR_TOTAL_BUDGET_MS = 42_000;
 
 export function boundedAttemptMs(
   now: number,

@@ -267,6 +267,35 @@ test('an order date on the model confirms one reading and stays flagged', () => 
   );
 });
 
+test('page scan schema keeps orderDate and struckThrough and drops terms and ordered', () => {
+  const parsed = invoiceOcrModelSchema.safeParse({
+    vendorName: 'North Market',
+    invoiceNumber: 'INV-9',
+    invoiceDate: '05-11-2026',
+    orderDate: '05-11-26',
+    terms: '7 days',
+    lineItems: [
+      {
+        name: 'Apples',
+        department: 'PRODUCE',
+        ordered: 4,
+        shipped: 1,
+        unit: 'cases',
+        unitCost: 2,
+        totalCost: 2,
+        struckThrough: false,
+      },
+    ],
+  });
+  assert.equal(parsed.success, true);
+  if (!parsed.success) return;
+  assert.equal(parsed.data.orderDate, '05-11-26');
+  assert.equal('terms' in parsed.data, false);
+  assert.equal(parsed.data.lineItems[0]?.shipped, 1);
+  assert.equal(parsed.data.lineItems[0]?.struckThrough, false);
+  assert.equal('ordered' in parsed.data.lineItems[0]!, false);
+});
+
 test('an invoice with only charges and zero lines is rejected before a draft', () => {
   assert.throws(
     () =>
