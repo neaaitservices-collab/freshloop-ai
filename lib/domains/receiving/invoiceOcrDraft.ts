@@ -12,6 +12,11 @@ import {
   type OcrQuantityKind,
   type OcrReviewReasonCode,
 } from '@/lib/domains/receiving/invoiceOcrCommit';
+import {
+  normalizeLineNameKey,
+  normalizeSupplierCode,
+  printedMatchValue,
+} from '@/lib/domains/receiving/supplierProductMatch';
 
 export const OCR_REVIEW_REASONS = [
   'low_confidence',
@@ -60,6 +65,11 @@ export interface AuditedDraftSourceLine {
   unit_invalid?: boolean;
   line_total_mismatch?: boolean;
   line_total_note?: string;
+  supplier_code?: string | null;
+  printed_name?: string | null;
+  match_source?: 'code' | 'learned_name' | 'name' | null;
+  match_printed_value?: string | null;
+  matched_product_name?: string | null;
 }
 
 export interface OcrDraftResolution {
@@ -71,6 +81,10 @@ export interface OcrDraftResolution {
     line_name?: string;
     quantity?: number;
     department?: Department;
+    product_id?: string;
+    remember?: boolean;
+    unlink?: boolean;
+    create_new?: boolean;
   }>;
 }
 
@@ -170,12 +184,23 @@ export function buildAuthoritativeOcrDraft(input: {
       line_total_mismatch: lineTotalMismatch,
       review_reasons: undefined,
     });
+    const printedName = printedMatchValue(line.printed_name || line.item_name);
+    const supplierCode = printedMatchValue(line.supplier_code);
     return {
       product_id: line.product_id?.trim() ?? '',
       quantity: quantityUnreadable ? 0 : line.quantity,
       quantity_kind: quantityKindForInvoiceUnit(line.unit) as OcrQuantityKind,
       unit_cost: line.unit_cost,
       line_name: line.item_name,
+      ...(printedName && normalizeLineNameKey(printedName) ? { printed_name: printedName } : {}),
+      ...(supplierCode && normalizeSupplierCode(supplierCode) ? { supplier_code: supplierCode } : {}),
+      ...(line.match_source ? { match_source: line.match_source } : {}),
+      ...(line.match_printed_value?.trim()
+        ? { match_printed_value: line.match_printed_value.trim() }
+        : {}),
+      ...(line.matched_product_name?.trim()
+        ? { matched_product_name: line.matched_product_name.trim() }
+        : {}),
       department: line.department as Department,
       case_pack_size: line.case_pack_size,
       line_confidence: line.line_confidence,
@@ -279,7 +304,7 @@ export function draftPostingBlockers(
   const managerMayResolve = options.manualReviewOverride && options.actorIsManager;
   payload.lines.forEach((line, index) => {
     if (isZeroDollarDraftLine(line)) return;
-    if (!lineHasMatchedProduct(line)) {
+    if (!lineHasMatchedProduct(line) && line.create_new !== true) {
       blockers.push(`Line ${index + 1} is not matched to a catalog product.`);
     }
     const reasons = unresolvedLineReasons(line, managerMayResolve);
@@ -400,6 +425,22 @@ export function applyOcrDraftResolutions(
       line.quantity = edit.quantity;
       line.quantity_unreadable = false;
       line.review_reasons = withoutReason(line.review_reasons, 'quantity_unreadable');
+    }
+    if (edit.unlink === true) line.unlink_match = true;
+    if (edit.create_new === true) {
+      line.create_new = true;
+      line.product_id = '';
+      line.product_picked = false;
+      line.remember = false;
+    }
+    const productId = edit.product_id?.trim();
+    if (productId) {
+      line.product_id = productId;
+      line.product_picked = true;
+      line.create_new = false;
+    }
+    if (typeof edit.remember === 'boolean' && line.create_new !== true) {
+      line.remember = edit.remember;
     }
     const managerMayClearAssumed = actor.actorIsManager && actor.manualReviewOverride;
     if (edit.department && line.department_assumed) {

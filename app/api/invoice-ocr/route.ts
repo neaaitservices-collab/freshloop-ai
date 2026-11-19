@@ -27,6 +27,14 @@ import { requireReceivingStaff } from '@/lib/auth/guardRoute';
 import { gateStoredOcrDraft } from '@/lib/domains/receiving/sampleReceivingGuard';
 import { findLatestStoreSetting } from '@/lib/domains/stats/storeSettingSelect';
 import { matchProductWithScore } from '@/lib/domains/inventory/productMatching';
+import {
+  loadActiveSupplierProductLinksForVendor,
+  matchInvoiceLine,
+  normalizeSupplierCode,
+  printedMatchValue,
+  type InvoiceMatchSource,
+  type SupplierProductLinkRef,
+} from '@/lib/domains/receiving/supplierProductMatch';
 import { recordOcrScanAnalytics } from '@/lib/domains/suppliers/analyticsPersistence';
 import { VENDOR_PRICE_ALERT_DEFAULT_PCT } from '@/lib/domains/suppliers/vendorAnalyticsTypes';
 import { assertHotPathRateLimit } from '@/lib/security/rateLimit';
@@ -131,6 +139,10 @@ export interface InvoiceOcrLineItemWithGuardrail {
   unit_invalid: boolean;
   line_total_mismatch: boolean;
   line_total_note: string | null;
+  supplier_code: string | null;
+  printed_name: string | null;
+  match_source: InvoiceMatchSource | null;
+  match_printed_value: string | null;
 }
 
 export interface InvoiceOcrApiResponse {
@@ -177,6 +189,11 @@ export interface InvoiceOcrApiResponse {
       totalCost: number;
       caseRetailPrice?: number | null;
       productId?: string | null;
+      matchedProductName?: string | null;
+      supplierCode?: string | null;
+      printedName?: string | null;
+      matchSource?: 'code' | 'learned_name' | 'name' | null;
+      matchPrintedValue?: string | null;
       historicalAvgCost?: number | null;
       costVariancePct?: number | null;
       requires_approval?: boolean;
@@ -231,6 +248,7 @@ async function loadCatalogForCostComparison(): Promise<CatalogLookupEntry[]> {
  */
 type RawOcrLineItem = {
   name: string;
+  code?: string;
   department: 'PRODUCE' | 'DAIRY' | 'BAKERY' | 'PANTRY' | 'DELI_KITCHEN' | 'GROCERY';
   quantity: number;
   unit: string;
@@ -254,7 +272,11 @@ function evaluateCostGuardrailSync(
   matchScore: number | null,
   macPerBaseUnit: number | undefined,
   thresholdPct: number = 20.0,
-  ocrSource: 'sample' | 'photo' = 'photo'
+  ocrSource: 'sample' | 'photo' = 'photo',
+  match: { source: InvoiceMatchSource | null; printedValue: string | null } = {
+    source: null,
+    printedValue: null,
+  }
 ): InvoiceOcrLineItemWithGuardrail {
   let historicalAvgCost: number | null = null;
 
@@ -304,9 +326,13 @@ function evaluateCostGuardrailSync(
     rawItem.extractionConfidence,
     ocrSource
   );
-  const matchConfidence =
-    matchScore !== null ? matchConfidenceFromCatalogScore(matchScore) : null;
-  const lineConfidence = combineLineConfidence(extractionConfidence, matchConfidence);
+  const linkMatch = match.source === 'code' || match.source === 'learned_name';
+  const matchConfidence = linkMatch
+    ? 1
+    : matchScore !== null
+      ? matchConfidenceFromCatalogScore(matchScore)
+      : null;
+  const lineConfidence = linkMatch ? 1 : combineLineConfidence(extractionConfidence, matchConfidence);
   const needsManualReview =
     lineNeedsManualReview(lineConfidence) ||
     rawItem.quantityUnreadable === true ||
@@ -346,6 +372,13 @@ function evaluateCostGuardrailSync(
     department_assumed: rawItem.departmentAssumed === true,
     quantity_unreadable: rawItem.quantityUnreadable === true || !(rawItem.quantity > 0),
     name_unreadable: !rawItem.name.trim() || rawItem.name.startsWith('Unread line '),
+    supplier_code: (() => {
+      const printed = printedMatchValue(rawItem.code);
+      return printed && normalizeSupplierCode(printed) ? printed : null;
+    })(),
+    printed_name: printedMatchValue(rawItem.name),
+    match_source: match.source,
+    match_printed_value: match.printedValue,
   };
 }
 
@@ -353,14 +386,28 @@ async function evaluateCostGuardrailsBatch(
   lineItems: RawOcrLineItem[],
   catalog: CatalogLookupEntry[],
   thresholdPct: number,
-  ocrSource: 'sample' | 'photo'
+  ocrSource: 'sample' | 'photo',
+  links: readonly SupplierProductLinkRef[] = []
 ): Promise<InvoiceOcrLineItemWithGuardrail[]> {
   const matches = lineItems.map((rawItem) => {
-    const hit = matchProductWithScore(rawItem.name, catalog);
+    const hit = links.length
+      ? matchInvoiceLine({
+          code: rawItem.code,
+          name: rawItem.name,
+          printedName: rawItem.name,
+          links,
+          catalog,
+        })
+      : null;
+    const fuzzy = hit ? null : matchProductWithScore(rawItem.name, catalog);
+    const matchedProduct = hit?.product ?? fuzzy?.product ?? null;
+    const matchScore = hit?.score ?? fuzzy?.score ?? null;
     return {
       rawItem,
-      matchedProduct: hit?.product ?? null,
-      matchScore: hit?.score ?? null,
+      matchedProduct,
+      matchScore,
+      source: hit?.source ?? (fuzzy ? 'name' : null),
+      printedValue: hit?.printedValue ?? null,
     };
   });
   const productIds = matches
@@ -368,14 +415,15 @@ async function evaluateCostGuardrailsBatch(
     .filter((id): id is string => Boolean(id));
   const macMap = await getMovingAverageCostMap(productIds);
 
-  return matches.map(({ rawItem, matchedProduct, matchScore }) =>
+  return matches.map(({ rawItem, matchedProduct, matchScore, source, printedValue }) =>
     evaluateCostGuardrailSync(
       rawItem,
       matchedProduct,
       matchScore,
       matchedProduct ? macMap.get(matchedProduct.id) : undefined,
       thresholdPct,
-      ocrSource
+      ocrSource,
+      { source, printedValue }
     )
   );
 }
@@ -461,6 +509,7 @@ async function extractInvoiceWithGemini15FlashVision(
   printedSubtotal?: number;
   lineItems: Array<{
     name: string;
+    code?: string;
     department: 'PRODUCE' | 'DAIRY' | 'BAKERY' | 'PANTRY' | 'DELI_KITCHEN' | 'GROCERY';
     quantity: number;
     unit: string;
@@ -494,6 +543,7 @@ async function extractInvoiceWithGemini15FlashVision(
     ...(typeof model.subtotal === 'number' ? { printedSubtotal: model.subtotal } : {}),
     lineItems: model.lineItems.map((line) => ({
       name: line.name,
+      ...(line.code ? { code: line.code } : {}),
       department: line.department,
       quantity: line.quantity,
       unit: line.unit,
@@ -650,9 +700,11 @@ async function auditMultiPageLines(scan: PageScanRecord, lines: InvoicePageLine[
     // Keep the default threshold.
   }
   const catalog = await loadCatalogForCostComparison();
+  const supplierLinks = await loadActiveSupplierProductLinksForVendor(scan.vendorName);
   const audited = await evaluateCostGuardrailsBatch(
     lines.map((line) => ({
       name: line.name,
+      ...(line.code ? { code: line.code } : {}),
       department: line.department,
       quantity: line.quantity ?? 0,
       unit: line.unit,
@@ -671,7 +723,8 @@ async function auditMultiPageLines(scan: PageScanRecord, lines: InvoicePageLine[
     })),
     catalog,
     guardrailThresholdPct,
-    'photo'
+    'photo',
+    supplierLinks
   );
   return buildAuthoritativeOcrDraft({
     vendorName: scan.vendorName,
@@ -704,6 +757,11 @@ async function auditMultiPageLines(scan: PageScanRecord, lines: InvoicePageLine[
       unit_invalid: item.unit_invalid,
       line_total_mismatch: item.line_total_mismatch,
       line_total_note: item.line_total_note ?? undefined,
+      supplier_code: item.supplier_code,
+      printed_name: item.printed_name,
+      match_source: item.match_source,
+      match_printed_value: item.match_printed_value,
+      matched_product_name: item.matched_product_name,
     })),
   });
 }
@@ -854,6 +912,14 @@ export async function POST(req: NextRequest) {
             department: line.department,
             case_pack_size: line.case_pack_size,
             line_confidence: line.line_confidence,
+            supplier_code: line.supplier_code,
+            printed_name: line.printed_name,
+            match_source: line.match_source,
+            match_printed_value: line.match_printed_value,
+            product_picked: line.product_picked,
+            remember: line.remember,
+            unlink_match: line.unlink_match,
+            create_new: line.create_new,
           })),
           invoiceMeta: {
             vendorName: payload.vendorName,
@@ -980,11 +1046,13 @@ export async function POST(req: NextRequest) {
     ]);
 
     const ocrSource: 'sample' | 'photo' = demo || uploadPages.length === 0 ? 'sample' : 'photo';
+    const supplierLinks = await loadActiveSupplierProductLinksForVendor(extracted.vendorName);
     const auditedItems = await evaluateCostGuardrailsBatch(
       extracted.lineItems,
       catalog,
       guardrailThresholdPct,
-      ocrSource
+      ocrSource,
+      supplierLinks
     );
 
     const departmentBreakdown = {
@@ -1039,6 +1107,11 @@ export async function POST(req: NextRequest) {
         unit_invalid: item.unit_invalid,
         line_total_mismatch: item.line_total_mismatch,
         line_total_note: item.line_total_note ?? undefined,
+        supplier_code: item.supplier_code,
+        printed_name: item.printed_name,
+        match_source: item.match_source,
+        match_printed_value: item.match_printed_value,
+        matched_product_name: item.matched_product_name,
       })),
     });
     if (extracted.lineItems.length === 0) {
@@ -1095,6 +1168,10 @@ export async function POST(req: NextRequest) {
           totalCost: item.total_cost,
           caseRetailPrice: item.case_retail_price,
           productId: item.product_id,
+          supplierCode: item.supplier_code,
+          printedName: item.printed_name,
+          matchSource: item.match_source,
+          matchPrintedValue: item.match_printed_value,
           historicalAvgCost: item.historical_avg_cost,
           costVariancePct: item.cost_variance_pct,
           requires_approval: item.requires_approval,

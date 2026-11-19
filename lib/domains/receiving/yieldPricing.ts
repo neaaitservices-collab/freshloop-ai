@@ -13,6 +13,12 @@ export interface ReceivingLog {
   retailUnit?: RetailUnit;
   /** When invoice OCR matched the catalog, receive posts to this SKU. */
   productId?: string;
+  /** Catalog name shown next to a matched line. */
+  matchedProductName?: string;
+  /** Printed supplier item code from the scan. */
+  supplierCode?: string;
+  matchSource?: 'code' | 'learned_name' | 'name';
+  matchPrintedValue?: string;
   /** Original vendor wording (for display). */
   invoiceLineName?: string;
   /** When OCR reads a printed case shelf / list price on the invoice. */

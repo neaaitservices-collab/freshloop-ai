@@ -149,6 +149,7 @@ model Product {
   floorBundlePromos  FloorBundlePromo[]
   priceVarianceLogs  PriceVarianceLog[]
   supplierActivities SupplierActivity[]
+  productMatches     SupplierProductMatch[]
 
   @@index([department])
   @@index([departmentId])
@@ -459,8 +460,33 @@ model Supplier {
   invoiceDocuments       SupplierInvoiceDocument[]
   activities             SupplierActivity[]
   purchaseOrderEmails    PurchaseOrderEmail[]
+  productMatches         SupplierProductMatch[]
 
   @@map("suppliers")
+}
+
+/// A clerk-confirmed link: this supplier's code or printed line name is this product.
+model SupplierProductMatch {
+  id           String   @id @default(cuid())
+  supplierId   String   @map("supplier_id")
+  supplier     Supplier @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  /// 'code' or 'name'. varchar + CHECK, not a Postgres enum.
+  matchType    String   @map("match_type") @db.VarChar(8)
+  /// code: trim, uppercase, strip spaces/dashes/dots.
+  /// name: lowercase, trim, strip punctuation, collapse spaces. Never blank.
+  matchKey     String   @map("match_key") @db.VarChar(160)
+  /// As printed on the invoice, for display.
+  printedValue String   @map("printed_value") @db.VarChar(160)
+  productId    String   @map("product_id")
+  product      Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  createdById  String   @map("created_by_id")
+  updatedById  String   @map("updated_by_id")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@unique([supplierId, matchType, matchKey])
+  @@index([productId])
+  @@map("supplier_product_matches")
 }
 
 enum PurchaseOrderEmailStatus {

@@ -30,6 +30,11 @@ import { matchSupplierByName } from '@/lib/domains/suppliers/supplierInvoiceMatc
 import type { SupplierRecord } from '@/lib/domains/suppliers/suppliers';
 import type { InvoiceLineItemExtract } from '@/lib/types';
 import {
+  invoiceMatchResolutions,
+  type InvoiceMatchChoice,
+} from '@/lib/domains/receiving/invoiceMatchChoice';
+import { ReceiveLineProductMatch } from '@/components/features/receive/ReceiveLineProductMatch';
+import {
   limitInvoiceOcrUpload,
   prepareImageFileForOcr,
   type OcrPageImage,
@@ -58,6 +63,11 @@ interface ReviewLine {
   unit: string;
   unitCost?: number;
   totalCost?: number;
+  productId?: string | null;
+  productName?: string | null;
+  supplierCode?: string | null;
+  matchSource?: 'code' | 'learned_name' | 'name' | null;
+  matchPrintedValue?: string | null;
 }
 
 interface ScanView {
@@ -123,6 +133,7 @@ export function InvoicePageScanSheet({
   const [showAllLines, setShowAllLines] = useState(false);
   const [managerApproved, setManagerApproved] = useState(false);
   const [working, setWorking] = useState(false);
+  const [lineEdits, setLineEdits] = useState<Record<number, InvoiceMatchChoice>>({});
   const [continueAt, setContinueAt] = useState<number | null>(null);
   const [nowMs, setNowMs] = useState(() => Date.now());
 
@@ -141,6 +152,7 @@ export function InvoicePageScanSheet({
     setDateConfirmed(false);
     setShowAllLines(false);
     setManagerApproved(false);
+    setLineEdits({});
     setContinueAt(null);
     localImages.current = new Map();
     clientScanId.current = '';
@@ -245,6 +257,7 @@ export function InvoicePageScanSheet({
     const next = viewFromPost(json);
     if (!next) return;
     rememberView(next);
+    setLineEdits({});
     if (next.status === 'ready') {
       setDateDraft((current) => current || next.invoiceDate);
       setStep('review');
@@ -438,11 +451,20 @@ export function InvoicePageScanSheet({
     setError(null);
     try {
       const dateResolution = confirmInvoiceDateResolution({ dateConfirmed, dateDraft });
+      const lineResolution = invoiceMatchResolutions(
+        view.lines.map((line, index) => ({ id: String(index), draftLineIndex: index })),
+        Object.fromEntries(Object.entries(lineEdits).map(([index, choice]) => [index, choice])),
+        Boolean(supplierId)
+      );
+      const resolutions =
+        dateResolution || lineResolution
+          ? { ...dateResolution, ...(lineResolution ? { lines: lineResolution.lines } : {}) }
+          : undefined;
       const json = await postJson({
         confirmCommit: true,
         draftId: view.draftId,
         supplierId,
-        ...(dateResolution ? { resolutions: dateResolution } : {}),
+        ...(resolutions ? { resolutions } : {}),
         ...(managerApproved && manager ? { manualReviewOverride: true } : {}),
       });
       if (json.committed !== true && json.success !== true) {
@@ -728,20 +750,92 @@ export function InvoicePageScanSheet({
                 </ul>
               ) : null}
               <ul className="divide-y divide-slate-800 rounded-2xl border border-slate-800">
-                {(showAllLines ? view.lines : view.lines.slice(0, 3)).map((line, index) => (
-                  <li key={`${line.name}-${index}`} className="px-3 py-2">
-                    <div className="flex items-baseline justify-between gap-3">
-                      <span className="min-w-0 truncate font-medium">{line.name}</span>
-                      <span className="font-mono text-sm tabular-nums">{money(line.totalCost)}</span>
-                    </div>
-                    <p className="text-xs text-slate-400">
-                      {line.page ? `p${line.page}` : 'p?'}
-                      {line.quantity != null && line.unitCost != null
-                        ? ` · ${line.quantity} ${line.unit} × ${money(line.unitCost)}`
-                        : ''}
-                    </p>
-                  </li>
-                ))}
+                {view.lines.map((line, index) => ({ line, index }))
+                  .filter(({ index }) => showAllLines || index < 3)
+                  .map(({ line, index }) => {
+                    const choice = lineEdits[index];
+                    const supplierLabel = suppliers.find((row) => row.id === supplierId)?.name ?? '';
+                    const pickedId = choice?.createNew ? undefined : choice?.productId ?? line.productId ?? undefined;
+                    const productName = choice?.createNew
+                      ? null
+                      : choice?.productName ?? line.productName ?? null;
+                    const showSavedBadge = !choice?.unlink && !choice?.productPicked && !choice?.createNew;
+                    return (
+                      <li key={`${line.name}-${index}`} className="px-3 py-2">
+                        <div className="flex items-baseline justify-between gap-3">
+                          <span className="min-w-0 truncate font-medium">{line.name}</span>
+                          <span className="font-mono text-sm tabular-nums">{money(line.totalCost)}</span>
+                        </div>
+                        <p className="text-xs text-slate-400">
+                          {line.page ? `p${line.page}` : 'p?'}
+                          {line.quantity != null && line.unitCost != null
+                            ? ` · ${line.quantity} ${line.unit} × ${money(line.unitCost)}`
+                            : ''}
+                        </p>
+                        <ReceiveLineProductMatch
+                          productName={productName}
+                          matchSource={showSavedBadge ? line.matchSource : null}
+                          matchPrintedValue={showSavedBadge ? line.matchPrintedValue : null}
+                          supplierName={supplierLabel}
+                          supplierSaved={Boolean(supplierId)}
+                          pickerOpen={choice?.pickerOpen ?? !pickedId}
+                          remember={choice?.remember !== false}
+                          createNew={choice?.createNew === true}
+                          showRemember={Boolean(supplierId) && choice?.productPicked === true && choice.createNew !== true}
+                          onPick={(product) =>
+                            setLineEdits((current) => ({
+                              ...current,
+                              [index]: {
+                                productId: product.id,
+                                productName: product.name,
+                                productPicked: true,
+                                remember: true,
+                                unlink: false,
+                                createNew: false,
+                                pickerOpen: false,
+                              },
+                            }))
+                          }
+                          onCreateNew={() =>
+                            setLineEdits((current) => ({
+                              ...current,
+                              [index]: {
+                                productPicked: false,
+                                remember: false,
+                                unlink: current[index]?.unlink === true,
+                                createNew: true,
+                                pickerOpen: true,
+                              },
+                            }))
+                          }
+                          onChange={() =>
+                            setLineEdits((current) => ({
+                              ...current,
+                              [index]: { ...(current[index] ?? {}), pickerOpen: true, createNew: false },
+                            }))
+                          }
+                          onUnlink={() =>
+                            setLineEdits((current) => ({
+                              ...current,
+                              [index]: {
+                                unlink: true,
+                                productPicked: false,
+                                remember: false,
+                                createNew: false,
+                                pickerOpen: true,
+                              },
+                            }))
+                          }
+                          onRemember={(value) =>
+                            setLineEdits((current) => ({
+                              ...current,
+                              [index]: { ...(current[index] ?? {}), remember: value, productPicked: true, unlink: false },
+                            }))
+                          }
+                        />
+                      </li>
+                    );
+                  })}
               </ul>
               {view.lines.length > 3 && !showAllLines ? (
                 <button type="button" className="min-h-11 text-sm font-bold text-slate-200" onClick={() => setShowAllLines(true)}>
@@ -948,6 +1042,14 @@ function asLines(value: unknown): ReviewLine[] {
         unit: typeof line.unit === 'string' && line.unit ? line.unit : 'units',
         unitCost: typeof line.unitCost === 'number' ? line.unitCost : undefined,
         totalCost: typeof line.totalCost === 'number' ? line.totalCost : undefined,
+        productId: typeof line.productId === 'string' ? line.productId : null,
+        productName: typeof line.matchedProductName === 'string' ? line.matchedProductName : null,
+        supplierCode: typeof line.supplierCode === 'string' ? line.supplierCode : null,
+        matchSource:
+          line.matchSource === 'code' || line.matchSource === 'learned_name' || line.matchSource === 'name'
+            ? line.matchSource
+            : null,
+        matchPrintedValue: typeof line.matchPrintedValue === 'string' ? line.matchPrintedValue : null,
       },
     ];
   });
