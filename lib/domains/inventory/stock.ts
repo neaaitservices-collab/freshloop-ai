@@ -1435,11 +1435,47 @@ export async function postProductReceipt(
   return result;
 }
 
+/**
+ * A move quantity is the caller's number. Omitted, blank, and non-positive values are invalid.
+ * A quantity above on-hand is rejected. It is not trimmed down to the balance.
+ */
+export function explicitMoveQuantity(
+  quantity: number,
+  onHand: number,
+  location: 'floor' | 'production'
+): number {
+  if (!Number.isFinite(quantity) || quantity <= 0 || quantity > 1_000_000) {
+    throw new InventoryLedgerError(
+      'Quantity must be a positive number.',
+      'INVALID_MOVE_QTY',
+      400
+    );
+  }
+  const qty = Number(quantity.toFixed(4));
+  const available = Number(onHand.toFixed(4));
+  if (!(qty > 0)) {
+    throw new InventoryLedgerError(
+      'Quantity must be a positive number.',
+      'INVALID_MOVE_QTY',
+      400
+    );
+  }
+  if (qty > available) {
+    const where = location === 'floor' ? 'on the floor' : 'in production';
+    throw new InventoryLedgerError(
+      `Quantity ${qty} is more than the ${available} ${where}.`,
+      'QTY_OVER_ON_HAND',
+      409
+    );
+  }
+  return qty;
+}
+
 export async function moveRetailStock(
   productId: string,
   action: 'waste' | 'rescue',
   staffId: string,
-  quantity?: number,
+  quantity: number,
   clientMutationId?: string | null
 ): Promise<{ level: StockLevel; units: number }> {
   if (clientMutationId?.trim()) {
@@ -1448,16 +1484,18 @@ export async function moveRetailStock(
       return { level: await readStockLevel(productId), units: 0 };
     }
   }
+  if (!Number.isFinite(quantity) || quantity <= 0 || quantity > 1_000_000) {
+    throw new InventoryLedgerError(
+      'Quantity must be a positive number.',
+      'INVALID_MOVE_QTY',
+      400
+    );
+  }
   const product = await prisma.product.findUnique({ where: { id: productId } });
   if (!product) throw new Error('Item was not found.');
   const floorQty = await getCurrentStock(productId, InventoryLocation.Retail_Floor);
   if (!(floorQty > 0)) throw new Error('Nothing is on the retail floor to move.');
-  const requested =
-    quantity !== undefined && Number.isFinite(quantity)
-      ? Number(quantity)
-      : floorQty;
-  const qty = Number(Math.min(floorQty, Math.max(0, requested)).toFixed(4));
-  if (!(qty > 0)) throw new Error('Transfer quantity must be greater than zero.');
+  const qty = explicitMoveQuantity(quantity, floorQty, 'floor');
   const cost = product.standardCost && product.standardCost > 0 ? product.standardCost : 0;
   const actor = staffId.trim() || 'staff-floor';
   const referenceId = clientMutationId?.trim()
@@ -1537,16 +1575,20 @@ export async function moveRetailStock(
 export async function moveKitchenPrepToWaste(
   productId: string,
   staffId: string,
-  quantity?: number
+  quantity: number
 ): Promise<{ level: StockLevel; units: number }> {
+  if (!Number.isFinite(quantity) || quantity <= 0 || quantity > 1_000_000) {
+    throw new InventoryLedgerError(
+      'Quantity must be a positive number.',
+      'INVALID_MOVE_QTY',
+      400
+    );
+  }
   const product = await prisma.product.findUnique({ where: { id: productId } });
   if (!product) throw new Error('Item was not found.');
   const prepQty = await getCurrentStock(productId, InventoryLocation.Kitchen_Prep);
   if (!(prepQty > 0)) throw new Error('Nothing is in production prep to discard.');
-  const requested =
-    quantity !== undefined && Number.isFinite(quantity) ? Number(quantity) : prepQty;
-  const qty = Number(Math.min(prepQty, Math.max(0, requested)).toFixed(4));
-  if (!(qty > 0)) throw new Error('Transfer quantity must be greater than zero.');
+  const qty = explicitMoveQuantity(quantity, prepQty, 'production');
   const cost = product.standardCost && product.standardCost > 0 ? product.standardCost : 0;
   await prisma.$transaction(async (tx) => {
     await consumeLotsFifo(tx, {

@@ -121,7 +121,8 @@ export function receivingPostFailureReason(error: unknown): string {
     if (mentionsLocation(message) && /missing|not found|invalid|required/i.test(message)) {
       return MISSING_LOCATION_REASON;
     }
-    if (/required|must be|invalid|greater than|at most|finite|validation/i.test(message)) return message;
+    if (/required|must be|greater than|at most|finite|validation/i.test(message)) return message;
+    if (/invalid/i.test(message)) return RECEIVING_VALIDATION_REASON;
   }
   return STOCK_NOT_UPDATED;
 }

@@ -1,11 +1,17 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { readFileSync } from 'node:fs';
 import {
   buildCostVarianceSeries,
   buildExecutiveKpis,
+  formatExecutivePercent,
   monthlyFactorFromLookback,
 } from '@/lib/domains/executive/financeModel';
-import { DEFAULT_EXECUTIVE_SCENARIO } from '@/lib/domains/executive/types';
+import {
+  DEFAULT_EXECUTIVE_SCENARIO,
+  ROI_ESTIMATE_LABEL,
+  executiveScenarioIsDefault,
+} from '@/lib/domains/executive/types';
 
 test('buildExecutiveKpis returns positive savings with scenario', () => {
   const kpis = buildExecutiveKpis(
@@ -74,6 +80,50 @@ test('an empty sales period stays finite', () => {
   );
   assert.equal(series.length, 6);
   assert.ok(series.every((row) => Number.isFinite(row.baseline) && Number.isFinite(row.optimized) && Number.isFinite(row.savings)));
+});
+
+test('a range with no sales shows a dash instead of 0% or NaN', () => {
+  assert.equal(formatExecutivePercent(0, 0), '—');
+  assert.equal(formatExecutivePercent(Number.NaN, 0), '—');
+  assert.equal(formatExecutivePercent(null, 0), '—');
+  assert.equal(formatExecutivePercent(99.9, 0), '—');
+  const kpis = buildExecutiveKpis(
+    {
+      stats: { rescuedValue: 0, wasteReductionPct: null, targetWastePct: 10 } as never,
+      wasteKpi: {
+        totalWasteValue: 0,
+        wastePct: null,
+        targetWastePct: 10,
+        grossSalesRevenue: 0,
+      } as never,
+    },
+    DEFAULT_EXECUTIVE_SCENARIO,
+    31
+  );
+  assert.equal(formatExecutivePercent(kpis.operationalEfficiencyPct, 0), '—');
+  assert.equal(formatExecutivePercent(kpis.baselineWastePct, 0), '—');
+  assert.equal(formatExecutivePercent(0, 250), '0.0%');
+  assert.equal(formatExecutivePercent(Number.NaN, 250), '—');
+  assert.equal(formatExecutivePercent(12.4, 250), '12.4%');
+});
+
+test('default scenario ROI figures use the Estimate label', () => {
+  assert.equal(executiveScenarioIsDefault(DEFAULT_EXECUTIVE_SCENARIO), true);
+  assert.equal(ROI_ESTIMATE_LABEL, 'Estimate');
+  assert.equal(
+    executiveScenarioIsDefault({ ...DEFAULT_EXECUTIVE_SCENARIO, laborHoursSavedPerWeek: 0 }),
+    false
+  );
+  const dashboard = readFileSync('components/features/executive/ExecutiveDashboard.tsx', 'utf8');
+  const summary = readFileSync('components/features/executive/ROIImpactSummary.tsx', 'utf8');
+  const page = readFileSync('app/admin/executive/page.tsx', 'utf8');
+  assert.match(dashboard, /executiveScenarioIsDefault\(scenario\)/);
+  assert.match(dashboard, /ROI_ESTIMATE_LABEL/);
+  assert.match(dashboard, /formatExecutivePercent\(kpis\.operationalEfficiencyPct, sales\)/);
+  assert.match(dashboard, /formatExecutivePercent\(kpis\.baselineWastePct, sales\)/);
+  assert.match(summary, /ROI_ESTIMATE_LABEL/);
+  assert.match(summary, /formatExecutivePercent\(kpis\.operationalEfficiencyPct, grossSalesRevenue\)/);
+  assert.match(page, /grossSalesRevenue=\{wasteKpi\.grossSalesRevenue\}/);
 });
 
 test('buildCostVarianceSeries returns 6 months', () => {

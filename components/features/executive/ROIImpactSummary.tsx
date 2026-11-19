@@ -2,15 +2,21 @@
 
 import React from 'react';
 import { Card, CardBody, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card';
+import { formatExecutivePercent } from '@/lib/domains/executive/financeModel';
 import { formatCurrency } from '@/lib/domains/receiving/yieldPricing';
-import type { ExecutiveKpiSummary } from '@/lib/domains/executive/types';
+import { ROI_ESTIMATE_LABEL, type ExecutiveKpiSummary } from '@/lib/domains/executive/types';
 import { cn } from '@/lib/utils/cn';
 
 export function ROIImpactSummary({
   kpis,
+  grossSalesRevenue = null,
+  estimate = false,
   loading = false,
 }: {
   kpis: ExecutiveKpiSummary | null;
+  grossSalesRevenue?: number | null;
+  /** True when the figures still use the default assumed scenario. */
+  estimate?: boolean;
   loading?: boolean;
 }) {
   if (loading || !kpis) {
@@ -73,6 +79,9 @@ export function ROIImpactSummary({
             <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-400/80">
               Projected annual ROI
             </p>
+            {estimate ? (
+              <p className="mt-1 text-xs font-bold text-amber-300">{ROI_ESTIMATE_LABEL}</p>
+            ) : null}
             <p className="font-mono text-2xl font-black text-emerald-300">
               {formatCurrency(kpis.projectedAnnualRoiUsd)}
             </p>
@@ -82,13 +91,20 @@ export function ROIImpactSummary({
             <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
               Operational efficiency index
             </p>
+            {estimate ? (
+              <p className="mt-1 text-xs font-bold text-amber-300">{ROI_ESTIMATE_LABEL}</p>
+            ) : null}
             <p
               className={cn(
                 'font-mono text-2xl font-black',
-                kpis.operationalEfficiencyPct >= 90 ? 'text-emerald-300' : 'text-amber-200'
+                formatExecutivePercent(kpis.operationalEfficiencyPct, grossSalesRevenue) === '—'
+                  ? 'text-slate-300'
+                  : kpis.operationalEfficiencyPct >= 90
+                    ? 'text-emerald-300'
+                    : 'text-amber-200'
               )}
             >
-              {kpis.operationalEfficiencyPct.toFixed(1)}%
+              {formatExecutivePercent(kpis.operationalEfficiencyPct, grossSalesRevenue)}
             </p>
           </div>
         </div>

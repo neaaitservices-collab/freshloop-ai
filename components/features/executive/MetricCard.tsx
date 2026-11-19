@@ -11,6 +11,7 @@ export function MetricCard({
   icon: Icon,
   accent = 'text-slate-100',
   trend,
+  badge,
   loading = false,
 }: {
   label: string;
@@ -19,6 +20,7 @@ export function MetricCard({
   icon: React.ComponentType<{ className?: string }>;
   accent?: string;
   trend?: { direction: 'up' | 'down' | 'flat'; text: string };
+  badge?: string;
   loading?: boolean;
 }) {
   return (
@@ -33,9 +35,20 @@ export function MetricCard({
         {loading ? (
           <div className="mt-3 h-9 w-28 animate-pulse rounded-lg bg-slate-800" />
         ) : (
-          <p className={cn('mt-2 font-mono text-2xl font-black tracking-tight sm:text-[1.75rem]', accent)}>
-            {value}
-          </p>
+          <>
+            {badge ? (
+              <p className="mt-2 text-xs font-bold text-amber-300">{badge}</p>
+            ) : null}
+            <p
+              className={cn(
+                'font-mono text-2xl font-black tracking-tight sm:text-[1.75rem]',
+                badge ? 'mt-0.5' : 'mt-2',
+                accent
+              )}
+            >
+              {value}
+            </p>
+          </>
         )}
         <p className="mt-1 line-clamp-2 text-[11px] leading-snug text-slate-500">{detail}</p>
         {trend && !loading ? (

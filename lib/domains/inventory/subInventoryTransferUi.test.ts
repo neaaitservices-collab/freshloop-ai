@@ -100,11 +100,11 @@ test('floor waste asks for confirmation and does not post', () => {
   assert.equal(
     floorWasteConfirmDetails({ name: 'FARFALLE PASTA', quantity: 1, unit: 'units', unitCost: 0 })
       .costLabel,
-    null
+    'Cost unknown'
   );
   assert.equal(
     floorWasteConfirmDetails({ name: 'FARFALLE PASTA', quantity: 1, unit: 'units' }).costLabel,
-    null
+    'Cost unknown'
   );
 
   const html = renderToStaticMarkup(
@@ -131,12 +131,12 @@ test('floor waste asks for confirmation and does not post', () => {
       item: 'FARFALLE PASTA',
       quantityLabel: '1 units',
       location: 'Floor',
-      costLabel: null,
+      costLabel: 'Cost unknown',
       onCancel: () => {},
       onConfirm: () => {},
     })
   );
-  assert.equal(noCost.includes('Cost'), false);
+  assert.match(noCost, /Cost unknown/);
   assert.equal(noCost.includes('$0.00'), false);
 });
 
@@ -178,6 +178,9 @@ test('the transfer bar starts at 1, keeps All, and hides waste confirm until req
   assert.match(source, /postMove\('rescue'/);
   assert.match(source, /postMove\('sale'/);
   assert.match(source, /postMove\('kitchen_waste'/);
+  assert.match(source, /runInFlight/);
+  assert.match(source, /Cost unknown/);
+  assert.match(source, /onChange\(max > 0 \? max : undefined\)/);
   const list = readFileSync(
     'components/features/inventory/SubInventoryTransferList.tsx',
     'utf8'
