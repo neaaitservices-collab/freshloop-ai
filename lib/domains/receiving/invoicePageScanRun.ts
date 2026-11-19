@@ -102,6 +102,7 @@ function scanPayload(scan: PageScanRecord, lines: OcrDraftLine[]): OcrDraftPaylo
     ...(scan.printedSubtotal !== undefined ? { printedSubtotal: scan.printedSubtotal } : {}),
     ...(scan.printedHst !== undefined ? { printedHst: scan.printedHst } : {}),
     ...(scan.printedPst !== undefined ? { printedPst: scan.printedPst } : {}),
+    ...(scan.printedGst !== undefined ? { printedGst: scan.printedGst } : {}),
     pageScanBlockers: scan.pageScanBlockers,
     pageScanReviewFlags: scan.pageScanReviewFlags,
   };
@@ -159,6 +160,7 @@ function responseFor(draftId: string, payload: OcrDraftPayload): ScanResponse {
     ...(scan?.printedSubtotal !== undefined ? { printedSubtotal: scan.printedSubtotal } : {}),
     ...(scan?.printedHst !== undefined ? { printedHst: scan.printedHst } : {}),
     ...(scan?.printedPst !== undefined ? { printedPst: scan.printedPst } : {}),
+    ...(scan?.printedGst !== undefined ? { printedGst: scan.printedGst } : {}),
   };
   if (status === 'ready' && payload.scanAudited) {
     body.data = {

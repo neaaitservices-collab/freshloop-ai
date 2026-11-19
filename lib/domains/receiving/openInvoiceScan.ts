@@ -18,6 +18,7 @@ export interface RestoredPageScan {
   printedSubtotal?: number;
   printedHst?: number;
   printedPst?: number;
+  printedGst?: number;
   blockers: string[];
   reviewFlags: string[];
   clientScanId?: string;
@@ -177,6 +178,7 @@ function pageScanOf(raw: unknown): RestoredInvoiceScan['pageScan'] {
     ...(scan.printedSubtotal !== undefined ? { printedSubtotal: scan.printedSubtotal } : {}),
     ...(scan.printedHst !== undefined ? { printedHst: scan.printedHst } : {}),
     ...(scan.printedPst !== undefined ? { printedPst: scan.printedPst } : {}),
+    ...(scan.printedGst !== undefined ? { printedGst: scan.printedGst } : {}),
     blockers: scan.pageScanBlockers,
     reviewFlags: scan.pageScanReviewFlags,
     ...(scan.clientScanId ? { clientScanId: scan.clientScanId } : {}),

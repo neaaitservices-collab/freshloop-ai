@@ -73,7 +73,13 @@ const PRINTED_SUBTOTAL = 1536.08;
 const LINE_SUM = 1500.75;
 const BAD_SCAN_TOTAL = 852.1;
 
-function hundredDollarInvoice(printed: { subtotal?: number; totalAmount?: number; hst?: number; pst?: number }) {
+function hundredDollarInvoice(printed: {
+  subtotal?: number;
+  totalAmount?: number;
+  hst?: number;
+  pst?: number;
+  gst?: number;
+}) {
   const body: Record<string, unknown> = {
     vendorName: 'Demo Produce Co',
     invoiceNumber: '1001',
@@ -94,6 +100,7 @@ function hundredDollarInvoice(printed: { subtotal?: number; totalAmount?: number
   if ('totalAmount' in printed) body.totalAmount = printed.totalAmount;
   if ('hst' in printed) body.hst = printed.hst;
   if ('pst' in printed) body.pst = printed.pst;
+  if ('gst' in printed) body.gst = printed.gst;
   return body;
 }
 
@@ -327,6 +334,12 @@ describe('Deodato header total from the invoice reader', { concurrency: 1 }, () 
     const read = await readFakeModel(hundredDollarInvoice({ hst: 13, totalAmount: 113 }));
     assert.equal(read.totalAmount, 100);
     assert.notEqual(read.totalAmount, 113);
+  });
+
+  test('a raw response with no subtotal, gst 5, and total 105 uses the line sum', async () => {
+    const read = await readFakeModel(hundredDollarInvoice({ gst: 5, totalAmount: 105 }));
+    assert.equal(read.totalAmount, 100);
+    assert.notEqual(read.totalAmount, 105);
   });
 
   test('uses the line sum when hst is present and the subtotal was omitted', async () => {
