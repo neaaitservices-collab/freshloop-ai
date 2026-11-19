@@ -241,38 +241,61 @@ export function planSupplierMatchWrites(
   return writes;
 }
 
-/** Active, non-manufactured links for one supplier. One query. */
+/** P2021, or Postgres saying supplier_product_matches is not there yet. */
+export function isMissingSupplierProductMatches(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false;
+  const code = 'code' in error ? String((error as { code?: unknown }).code ?? '') : '';
+  const message = 'message' in error ? String((error as { message?: unknown }).message ?? '') : '';
+  const meta = 'meta' in error ? JSON.stringify((error as { meta?: unknown }).meta ?? '') : '';
+  const blob = `${message}\n${meta}`.toLowerCase();
+  if (code === 'P2021' || code === '42P01') return true;
+  return blob.includes('supplier_product_matches') && blob.includes('does not exist');
+}
+
+function warnMissingSupplierProductMatches(): void {
+  console.warn(
+    '[freshloop] supplier_product_matches is not in this database yet. Invoice lines match by name only, and remembered links were not saved.'
+  );
+}
+
+/** Active, non-manufactured links for one supplier. One query. A missing table is no links. */
 export async function loadActiveSupplierProductLinks(
   supplierId: string,
   db: Db = prisma
 ): Promise<SupplierProductLinkRef[]> {
   const id = supplierId.trim();
   if (!id) return [];
-  const rows = await db.supplierProductMatch.findMany({
-    where: {
-      supplierId: id,
-      product: { catalogActive: true, isManufactured: false },
-    },
-    select: {
-      matchType: true,
-      matchKey: true,
-      printedValue: true,
-      productId: true,
-      product: { select: { name: true } },
-    },
-  });
-  return rows.flatMap((row) => {
-    if (row.matchType !== 'code' && row.matchType !== 'name') return [];
-    return [
-      {
-        matchType: row.matchType,
-        matchKey: row.matchKey,
-        printedValue: row.printedValue,
-        productId: row.productId,
-        productName: row.product.name,
+  try {
+    const rows = await db.supplierProductMatch.findMany({
+      where: {
+        supplierId: id,
+        product: { catalogActive: true, isManufactured: false },
       },
-    ];
-  });
+      select: {
+        matchType: true,
+        matchKey: true,
+        printedValue: true,
+        productId: true,
+        product: { select: { name: true } },
+      },
+    });
+    return rows.flatMap((row) => {
+      if (row.matchType !== 'code' && row.matchType !== 'name') return [];
+      return [
+        {
+          matchType: row.matchType,
+          matchKey: row.matchKey,
+          printedValue: row.printedValue,
+          productId: row.productId,
+          productName: row.product.name,
+        },
+      ];
+    });
+  } catch (error) {
+    if (!isMissingSupplierProductMatches(error)) throw error;
+    warnMissingSupplierProductMatches();
+    return [];
+  }
 }
 
 /** Scan-time guess. No saved supplier, or an ambiguous name, loads nothing. */
@@ -329,12 +352,28 @@ export async function applySupplierMatchWrites(
   const supplier = supplierId.trim();
   const actor = actorId.trim();
   if (!supplier || !actor || writes.length === 0) return;
+  let warnedMissing = false;
+  const skipBecauseTableIsMissing = (error: unknown): boolean => {
+    if (!isMissingSupplierProductMatches(error)) return false;
+    if (!warnedMissing) {
+      warnedMissing = true;
+      warnMissingSupplierProductMatches();
+    }
+    return true;
+  };
   for (const write of writes) {
     if (!write.matchKey) continue;
     if (write.action === 'delete') {
-      await db.supplierProductMatch.deleteMany({
-        where: { supplierId: supplier, matchType: write.matchType, matchKey: write.matchKey },
-      });
+      try {
+        await withoutAbortingTransaction(db, () =>
+          db.supplierProductMatch.deleteMany({
+            where: { supplierId: supplier, matchType: write.matchType, matchKey: write.matchKey },
+          })
+        );
+      } catch (error) {
+        if (skipBecauseTableIsMissing(error)) return;
+        throw error;
+      }
       continue;
     }
     const productId = write.productId?.trim() ?? '';
@@ -365,8 +404,14 @@ export async function applySupplierMatchWrites(
         })
       );
     } catch (error) {
+      if (skipBecauseTableIsMissing(error)) return;
       if (!isUniqueViolation(error)) throw error;
-      await db.supplierProductMatch.update({ where, data: update });
+      try {
+        await withoutAbortingTransaction(db, () => db.supplierProductMatch.update({ where, data: update }));
+      } catch (retryError) {
+        if (skipBecauseTableIsMissing(retryError)) return;
+        throw retryError;
+      }
     }
   }
 }

@@ -7,9 +7,14 @@
 -- Those roles are absent on plain Postgres (GitHub Actions role `ci`). Missing roles are skipped.
 --
 -- The foreign keys lock products and suppliers. Same lock cap as
--- 20261118040000_db_lockdown.
+-- 20261118040000_db_lockdown. The whole migration is one transaction so a
+-- failed statement cannot leave a half-built table. Prisma must not open a
+-- second transaction around this file.
+-- prisma migrate disable transaction
 
-SET lock_timeout = '5s';
+BEGIN;
+
+SET LOCAL lock_timeout = '5s';
 
 CREATE TABLE "supplier_product_matches" (
     "id" TEXT NOT NULL,
@@ -55,3 +60,5 @@ BEGIN
   END LOOP;
 END
 $$;
+
+COMMIT;

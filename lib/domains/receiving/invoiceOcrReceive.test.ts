@@ -15,6 +15,11 @@ import {
 } from '@/lib/domains/receiving/invoiceOcrReceive';
 import type { OcrDraftPayload } from '@/lib/domains/receiving/invoiceOcrCommit';
 import type { ReceivingLogPostResult } from '@/lib/domains/receiving/receivingLogPost';
+import {
+  applySupplierMatchWrites,
+  loadActiveSupplierProductLinks,
+  planSupplierMatchWrites,
+} from '@/lib/domains/receiving/supplierProductMatch';
 
 const DELIVERY_ID = '33333333-3333-4333-8333-333333333333';
 
@@ -86,6 +91,68 @@ function deps(draft: OcrDraftRecord | null, posted: InvoiceOcrPostEntry[]) {
     },
   };
 }
+
+test('receive still posts when supplier_product_matches is missing', async () => {
+  const posted: InvoiceOcrPostEntry[] = [];
+  const draft = storedDraft();
+  const line = (draft.payload as OcrDraftPayload).lines[0];
+  if (line) {
+    line.supplier_code = 'AB-12';
+    line.printed_name = 'Honeycrisp Apples';
+    line.remember = true;
+  }
+  const missing = Object.assign(new Error('relation "supplier_product_matches" does not exist'), { code: 'P2021' });
+  const outcome = await receiveAcceptedInvoiceOcr({
+    actorId: 'clerk-1',
+    actorIsManager: false,
+    body: {
+      invoiceOcr: true,
+      draftId: 'draft-1',
+      acceptDraft: true,
+      supplierId: 'sup-1',
+      items: [browserCopy()],
+    },
+    deps: {
+      ...deps(draft, posted),
+      loadSupplierLinks: async (supplierId) =>
+        loadActiveSupplierProductLinks(supplierId, {
+          supplierProductMatch: { findMany: async () => { throw missing; } },
+        } as never),
+      postLines: async (input) => {
+        await applySupplierMatchWrites(
+          {
+            supplierProductMatch: {
+              upsert: async () => { throw missing; },
+              deleteMany: async () => { throw missing; },
+              update: async () => { throw new Error('update should not run'); },
+            },
+          } as never,
+          'sup-1',
+          input.actorId,
+          planSupplierMatchWrites(input.resolved.lines, 'sup-1')
+        );
+        posted.push(...input.entries);
+        return input.entries.map(
+          (entry): ReceivingLogPostResult => ({
+            externalLogId: entry.line.externalLogId,
+            itemName: entry.line.itemName,
+            stock: {
+              posted: true,
+              unitsAdded: entry.line.casesReceived,
+              onHand: entry.line.casesReceived,
+              productId: entry.line.productId ?? '',
+              productName: entry.line.itemName,
+              transactionId: 'tx-1',
+            },
+          })
+        );
+      },
+    },
+  });
+  assert.equal(outcome.ok, true);
+  assert.equal(posted.length, 1);
+  assert.equal(posted[0]?.line.productId, 'sku-apple');
+});
 
 test('an accepted server draft posts its stored quantity and cost', async () => {
   const posted: InvoiceOcrPostEntry[] = [];

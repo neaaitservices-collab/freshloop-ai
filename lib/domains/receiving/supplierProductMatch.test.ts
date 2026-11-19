@@ -6,6 +6,7 @@ import { applyOcrDraftResolutions, buildAuthoritativeOcrDraft, draftPostingBlock
 import { invoiceMatchResolutions } from '@/lib/domains/receiving/invoiceMatchChoice';
 import {
   applySupplierMatchWrites,
+  loadActiveSupplierProductLinks,
   matchInvoiceLine,
   normalizeLineNameKey,
   normalizeSupplierCode,
@@ -318,7 +319,10 @@ test('the supplier match migration checks the key and grants nothing to the Data
     path.join(process.cwd(), 'prisma/migrations/20261119050000_supplier_product_matches/migration.sql'),
     'utf8'
   );
-  assert.match(sql, /SET lock_timeout = '5s';/);
+  assert.match(sql, /^BEGIN;$/m);
+  assert.match(sql, /^COMMIT;$/m);
+  assert.match(sql, /SET LOCAL lock_timeout = '5s';/);
+  assert.equal(sql.includes("SET lock_timeout = '5s';"), false);
   assert.match(sql, /CHECK \("match_type" IN \('code', 'name'\)\)/);
   assert.match(sql, /CHECK \("match_key" <> ''\)/);
   assert.match(sql, /CHECK \(btrim\("printed_value"\) <> ''\)/);
@@ -454,4 +458,87 @@ test('a concurrent link upsert is saved as an update instead of failing the post
       ),
     /connection lost/
   );
+});
+
+function missingTable(code = 'P2021', message = 'The table `public.supplier_product_matches` does not exist in the current database.'): Error {
+  const error = new Error(message);
+  (error as { code?: string }).code = code;
+  return error;
+}
+
+test('scan and commit treat a missing supplier match table as no links', async () => {
+  const warnings: unknown[][] = [];
+  const original = console.warn;
+  console.warn = (...args: unknown[]) => {
+    warnings.push(args);
+  };
+  try {
+    const links = await loadActiveSupplierProductLinks('deodato', {
+      supplierProductMatch: { findMany: async () => { throw missingTable(); } },
+    } as never);
+    assert.deepEqual(links, []);
+    const byMessage = await loadActiveSupplierProductLinks('deodato', {
+      supplierProductMatch: {
+        findMany: async () => {
+          throw missingTable('42P01', 'relation "supplier_product_matches" does not exist');
+        },
+      },
+    } as never);
+    assert.deepEqual(byMessage, []);
+    await assert.rejects(
+      () =>
+        loadActiveSupplierProductLinks('deodato', {
+          supplierProductMatch: { findMany: async () => { throw new Error('connection lost'); } },
+        } as never),
+      /connection lost/
+    );
+  } finally {
+    console.warn = original;
+  }
+  assert.equal(warnings.length, 2);
+  assert.match(String(warnings[0]?.[0]), /supplier_product_matches is not in this database yet/);
+});
+
+test('remember and unlink skip a missing table without aborting the stock transaction', async () => {
+  const sql: string[] = [];
+  let updates = 0;
+  const warnings: unknown[][] = [];
+  const original = console.warn;
+  console.warn = (...args: unknown[]) => {
+    warnings.push(args);
+  };
+  try {
+    await applySupplierMatchWrites(
+      {
+        $executeRawUnsafe: async (query: string) => {
+          sql.push(query);
+        },
+        supplierProductMatch: {
+          upsert: async () => {
+            throw missingTable();
+          },
+          deleteMany: async () => {
+            throw missingTable();
+          },
+          update: async () => {
+            updates += 1;
+            return { id: 'row' };
+          },
+        },
+      } as never,
+      'deodato',
+      'clerk',
+      [
+        { action: 'upsert', matchType: 'code', matchKey: 'AB12', printedValue: 'AB12', productId: 'apples' },
+        { action: 'delete', matchType: 'name', matchKey: 'hot house tomatoes on', printedValue: 'Tomatoes' },
+      ]
+    );
+  } finally {
+    console.warn = original;
+  }
+  assert.equal(updates, 0);
+  assert.equal(warnings.length, 1);
+  assert.match(sql[0] ?? '', /^SAVEPOINT spm_link_/);
+  assert.match(sql[1] ?? '', /^ROLLBACK TO SAVEPOINT spm_link_/);
+  assert.equal(sql.length, 2);
 });
