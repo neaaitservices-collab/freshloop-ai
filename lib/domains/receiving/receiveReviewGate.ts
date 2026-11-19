@@ -35,22 +35,21 @@ function overrideBlocker(blocker: string): boolean {
   return /cost_guardrail|low_confidence/i.test(blocker);
 }
 
-/** Price jumps, low confidence, and a subtotal mismatch need a manager. The subtotal block is client-side. */
+/**
+ * Price jumps and low confidence need a manager override.
+ * A subtotal mismatch stays on the manager checkbox only. It does not block a receiver.
+ */
 export function needsManagerSignoff(input: {
-  reviewFlags: readonly string[];
   lines: readonly { requiresApproval?: boolean }[];
   blockers: readonly string[];
 }): boolean {
   return (
-    input.reviewFlags.length > 0 ||
-    input.lines.some((line) => line.requiresApproval === true) ||
-    input.blockers.some(overrideBlocker)
+    input.lines.some((line) => line.requiresApproval === true) || input.blockers.some(overrideBlocker)
   );
 }
 
 export function clerkCannotConfirm(input: {
   manager: boolean;
-  reviewFlags: readonly string[];
   lines: readonly { requiresApproval?: boolean }[];
   blockers: readonly string[];
 }): boolean {
