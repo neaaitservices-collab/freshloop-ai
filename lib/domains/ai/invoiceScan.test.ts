@@ -18,22 +18,29 @@ import {
 } from '@/lib/domains/ai/invoiceScan';
 import { invoiceOcrModelCandidates, INVOICE_OCR_FLASH_MODEL } from '@/lib/domains/ai/geminiModels';
 
-test('invoice scan attempt limit respects the 22s cap and the total budget', () => {
-  assert.equal(INVOICE_OCR_ATTEMPT_TIMEOUT_MS, 22_000);
-  assert.equal(INVOICE_OCR_TOTAL_BUDGET_MS, 25_000);
+test('invoice scan uses one 40s attempt inside a 42s page budget', () => {
+  assert.equal(INVOICE_OCR_ATTEMPT_TIMEOUT_MS, 40_000);
+  assert.equal(INVOICE_OCR_TOTAL_BUDGET_MS, 42_000);
   assert.equal(boundedAttemptMs(0, undefined), 'unlimited');
   assert.equal(
-    boundedAttemptMs(1_000, { attemptTimeoutMs: 22_000, deadlineAtMs: 25_000 }),
-    22_000
+    boundedAttemptMs(1_000, { attemptTimeoutMs: INVOICE_OCR_ATTEMPT_TIMEOUT_MS, deadlineAtMs: INVOICE_OCR_TOTAL_BUDGET_MS }),
+    40_000
   );
   assert.equal(
-    boundedAttemptMs(20_000, { attemptTimeoutMs: 22_000, deadlineAtMs: 25_000 }),
-    5_000
+    boundedAttemptMs(INVOICE_OCR_ATTEMPT_TIMEOUT_MS, {
+      attemptTimeoutMs: INVOICE_OCR_ATTEMPT_TIMEOUT_MS,
+      deadlineAtMs: INVOICE_OCR_TOTAL_BUDGET_MS,
+    }),
+    2_000
   );
   assert.equal(
-    boundedAttemptMs(25_000, { attemptTimeoutMs: 22_000, deadlineAtMs: 25_000 }),
+    boundedAttemptMs(INVOICE_OCR_TOTAL_BUDGET_MS, {
+      attemptTimeoutMs: INVOICE_OCR_ATTEMPT_TIMEOUT_MS,
+      deadlineAtMs: INVOICE_OCR_TOTAL_BUDGET_MS,
+    }),
     null
   );
+  assert.ok(INVOICE_OCR_TOTAL_BUDGET_MS - INVOICE_OCR_ATTEMPT_TIMEOUT_MS < INVOICE_OCR_ATTEMPT_TIMEOUT_MS);
 });
 
 test('attempt abort fires and abort errors stay worded as timeouts', async () => {
@@ -176,6 +183,8 @@ test('invoice route sends one prepared flash attempt inside the time budget', ()
   assert.match(route, /maxModelsToTry: 1/);
   assert.match(route, /attemptTimeoutMs: INVOICE_OCR_ATTEMPT_TIMEOUT_MS/);
   assert.match(route, /deadlineAtMs: scanStartedAt \+ INVOICE_OCR_TOTAL_BUDGET_MS/);
+  assert.match(route, /maxOutputTokens: 16384/);
+  assert.equal(route.includes('maxOutputTokens: 8192'), false);
   assert.equal(route.includes('maxModelsToTry: 5'), false);
   assert.equal(route.includes('skipModelDiscovery: false'), false);
   assert.match(gemini, /createAttemptAbort/);

@@ -2,8 +2,12 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
-import { geminiBackoffMs } from '@/lib/domains/ai/gemini';
-import { INVOICE_OCR_TOTAL_BUDGET_MS, INVOICE_PDF_MAX_PAGES } from '@/lib/domains/ai/invoiceScan';
+import { GeminiMaxTokensError, geminiBackoffMs } from '@/lib/domains/ai/gemini';
+import {
+  INVOICE_OCR_ATTEMPT_TIMEOUT_MS,
+  INVOICE_OCR_TOTAL_BUDGET_MS,
+  INVOICE_PDF_MAX_PAGES,
+} from '@/lib/domains/ai/invoiceScan';
 import { INVOICE_LINE_TOTAL_TOLERANCE } from '@/lib/domains/receiving/invoiceOcrModel';
 import { draftPostingBlockers } from '@/lib/domains/receiving/invoiceOcrDraft';
 import type { OcrDraftPayload } from '@/lib/domains/receiving/invoiceOcrCommit';
@@ -22,23 +26,30 @@ import {
   finalizeReadyScan,
   initialPageScan,
   INVOICE_PAGE_ATTEMPT_BUDGET_MS,
+  InvoicePageReadError,
   InvoiceScanRequestError,
   invoiceReviewHardBlocked,
   INVOICE_PAGE_BATCH_SIZE,
   INVOICE_PAGE_LINE_MAX,
   INVOICE_PAGE_MAX,
   INVOICE_PAGE_REQUEST_BUDGET_MS,
+  INVOICE_PAGE_RETRY_MARGIN_MS,
+  INVOICE_PAGE_TOO_DENSE_MESSAGE,
   INVOICE_PAGE_STALE_MS,
   INVOICE_PAGE_TOTAL_TOLERANCE,
+  invoicePageFailureStage,
   lineIdentityKey,
+  logInvoicePageReadFailure,
   markPagesScanning,
   mergeReadPages,
   nextRemainingIndexes,
   nextSuppliedWave,
   nextWaveDelayMs,
+  pageFailureMessage,
   parseRetryAfterDelayMs,
   readOptionalMoney,
   readPostedInvoiceDate,
+  rateLimitRetryFits,
   readPrintedMoneyFields,
   retryAfterPlan,
   readStoredPageScan,
@@ -121,8 +132,10 @@ test('page waves stay inside the 60 second route and match the existing OCR limi
   );
   assert.deepEqual(chunkPages([1, 2], 2), [[1, 2]]);
   assert.equal(waveFitsInRequest(0, 0), true);
+  assert.equal(waveFitsInRequest(6_000, 0), true);
+  assert.equal(waveFitsInRequest(6_001, 0), false);
+  assert.equal(waveFitsInRequest(20_000, 0), false);
   assert.equal(waveFitsInRequest(24_000, 0), false);
-  assert.equal(waveFitsInRequest(20_000, 0), true);
 
   const pages = createScanPages(8, NOW);
   pages[0] = { ...pages[0]!, status: 'read' };
@@ -133,6 +146,102 @@ test('page waves stay inside the 60 second route and match the existing OCR limi
   );
   assert.equal(nextWaveDelayMs(false, geminiBackoffMs, 0), 0);
   assert.equal(nextWaveDelayMs(true, geminiBackoffMs, 0), geminiBackoffMs(null, 0));
+});
+
+test('parallel pages share one 40s attempt inside the 48s request and the 60s route', () => {
+  const runner = fs.readFileSync(path.join(process.cwd(), 'lib/domains/receiving/invoicePageScanRun.ts'), 'utf8');
+  const route = fs.readFileSync(path.join(process.cwd(), 'app/api/invoice-ocr/route.ts'), 'utf8');
+  assert.match(runner, /mapPool\(wave, INVOICE_PAGE_BATCH_SIZE/);
+  assert.match(route, /export const maxDuration = 60;/);
+  assert.equal(INVOICE_OCR_ATTEMPT_TIMEOUT_MS, 40_000);
+  assert.equal(INVOICE_OCR_TOTAL_BUDGET_MS, 42_000);
+  assert.equal(INVOICE_PAGE_ATTEMPT_BUDGET_MS, 42_000);
+  assert.equal(INVOICE_PAGE_REQUEST_BUDGET_MS, 48_000);
+  assert.equal(INVOICE_PAGE_BATCH_SIZE, 3);
+
+  const pages = 3;
+  const imagePrepMs = 2_000;
+  const responseMs = 4_000;
+  const parallelWall = imagePrepMs + INVOICE_OCR_ATTEMPT_TIMEOUT_MS + responseMs;
+  const serialWall = pages * (imagePrepMs + INVOICE_OCR_ATTEMPT_TIMEOUT_MS);
+  assert.ok(parallelWall < serialWall);
+  assert.ok(parallelWall <= INVOICE_PAGE_REQUEST_BUDGET_MS);
+  assert.ok(parallelWall <= 60_000);
+  assert.ok(imagePrepMs + INVOICE_OCR_TOTAL_BUDGET_MS + responseMs <= 60_000);
+  assert.ok(60_000 - INVOICE_PAGE_REQUEST_BUDGET_MS >= 10_000);
+  assert.ok(parallelWall + INVOICE_OCR_ATTEMPT_TIMEOUT_MS > 60_000);
+  assert.equal(waveFitsInRequest(0, 0), true);
+  assert.equal(waveFitsInRequest(INVOICE_PAGE_REQUEST_BUDGET_MS - INVOICE_PAGE_ATTEMPT_BUDGET_MS, 0), true);
+});
+
+test('a max token finish tells the clerk the page is too dense', () => {
+  assert.equal(INVOICE_PAGE_TOO_DENSE_MESSAGE, 'Page too dense to read in one pass, please retake closer or split');
+  assert.equal(pageFailureMessage(new GeminiMaxTokensError()), INVOICE_PAGE_TOO_DENSE_MESSAGE);
+  assert.equal(invoicePageFailureStage(new GeminiMaxTokensError()), null);
+});
+
+test('a 429 follow-up starts only when a full attempt plus margin still fits', () => {
+  assert.equal(INVOICE_PAGE_RETRY_MARGIN_MS, INVOICE_OCR_TOTAL_BUDGET_MS - INVOICE_OCR_ATTEMPT_TIMEOUT_MS);
+  assert.equal(
+    INVOICE_PAGE_ATTEMPT_BUDGET_MS - INVOICE_PAGE_RETRY_MARGIN_MS,
+    INVOICE_OCR_ATTEMPT_TIMEOUT_MS
+  );
+  const needed = INVOICE_OCR_ATTEMPT_TIMEOUT_MS + INVOICE_PAGE_RETRY_MARGIN_MS;
+  const latest = INVOICE_PAGE_REQUEST_BUDGET_MS - needed;
+  assert.equal(rateLimitRetryFits(0, 0), true);
+  assert.equal(rateLimitRetryFits(latest, 0), true);
+  assert.equal(rateLimitRetryFits(latest + 1, 0), false);
+  const late = 20_000;
+  assert.equal(rateLimitRetryFits(late, 0), false);
+  assert.ok(late + INVOICE_OCR_ATTEMPT_TIMEOUT_MS > INVOICE_PAGE_REQUEST_BUDGET_MS);
+  assert.ok(late + INVOICE_OCR_ATTEMPT_TIMEOUT_MS >= 60_000);
+
+  const runner = fs.readFileSync(path.join(process.cwd(), 'lib/domains/receiving/invoicePageScanRun.ts'), 'utf8');
+  assert.match(runner, /rateLimitRetryFits\(Date\.now\(\) \+ wait, startedAtMs\)/);
+
+  let scan = initialPageScan('33333333-3333-4333-8333-333333333333', 2, NOW);
+  const marked = markPagesScanning(scan, [1], NOW);
+  scan = recordPageFailure(
+    marked.scan,
+    1,
+    marked.attempts[1]!,
+    'The reader was rate limited. Retry this page in a moment.',
+    NOW
+  );
+  assert.equal(scan.scanPages[0]?.status, 'failed');
+  const again = beginPageReread(scan, 1, NOW, NOW_MS);
+  assert.equal(again.ok, true);
+});
+
+test('page failure logs finishReason and stage without invoice content', () => {
+  const secret = 'SECRET_INVOICE_TEXT';
+  const calls: unknown[][] = [];
+  const original = console.info;
+  console.info = (...args: unknown[]) => {
+    calls.push(args);
+  };
+  try {
+    logInvoicePageReadFailure(new InvoicePageReadError('json', secret, 'STOP'), 3);
+    logInvoicePageReadFailure(new InvoicePageReadError('zod', secret, 'STOP'), 3);
+    logInvoicePageReadFailure(new InvoicePageReadError('interpret', secret, null), 1);
+    logInvoicePageReadFailure(new Error(`429 ${secret}`), 2);
+    logInvoicePageReadFailure(new Error(`The invoice reader timed out ${secret}`), 4);
+    const zod = new Error(secret);
+    zod.name = 'ZodError';
+    logInvoicePageReadFailure(zod, 5);
+    logInvoicePageReadFailure(new GeminiMaxTokensError(), 6);
+  } finally {
+    console.info = original;
+  }
+  const logged = calls.map((args) => args.map((part) => String(part)).join(' ')).join('\n');
+  assert.equal(logged.includes(secret), false);
+  assert.ok(calls.some((args) => args[1] === 3 && args[2] === 'STOP' && args[3] === 'json'));
+  assert.ok(calls.some((args) => args[3] === 'zod'));
+  assert.ok(calls.some((args) => args[3] === 'interpret' && args[2] === 'none'));
+  assert.ok(calls.some((args) => args[3] === '429'));
+  assert.ok(calls.some((args) => args[3] === 'abort'));
+  assert.ok(calls.some((args) => args[1] === 6 && args[2] === 'MAX_TOKENS' && args[3] === 'none'));
+  assert.equal(calls.every((args) => args[0] === '[invoice-ocr] page=%s finishReason=%s stage=%s'), true);
 });
 
 test('a failed page can be retaken without reading the pages that already succeeded', () => {

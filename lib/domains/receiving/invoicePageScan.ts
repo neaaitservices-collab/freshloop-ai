@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { interpretInvoiceOcrModel } from '@/lib/domains/receiving/invoiceOcrModel';
+import { INVOICE_OCR_JSON_ERROR, interpretInvoiceOcrModel } from '@/lib/domains/receiving/invoiceOcrModel';
 import { numericInput } from '@/lib/security/numericInput';
 
 /**
@@ -12,13 +12,26 @@ import { numericInput } from '@/lib/security/numericInput';
 export const INVOICE_PAGE_MAX = 8;
 /** Pages read at once. Nelson asked for a small parallel batch of 2–3. */
 export const INVOICE_PAGE_BATCH_SIZE = 3;
-/** Matches `INVOICE_OCR_TOTAL_BUDGET_MS` (one wave of parallel reads). */
-export const INVOICE_PAGE_ATTEMPT_BUDGET_MS = 25_000;
+/**
+ * Matches `INVOICE_OCR_TOTAL_BUDGET_MS`. Every page in the wave spends this
+ * concurrently (`mapPool` with `INVOICE_PAGE_BATCH_SIZE`), so two or three pages
+ * cost one page of wall clock. Image prep runs inside that same parallel call,
+ * before the 40s attempt. The response uses the slack under maxDuration 60.
+ */
+export const INVOICE_PAGE_ATTEMPT_BUDGET_MS = 42_000;
 /**
  * Stop starting another wave before the route's 60s maxDuration.
- * Two slow waves are 50s, which does not fit; the phone sends the rest.
+ * A wave needs this page budget, so a second wave fits only in the first 6s
+ * (48s - 42s). A slow wave does not start another. The phone sends the rest.
  */
 export const INVOICE_PAGE_REQUEST_BUDGET_MS = 48_000;
+/**
+ * Slack after the 40s attempt. The page deadline is 42s, so a follow-up read
+ * needs the attempt plus this margin still inside the request budget.
+ */
+export const INVOICE_PAGE_RETRY_MARGIN_MS = 2_000;
+export const INVOICE_PAGE_TOO_DENSE_MESSAGE =
+  'Page too dense to read in one pass, please retake closer or split';
 /** A scanning page older than this was abandoned (refresh or a dead request). */
 export const INVOICE_PAGE_STALE_MS = 70_000;
 /** Matches `INVOICE_LINE_TOTAL_TOLERANCE`. */
@@ -221,6 +234,21 @@ export function chunkPages<T>(items: T[], size = INVOICE_PAGE_BATCH_SIZE): T[][]
   return waves;
 }
 
+/**
+ * A 429 follow-up is another full attempt. It starts only when the request
+ * budget still holds that attempt plus margin. Otherwise the page stays failed
+ * and can be sent again.
+ */
+export function rateLimitRetryFits(
+  nowMs: number,
+  startedAtMs: number,
+  attemptMs = INVOICE_PAGE_ATTEMPT_BUDGET_MS - INVOICE_PAGE_RETRY_MARGIN_MS,
+  marginMs = INVOICE_PAGE_RETRY_MARGIN_MS,
+  requestBudgetMs = INVOICE_PAGE_REQUEST_BUDGET_MS
+): boolean {
+  return nowMs + attemptMs + marginMs <= startedAtMs + requestBudgetMs;
+}
+
 /** True when another parallel wave can finish inside this request. */
 export function waveFitsInRequest(
   nowMs: number,
@@ -265,7 +293,81 @@ export function isGeminiRateLimitMessage(message: string): boolean {
   return /\b429\b|RESOURCE_EXHAUSTED|rate limit/i.test(message);
 }
 
+export type InvoicePageFailureStage = 'json' | 'zod' | 'interpret' | 'abort' | '429';
+
+const INVOICE_PAGE_FAILURE_STAGES = new Set<InvoicePageFailureStage>([
+  'json',
+  'zod',
+  'interpret',
+  'abort',
+  '429',
+]);
+
+/** A page read failed at a known stage. `finishReason` is set when Gemini reported one. */
+export class InvoicePageReadError extends Error {
+  readonly stage: InvoicePageFailureStage;
+  readonly finishReason: string | null;
+  constructor(stage: InvoicePageFailureStage, message: string, finishReason: string | null = null) {
+    super(message);
+    this.name = 'InvoicePageReadError';
+    this.stage = stage;
+    this.finishReason = finishReason;
+  }
+}
+
+function isInvoiceMaxTokensError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  if ((error as { finishReason?: unknown }).finishReason === 'MAX_TOKENS') return true;
+  return error instanceof Error && error.name === 'GeminiMaxTokensError';
+}
+
+/** Gemini finishReason, or null. Only a short reason token is kept, never response text. */
+export function invoicePageFinishReason(error: unknown): string | null {
+  if (!error || typeof error !== 'object') return null;
+  const reason = (error as { finishReason?: unknown }).finishReason;
+  if (typeof reason !== 'string' || !/^[A-Z0-9_]{1,32}$/.test(reason)) return null;
+  return reason;
+}
+
+export function invoicePageFailureStage(error: unknown): InvoicePageFailureStage | null {
+  if (error && typeof error === 'object') {
+    const stage = (error as { stage?: unknown }).stage;
+    if (typeof stage === 'string' && INVOICE_PAGE_FAILURE_STAGES.has(stage as InvoicePageFailureStage)) {
+      return stage as InvoicePageFailureStage;
+    }
+  }
+  if (isInvoiceMaxTokensError(error)) return null;
+  const message = error instanceof Error ? error.message : '';
+  if (isGeminiRateLimitMessage(message)) return '429';
+  if (
+    error instanceof Error &&
+    (error.name === 'AbortError' || error.name === 'TimeoutError' || /timed out/i.test(message))
+  ) {
+    return 'abort';
+  }
+  if (error instanceof Error && error.name === 'ZodError') return 'zod';
+  if (message === INVOICE_OCR_JSON_ERROR || /structured JSON/i.test(message)) return 'json';
+  if (/No stock lines/i.test(message)) return 'interpret';
+  return null;
+}
+
+/**
+ * One line per failed page. The line is the page index, finishReason, and stage.
+ * It must not include the model text, vendor, amounts, or any other invoice content.
+ */
+export function logInvoicePageReadFailure(error: unknown, pageIndex?: number): void {
+  console.info(
+    '[invoice-ocr] page=%s finishReason=%s stage=%s',
+    pageIndex == null ? '-' : pageIndex,
+    invoicePageFinishReason(error) ?? 'none',
+    invoicePageFailureStage(error) ?? 'none'
+  );
+}
+
 export function pageFailureMessage(error: unknown): string {
+  if (isInvoiceMaxTokensError(error)) {
+    return INVOICE_PAGE_TOO_DENSE_MESSAGE;
+  }
   const message = error instanceof Error ? error.message : '';
   if (isGeminiRateLimitMessage(message)) {
     return 'The reader was rate limited. Retry this page in a moment.';

@@ -9,6 +9,11 @@ test('invoice commit keeps every scanned line and posts through the supplier inv
   assert.match(route, /interpretInvoiceOcrModel/);
   assert.match(route, /never instructions/);
   assert.match(route, /orderDate/);
+  assert.match(route, /struckThrough/);
+  assert.match(route, /not ordered/);
+  assert.match(route, /maxOutputTokens: 16384/);
+  assert.equal(route.includes('"terms"'), false);
+  assert.equal(route.includes('"ordered"'), false);
   assert.match(route, /invoiceDateNeedsConfirm/);
   assert.match(route, /thinkingConfig: invoiceOcrThinkingConfig/);
   assert.match(route, /buildAuthoritativeOcrDraft/);

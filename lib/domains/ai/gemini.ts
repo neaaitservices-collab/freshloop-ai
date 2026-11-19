@@ -120,7 +120,7 @@ export type GenerateContentOptions = {
   preferRestApi?: boolean;
   /** Merged into generationConfig (JSON mode, caps, temperature). */
   generationConfig?: Record<string, unknown>;
-  /** AbortController timeout for one Gemini attempt (invoice OCR uses 22s). */
+  /** AbortController timeout for one Gemini attempt (invoice OCR uses 40s). */
   attemptTimeoutMs?: number;
   /** Absolute time after which the model ladder must not start another attempt. */
   deadlineAtMs?: number;
@@ -166,6 +166,21 @@ function rankFlashModels(names: string[]): string[] {
 }
 
 const RETRYABLE_GEMINI_STATUS = new Set([429, 500, 502, 503, 504]);
+
+/** Gemini stopped because the output cap was reached. The partial JSON is not a page. */
+export class GeminiMaxTokensError extends Error {
+  readonly finishReason = 'MAX_TOKENS';
+  constructor() {
+    super('MAX_TOKENS');
+    this.name = 'GeminiMaxTokensError';
+  }
+}
+
+export function isGeminiMaxTokensError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  if ((error as { finishReason?: unknown }).finishReason === 'MAX_TOKENS') return true;
+  return error instanceof Error && error.name === 'GeminiMaxTokensError';
+}
 
 /** One retry delay. Retry-After is a floor; a short jitter keeps retries from lining up. */
 export function geminiBackoffMs(retryAfterHeader: string | null, randomUnit = Math.random()): number {
@@ -228,7 +243,7 @@ async function tryGeminiRestGenerateContent(
   remember: (model: string, detail: string) => void,
   signal?: AbortSignal,
   deadlineAtMs?: number
-): Promise<{ text: string | null; rateLimited: boolean }> {
+): Promise<{ text: string | null; rateLimited: boolean; finishReason: string | null }> {
   const parts: GeminiContentPart[] = [{ text: promptText }];
   for (const inlinePart of inlineParts) {
     parts.push({ inlineData: inlinePart });
@@ -262,9 +277,12 @@ async function tryGeminiRestGenerateContent(
 
   const postOnce = async (
     attempt: (typeof attempts)[number]
-  ): Promise<{ ok: true; text: string } | { ok: false; status: number; retryAfter: string | null; detail: string }> => {
+  ): Promise<
+    | { ok: true; text: string; finishReason: string | null }
+    | { ok: false; status: number; retryAfter: string | null; detail: string; finishReason: string | null }
+  > => {
     if (signal?.aborted) {
-      return { ok: false, status: 0, retryAfter: null, detail: `${attempt.label} timed out` };
+      return { ok: false, status: 0, retryAfter: null, detail: `${attempt.label} timed out`, finishReason: null };
     }
     try {
       const response = await fetch(attempt.url, {
@@ -275,19 +293,45 @@ async function tryGeminiRestGenerateContent(
       });
       const raw = await response.text();
       if (response.ok) {
-        const data = JSON.parse(raw) as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
-        const responseText = data.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (responseText) return { ok: true, text: responseText };
-        return { ok: false, status: response.status, retryAfter: null, detail: `${attempt.label} returned no text` };
+        const data = JSON.parse(raw) as {
+          candidates?: Array<{ finishReason?: string; content?: { parts?: Array<{ text?: string }> } }>;
+        };
+        const candidate = data.candidates?.[0];
+        const finishReason = typeof candidate?.finishReason === 'string' ? candidate.finishReason : null;
+        if (finishReason === 'MAX_TOKENS') {
+          return {
+            ok: false,
+            status: response.status,
+            retryAfter: null,
+            detail: 'finishReason MAX_TOKENS',
+            finishReason,
+          };
+        }
+        const responseText = candidate?.content?.parts?.[0]?.text;
+        if (responseText) return { ok: true, text: responseText, finishReason };
+        return {
+          ok: false,
+          status: response.status,
+          retryAfter: null,
+          detail: `${attempt.label} returned no text`,
+          finishReason,
+        };
       }
       return {
         ok: false,
         status: response.status,
         retryAfter: response.headers.get('retry-after'),
         detail: `${attempt.label} ${response.status} ${raw.slice(0, 180)}`,
+        finishReason: null,
       };
     } catch (e: unknown) {
-      return { ok: false, status: 0, retryAfter: null, detail: `${attempt.label} ${geminiFailureDetail(e)}` };
+      return {
+        ok: false,
+        status: 0,
+        retryAfter: null,
+        detail: `${attempt.label} ${geminiFailureDetail(e)}`,
+        finishReason: null,
+      };
     }
   };
 
@@ -301,7 +345,10 @@ async function tryGeminiRestGenerateContent(
       const canWait = await waitForGeminiRetry(delay, signal, deadlineAtMs);
       if (canWait) result = await postOnce(attempt);
     }
-    if (result.ok) return { text: result.text, rateLimited: false };
+    if (result.ok) return { text: result.text, rateLimited: false, finishReason: result.finishReason };
+    if (result.finishReason === 'MAX_TOKENS') {
+      return { text: null, rateLimited: false, finishReason: 'MAX_TOKENS' };
+    }
     if (result.status === 429) rateLimited = true;
     if (attempt.label === 'key' && (result.status === 401 || result.status === 403)) {
       keyUnauthorized = true;
@@ -309,7 +356,7 @@ async function tryGeminiRestGenerateContent(
     remember(modelName, result.detail);
     if (rateLimited) break;
   }
-  return { text: null, rateLimited };
+  return { text: null, rateLimited, finishReason: null };
 }
 
 function tryGeminiSdkGenerateContent(
@@ -348,7 +395,7 @@ export async function generateContentWithFallback(
   inlinePart?: GeminiInlineImage | GeminiInlineImage[],
   preferredModels: string[] = [...GEMINI_FLASH_MODEL_FALLBACKS],
   options?: GenerateContentOptions
-): Promise<{ text: string; modelUsed: string }> {
+): Promise<{ text: string; modelUsed: string; finishReason: string | null }> {
   const apiKey = getApiKey();
   if (!apiKey) {
     throw new Error('GEMINI_API_KEY missing or empty');
@@ -400,6 +447,7 @@ export async function generateContentWithFallback(
     try {
       let text: string | null = null;
       let stop = false;
+      let finishReason: string | null = null;
 
       if (preferRest) {
         const rest = await runBounded(modelName, (signal) =>
@@ -416,6 +464,8 @@ export async function generateContentWithFallback(
         );
         stop = rest.stop;
         text = rest.value?.text ?? null;
+        finishReason = rest.value?.finishReason ?? null;
+        if (finishReason === 'MAX_TOKENS') throw new GeminiMaxTokensError();
         if (!stop && !text && shouldUseSdkAfterRest(Boolean(rest.value?.rateLimited))) {
           const sdk = await runBounded(modelName, (signal) =>
             tryGeminiSdkGenerateContent(
@@ -459,15 +509,18 @@ export async function generateContentWithFallback(
             )
           );
           text = rest.value?.text ?? null;
+          finishReason = rest.value?.finishReason ?? null;
+          if (finishReason === 'MAX_TOKENS') throw new GeminiMaxTokensError();
           stop = rest.stop;
         }
       }
 
       if (stop) break;
       if (text) {
-        return { text, modelUsed: modelName };
+        return { text, modelUsed: modelName, finishReason };
       }
     } catch (err: unknown) {
+      if (isGeminiMaxTokensError(err)) throw err;
       remember(modelName, geminiFailureDetail(err));
     }
   }
