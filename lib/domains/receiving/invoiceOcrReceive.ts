@@ -6,6 +6,7 @@ import { receivingDepartment } from '@/lib/domains/inventory/receivingDepartment
 import {
   applyOcrDraftResolutions,
   draftPostingBlockers,
+  isZeroDollarDraftLine,
   type OcrDraftResolution,
 } from '@/lib/domains/receiving/invoiceOcrDraft';
 import {
@@ -16,6 +17,7 @@ import {
   assertReceivingDepartmentsChosen,
   postReceivingLogToInventory,
   validateReceivingLogPostInput,
+  ZERO_DOLLAR_REVIEW_REASON,
   type ReceivingLogPostInput,
   type ReceivingLogPostResult,
 } from '@/lib/domains/receiving/receivingLogPost';
@@ -527,6 +529,14 @@ export async function receiveAcceptedInvoiceOcr(input: {
     const line = resolved.lines[client.index];
     if (!line) {
       return failure(400, 'A line in this request is not on the saved invoice scan.', 'OCR_LINE_NOT_ON_DRAFT');
+    }
+    if (isZeroDollarDraftLine(line)) {
+      skipped.push({
+        externalLogId: client.externalLogId,
+        itemName: line.line_name?.trim() || 'Line',
+        stock: { posted: false, reason: ZERO_DOLLAR_REVIEW_REASON },
+      });
+      continue;
     }
     if (!(line.quantity > 0)) {
       skipped.push({

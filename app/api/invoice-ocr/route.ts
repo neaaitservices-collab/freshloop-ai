@@ -59,6 +59,7 @@ import {
   buildAuthoritativeOcrDraft,
   draftPostingBlockers,
 } from '@/lib/domains/receiving/invoiceOcrDraft';
+import { selectInvoiceHeaderTotal } from '@/lib/domains/receiving/invoiceHeaderTotal';
 import type { RoleName } from '@/lib/utils/roles';
 
 export const maxDuration = 60;
@@ -456,6 +457,8 @@ async function extractInvoiceWithGemini15FlashVision(
   invoiceDate: string;
   invoiceDateNeedsConfirm: boolean;
   invoiceDateConfirmReason: string | null;
+  /** Printed subtotal when the model read one. Absent when the page did not print it. */
+  printedSubtotal?: number;
   lineItems: Array<{
     name: string;
     department: 'PRODUCE' | 'DAIRY' | 'BAKERY' | 'PANTRY' | 'DELI_KITCHEN' | 'GROCERY';
@@ -488,6 +491,7 @@ async function extractInvoiceWithGemini15FlashVision(
     invoiceDate: model.invoiceDate,
     invoiceDateNeedsConfirm: model.invoiceDateNeedsConfirm,
     invoiceDateConfirmReason: model.invoiceDateConfirmReason,
+    ...(typeof model.subtotal === 'number' ? { printedSubtotal: model.subtotal } : {}),
     lineItems: model.lineItems.map((line) => ({
       name: line.name,
       department: line.department,
@@ -675,7 +679,11 @@ async function auditMultiPageLines(scan: PageScanRecord, lines: InvoicePageLine[
     invoiceDate: scan.invoiceDate,
     invoiceDateNeedsConfirm: scan.invoiceDateNeedsConfirm,
     invoiceDateConfirmReason: scan.invoiceDateConfirmReason,
-    totalAmount: Number(audited.reduce((sum, item) => sum + item.total_cost, 0).toFixed(2)),
+    totalAmount: selectInvoiceHeaderTotal({
+      printedSubtotal: scan.printedSubtotal,
+      lineAmounts: audited.map((item) => item.total_cost),
+    }),
+    ...(typeof scan.printedSubtotal === 'number' ? { printedSubtotal: scan.printedSubtotal } : {}),
     departmentBreakdown: audited.reduce<Record<string, number>>((breakdown, item) => {
       breakdown[item.department] = Number(((breakdown[item.department] ?? 0) + item.total_cost).toFixed(2));
       return breakdown;
@@ -994,9 +1002,10 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const totalAmount = Number(
-      auditedItems.reduce((sum, item) => sum + item.total_cost, 0).toFixed(2)
-    );
+    const totalAmount = selectInvoiceHeaderTotal({
+      printedSubtotal: extracted.printedSubtotal,
+      lineAmounts: auditedItems.map((item) => item.total_cost),
+    });
     const flaggedItemsCount = auditedItems.filter(
       (item) => item.requires_approval
     ).length;
@@ -1010,6 +1019,9 @@ export async function POST(req: NextRequest) {
       invoiceDateNeedsConfirm: extracted.invoiceDateNeedsConfirm,
       invoiceDateConfirmReason: extracted.invoiceDateConfirmReason,
       totalAmount,
+      ...(typeof extracted.printedSubtotal === 'number'
+        ? { printedSubtotal: extracted.printedSubtotal }
+        : {}),
       departmentBreakdown,
       lines: auditedItems.map((item) => ({
         item_name: item.item_name,

@@ -8,6 +8,7 @@ import {
   type OcrDraftPayload,
 } from '@/lib/domains/receiving/invoiceOcrCommit';
 import { draftPostingBlockers } from '@/lib/domains/receiving/invoiceOcrDraft';
+import { selectInvoiceHeaderTotal } from '@/lib/domains/receiving/invoiceHeaderTotal';
 import {
   beginPageReread,
   duplicateNoteForScan,
@@ -107,10 +108,10 @@ function scanPayload(scan: PageScanRecord, lines: OcrDraftLine[]): OcrDraftPaylo
 }
 
 function printedTotal(scan: PageScanRecord, fallback: number): number {
-  if (typeof scan.printedSubtotal !== 'number') return fallback;
-  const hst = typeof scan.printedHst === 'number' ? scan.printedHst : 0;
-  const pst = typeof scan.printedPst === 'number' ? scan.printedPst : 0;
-  return Number((scan.printedSubtotal + hst + pst).toFixed(2));
+  return selectInvoiceHeaderTotal({
+    printedSubtotal: scan.printedSubtotal,
+    lineAmounts: [fallback],
+  });
 }
 
 async function persist(id: string, payload: OcrDraftPayload): Promise<void> {
