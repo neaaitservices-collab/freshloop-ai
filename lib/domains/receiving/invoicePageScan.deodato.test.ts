@@ -73,6 +73,30 @@ const PRINTED_SUBTOTAL = 1536.08;
 const LINE_SUM = 1500.75;
 const BAD_SCAN_TOTAL = 852.1;
 
+function hundredDollarInvoice(printed: { subtotal?: number; totalAmount?: number; hst?: number; pst?: number }) {
+  const body: Record<string, unknown> = {
+    vendorName: 'Demo Produce Co',
+    invoiceNumber: '1001',
+    invoiceDate: '2026-11-01',
+    lineItems: [
+      {
+        name: 'BANANAS',
+        code: 'BAN1',
+        department: 'PRODUCE',
+        quantity: 2,
+        unit: 'CASE',
+        unitCost: 50,
+        totalCost: 100,
+      },
+    ],
+  };
+  if ('subtotal' in printed) body.subtotal = printed.subtotal;
+  if ('totalAmount' in printed) body.totalAmount = printed.totalAmount;
+  if ('hst' in printed) body.hst = printed.hst;
+  if ('pst' in printed) body.pst = printed.pst;
+  return body;
+}
+
 function deodatoModel(printed?: { subtotal?: number; totalAmount?: number }) {
   const body: Record<string, unknown> = {
     vendorName: 'Tony Deodato & Sons',
@@ -292,6 +316,40 @@ describe('Deodato header total from the invoice reader', { concurrency: 1 }, () 
     assert.equal(read.totalAmount, PRINTED_SUBTOTAL);
     assert.notEqual(read.totalAmount, LINE_SUM);
   });
+
+  test('uses the printed subtotal when hst and a tax-inclusive total are also present', async () => {
+    const read = await readFakeModel(hundredDollarInvoice({ subtotal: 100, hst: 13, totalAmount: 113 }));
+    assert.equal(read.totalAmount, 100);
+    assert.notEqual(read.totalAmount, 113);
+  });
+
+  test('uses the line sum when hst is present and the subtotal was omitted', async () => {
+    const hst = await readFakeModel(hundredDollarInvoice({ hst: 13, totalAmount: 113 }));
+    assert.equal(hst.totalAmount, 100);
+    assert.notEqual(hst.totalAmount, 113);
+
+    const pst = await readFakeModel(hundredDollarInvoice({ pst: 13, totalAmount: 113 }));
+    assert.equal(pst.totalAmount, 100);
+    assert.notEqual(pst.totalAmount, 113);
+
+    const alias = hundredDollarInvoice({ totalAmount: 113 });
+    alias.HST = 13;
+    const upper = await readFakeModel(alias);
+    assert.equal(upper.totalAmount, 100);
+    assert.notEqual(upper.totalAmount, 113);
+  });
+
+  test('uses a printed total of 1536.08 when no subtotal and no tax are present', async () => {
+    const omitted = deodatoModel({ totalAmount: PRINTED_SUBTOTAL });
+    const zeroTax = deodatoModel({ totalAmount: PRINTED_SUBTOTAL });
+    zeroTax.hst = 0;
+    zeroTax.pst = 0;
+    for (const payload of [omitted, zeroTax]) {
+      const read = await readFakeModel(payload);
+      assert.equal(read.totalAmount, 1536.08);
+      assert.notEqual(read.totalAmount, LINE_SUM);
+    }
+  });
 });
 
 test('the page-scan prompt reads the printed subtotal and does not add it up', () => {
@@ -300,5 +358,7 @@ test('the page-scan prompt reads the printed subtotal and does not add it up', (
   assert.equal(route.includes('subtotal is the sum of the line totals'), false);
   assert.match(route, /subtotal is read exactly as printed on the invoice and is never computed from the lines/);
   assert.match(gemini, /selectInvoiceHeaderTotal/);
+  assert.match(gemini, /printed subtotal before tax/);
+  assert.equal(gemini.includes('printed invoice total'), false);
   assert.equal(gemini.includes('equals sum of department totals'), false);
 });
