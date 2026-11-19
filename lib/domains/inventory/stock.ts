@@ -52,7 +52,7 @@ import {
   parseProductPullOverride,
   type PullSensitivityDays,
 } from '@/lib/domains/inventory/pullSensitivity';
-import { matchProduct } from '@/lib/domains/inventory/productMatching';
+import { matchProduct, selectPurchaseProductByName } from '@/lib/domains/inventory/productMatching';
 import { getCatalogProductNames } from '@/lib/domains/inventory/catalogProductIndex';
 import { sellableUnitsPerCase } from '@/lib/domains/receiving/yieldPricing';
 
@@ -187,7 +187,8 @@ export async function findOrCreatePurchaseProduct(
       where: { isManufactured: false },
       select: { id: true, name: true },
     }));
-  const match = matchProduct(name, products);
+  // Same normalized name in this store, including a product created earlier on this invoice.
+  const match = selectPurchaseProductByName(name, products);
   if (match) {
     await client.product.update({
       where: { id: match.id },
@@ -1155,7 +1156,7 @@ export async function postReceipt(input: {
     payloadHash: string;
     productId?: string | null;
   };
-}, db?: LotTx): Promise<PostedReceipt | SkippedReceipt | ConflictReceipt> {
+}, db?: LotTx, nameCatalog?: PurchaseProductNameCatalog): Promise<PostedReceipt | SkippedReceipt | ConflictReceipt> {
   let packData: ReturnType<typeof productPackWriteData>;
   try {
     packData = productPackWriteData(input.packSize, input.splitFactor);
@@ -1212,7 +1213,8 @@ export async function postReceipt(input: {
         supplier: supplierLabel,
         department: resolvedDepartment ?? undefined,
       },
-      tx
+      tx,
+      nameCatalog
     );
     if (!ensured) {
       const message = receivingDepartmentRequiredMessage(input.itemName);

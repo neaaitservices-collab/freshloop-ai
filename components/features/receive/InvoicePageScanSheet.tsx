@@ -35,6 +35,13 @@ import {
 } from '@/lib/domains/receiving/invoiceMatchChoice';
 import { ReceiveLineProductMatch } from '@/components/features/receive/ReceiveLineProductMatch';
 import {
+  isInvoiceLevelBlocker,
+  lineNeedsCheck,
+  receiveLinePill,
+  reviewCounts,
+  type ReceiveLineFacts,
+} from '@/lib/domains/receiving/invoiceLineReview';
+import {
   limitInvoiceOcrUpload,
   prepareImageFileForOcr,
   type OcrPageImage,
@@ -68,6 +75,15 @@ interface ReviewLine {
   supplierCode?: string | null;
   matchSource?: 'code' | 'learned_name' | 'name' | null;
   matchPrintedValue?: string | null;
+  quantityUnreadable?: boolean;
+  costUnreadable?: boolean;
+  nameUnreadable?: boolean;
+  unitInvalid?: boolean;
+  lineTotalMismatch?: boolean;
+  departmentAssumed?: boolean;
+  requiresApproval?: boolean;
+  fuzzyAmbiguous?: boolean;
+  createNew?: boolean;
 }
 
 interface ScanView {
@@ -115,6 +131,7 @@ export function InvoicePageScanSheet({
   const libraryRef = useRef<HTMLInputElement>(null);
   const addRef = useRef<HTMLInputElement>(null);
   const retakeRef = useRef<HTMLInputElement>(null);
+  const retakeLibraryRef = useRef<HTMLInputElement>(null);
   const retakeIndex = useRef<number | null>(null);
   const dragIndex = useRef<number | null>(null);
   const clientScanId = useRef('');
@@ -134,6 +151,8 @@ export function InvoicePageScanSheet({
   const [managerApproved, setManagerApproved] = useState(false);
   const [working, setWorking] = useState(false);
   const [lineEdits, setLineEdits] = useState<Record<number, InvoiceMatchChoice>>({});
+  const [sheet, setSheet] = useState<{ index: number; fromCheck: boolean } | null>(null);
+  const lineRefs = useRef<Map<number, HTMLLIElement>>(new Map());
   const [continueAt, setContinueAt] = useState<number | null>(null);
   const [nowMs, setNowMs] = useState(() => Date.now());
 
@@ -153,6 +172,7 @@ export function InvoicePageScanSheet({
     setShowAllLines(false);
     setManagerApproved(false);
     setLineEdits({});
+    setSheet(null);
     setContinueAt(null);
     localImages.current = new Map();
     clientScanId.current = '';
@@ -171,6 +191,11 @@ export function InvoicePageScanSheet({
     setStep(next.status === 'ready' ? 'review' : 'scanning');
     setError(null);
   }, [open, resume]);
+
+  useEffect(() => {
+    if (!sheet) return;
+    lineRefs.current.get(sheet.index)?.scrollIntoView({ block: 'center' });
+  }, [sheet, showAllLines]);
 
   useEffect(() => {
     if (!open || step !== 'review' || !view || supplierId) return;
@@ -401,6 +426,24 @@ export function InvoicePageScanSheet({
     } finally {
       setWorking(false);
     }
+  };
+
+  const onReplaceFailedPage = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    const index = retakeIndex.current;
+    event.target.value = '';
+    if (!file || index == null) return;
+    setPreparing(true);
+    void prepareImageFileForOcr(file)
+      .then((prepared) => {
+        const page = prepared.pages[0];
+        if (!page) throw new Error(PAGE_CAP_MESSAGE);
+        return reread(index, page);
+      })
+      .catch((err: unknown) => {
+        setError(err instanceof Error ? err.message : 'Could not prepare the photo. Try another image.');
+      })
+      .finally(() => setPreparing(false));
   };
 
   const undo = async () => {
@@ -675,11 +718,11 @@ export function InvoicePageScanSheet({
                     </div>
                     {'error' in chip && chip.error ? <p className="text-xs text-rose-200">{chip.error}</p> : null}
                     {chip.status === 'failed' || (chip.status === 'pending' && !localImages.current.has(chip.index)) ? (
-                      <div className="flex gap-2">
+                      <div className="flex flex-col gap-2 sm:flex-row">
                         {chip.status === 'failed' && localImages.current.has(chip.index) ? (
                           <Button
                             variant="secondary"
-                            className="flex-1"
+                            className="min-h-11 w-full sm:w-auto sm:flex-1"
                             disabled={working}
                             onClick={() => void reread(chip.index, localImages.current.get(chip.index))}
                           >
@@ -688,14 +731,25 @@ export function InvoicePageScanSheet({
                         ) : null}
                         <Button
                           variant="secondary"
-                          className="flex-1"
+                          className="min-h-11 w-full sm:w-auto sm:flex-1"
                           disabled={working}
                           onClick={() => {
                             retakeIndex.current = chip.index;
                             retakeRef.current?.click();
                           }}
                         >
-                          Retake photo
+                          Take photo
+                        </Button>
+                        <Button
+                          variant="secondary"
+                          className="min-h-11 w-full sm:w-auto sm:flex-1"
+                          disabled={working}
+                          onClick={() => {
+                            retakeIndex.current = chip.index;
+                            retakeLibraryRef.current?.click();
+                          }}
+                        >
+                          Choose photo
                         </Button>
                       </div>
                     ) : null}
@@ -740,13 +794,19 @@ export function InvoicePageScanSheet({
                   </p>
                 ) : null}
               </div>
-              {view.blockers.some((blocker) => !/do not agree on the invoice date/i.test(blocker)) ? (
+              <ReviewSummary
+                lines={view.lines}
+                edits={lineEdits}
+                onOpenCheck={(index) => {
+                  setShowAllLines(true);
+                  setSheet({ index, fromCheck: true });
+                }}
+              />
+              {view.blockers.some(isInvoiceLevelBlocker) ? (
                 <ul className="space-y-1 rounded-xl border border-amber-800/50 bg-amber-950/30 px-3 py-2 text-sm text-amber-100">
-                  {view.blockers
-                    .filter((blocker) => !/do not agree on the invoice date/i.test(blocker))
-                    .map((blocker) => (
-                      <li key={blocker}>{blocker}</li>
-                    ))}
+                  {view.blockers.filter(isInvoiceLevelBlocker).map((blocker) => (
+                    <li key={blocker}>{blocker}</li>
+                  ))}
                 </ul>
               ) : null}
               <ul className="divide-y divide-slate-800 rounded-2xl border border-slate-800">
@@ -755,13 +815,19 @@ export function InvoicePageScanSheet({
                   .map(({ line, index }) => {
                     const choice = lineEdits[index];
                     const supplierLabel = suppliers.find((row) => row.id === supplierId)?.name ?? '';
-                    const pickedId = choice?.createNew ? undefined : choice?.productId ?? line.productId ?? undefined;
-                    const productName = choice?.createNew
-                      ? null
-                      : choice?.productName ?? line.productName ?? null;
-                    const showSavedBadge = !choice?.unlink && !choice?.productPicked && !choice?.createNew;
+                    const facts = factsForLine(line, choice);
+                    const checkIndexes = reviewCheckIndexes(view.lines, lineEdits);
+                    const checkAt = checkIndexes.indexOf(index);
+                    const fromCheck = sheet?.fromCheck === true && sheet.index === index;
                     return (
-                      <li key={`${line.name}-${index}`} className="px-3 py-2">
+                      <li
+                        key={`${line.name}-${index}`}
+                        ref={(node) => {
+                          if (node) lineRefs.current.set(index, node);
+                          else lineRefs.current.delete(index);
+                        }}
+                        className="px-3 py-2"
+                      >
                         <div className="flex items-baseline justify-between gap-3">
                           <span className="min-w-0 truncate font-medium">{line.name}</span>
                           <span className="font-mono text-sm tabular-nums">{money(line.totalCost)}</span>
@@ -773,30 +839,49 @@ export function InvoicePageScanSheet({
                             : ''}
                         </p>
                         <ReceiveLineProductMatch
-                          productName={productName}
-                          matchSource={showSavedBadge ? line.matchSource : null}
-                          matchPrintedValue={showSavedBadge ? line.matchPrintedValue : null}
+                          productName={null}
                           supplierName={supplierLabel}
                           supplierSaved={Boolean(supplierId)}
-                          pickerOpen={choice?.pickerOpen ?? !pickedId}
+                          pickerOpen={sheet?.index === index}
                           remember={choice?.remember !== false}
                           createNew={choice?.createNew === true}
-                          showRemember={Boolean(supplierId) && choice?.productPicked === true && choice.createNew !== true}
-                          onPick={(product) =>
+                          showRemember={false}
+                          presentation="sheet"
+                          pill={receiveLinePill(facts)}
+                          onClose={() => setSheet(null)}
+                          checkStep={
+                            fromCheck
+                              ? {
+                                  label: `${checkAt + 1} of ${checkIndexes.length}`,
+                                  prevDisabled: checkAt <= 0,
+                                  nextDisabled: checkAt < 0 || checkAt >= checkIndexes.length - 1,
+                                  onPrev: () => {
+                                    const prev = checkIndexes[checkAt - 1];
+                                    if (prev !== undefined) setSheet({ index: prev, fromCheck: true });
+                                  },
+                                  onNext: () => {
+                                    const next = checkIndexes[checkAt + 1];
+                                    if (next !== undefined) setSheet({ index: next, fromCheck: true });
+                                  },
+                                }
+                              : null
+                          }
+                          onPick={(product) => {
                             setLineEdits((current) => ({
                               ...current,
                               [index]: {
                                 productId: product.id,
                                 productName: product.name,
                                 productPicked: true,
-                                remember: true,
+                                remember: current[index]?.remember !== false,
                                 unlink: false,
                                 createNew: false,
                                 pickerOpen: false,
                               },
-                            }))
-                          }
-                          onCreateNew={() =>
+                            }));
+                            setSheet(null);
+                          }}
+                          onCreateNew={() => {
                             setLineEdits((current) => ({
                               ...current,
                               [index]: {
@@ -804,16 +889,12 @@ export function InvoicePageScanSheet({
                                 remember: false,
                                 unlink: current[index]?.unlink === true,
                                 createNew: true,
-                                pickerOpen: true,
+                                pickerOpen: false,
                               },
-                            }))
-                          }
-                          onChange={() =>
-                            setLineEdits((current) => ({
-                              ...current,
-                              [index]: { ...(current[index] ?? {}), pickerOpen: true, createNew: false },
-                            }))
-                          }
+                            }));
+                            setSheet(null);
+                          }}
+                          onChange={() => setSheet({ index, fromCheck: false })}
                           onUnlink={() =>
                             setLineEdits((current) => ({
                               ...current,
@@ -821,15 +902,15 @@ export function InvoicePageScanSheet({
                                 unlink: true,
                                 productPicked: false,
                                 remember: false,
-                                createNew: false,
-                                pickerOpen: true,
+                                createNew: true,
+                                pickerOpen: false,
                               },
                             }))
                           }
                           onRemember={(value) =>
                             setLineEdits((current) => ({
                               ...current,
-                              [index]: { ...(current[index] ?? {}), remember: value, productPicked: true, unlink: false },
+                              [index]: { ...(current[index] ?? {}), remember: value },
                             }))
                           }
                         />
@@ -965,23 +1046,14 @@ export function InvoicePageScanSheet({
           accept="image/*"
           capture="environment"
           className="hidden"
-          onChange={(event) => {
-            const file = event.target.files?.[0];
-            const index = retakeIndex.current;
-            event.target.value = '';
-            if (!file || index == null) return;
-            setPreparing(true);
-            void prepareImageFileForOcr(file)
-              .then((prepared) => {
-                const page = prepared.pages[0];
-                if (!page) throw new Error(PAGE_CAP_MESSAGE);
-                return reread(index, page);
-              })
-              .catch((err: unknown) => {
-                setError(err instanceof Error ? err.message : 'Could not prepare the photo. Try another image.');
-              })
-              .finally(() => setPreparing(false));
-          }}
+          onChange={onReplaceFailedPage}
+        />
+        <input
+          ref={retakeLibraryRef}
+          type="file"
+          accept="image/*,application/pdf"
+          className="hidden"
+          onChange={onReplaceFailedPage}
         />
       </div>
     </div>
@@ -1008,6 +1080,61 @@ function TotalRow({ label, value }: { label: string; value: number | undefined }
       <span>{label}</span>
       <span className="font-mono tabular-nums">{money(value)}</span>
     </div>
+  );
+}
+
+function flag(value: unknown): boolean {
+  return value === true;
+}
+
+function factsForLine(line: ReviewLine, choice: InvoiceMatchChoice | undefined): ReceiveLineFacts {
+  const createNew = choice?.createNew === true;
+  const picked = choice?.productPicked === true && Boolean(choice.productId?.trim());
+  const productId = createNew ? '' : picked ? choice?.productId : line.productId;
+  return {
+    name: line.name,
+    quantityUnreadable: line.quantityUnreadable,
+    costUnreadable: line.costUnreadable,
+    nameUnreadable: line.nameUnreadable,
+    unitInvalid: line.unitInvalid,
+    lineTotalMismatch: line.lineTotalMismatch,
+    departmentAssumed: line.departmentAssumed,
+    requiresApproval: line.requiresApproval,
+    fuzzyAmbiguous: picked || createNew ? false : line.fuzzyAmbiguous,
+    matchSource: picked || createNew ? null : line.matchSource,
+    matchPrintedValue: picked || createNew ? null : line.matchPrintedValue,
+    productId,
+    createNew: createNew || (!picked && !productId?.trim() && line.createNew === true),
+  };
+}
+
+function reviewCheckIndexes(lines: ReviewLine[], edits: Record<number, InvoiceMatchChoice>): number[] {
+  return lines.flatMap((line, index) => (lineNeedsCheck(factsForLine(line, edits[index])) ? [index] : []));
+}
+
+function ReviewSummary({
+  lines,
+  edits,
+  onOpenCheck,
+}: {
+  lines: ReviewLine[];
+  edits: Record<number, InvoiceMatchChoice>;
+  onOpenCheck: (index: number) => void;
+}) {
+  const counts = reviewCounts(lines.map((line, index) => factsForLine(line, edits[index])));
+  const firstCheck = reviewCheckIndexes(lines, edits)[0];
+  const checkLabel = `Check ${counts.check}`;
+  return (
+    <p className="rounded-full border border-slate-700 bg-slate-900 px-3 py-2 text-sm font-semibold text-slate-100">
+      {`Matched ${counts.matched} · New ${counts.created} · `}
+      {counts.check > 0 && firstCheck !== undefined ? (
+        <button type="button" className="min-h-11 font-semibold underline" onClick={() => onOpenCheck(firstCheck)}>
+          {checkLabel}
+        </button>
+      ) : (
+        checkLabel
+      )}
+    </p>
   );
 }
 
@@ -1050,6 +1177,15 @@ function asLines(value: unknown): ReviewLine[] {
             ? line.matchSource
             : null,
         matchPrintedValue: typeof line.matchPrintedValue === 'string' ? line.matchPrintedValue : null,
+        quantityUnreadable: flag(line.quantityUnreadable),
+        costUnreadable: flag(line.costUnreadable),
+        nameUnreadable: flag(line.nameUnreadable),
+        unitInvalid: flag(line.unitInvalid),
+        lineTotalMismatch: flag(line.lineTotalMismatch),
+        departmentAssumed: flag(line.departmentAssumed),
+        requiresApproval: flag(line.requires_approval),
+        fuzzyAmbiguous: flag(line.fuzzyAmbiguous),
+        createNew: flag(line.createNew),
       },
     ];
   });

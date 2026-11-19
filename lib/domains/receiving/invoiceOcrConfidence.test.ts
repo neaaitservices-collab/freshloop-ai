@@ -13,10 +13,12 @@ test('matchConfidenceFromCatalogScore normalizes fuzzy match points', () => {
   assert.equal(matchConfidenceFromCatalogScore(120), 1);
 });
 
-test('combineLineConfidence penalizes missing catalog match', () => {
-  const blended = combineLineConfidence(0.92, null);
-  assert.ok(blended < 0.92);
-  assert.ok(blended < INVOICE_OCR_CONFIDENCE_THRESHOLD);
+test('combineLineConfidence uses extraction only', () => {
+  assert.equal(combineLineConfidence(0.92, null), 0.92);
+  assert.equal(combineLineConfidence(0.92, 0.4), 0.92);
+  assert.equal(lineNeedsManualReview(combineLineConfidence(0.92, null)), false);
+  assert.equal(lineNeedsManualReview(combineLineConfidence(0.5, 1)), true);
+  assert.ok(combineLineConfidence(0.5, 1) < INVOICE_OCR_CONFIDENCE_THRESHOLD);
 });
 
 test('lineNeedsManualReview uses shared threshold', () => {

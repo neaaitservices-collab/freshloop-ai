@@ -374,6 +374,19 @@ test('a later wave failure keeps read pages and Continue sends the pending photo
   assert.ok(noteAt > 0 && supplierAt > noteAt);
   assert.match(sheet, /Continue scan/);
   assert.match(sheet, /retryAfterPlan\(response\.headers\.get\('Retry-After'\)\)/);
+  assert.equal(sheet.includes('Retake photo'), false);
+  assert.match(sheet, /Take photo/);
+  assert.match(sheet, /Choose photo/);
+  assert.match(sheet, /flex flex-col gap-2 sm:flex-row/);
+  assert.match(sheet, /min-h-11 w-full sm:w-auto sm:flex-1/);
+  const retakeAt = sheet.indexOf('ref={retakeRef}');
+  const libraryAt = sheet.indexOf('ref={retakeLibraryRef}');
+  assert.ok(retakeAt > 0 && libraryAt > retakeAt);
+  const libraryInput = sheet.slice(libraryAt, libraryAt + 280);
+  assert.match(libraryInput, /accept="image\/\*,application\/pdf"/);
+  assert.equal(libraryInput.includes('capture'), false);
+  assert.match(libraryInput, /onChange=\{onReplaceFailedPage\}/);
+  assert.match(sheet.slice(retakeAt, retakeAt + 220), /onChange=\{onReplaceFailedPage\}/);
 });
 
 test('Retry-After is waited when it is short and shown when it is long', () => {
@@ -446,6 +459,8 @@ test('a date disagreement stays until the clerk confirms the picker', () => {
 
   const run = fs.readFileSync(path.join(process.cwd(), 'lib/domains/receiving/invoicePageScanRun.ts'), 'utf8');
   assert.match(run, /invoiceDateNeedsConfirm: payload\.invoiceDateNeedsConfirm === true/);
+  assert.match(run, /actorIsManager,/);
+  assert.equal(run.includes('actorIsManager: false'), false);
 });
 
 test('page-scan gst is read and kept through the merged scan', () => {

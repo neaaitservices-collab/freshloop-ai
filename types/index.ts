@@ -63,9 +63,18 @@ export interface InvoiceLineItemExtract {
   extractionConfidence?: number;
   /** Catalog fuzzy-match certainty (0–1). */
   matchConfidence?: number | null;
-  /** Blended score used for review threshold (0–1). */
+  /** OCR extraction confidence used for review (0–1). A catalog match is not folded in. */
   lineConfidence?: number;
   needsManualReview?: boolean;
+  quantityUnreadable?: boolean;
+  costUnreadable?: boolean;
+  nameUnreadable?: boolean;
+  unitInvalid?: boolean;
+  lineTotalMismatch?: boolean;
+  departmentAssumed?: boolean;
+  /** Two fuzzy candidates were too close to auto-pick. */
+  fuzzyAmbiguous?: boolean;
+  createNew?: boolean;
   /** Server delivery UUID. The receiving board posts this id and does not mint another. */
   deliveryId?: string;
   /** Page number on a multi-page invoice. */

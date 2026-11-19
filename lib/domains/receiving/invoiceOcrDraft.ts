@@ -70,6 +70,8 @@ export interface AuditedDraftSourceLine {
   match_source?: 'code' | 'learned_name' | 'name' | null;
   match_printed_value?: string | null;
   matched_product_name?: string | null;
+  /** Two fuzzy candidates were too close to auto-pick. Not a posting blocker. */
+  fuzzy_ambiguous?: boolean;
 }
 
 export interface OcrDraftResolution {
@@ -88,7 +90,7 @@ export interface OcrDraftResolution {
   }>;
 }
 
-/** A catalog id is the match. A blank id stays blocked even after a manager override. */
+/** A catalog id is a match. A blank id is a new item and does not block posting. */
 export function lineHasMatchedProduct(line: { product_id?: string | null }): boolean {
   return Boolean(line.product_id?.trim());
 }
@@ -201,6 +203,7 @@ export function buildAuthoritativeOcrDraft(input: {
       ...(line.matched_product_name?.trim()
         ? { matched_product_name: line.matched_product_name.trim() }
         : {}),
+      ...(line.fuzzy_ambiguous ? { fuzzy_ambiguous: true } : {}),
       department: line.department as Department,
       case_pack_size: line.case_pack_size,
       line_confidence: line.line_confidence,
@@ -304,9 +307,6 @@ export function draftPostingBlockers(
   const managerMayResolve = options.manualReviewOverride && options.actorIsManager;
   payload.lines.forEach((line, index) => {
     if (isZeroDollarDraftLine(line)) return;
-    if (!lineHasMatchedProduct(line) && line.create_new !== true) {
-      blockers.push(`Line ${index + 1} is not matched to a catalog product.`);
-    }
     const reasons = unresolvedLineReasons(line, managerMayResolve);
     if (line.pack_needs_manager && !line.pack_edited_by && !options.actorIsManager) {
       const pack = line.case_pack_size ?? 1;

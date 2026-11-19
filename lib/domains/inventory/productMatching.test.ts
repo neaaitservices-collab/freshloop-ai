@@ -2,9 +2,12 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   catalogDuplicateScore,
+  claimPurchaseProduct,
   identityTokens,
   matchProduct,
+  matchProductWithScore,
   scoreProductMatch,
+  selectPurchaseProductByName,
 } from '@/lib/domains/inventory/productMatching';
 
 const catalog = [
@@ -62,6 +65,38 @@ test('a short invoice name does not bind to a longer catalog SKU', () => {
   );
   assert.equal(matchProduct('Dill', [{ id: 'pickles', name: 'Dill Pickles' }]), null);
   assert.equal(matchProduct('Organic Bananas', [{ id: 'chips', name: 'Banana Chips' }]), null);
+});
+
+test('a new purchase reuses the same normalized name in this catalog', () => {
+  const catalog = [
+    { id: 'chips', name: 'Banana Chips' },
+    { id: 'bananas', name: 'Organic Bananas' },
+  ];
+  assert.equal(selectPurchaseProductByName('organic bananas', catalog)?.id, 'bananas');
+  assert.equal(selectPurchaseProductByName('ORGANIC BANANAS', catalog)?.id, 'bananas');
+  assert.equal(matchProduct('Organic Bananas', [{ id: 'chips', name: 'Banana Chips' }]), null);
+});
+
+test('two new lines with the same name claim one product', () => {
+  const catalog: { id: string; name: string }[] = [];
+  let n = 0;
+  const first = claimPurchaseProduct('Eshallots', catalog, () => `id-${(n += 1)}`);
+  const second = claimPurchaseProduct(' eshallots ', catalog, () => `id-${(n += 1)}`);
+  assert.equal(first.created, true);
+  assert.equal(second.created, false);
+  assert.equal(second.id, first.id);
+  assert.equal(catalog.length, 1);
+  assert.equal(claimPurchaseProduct('Eshallots', catalog, () => `id-${(n += 1)}`).id, first.id);
+});
+
+test('fuzzy match reports the runner-up score', () => {
+  const hit = matchProductWithScore('Golden Beets', [
+    { id: 'a', name: 'Golden Beets' },
+    { id: 'b', name: 'Golden Beet' },
+  ]);
+  assert.equal(hit?.product.id, 'a');
+  assert.equal(hit?.score, 100);
+  assert.equal(hit?.runnerUpScore, 100);
 });
 
 test('catalog duplicate score rejects substring false friends', () => {

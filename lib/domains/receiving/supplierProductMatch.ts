@@ -25,6 +25,8 @@ export interface SupplierProductLinkRef {
 export interface InvoiceLineMatch<T> {
   product: T | null;
   score: number | null;
+  /** Second fuzzy candidate at or above the match bar. Null for a code or learned-name hit. */
+  runnerUpScore: number | null;
   source: InvoiceMatchSource | null;
   printedValue: string | null;
 }
@@ -93,7 +95,7 @@ export function matchInvoiceLine<T extends { id: string; name: string }>(input: 
     const link = input.links.find((row) => row.matchType === 'code' && row.matchKey === codeKey);
     const product = link ? catalogProduct(input.catalog, link.productId) : null;
     if (link && product) {
-      return { product, score: 100, source: 'code', printedValue: link.printedValue };
+      return { product, score: 100, runnerUpScore: null, source: 'code', printedValue: link.printedValue };
     }
   }
 
@@ -103,13 +105,19 @@ export function matchInvoiceLine<T extends { id: string; name: string }>(input: 
     const link = input.links.find((row) => row.matchType === 'name' && row.matchKey === nameKey);
     const product = link ? catalogProduct(input.catalog, link.productId) : null;
     if (link && product) {
-      return { product, score: 100, source: 'learned_name', printedValue: link.printedValue };
+      return { product, score: 100, runnerUpScore: null, source: 'learned_name', printedValue: link.printedValue };
     }
   }
 
   const fuzzy = matchProductWithScore(input.name, [...input.catalog]);
-  if (!fuzzy) return { product: null, score: null, source: null, printedValue: null };
-  return { product: fuzzy.product, score: fuzzy.score, source: 'name', printedValue: null };
+  if (!fuzzy) return { product: null, score: null, runnerUpScore: null, source: null, printedValue: null };
+  return {
+    product: fuzzy.product,
+    score: fuzzy.score,
+    runnerUpScore: fuzzy.runnerUpScore,
+    source: 'name',
+    printedValue: null,
+  };
 }
 
 function nameIdentity(line: {
