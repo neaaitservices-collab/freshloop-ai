@@ -3,9 +3,10 @@
 import React, { Suspense, useMemo, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { InvoiceDateField } from '@/components/features/receive/InvoiceDateField';
-import { resolveAdminDateRange } from '@/lib/domains/stats/adminDateRange';
+import { capAdminDateBounds, resolveAdminDateRange } from '@/lib/domains/stats/adminDateRange';
 import {
   ADMIN_DATE_PRESETS,
+  torontoToday,
   type AdminDatePreset,
 } from '@/lib/domains/stats/storeTime';
 import { statsRangeQuerySchema } from '@/lib/security/schemas/statsRange';
@@ -34,6 +35,7 @@ function StatsDateFilter() {
   const custom = resolved.mode === 'custom';
   const fromValue = draft?.from ?? resolved.from;
   const toValue = draft?.to ?? resolved.to;
+  const storeToday = torontoToday();
 
   const replace = (next: URLSearchParams) => {
     const query = next.toString();
@@ -61,7 +63,8 @@ function StatsDateFilter() {
   };
 
   const commitCustom = (from: string, to: string) => {
-    const parsed = statsRangeQuerySchema.safeParse({ from, to });
+    const capped = capAdminDateBounds(from, to);
+    const parsed = statsRangeQuerySchema.safeParse({ from: capped.from, to: capped.to });
     if (!parsed.success) {
       setDraft({ from, to });
       setError(parsed.error.errors[0]?.message ?? 'Invalid date range.');
@@ -71,8 +74,8 @@ function StatsDateFilter() {
     setDraft(null);
     const next = new URLSearchParams(params.toString());
     next.delete('preset');
-    next.set('from', from);
-    next.set('to', to);
+    next.set('from', capped.from);
+    next.set('to', capped.to);
     replace(next);
   };
 
@@ -115,11 +118,13 @@ function StatsDateFilter() {
           <InvoiceDateField
             label="From"
             value={fromValue}
+            max={storeToday}
             onChange={(ymd) => commitCustom(ymd, toValue)}
           />
           <InvoiceDateField
             label="To"
             value={toValue}
+            max={storeToday}
             onChange={(ymd) => commitCustom(fromValue, ymd)}
           />
         </div>
