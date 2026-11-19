@@ -300,12 +300,14 @@ type SavepointDb = {
 
 /**
  * A unique violation aborts the surrounding Postgres transaction.
- * A savepoint lets the stock post continue after one retry.
- * A test double with no raw executor just runs the write.
+ * Inside a stock transaction, a savepoint lets that post continue after one retry.
+ * The root client is not in a transaction, and a test double has no raw executor.
  */
 async function withoutAbortingTransaction<T>(db: Db, run: () => Promise<T>): Promise<T> {
-  const execute = (db as SavepointDb).$executeRawUnsafe?.bind(db);
-  if (!execute) return run();
+  const raw = db as SavepointDb & { $transaction?: unknown };
+  const execute = raw.$executeRawUnsafe?.bind(db);
+  const insideTransaction = typeof raw.$transaction !== 'function';
+  if (!execute || !insideTransaction) return run();
   const savepoint = `spm_link_${Math.floor(Math.random() * 1_000_000_000)}`;
   await execute(`SAVEPOINT ${savepoint}`);
   try {

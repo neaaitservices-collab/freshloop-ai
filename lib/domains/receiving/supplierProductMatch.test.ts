@@ -335,6 +335,52 @@ function uniqueViolation(): Error {
   return error;
 }
 
+test('a link write outside a transaction does not open a savepoint', async () => {
+  const sql: string[] = [];
+  await applySupplierMatchWrites(
+    {
+      $transaction: async () => undefined,
+      $executeRawUnsafe: async (query: string) => {
+        sql.push(query);
+      },
+      supplierProductMatch: {
+        upsert: async () => ({ id: 'row' }),
+        update: async () => {
+          throw new Error('update should not run');
+        },
+        deleteMany: async () => ({ count: 0 }),
+      },
+    } as never,
+    'deodato',
+    'clerk',
+    [{ action: 'upsert', matchType: 'code', matchKey: 'AB12', printedValue: 'AB12', productId: 'apples' }]
+  );
+  assert.deepEqual(sql, []);
+});
+
+test('a concurrent link upsert inside a transaction rolls back to its savepoint', async () => {
+  const sql: string[] = [];
+  await applySupplierMatchWrites(
+    {
+      $executeRawUnsafe: async (query: string) => {
+        sql.push(query);
+      },
+      supplierProductMatch: {
+        upsert: async () => {
+          throw uniqueViolation();
+        },
+        update: async () => ({ id: 'row' }),
+        deleteMany: async () => ({ count: 0 }),
+      },
+    } as never,
+    'deodato',
+    'clerk',
+    [{ action: 'upsert', matchType: 'code', matchKey: 'AB12', printedValue: 'AB12', productId: 'apples' }]
+  );
+  assert.match(sql[0] ?? '', /^SAVEPOINT spm_link_/);
+  assert.match(sql[1] ?? '', /^ROLLBACK TO SAVEPOINT spm_link_/);
+});
+
 test('a concurrent link upsert is saved as an update instead of failing the post', async () => {
   const updates: Array<{
     where: { supplierId_matchType_matchKey: { matchKey: string } };
