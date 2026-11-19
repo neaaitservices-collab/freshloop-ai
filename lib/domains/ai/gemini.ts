@@ -7,6 +7,7 @@ import {
 import { boundedAttemptMs, createAttemptAbort, geminiFailureDetail } from '@/lib/domains/ai/invoiceScan';
 import { GEMINI_FLASH_MODEL_FALLBACKS } from '@/lib/domains/ai/geminiModels';
 import { departmentPromptUnion } from '@/lib/domains/inventory/inventoryCatalog';
+import { selectInvoiceHeaderTotal } from '@/lib/domains/receiving/invoiceHeaderTotal';
 import { interpretInvoiceOcrModel } from '@/lib/domains/receiving/invoiceOcrModel';
 
 /**
@@ -535,6 +536,21 @@ function getMockVoiceResult(spokenText?: string): VoiceLoggerResult {
   };
 }
 
+/**
+ * Printed header amount for `selectInvoiceHeaderTotal`.
+ * The parsed subtotal wins. When the page did not print one, a numeric totalAmount is the printed total.
+ * InvoiceOcrResult has no separate subtotal field, so the header total carries this value.
+ */
+function printedInvoiceAmount(raw: unknown, interpretedSubtotal: number | null): number | null {
+  if (typeof interpretedSubtotal === 'number' && Number.isFinite(interpretedSubtotal)) {
+    return interpretedSubtotal;
+  }
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const total = (raw as Record<string, unknown>).totalAmount;
+  if (typeof total === 'number' && Number.isFinite(total)) return total;
+  return null;
+}
+
 export async function processInvoiceOcr(base64Image: string, mimeType: string = 'image/jpeg'): Promise<InvoiceOcrResult> {
   const apiKey = getApiKey();
   if (!apiKey) {
@@ -556,7 +572,8 @@ Analyze this invoice image and extract structured data in JSON format adhering s
   "invoiceNumber": "string",
   "invoiceDate": "YYYY-MM-DD",
   "orderDate": "another printed date such as the order date, copied as printed, or empty",
-  "totalAmount": number,
+  "totalAmount": number (printed invoice total, copied exactly as printed),
+  "subtotal": number (printed subtotal, copied exactly as printed, or omit when the invoice has none),
   "departmentBreakdown": {
     "PRODUCE": number,
     "DAIRY": number,
@@ -568,8 +585,9 @@ Analyze this invoice image and extract structured data in JSON format adhering s
   "lineItems": [
     {
       "name": "string (item description)",
+      "code": "string (supplier item code from the CODE column)",
       "department": ${departmentPromptUnion()},
-      "quantity": number (number of cases/crates),
+      "quantity": number (cases or crates shipped; 0 when that row shipped 0 at $0.00),
       "unit": "cases",
       "casePackSize": number (e.g. 40 for 40lb case, 7 for 7ct case, 24 for 24 bunch case, 4 for 4L case),
       "subUnit": "lbs" | "kg" | "g" | "oz" | "units" | "ml" | "L" | "fl oz" | "bunches" | "loaves" | "tubs" | "boxes",
@@ -587,7 +605,7 @@ Classification rules:
 - Classify oils, spices, canned goods, sauces, grains as "PANTRY".
 - Classify household paper, soap, detergent, and packaged grocery as "GROCERY".
 - Classify prepared foods, deli, and rotisserie as "DELI_KITCHEN".
-Make sure totalAmount equals sum of department totals and line item costs. Format costs as float numbers.`;
+totalAmount is the printed invoice total and subtotal is the printed subtotal. Copy both exactly as printed on the invoice. Never compute or adjust them to match the line items or the department totals. Omit subtotal when the invoice does not print one. Return a code for every line. Include rows that shipped 0 at $0.00 and set their quantity to 0. Those rows are review-only. Format costs as float numbers.`;
 
     const cleanData = base64Image.includes(',') ? base64Image.split(',')[1] : base64Image;
 
@@ -603,7 +621,8 @@ Make sure totalAmount equals sum of department totals and line item costs. Forma
       }
     );
 
-    const model = interpretInvoiceOcrModel(parseModelJson(text));
+    const parsed = parseModelJson(text);
+    const model = interpretInvoiceOcrModel(parsed);
     const departmentBreakdown: InvoiceOcrResult['departmentBreakdown'] = {
       PRODUCE: 0,
       DAIRY: 0,
@@ -617,7 +636,10 @@ Make sure totalAmount equals sum of department totals and line item costs. Forma
         (departmentBreakdown[line.department] + line.totalCost).toFixed(2)
       );
     }
-    const totalAmount = Number(model.lineItems.reduce((sum, line) => sum + line.totalCost, 0).toFixed(2));
+    const totalAmount = selectInvoiceHeaderTotal({
+      printedSubtotal: printedInvoiceAmount(parsed, model.subtotal),
+      lineAmounts: model.lineItems.map((line) => line.totalCost),
+    });
     return {
       vendorName: model.vendorName,
       invoiceNumber: model.invoiceNumber,
