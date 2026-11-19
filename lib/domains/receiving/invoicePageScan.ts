@@ -25,6 +25,13 @@ export const INVOICE_PAGE_ATTEMPT_BUDGET_MS = 42_000;
  * (48s - 42s). A slow wave does not start another. The phone sends the rest.
  */
 export const INVOICE_PAGE_REQUEST_BUDGET_MS = 48_000;
+/**
+ * Slack after the 40s attempt. The page deadline is 42s, so a follow-up read
+ * needs the attempt plus this margin still inside the request budget.
+ */
+export const INVOICE_PAGE_RETRY_MARGIN_MS = 2_000;
+export const INVOICE_PAGE_TOO_DENSE_MESSAGE =
+  'Page too dense to read in one pass, please retake closer or split';
 /** A scanning page older than this was abandoned (refresh or a dead request). */
 export const INVOICE_PAGE_STALE_MS = 70_000;
 /** Matches `INVOICE_LINE_TOTAL_TOLERANCE`. */
@@ -227,6 +234,21 @@ export function chunkPages<T>(items: T[], size = INVOICE_PAGE_BATCH_SIZE): T[][]
   return waves;
 }
 
+/**
+ * A 429 follow-up is another full attempt. It starts only when the request
+ * budget still holds that attempt plus margin. Otherwise the page stays failed
+ * and can be sent again.
+ */
+export function rateLimitRetryFits(
+  nowMs: number,
+  startedAtMs: number,
+  attemptMs = INVOICE_PAGE_ATTEMPT_BUDGET_MS - INVOICE_PAGE_RETRY_MARGIN_MS,
+  marginMs = INVOICE_PAGE_RETRY_MARGIN_MS,
+  requestBudgetMs = INVOICE_PAGE_REQUEST_BUDGET_MS
+): boolean {
+  return nowMs + attemptMs + marginMs <= startedAtMs + requestBudgetMs;
+}
+
 /** True when another parallel wave can finish inside this request. */
 export function waveFitsInRequest(
   nowMs: number,
@@ -344,7 +366,7 @@ export function logInvoicePageReadFailure(error: unknown, pageIndex?: number): v
 
 export function pageFailureMessage(error: unknown): string {
   if (isInvoiceMaxTokensError(error)) {
-    return 'Page too dense to read in one pass, please retake closer or split';
+    return INVOICE_PAGE_TOO_DENSE_MESSAGE;
   }
   const message = error instanceof Error ? error.message : '';
   if (isGeminiRateLimitMessage(message)) {

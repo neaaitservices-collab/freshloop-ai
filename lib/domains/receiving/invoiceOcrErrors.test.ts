@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import { GeminiMaxTokensError } from '@/lib/domains/ai/gemini';
 import { invoiceOcrErrorResponse } from '@/lib/domains/receiving/invoiceOcrErrors';
+import { INVOICE_PAGE_TOO_DENSE_MESSAGE } from '@/lib/domains/receiving/invoicePageScan';
 
 describe('invoiceOcrErrorResponse', () => {
   it('maps missing Gemini key to 503', async () => {
@@ -9,6 +11,15 @@ describe('invoiceOcrErrorResponse', () => {
     assert.equal(res.status, 503);
     const body = await res.json();
     assert.match(body.error, /GEMINI_API_KEY/i);
+  });
+
+  it('maps a max-token read to the dense-page message', async () => {
+    const res = invoiceOcrErrorResponse(new GeminiMaxTokensError());
+    assert.ok(res);
+    assert.equal(res.status, 422);
+    const body = await res.json();
+    assert.equal(body.error, INVOICE_PAGE_TOO_DENSE_MESSAGE);
+    assert.equal(body.error, 'Page too dense to read in one pass, please retake closer or split');
   });
 
   it('passes through structured JSON parse failures as 422', async () => {

@@ -1,4 +1,6 @@
 import { apiError } from '@/lib/domains/ai/apiError';
+import { GeminiMaxTokensError } from '@/lib/domains/ai/gemini';
+import { INVOICE_PAGE_TOO_DENSE_MESSAGE } from '@/lib/domains/receiving/invoicePageScan';
 import type { NextResponse } from 'next/server';
 
 /** Map known invoice OCR failures to actionable client messages (avoid generic 500 text). */
@@ -18,6 +20,10 @@ export function invoiceOcrErrorResponse(error: unknown): NextResponse | null {
       'Could not reach Google Gemini to read the invoice. Try again shortly, or use “Use a sample invoice” to verify receiving.',
       502
     );
+  }
+
+  if (error instanceof GeminiMaxTokensError || error.name === 'GeminiMaxTokensError') {
+    return apiError(INVOICE_PAGE_TOO_DENSE_MESSAGE, 422);
   }
 
   if (/could not be parsed as structured JSON/i.test(msg)) {

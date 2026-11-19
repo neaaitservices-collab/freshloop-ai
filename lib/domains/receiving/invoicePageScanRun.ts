@@ -19,6 +19,7 @@ import {
   mergeReadPages,
   nextSuppliedWave,
   nextWaveDelayMs,
+  rateLimitRetryFits,
   overallScanStatus,
   logInvoicePageReadFailure,
   pageFailureMessage,
@@ -423,6 +424,7 @@ async function continueScan(runner: InvoicePageScanRunner, now: Date): Promise<S
 }
 
 async function retryScan(runner: InvoicePageScanRunner, now: Date): Promise<ScanResponse> {
+  const startedAtMs = now.getTime();
   const body = invoicePageRetryBodySchema.parse(runner.body);
   const tooBig = imageTooLarge(body.page);
   if (tooBig) return { status: 413, body: { success: false, error: tooBig } };
@@ -447,13 +449,15 @@ async function retryScan(runner: InvoicePageScanRunner, now: Date): Promise<Scan
     failure = pageFailureMessage(error);
     if (isRateLimited(error)) {
       const wait = nextWaveDelayMs(true, geminiBackoffMs);
-      await sleep(wait);
-      try {
-        fact = await runner.readPage(body.page);
-        failure = '';
-      } catch (again) {
-        logInvoicePageReadFailure(again, body.page.index);
-        failure = pageFailureMessage(again);
+      if (rateLimitRetryFits(Date.now() + wait, startedAtMs)) {
+        await sleep(wait);
+        try {
+          fact = await runner.readPage(body.page);
+          failure = '';
+        } catch (again) {
+          logInvoicePageReadFailure(again, body.page.index);
+          failure = pageFailureMessage(again);
+        }
       }
     }
   }

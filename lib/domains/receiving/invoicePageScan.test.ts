@@ -33,6 +33,8 @@ import {
   INVOICE_PAGE_LINE_MAX,
   INVOICE_PAGE_MAX,
   INVOICE_PAGE_REQUEST_BUDGET_MS,
+  INVOICE_PAGE_RETRY_MARGIN_MS,
+  INVOICE_PAGE_TOO_DENSE_MESSAGE,
   INVOICE_PAGE_STALE_MS,
   INVOICE_PAGE_TOTAL_TOLERANCE,
   invoicePageFailureStage,
@@ -47,6 +49,7 @@ import {
   parseRetryAfterDelayMs,
   readOptionalMoney,
   readPostedInvoiceDate,
+  rateLimitRetryFits,
   readPrintedMoneyFields,
   retryAfterPlan,
   readStoredPageScan,
@@ -172,11 +175,42 @@ test('parallel pages share one 40s attempt inside the 48s request and the 60s ro
 });
 
 test('a max token finish tells the clerk the page is too dense', () => {
-  assert.equal(
-    pageFailureMessage(new GeminiMaxTokensError()),
-    'Page too dense to read in one pass, please retake closer or split'
-  );
+  assert.equal(INVOICE_PAGE_TOO_DENSE_MESSAGE, 'Page too dense to read in one pass, please retake closer or split');
+  assert.equal(pageFailureMessage(new GeminiMaxTokensError()), INVOICE_PAGE_TOO_DENSE_MESSAGE);
   assert.equal(invoicePageFailureStage(new GeminiMaxTokensError()), null);
+});
+
+test('a 429 follow-up starts only when a full attempt plus margin still fits', () => {
+  assert.equal(INVOICE_PAGE_RETRY_MARGIN_MS, INVOICE_OCR_TOTAL_BUDGET_MS - INVOICE_OCR_ATTEMPT_TIMEOUT_MS);
+  assert.equal(
+    INVOICE_PAGE_ATTEMPT_BUDGET_MS - INVOICE_PAGE_RETRY_MARGIN_MS,
+    INVOICE_OCR_ATTEMPT_TIMEOUT_MS
+  );
+  const needed = INVOICE_OCR_ATTEMPT_TIMEOUT_MS + INVOICE_PAGE_RETRY_MARGIN_MS;
+  const latest = INVOICE_PAGE_REQUEST_BUDGET_MS - needed;
+  assert.equal(rateLimitRetryFits(0, 0), true);
+  assert.equal(rateLimitRetryFits(latest, 0), true);
+  assert.equal(rateLimitRetryFits(latest + 1, 0), false);
+  const late = 20_000;
+  assert.equal(rateLimitRetryFits(late, 0), false);
+  assert.ok(late + INVOICE_OCR_ATTEMPT_TIMEOUT_MS > INVOICE_PAGE_REQUEST_BUDGET_MS);
+  assert.ok(late + INVOICE_OCR_ATTEMPT_TIMEOUT_MS >= 60_000);
+
+  const runner = fs.readFileSync(path.join(process.cwd(), 'lib/domains/receiving/invoicePageScanRun.ts'), 'utf8');
+  assert.match(runner, /rateLimitRetryFits\(Date\.now\(\) \+ wait, startedAtMs\)/);
+
+  let scan = initialPageScan('33333333-3333-4333-8333-333333333333', 2, NOW);
+  const marked = markPagesScanning(scan, [1], NOW);
+  scan = recordPageFailure(
+    marked.scan,
+    1,
+    marked.attempts[1]!,
+    'The reader was rate limited. Retry this page in a moment.',
+    NOW
+  );
+  assert.equal(scan.scanPages[0]?.status, 'failed');
+  const again = beginPageReread(scan, 1, NOW, NOW_MS);
+  assert.equal(again.ok, true);
 });
 
 test('page failure logs finishReason and stage without invoice content', () => {
