@@ -11,6 +11,22 @@ export interface CatalogProductRow {
   standardCostPerCase: number;
 }
 
+/** Active purchasable catalog for the receive product picker. Blank query returns the first page. */
+export async function searchActiveCatalog(query: string, limit = 20): Promise<Array<{ id: string; name: string }>> {
+  const q = query.trim().slice(0, 80);
+  const take = Math.min(20, Math.max(1, limit));
+  return prisma.product.findMany({
+    where: {
+      catalogActive: true,
+      isManufactured: false,
+      ...(q ? { name: { contains: q, mode: 'insensitive' } } : {}),
+    },
+    orderBy: { name: 'asc' },
+    take,
+    select: { id: true, name: true },
+  });
+}
+
 /** Live product catalog for OCR/voice matching (no in-memory demo fallback). */
 export async function loadProductCatalog(): Promise<CatalogProductRow[]> {
   const dbProducts = await prisma.product.findMany({

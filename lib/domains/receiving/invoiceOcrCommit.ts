@@ -19,6 +19,13 @@ import {
   type ReceivingLogPostResult,
 } from '@/lib/domains/receiving/receivingLogPost';
 import { getSupplierNameById } from '@/lib/domains/suppliers/suppliers';
+import { loadProductCatalog } from '@/lib/domains/catalog/productCatalog';
+import {
+  applySupplierMatchWrites,
+  loadActiveSupplierProductLinks,
+  planSupplierMatchWrites,
+  reapplySupplierLinks,
+} from '@/lib/domains/receiving/supplierProductMatch';
 import {
   invoiceLinePostInput,
   resolveSupplierInvoice,
@@ -114,6 +121,21 @@ export interface OcrCommitLine {
   unit_invalid?: boolean;
   line_total_mismatch?: boolean;
   review_reasons?: OcrReviewReasonCode[];
+  /** Printed supplier item code. Blank is omitted. */
+  supplier_code?: string;
+  /** Original OCR line name. Kept when a clerk renames line_name. */
+  printed_name?: string;
+  match_source?: 'code' | 'learned_name' | 'name';
+  match_printed_value?: string;
+  matched_product_name?: string;
+  /** The clerk chose this product. Commit does not replace it with a link. */
+  product_picked?: boolean;
+  /** Save a supplier link in the same transaction as the stock post. */
+  remember?: boolean;
+  /** Delete this line's supplier link on save. */
+  unlink_match?: boolean;
+  /** Post a new catalog product and do not save a link. */
+  create_new?: boolean;
 }
 
 export interface OcrInvoiceMeta {
@@ -227,6 +249,18 @@ export interface OcrDraftLine {
   code?: string;
   /** Printed unit, kept for the review screen. Commit uses quantity_kind. */
   unit?: string;
+  /** Printed supplier item code. Blank is omitted and never matched. */
+  supplier_code?: string;
+  /** Original OCR name. A clerk rename changes line_name and leaves this. */
+  printed_name?: string;
+  match_source?: 'code' | 'learned_name' | 'name';
+  /** Printed code or name from the saved link, for the badge. */
+  match_printed_value?: string;
+  matched_product_name?: string;
+  product_picked?: boolean;
+  remember?: boolean;
+  unlink_match?: boolean;
+  create_new?: boolean;
 }
 
 export interface OcrDraftPayload {
@@ -285,6 +319,57 @@ export async function saveInvoiceOcrDraft(staffId: string, payload: OcrDraftPayl
   });
 }
 
+function commitLineAsDraft(item: OcrCommitLine): OcrDraftLine {
+  return {
+    product_id: item.product_id,
+    quantity: item.quantity,
+    quantity_kind: item.quantity_kind,
+    unit_cost: item.unit_cost,
+    line_name: item.line_name,
+    department: item.department,
+    case_pack_size: item.case_pack_size,
+    line_confidence: item.line_confidence ?? 1,
+    requires_approval: false,
+    supplier_code: item.supplier_code,
+    printed_name: item.printed_name,
+    match_source: item.match_source,
+    match_printed_value: item.match_printed_value,
+    product_picked: item.product_picked,
+    remember: item.remember,
+    unlink_match: item.unlink_match,
+    create_new: item.create_new,
+  };
+}
+
+/** Re-apply the chosen supplier's links. A product the clerk picked stays. No supplier means no lookup. */
+async function reapplyCommitLines(items: OcrCommitLine[], supplierId: string): Promise<OcrCommitLine[]> {
+  const links = await loadActiveSupplierProductLinks(supplierId);
+  const needsCatalog =
+    links.length > 0 ||
+    items.some(
+      (item) => item.unlink_match === true || item.match_source === 'code' || item.match_source === 'learned_name'
+    );
+  if (!needsCatalog) return items;
+  const catalog = await loadProductCatalog();
+  const next = reapplySupplierLinks(items.map(commitLineAsDraft), links, catalog);
+  return items.map((item, index) => {
+    const line = next[index];
+    if (!line) return item;
+    return {
+      ...item,
+      product_id: line.product_id,
+      supplier_code: line.supplier_code ?? item.supplier_code,
+      printed_name: line.printed_name ?? item.printed_name,
+      match_source: line.match_source,
+      match_printed_value: line.match_printed_value,
+      product_picked: line.product_picked,
+      remember: line.remember,
+      unlink_match: line.unlink_match,
+      create_new: line.create_new,
+    };
+  });
+}
+
 export async function commitInvoiceOcrReceipts(input: {
   staffId: string;
   referenceId: string;
@@ -298,6 +383,10 @@ export async function commitInvoiceOcrReceipts(input: {
   if (input.confirmedItems.length === 0) {
     throw new Error('No confirmed invoice lines to receive.');
   }
+  const supplierIdEarly = input.invoiceMeta?.supplierId?.trim() ?? '';
+  const confirmedItems = supplierIdEarly
+    ? await reapplyCommitLines(input.confirmedItems, supplierIdEarly)
+    : input.confirmedItems;
   const sampleReason = sampleInvoiceCommitRejection({
     invoiceNumber: input.invoiceMeta?.invoiceNumber,
   });
@@ -307,7 +396,7 @@ export async function commitInvoiceOcrReceipts(input: {
 
   const explicitProductIds = [
     ...new Set(
-      input.confirmedItems
+      confirmedItems
         .map((item) => String(item.product_id ?? '').trim())
         .filter(Boolean)
     ),
@@ -320,7 +409,7 @@ export async function commitInvoiceOcrReceipts(input: {
     : [];
   const productNames = new Map(prefetchedNames.map((row) => [row.id, row.name]));
   assertInvoiceOcrCommitAllowed({
-    confirmedItems: input.confirmedItems,
+    confirmedItems,
     productNames,
     manualReviewOverride: input.manualReviewOverride,
     actorIsManager: Boolean(input.actorIsManager),
@@ -342,13 +431,13 @@ export async function commitInvoiceOcrReceipts(input: {
     supplierId,
     invoiceNumber: input.invoiceMeta?.invoiceNumber ?? '',
     invoiceDate: dateKey,
-    lines: input.confirmedItems.map((item) => ({ printedName: item.line_name?.trim() || '' })),
+    lines: confirmedItems.map((item) => ({ printedName: item.line_name?.trim() || '' })),
   });
   if (!resolved.ok) {
     throw new InventoryLedgerError(resolved.error, resolved.code, 409, { committed: false, ...resolved.details });
   }
   const posts: Awaited<ReturnType<typeof invoiceLinePostInput>>[] = [];
-  for (const [index, item] of input.confirmedItems.entries()) {
+  for (const [index, item] of confirmedItems.entries()) {
     const identity = resolved.lines[index];
     if (!identity) {
       throw new InventoryLedgerError('A saved invoice line was missing.', 'LINE_MISMATCH', 409, { committed: false });
@@ -444,7 +533,7 @@ export async function commitInvoiceOcrReceipts(input: {
 
         if (createdHeader && invoiceId) {
           const departmentIds = await loadDepartmentCodeMap(tx);
-          for (const [index, item] of input.confirmedItems.entries()) {
+          for (const [index, item] of confirmedItems.entries()) {
             if (isZeroDollarReceivingLine({ caseCost: item.unit_cost })) continue;
             const productId = receipts[index]?.productId || String(item.product_id ?? '');
             const product = productId
@@ -487,6 +576,15 @@ export async function commitInvoiceOcrReceipts(input: {
           }
         }
 
+        await applySupplierMatchWrites(
+          tx,
+          supplierId,
+          input.staffId,
+          planSupplierMatchWrites(
+            confirmedItems.filter((item) => !isZeroDollarReceivingLine({ caseCost: item.unit_cost })),
+            supplierId
+          )
+        );
         const committed = {
           invoiceId,
           receipts,

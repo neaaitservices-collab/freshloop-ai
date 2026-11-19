@@ -47,6 +47,14 @@ export interface InvoiceLineItemExtract {
   productId?: string | null;
   /** Catalog SKU name when OCR matched an existing product (invoice line name may differ). */
   matchedProductName?: string | null;
+  /** Printed supplier item code. Blank is omitted. */
+  supplierCode?: string | null;
+  /** Original OCR name, kept if the clerk renames the line. */
+  printedName?: string | null;
+  /** code, a clerk-confirmed name, or the existing fuzzy name match. */
+  matchSource?: 'code' | 'learned_name' | 'name' | null;
+  /** Printed code or saved name shown on the match badge. */
+  matchPrintedValue?: string | null;
   historicalAvgCost?: number | null;
   costVariancePct?: number | null;
   requires_approval?: boolean;

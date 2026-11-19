@@ -22,6 +22,14 @@ import {
   type ReceivingLogPostResult,
 } from '@/lib/domains/receiving/receivingLogPost';
 import { gateStoredOcrDraft } from '@/lib/domains/receiving/sampleReceivingGuard';
+import { loadProductCatalog } from '@/lib/domains/catalog/productCatalog';
+import {
+  applySupplierMatchWrites,
+  loadActiveSupplierProductLinks,
+  planSupplierMatchWrites,
+  reapplySupplierLinks,
+  type SupplierProductLinkRef,
+} from '@/lib/domains/receiving/supplierProductMatch';
 import { getSupplierNameById } from '@/lib/domains/suppliers/suppliers';
 
 const receiveResolutionsSchema = z
@@ -39,6 +47,10 @@ const receiveResolutionsSchema = z
             department: z.nativeEnum(Department).optional(),
             packSize: z.number().finite().positive().max(1_000_000).optional(),
             splitFactor: z.number().finite().positive().max(1_000_000).optional(),
+            product_id: z.preprocess(blankProductId, z.string().min(1).max(128).optional()),
+            remember: z.boolean().optional(),
+            unlink: z.boolean().optional(),
+            create_new: z.boolean().optional(),
           })
           .strict()
       )
@@ -48,6 +60,12 @@ const receiveResolutionsSchema = z
   .strict();
 
 type ReceiveResolutions = z.infer<typeof receiveResolutionsSchema>;
+
+function blankProductId(value: unknown): unknown {
+  if (typeof value !== 'string') return value;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : undefined;
+}
 
 export const OCR_CLIENT_COPY_REJECTED =
   'Stock was not posted. There is no accepted invoice scan on the server. The browser copy of the scan cannot add stock.';
@@ -91,6 +109,9 @@ export interface InvoiceOcrReceiveDeps {
     /** Draft indexes for $0 review lines. They are not stock posts, and they still count as covered. */
     skippedReviewIndexes?: number[];
   }) => Promise<ReceivingLogPostResult[]>;
+  /** Present on the live receive path. Tests that stub postLines skip the lookup. */
+  loadSupplierLinks?: (supplierId: string) => Promise<SupplierProductLinkRef[]>;
+  loadCatalog?: () => Promise<Array<{ id: string; name: string }>>;
 }
 
 export function isInvoiceOcrReceiveRequest(body: unknown): boolean {
@@ -407,6 +428,17 @@ async function postDraftLines(input: {
       const fullyPosted =
         lockedPayload.lines.length > 0 && lockedPayload.lines.every((_, index) => covered.has(index));
       const skippedChanged = skippedNow.some((index) => !skippedReviewIndexes(locked[0].payload).includes(index));
+      if (supplierId && postedNow.length > 0) {
+        const remembered = postedNow
+          .map((index) => input.resolved.lines[index])
+          .filter((line): line is OcrDraftLine => Boolean(line));
+        await applySupplierMatchWrites(
+          tx,
+          supplierId,
+          input.actorId,
+          planSupplierMatchWrites(remembered, supplierId)
+        );
+      }
       if (postedNow.length > 0 || skippedChanged || fullyPosted) {
         await tx.invoiceOcrDraft.updateMany({
           where: { id: input.draft.id, consumedAt: null },
@@ -435,6 +467,24 @@ async function postDraftLines(input: {
   return results;
 }
 
+async function reapplyChosenSupplierLinks(
+  payload: OcrDraftPayload,
+  supplierId: string,
+  deps: InvoiceOcrReceiveDeps
+): Promise<OcrDraftPayload> {
+  if (!supplierId || !deps.loadSupplierLinks) return payload;
+  const links = await deps.loadSupplierLinks(supplierId);
+  const needsCatalog =
+    links.length > 0 ||
+    payload.lines.some(
+      (line) =>
+        line.unlink_match === true || line.match_source === 'code' || line.match_source === 'learned_name'
+    );
+  if (!needsCatalog) return payload;
+  const catalog = deps.loadCatalog ? await deps.loadCatalog() : [];
+  return { ...payload, lines: reapplySupplierLinks(payload.lines, links, catalog) };
+}
+
 const defaultDeps: InvoiceOcrReceiveDeps = {
   findDraft: async (id) =>
     prisma.invoiceOcrDraft.findUnique({
@@ -442,6 +492,8 @@ const defaultDeps: InvoiceOcrReceiveDeps = {
       select: { id: true, staffId: true, payload: true, expiresAt: true, consumedAt: true },
     }),
   postLines: postDraftLines,
+  loadSupplierLinks: loadActiveSupplierProductLinks,
+  loadCatalog: loadProductCatalog,
 };
 
 /**
@@ -505,6 +557,10 @@ export async function receiveAcceptedInvoiceOcr(input: {
       line_name: edit.line_name,
       quantity: edit.quantity,
       department: edit.department,
+      product_id: edit.product_id,
+      remember: edit.remember,
+      unlink: edit.unlink,
+      create_new: edit.create_new,
     })),
   };
 
@@ -545,7 +601,9 @@ export async function receiveAcceptedInvoiceOcr(input: {
     draftResolutions,
     actor
   );
-  const resolved = applyPackResolutions(resolvedBase, packEdits);
+  const packed = applyPackResolutions(resolvedBase, packEdits);
+  const supplierId = typeof body.supplierId === 'string' ? body.supplierId.trim() : '';
+  const resolved = await reapplyChosenSupplierLinks(packed, supplierId, deps);
   const blockers = draftPostingBlockers(resolved, actor);
   if (blockers.length > 0) {
     return failure(409, blockers[0] ?? OCR_DRAFT_NOT_ACCEPTED, 'OCR_DRAFT_BLOCKED');
@@ -556,7 +614,6 @@ export async function receiveAcceptedInvoiceOcr(input: {
     }
   }
 
-  const supplierId = typeof body.supplierId === 'string' ? body.supplierId.trim() : '';
   const entries: InvoiceOcrPostEntry[] = [];
   const skipped: ReceivingLogPostResult[] = [];
   const skippedReviewIndexes: number[] = [];

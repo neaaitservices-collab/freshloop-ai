@@ -32,6 +32,12 @@ export function receivingLogsFromInvoice(result: InvoiceOcrResult): ReceivingLog
       itemName: item.name,
       invoiceLineName: catalogName && catalogName !== item.name ? item.name : undefined,
       productId: productId || undefined,
+      ...(item.matchedProductName?.trim() ? { matchedProductName: item.matchedProductName.trim() } : {}),
+      ...(item.supplierCode?.trim() ? { supplierCode: item.supplierCode.trim() } : {}),
+      ...(item.matchSource === 'code' || item.matchSource === 'learned_name' || item.matchSource === 'name'
+        ? { matchSource: item.matchSource }
+        : {}),
+      ...(item.matchPrintedValue?.trim() ? { matchPrintedValue: item.matchPrintedValue.trim() } : {}),
       casesReceived: Number(item.quantity) > 0 ? Number(item.quantity) : 0,
       caseCost: (() => {
         const qty = Number(item.quantity);

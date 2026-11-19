@@ -179,6 +179,11 @@ function responseFor(draftId: string, payload: OcrDraftPayload): ScanResponse {
         totalCost: Number(((line.quantity > 0 ? line.quantity : 0) * line.unit_cost).toFixed(2)),
         page: line.page,
         productId: line.product_id || null,
+        matchedProductName: line.matched_product_name ?? null,
+        supplierCode: line.supplier_code ?? null,
+        printedName: line.printed_name ?? line.line_name ?? null,
+        matchSource: line.match_source ?? null,
+        matchPrintedValue: line.match_printed_value ?? null,
         lineConfidence: line.line_confidence,
         needsManualReview:
           line.requires_approval === true ||
@@ -208,6 +213,7 @@ async function auditAndSave(
       ...line,
       ...(source?.page ? { page: source.page } : {}),
       ...(source?.code ? { code: source.code } : {}),
+      ...(source?.code && !line.supplier_code ? { supplier_code: source.code } : {}),
       ...(source?.unit ? { unit: source.unit } : {}),
     };
   });

@@ -562,6 +562,13 @@ export const InvoiceUploadModal: React.FC<InvoiceUploadModalProps> = ({
                         >
                           <td className="p-2 sm:p-2.5 font-semibold text-white">
                             {item.name}
+                            {item.matchSource === 'code' || item.matchSource === 'learned_name' ? (
+                              <p className="mt-1 text-[10px] font-semibold text-emerald-300/90">
+                                {item.matchSource === 'code'
+                                  ? `Matched by code${item.matchPrintedValue ? ` · ${item.matchPrintedValue}` : ''}`
+                                  : 'Matched by saved name'}
+                              </p>
+                            ) : null}
                             {item.matchedProductName && item.productId ? (
                               <p className="mt-1 text-[10px] font-normal text-emerald-300/90">
                                 Catalog: {item.matchedProductName}

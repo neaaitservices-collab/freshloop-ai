@@ -48,6 +48,7 @@ export function PackReceiptCard({
   onSaveAll,
   onNotReceived,
   onRemoveFromList,
+  matchSlot = null,
 }: {
   log: ReceivingLog;
   retailUnit: RetailUnit;
@@ -70,6 +71,8 @@ export function PackReceiptCard({
   onSaveAll?: () => void;
   onNotReceived: () => void;
   onRemoveFromList: () => void;
+  /** Catalog picker, match badge, and remember toggle for this line. */
+  matchSlot?: React.ReactNode;
 }) {
   const tone = marginTone(quote.currentMarginPct);
   const marginClass =
@@ -140,7 +143,8 @@ export function PackReceiptCard({
           <ReceiptRow label="Retail floor" value={formatCurrency(currentRetailPrice)} />
         </dl>
 
-        {!posted && !readOnly && stockOnHand !== null && !stockMatched ? (
+        {matchSlot}
+        {!posted && !readOnly && stockOnHand !== null && !stockMatched && !matchSlot ? (
           <p className="px-4 pb-2 text-[11px] leading-relaxed text-slate-400 sm:px-5">
             Not in catalog yet — save posts this delivery to inventory.
           </p>

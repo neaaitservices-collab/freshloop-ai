@@ -65,6 +65,12 @@ import {
   savedDeliveryChoices,
 } from '@/lib/domains/receiving/recentDeliveryStrip';
 import { invoiceScanBatchFields, invoiceScanPostFields } from '@/lib/domains/receiving/receivingBridge';
+import {
+  invoiceMatchResolutions,
+  type InvoiceMatchChoice,
+  type InvoiceMatchResolutionLine,
+} from '@/lib/domains/receiving/invoiceMatchChoice';
+import { ReceiveLineProductMatch } from '@/components/features/receive/ReceiveLineProductMatch';
 
 interface LogsResponse {
   success?: boolean;
@@ -167,7 +173,8 @@ async function postLogToInventory(
   log: ReceivingLog,
   pricing: LogPricing,
   supplierId?: string,
-  screenDepartment?: string
+  screenDepartment?: string,
+  resolutions?: { lines: InvoiceMatchResolutionLine[] }
 ) {
   const response = await fetch('/api/receiving-logs', {
     method: 'POST',
@@ -191,6 +198,7 @@ async function postLogToInventory(
       ...(log.category ? { category: log.category } : {}),
       ...(screenDepartment ? { screenDepartment } : {}),
       ...invoiceScanPostFields(log),
+      ...(resolutions ? { resolutions } : {}),
     }),
   });
   let json: {
@@ -252,7 +260,8 @@ function logPricingToPostBody(
 async function postLogsBatchToInventory(
   entries: Array<{ log: ReceivingLog; pricing: LogPricing }>,
   supplierId?: string,
-  screenDepartment?: string
+  screenDepartment?: string,
+  resolutions?: { lines: InvoiceMatchResolutionLine[] }
 ): Promise<{
   ok: boolean;
   results: Array<{
@@ -276,6 +285,7 @@ async function postLogsBatchToInventory(
     body: JSON.stringify({
       supplierId,
       ...invoiceScanBatchFields(entries.map((entry) => entry.log)),
+      ...(resolutions ? { resolutions } : {}),
       items: entries.map(({ log, pricing }) =>
         logPricingToPostBody(log, pricing, supplierId, screenDepartment)
       ),
@@ -333,6 +343,87 @@ function MovedNoticeBanner({ notice }: { notice: string }) {
         Open inventory
       </Link>
     </p>
+  );
+}
+
+function logWithMatchChoice(log: ReceivingLog, choice: InvoiceMatchChoice | undefined): ReceivingLog {
+  if (!choice) return log;
+  if (choice.createNew && !choice.productPicked) return { ...log, productId: undefined };
+  if (choice.productPicked && choice.productId) return { ...log, productId: choice.productId };
+  if (choice.unlink) return { ...log, productId: undefined };
+  return log;
+}
+
+function ReceiveLineMatchSlot({
+  log,
+  choice,
+  supplierId,
+  supplierName,
+  onChoice,
+}: {
+  log: ReceivingLog;
+  choice: InvoiceMatchChoice | undefined;
+  supplierId?: string;
+  supplierName?: string;
+  onChoice: (next: InvoiceMatchChoice) => void;
+}) {
+  const pickedId = choice?.createNew ? undefined : choice?.productId ?? log.productId;
+  const productName = choice?.createNew
+    ? null
+    : choice?.productName ?? log.matchedProductName ?? null;
+  const showSavedBadge = !choice?.unlink && !choice?.productPicked && !choice?.createNew;
+  const pickerOpen = choice?.pickerOpen ?? !pickedId;
+  return (
+    <ReceiveLineProductMatch
+      productName={productName}
+      matchSource={showSavedBadge ? log.matchSource : null}
+      matchPrintedValue={showSavedBadge ? log.matchPrintedValue : null}
+      supplierName={supplierName}
+      supplierSaved={Boolean(supplierId)}
+      pickerOpen={pickerOpen}
+      remember={choice?.remember !== false}
+      createNew={choice?.createNew === true}
+      showRemember={Boolean(supplierId) && choice?.productPicked === true && choice.createNew !== true}
+      onPick={(product) =>
+        onChoice({
+          productId: product.id,
+          productName: product.name,
+          productPicked: true,
+          remember: true,
+          unlink: false,
+          createNew: false,
+          pickerOpen: false,
+        })
+      }
+      onCreateNew={() =>
+        onChoice({
+          productPicked: false,
+          remember: false,
+          unlink: choice?.unlink === true,
+          createNew: true,
+          pickerOpen: true,
+        })
+      }
+      onChange={() =>
+        onChoice({
+          ...(choice ?? {}),
+          pickerOpen: true,
+          createNew: false,
+        })
+      }
+      onUnlink={() =>
+        onChoice({
+          unlink: true,
+          productPicked: false,
+          remember: false,
+          createNew: false,
+          pickerOpen: true,
+        })
+      }
+      onRemember={(value) =>
+        onChoice({ ...(choice ?? {}), remember: value, productPicked: true, unlink: false })
+      }
+    />
   );
 }
 
@@ -397,6 +488,7 @@ export function YieldPricingDashboard({
   const [warning, setWarning] = useState<string | null>(initialWarning);
   const [loading, setLoading] = useState(!seeded);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [matchChoices, setMatchChoices] = useState<Record<string, InvoiceMatchChoice>>({});
 
   const [packSize, setPackSize] = useState('12');
   const [splitFactor, setSplitFactor] = useState('1');
@@ -918,7 +1010,14 @@ export function YieldPricingDashboard({
     setMovedNotice(null);
 
     try {
-      const result = await postLogToInventory(withDepartmentPick(selected), pricing, supplierId, screenDepartment);
+      const resolutions = invoiceMatchResolutions([selected], matchChoices, Boolean(supplierId));
+      const result = await postLogToInventory(
+        withDepartmentPick(logWithMatchChoice(selected, matchChoices[selected.id])),
+        pricing,
+        supplierId,
+        screenDepartment,
+        resolutions
+      );
       if (!result.ok) {
         setErrorMessage(
           result.reason || 'Stock was not updated, so this case stays on the receiving list.'
@@ -990,12 +1089,17 @@ export function YieldPricingDashboard({
     let lastUnit: RetailUnit = 'units';
 
     const entries = targets.map((log) => ({
-      log: withDepartmentPick(log),
+      log: withDepartmentPick(logWithMatchChoice(log, matchChoices[log.id])),
       pricing: resolveLogPricing(log, live && live.id === log.id ? live : null),
     }));
 
     try {
-      const batch = await postLogsBatchToInventory(entries, supplierId, screenDepartment);
+      const batch = await postLogsBatchToInventory(
+        entries,
+        supplierId,
+        screenDepartment,
+        invoiceMatchResolutions(targets, matchChoices, Boolean(supplierId))
+      );
       if (!batch.ok) {
         setErrorMessage(batch.error || 'Batch save failed. Check the connection and try again.');
         return;
@@ -1331,6 +1435,17 @@ export function YieldPricingDashboard({
           ) : null}
 
           <PackReceiptCard
+            matchSlot={
+              <ReceiveLineMatchSlot
+                log={selected}
+                choice={matchChoices[selected.id]}
+                supplierId={supplierId}
+                supplierName={supplierName}
+                onChoice={(next) =>
+                  setMatchChoices((current) => ({ ...current, [selected.id]: next }))
+                }
+              />
+            }
             log={selected}
             retailUnit={yieldUnit}
             quote={quote}

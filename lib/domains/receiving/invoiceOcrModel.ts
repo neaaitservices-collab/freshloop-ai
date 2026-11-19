@@ -127,6 +127,8 @@ export const invoiceOcrModelSchema = z.object({
 
 export interface InterpretedInvoiceLine {
   name: string;
+  /** Printed supplier item code. Omitted when the read was blank. */
+  code?: string;
   department: DepartmentType;
   quantity: number;
   unit: string;
@@ -193,6 +195,8 @@ function readLine(raw: unknown, lineNumber: number): InterpretedInvoiceLine {
 
   const nameField = cappedString(pick(record, 'name', 'item_name'), INVOICE_OCR_TEXT_LIMITS.lineName);
   const name = nameField.missing ? `Unread line ${lineNumber}` : nameField.text;
+  const codeField = cappedString(pick(record, 'code'), 32);
+  const code = !codeField.missing && !codeField.truncated ? codeField.text : '';
   if (nameField.missing) gaps.push(`Line ${lineNumber} has no product name.`);
   if (nameField.truncated) gaps.push(`Line ${lineNumber} name was longer than ${INVOICE_OCR_TEXT_LIMITS.lineName} characters.`);
 
@@ -270,6 +274,7 @@ function readLine(raw: unknown, lineNumber: number): InterpretedInvoiceLine {
 
   return {
     name,
+    ...(code ? { code } : {}),
     department: departmentFields.department,
     quantity,
     unit,

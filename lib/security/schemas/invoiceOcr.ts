@@ -3,6 +3,13 @@ import { z } from 'zod';
 import { INVOICE_PDF_MAX_PAGES } from '@/lib/domains/ai/invoiceScan';
 import { numericInput } from '@/lib/security/numericInput';
 
+/** A blank product id is omitted. It is never stored as an empty match. */
+function blankToUndefined(value: unknown): unknown {
+  if (typeof value !== 'string') return value;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : undefined;
+}
+
 export const invoiceOcrResolutionsSchema = z
   .object({
     vendorName: z.string().trim().min(1).max(256).optional(),
@@ -16,6 +23,10 @@ export const invoiceOcrResolutionsSchema = z
             line_name: z.string().trim().min(1).max(256).optional(),
             quantity: z.number().finite().positive().max(1_000_000).optional(),
             department: z.nativeEnum(Department).optional(),
+            product_id: z.preprocess(blankToUndefined, z.string().min(1).max(128).optional()),
+            remember: z.boolean().optional(),
+            unlink: z.boolean().optional(),
+            create_new: z.boolean().optional(),
           })
           .strict()
       )
