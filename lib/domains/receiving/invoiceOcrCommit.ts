@@ -288,6 +288,7 @@ export interface OcrDraftPayload {
   printedSubtotal?: number;
   printedHst?: number;
   printedPst?: number;
+  printedGst?: number;
   pageScanBlockers?: string[];
   pageScanReviewFlags?: string[];
 }

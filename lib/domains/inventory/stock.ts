@@ -29,6 +29,7 @@ import {
 import {
   consumeLotsFifo,
   createLotOnReceive,
+  lockProductInventory,
   transferLotsFifo,
   type LotTx,
 } from '@/lib/domains/inventory/lots';
@@ -1471,6 +1472,21 @@ export function explicitMoveQuantity(
   return qty;
 }
 
+/** Lock the product, then reject a quantity above the on-hand inside that transaction. */
+async function readLockedMoveQuantity(
+  tx: LotTx,
+  productId: string,
+  location: InventoryLocation,
+  quantity: number,
+  shelf: 'floor' | 'production',
+  emptyMessage: string
+): Promise<number> {
+  await lockProductInventory(tx, productId, location);
+  const onHand = await getCurrentStock(productId, location, tx);
+  if (!(onHand > 0)) throw new Error(emptyMessage);
+  return explicitMoveQuantity(quantity, onHand, shelf);
+}
+
 export async function moveRetailStock(
   productId: string,
   action: 'waste' | 'rescue',
@@ -1493,27 +1509,33 @@ export async function moveRetailStock(
   }
   const product = await prisma.product.findUnique({ where: { id: productId } });
   if (!product) throw new Error('Item was not found.');
-  const floorQty = await getCurrentStock(productId, InventoryLocation.Retail_Floor);
-  if (!(floorQty > 0)) throw new Error('Nothing is on the retail floor to move.');
-  const qty = explicitMoveQuantity(quantity, floorQty, 'floor');
   const cost = product.standardCost && product.standardCost > 0 ? product.standardCost : 0;
   const actor = staffId.trim() || 'staff-floor';
   const referenceId = clientMutationId?.trim()
     ? offlineReferenceId(clientMutationId)
     : `${action === 'waste' ? 'WASTE' : 'RESCUE'}-${Date.now()}`;
-  const shared = {
-    productId,
-    staffId: actor,
-    unitCostAtTime: cost,
-    referenceId,
-    fromLocation: InventoryLocation.Retail_Floor,
-  };
 
+  let qty = 0;
   try {
   await prisma.$transaction(async (tx) => {
     if (clientMutationId?.trim()) {
       await tx.ledgerIdempotencyKey.create({ data: { key: referenceId } });
     }
+    qty = await readLockedMoveQuantity(
+      tx,
+      productId,
+      InventoryLocation.Retail_Floor,
+      quantity,
+      'floor',
+      'Nothing is on the retail floor to move.'
+    );
+    const shared = {
+      productId,
+      staffId: actor,
+      unitCostAtTime: cost,
+      referenceId,
+      fromLocation: InventoryLocation.Retail_Floor,
+    };
     if (action === 'waste') {
       await consumeLotsFifo(tx, {
         productId,
@@ -1586,11 +1608,17 @@ export async function moveKitchenPrepToWaste(
   }
   const product = await prisma.product.findUnique({ where: { id: productId } });
   if (!product) throw new Error('Item was not found.');
-  const prepQty = await getCurrentStock(productId, InventoryLocation.Kitchen_Prep);
-  if (!(prepQty > 0)) throw new Error('Nothing is in production prep to discard.');
-  const qty = explicitMoveQuantity(quantity, prepQty, 'production');
   const cost = product.standardCost && product.standardCost > 0 ? product.standardCost : 0;
+  let qty = 0;
   await prisma.$transaction(async (tx) => {
+    qty = await readLockedMoveQuantity(
+      tx,
+      productId,
+      InventoryLocation.Kitchen_Prep,
+      quantity,
+      'production',
+      'Nothing is in production prep to discard.'
+    );
     await consumeLotsFifo(tx, {
       productId,
       location: InventoryLocation.Kitchen_Prep,

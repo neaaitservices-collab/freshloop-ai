@@ -53,6 +53,23 @@ test('preset and custom queries resolve, and legacy presets still work', () => {
   assert.equal(exact.dayCount, 366);
 });
 
+test('a custom range caps from and to at the store today', () => {
+  const futureTo = resolveAdminDateRange({ from: '2026-11-01', to: '2026-12-31' }, NOW);
+  assert.equal(futureTo.mode, 'custom');
+  assert.equal(futureTo.from, '2026-11-01');
+  assert.equal(futureTo.to, '2026-11-18');
+  assert.equal(futureTo.dayCount, 18);
+
+  const futureBoth = resolveAdminDateRange({ from: '2026-12-01', to: '2026-12-31' }, NOW);
+  assert.equal(futureBoth.from, '2026-11-18');
+  assert.equal(futureBoth.to, '2026-11-18');
+  assert.equal(futureBoth.dayCount, 1);
+
+  const past = resolveAdminDateRange({ from: '2026-11-01', to: '2026-11-10' }, NOW);
+  assert.equal(past.from, '2026-11-01');
+  assert.equal(past.to, '2026-11-10');
+});
+
 test('overview and ROI links keep the date query', () => {
   const preset = new URLSearchParams('preset=last7&other=1');
   assert.equal(adminViewHref('/admin', preset), '/admin?preset=last7');

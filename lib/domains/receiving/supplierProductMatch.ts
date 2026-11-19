@@ -253,9 +253,9 @@ export function isMissingSupplierProductMatches(error: unknown): boolean {
   const message = 'message' in error ? errorText((error as { message?: unknown }).message) : '';
   const meta =
     'meta' in error && (error as { meta?: unknown }).meta && typeof (error as { meta?: unknown }).meta === 'object'
-      ? ((error as { meta: { table?: unknown; modelName?: unknown } }).meta)
+      ? ((error as { meta: { table?: unknown } }).meta)
       : {};
-  const named = `${message}\n${errorText(meta.table)}\n${errorText(meta.modelName)}`.toLowerCase();
+  const named = `${message}\n${errorText(meta.table)}`.toLowerCase();
   return named.includes('supplier_product_matches');
 }
 

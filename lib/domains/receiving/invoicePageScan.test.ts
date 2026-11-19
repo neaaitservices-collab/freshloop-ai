@@ -447,3 +447,33 @@ test('a date disagreement stays until the clerk confirms the picker', () => {
   const run = fs.readFileSync(path.join(process.cwd(), 'lib/domains/receiving/invoicePageScanRun.ts'), 'utf8');
   assert.match(run, /invoiceDateNeedsConfirm: payload\.invoiceDateNeedsConfirm === true/);
 });
+
+test('page-scan gst is read and kept through the merged scan', () => {
+  assert.deepEqual(readPrintedMoneyFields({ GST: '5.00', subtotal: '', hst: null }), { gst: 5 });
+  assert.deepEqual(readPrintedMoneyFields({ gst: 0, pst: 1 }), { gst: 0, pst: 1 });
+
+  const scan = readAll(initialPageScan('66666666-6666-4666-8666-666666666666', 1, NOW), [
+    fact({
+      lines: [line({ page: 1, name: 'Bananas', quantity: 2, unitCost: 50, totalCost: 100 })],
+      subtotal: 100,
+      gst: 5,
+    }),
+  ]);
+  assert.equal(scan.scanPages[0]?.gst, 5);
+
+  const merged = mergeReadPages(scan.scanPages);
+  assert.equal(merged.printedSubtotal, 100);
+  assert.equal(merged.printedGst, 5);
+
+  const ready = finalizeReadyScan(scan);
+  assert.equal(ready.printedGst, 5);
+  const stored = readStoredPageScan(JSON.parse(JSON.stringify(ready)));
+  assert.equal(stored?.printedGst, 5);
+  assert.equal(stored?.scanPages[0]?.gst, 5);
+
+  const restored = invoiceResultFromStoredDraft({
+    id: 'draft-gst',
+    payload: { ...JSON.parse(JSON.stringify(ready)), lines: [] },
+  });
+  assert.equal(restored?.pageScan?.printedGst, 5);
+});

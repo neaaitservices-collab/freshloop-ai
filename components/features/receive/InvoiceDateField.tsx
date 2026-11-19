@@ -18,20 +18,30 @@ import {
   isSelectableDeliveryDay,
   shiftDeliveryMonth,
 } from '@/lib/domains/receiving/invoiceDatePicker';
+import { isValidYmd } from '@/lib/domains/stats/storeTime';
+
+function selectionLimit(max?: string): string {
+  const today = invoiceDateToday();
+  if (!max || !isValidYmd(max) || max > today) return today;
+  return max;
+}
 
 export function InvoiceDateField({
   value,
   onChange,
   label = INVOICE_DATE_FIELD_LABEL,
+  max,
 }: {
   value: string;
   onChange: (ymd: string) => void;
   label?: string;
+  /** Latest selectable day. Store today when omitted. A later max still stops at today. */
+  max?: string;
 }) {
   const titleId = useId();
   const [open, setOpen] = useState(false);
   const [month, setMonth] = useState(() => invoiceDateToday());
-  const today = invoiceDateToday();
+  const today = selectionLimit(max);
   const buttonLabel = invoiceDateButtonLabel(value);
   const unset = buttonLabel === PICK_DELIVERY_DAY_LABEL;
   const model = deliveryMonthModel(month, today);
@@ -39,14 +49,14 @@ export function InvoiceDateField({
   const close = useCallback(() => setOpen(false), []);
 
   const openSheet = () => {
-    const nowToday = invoiceDateToday();
+    const nowToday = selectionLimit(max);
     const anchor = isSelectableDeliveryDay(value, nowToday) ? value : nowToday;
     setMonth(anchor);
     setOpen(true);
   };
 
   const choose = (ymd: string) => {
-    const nowToday = invoiceDateToday();
+    const nowToday = selectionLimit(max);
     if (!isSelectableDeliveryDay(ymd, nowToday)) return;
     onChange(ymd);
     setOpen(false);

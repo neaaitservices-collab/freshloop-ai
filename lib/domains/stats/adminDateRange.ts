@@ -3,8 +3,10 @@ import {
   calendarDaysInclusive,
   DEFAULT_ADMIN_DATE_PRESET,
   formatAdminRangeLabel,
+  isValidYmd,
   presetRange,
   torontoRange,
+  torontoToday,
   type StoreInstantRange,
   type StoreRangePreset,
 } from '@/lib/domains/stats/storeTime';
@@ -51,6 +53,21 @@ function monthToDate(now: Date): ResolvedAdminDateRange {
   return finish(presetRange(DEFAULT_ADMIN_DATE_PRESET, now), DEFAULT_ADMIN_DATE_PRESET);
 }
 
+/** Custom from/to cannot extend past the store today used by presets. */
+export function capAdminDateBounds(
+  from: string,
+  to: string,
+  now = new Date()
+): { from: string; to: string } {
+  const today = torontoToday(now);
+  const nextFrom = isValidYmd(from) && from > today ? today : from;
+  const nextTo = isValidYmd(to) && to > today ? today : to;
+  if (isValidYmd(nextFrom) && isValidYmd(nextTo) && nextFrom > nextTo) {
+    return { from: nextTo, to: nextTo };
+  }
+  return { from: nextFrom, to: nextTo };
+}
+
 /** Invalid or empty query params become month-to-date. day/week/month still resolve. */
 export function resolveAdminDateRange(query?: AdminDateQuery | null, now = new Date()): ResolvedAdminDateRange {
   const parsed = statsRangeQuerySchema.safeParse({
@@ -60,7 +77,9 @@ export function resolveAdminDateRange(query?: AdminDateQuery | null, now = new D
   });
   if (!parsed.success) return monthToDate(now);
   if (parsed.data.preset) return finish(presetRange(parsed.data.preset, now), parsed.data.preset);
-  if (parsed.data.from && parsed.data.to) return finish({ from: parsed.data.from, to: parsed.data.to }, null);
+  if (parsed.data.from && parsed.data.to) {
+    return finish(capAdminDateBounds(parsed.data.from, parsed.data.to, now), null);
+  }
   return monthToDate(now);
 }
 

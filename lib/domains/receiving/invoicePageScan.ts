@@ -78,6 +78,7 @@ export interface ScanPageState {
   subtotal?: number;
   hst?: number;
   pst?: number;
+  gst?: number;
   lines?: InvoicePageLine[];
 }
 
@@ -101,6 +102,7 @@ export interface PageScanRecord {
   printedSubtotal?: number;
   printedHst?: number;
   printedPst?: number;
+  printedGst?: number;
   pageScanBlockers: string[];
   pageScanReviewFlags: string[];
 }
@@ -114,6 +116,7 @@ export interface PageFact {
   subtotal?: number;
   hst?: number;
   pst?: number;
+  gst?: number;
   lines: InvoicePageLine[];
 }
 
@@ -130,6 +133,7 @@ export interface MergedInvoicePages {
   printedSubtotal?: number;
   printedHst?: number;
   printedPst?: number;
+  printedGst?: number;
   pageScanBlockers: string[];
   pageScanReviewFlags: string[];
   lineSum?: number;
@@ -152,16 +156,19 @@ export function readPrintedMoneyFields(raw: unknown): {
   subtotal?: number;
   hst?: number;
   pst?: number;
+  gst?: number;
 } {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
   const record = raw as Record<string, unknown>;
   const subtotal = readOptionalMoney(record.subtotal ?? record.subTotal);
   const hst = readOptionalMoney(record.hst ?? record.HST);
   const pst = readOptionalMoney(record.pst ?? record.PST);
+  const gst = readOptionalMoney(record.gst ?? record.GST);
   return {
     ...(subtotal !== undefined ? { subtotal } : {}),
     ...(hst !== undefined ? { hst } : {}),
     ...(pst !== undefined ? { pst } : {}),
+    ...(gst !== undefined ? { gst } : {}),
   };
 }
 
@@ -403,6 +410,7 @@ export function recordPageRead<T extends PageScanRecord>(
       ...(fact.subtotal !== undefined ? { subtotal: fact.subtotal } : { subtotal: undefined }),
       ...(fact.hst !== undefined ? { hst: fact.hst } : { hst: undefined }),
       ...(fact.pst !== undefined ? { pst: fact.pst } : { pst: undefined }),
+      ...(fact.gst !== undefined ? { gst: fact.gst } : { gst: undefined }),
       lines: fact.lines.map((line) => ({ ...line, page: index })),
     };
   });
@@ -640,12 +648,14 @@ export function mergeReadPages(
   let printedSubtotal: number | undefined;
   let printedHst: number | undefined;
   let printedPst: number | undefined;
+  let printedGst: number | undefined;
   for (const page of read) {
     if (typeof page.subtotal === 'number' && page.subtotal > 0) {
       totalsFromPage = page.index;
       printedSubtotal = page.subtotal;
       printedHst = page.hst;
       printedPst = page.pst;
+      printedGst = page.gst;
     }
   }
 
@@ -683,6 +693,7 @@ export function mergeReadPages(
     ...(printedSubtotal !== undefined ? { printedSubtotal } : {}),
     ...(printedHst !== undefined ? { printedHst } : {}),
     ...(printedPst !== undefined ? { printedPst } : {}),
+    ...(printedGst !== undefined ? { printedGst } : {}),
     pageScanBlockers: [...new Set(blockers)],
     pageScanReviewFlags: reviewFlags,
     ...(lineSum !== undefined ? { lineSum } : {}),
@@ -708,6 +719,8 @@ export function finalizeReadyScan<T extends PageScanRecord>(scan: T): T {
   else delete next.printedHst;
   if (merged.printedPst !== undefined) next.printedPst = merged.printedPst;
   else delete next.printedPst;
+  if (merged.printedGst !== undefined) next.printedGst = merged.printedGst;
+  else delete next.printedGst;
   next.pageScanBlockers = merged.pageScanBlockers;
   next.pageScanReviewFlags = merged.pageScanReviewFlags;
   next.scanStatus = 'ready';
@@ -766,12 +779,14 @@ export function readStoredPageScan(raw: unknown): PageScanRecord | null {
       ...(typeof page.subtotal === 'number' ? { subtotal: page.subtotal } : {}),
       ...(typeof page.hst === 'number' ? { hst: page.hst } : {}),
       ...(typeof page.pst === 'number' ? { pst: page.pst } : {}),
+      ...(typeof page.gst === 'number' ? { gst: page.gst } : {}),
       ...(Array.isArray(page.lines) ? { lines: page.lines as InvoicePageLine[] } : {}),
     });
   }
   const subtotal = typeof record.printedSubtotal === 'number' ? record.printedSubtotal : undefined;
   const hst = typeof record.printedHst === 'number' ? record.printedHst : undefined;
   const pst = typeof record.printedPst === 'number' ? record.printedPst : undefined;
+  const gst = typeof record.printedGst === 'number' ? record.printedGst : undefined;
   return {
     vendorName: typeof record.vendorName === 'string' ? record.vendorName : '',
     invoiceNumber: typeof record.invoiceNumber === 'string' ? record.invoiceNumber : '',
@@ -799,6 +814,7 @@ export function readStoredPageScan(raw: unknown): PageScanRecord | null {
     ...(subtotal !== undefined ? { printedSubtotal: subtotal } : {}),
     ...(hst !== undefined ? { printedHst: hst } : {}),
     ...(pst !== undefined ? { printedPst: pst } : {}),
+    ...(gst !== undefined ? { printedGst: gst } : {}),
     pageScanBlockers: Array.isArray(record.pageScanBlockers)
       ? record.pageScanBlockers.filter((item): item is string => typeof item === 'string')
       : [],
