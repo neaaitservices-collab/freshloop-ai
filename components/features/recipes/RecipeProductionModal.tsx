@@ -9,7 +9,11 @@ import type {
 } from '@/lib/domains/manufacturing/types';
 import type { RoleName } from '@/lib/utils/roles';
 import { batchActionLabel } from '@/lib/domains/manufacturing/batchActionLabel';
-import { computeScaledBatchCost } from '@/lib/domains/manufacturing/batchCost';
+import {
+  STANDARD_COST_FALLBACK_NOTE,
+  computeScaledBatchCost,
+  type StandardCostFallbackFlag,
+} from '@/lib/domains/manufacturing/batchCost';
 import { manufacturingPayloadKey } from '@/lib/domains/manufacturing/manufacturingPayload';
 import {
   browserManufacturingOperationStore,
@@ -18,7 +22,10 @@ import {
   purgeUnscopedManufacturingOperationKeys,
   settleManufacturingOperationId,
 } from '@/lib/domains/manufacturing/operationAttempt';
-import { resolveLaborRatePerHour } from '@/lib/domains/manufacturing/resolveLaborRate';
+import {
+  DEFAULT_LABOR_RATE_NOTE,
+  resolveLaborRate,
+} from '@/lib/domains/manufacturing/resolveLaborRate';
 import { ModalBody, ModalFooter, ModalHeader, ModalShell, ScrollTable } from '@/components/ui/layout';
 import {
   ChefHat,
@@ -35,6 +42,16 @@ export type {
   KitchenRecipeDefinition,
   ProductionBatchExecutedSummary,
 } from '@/lib/domains/manufacturing/types';
+
+function ingredientFallbackNote(
+  flags: StandardCostFallbackFlag[],
+  ingredientProductId: string
+): string | null {
+  const hit = flags.find(
+    (flag) => flag.standardCostFallback && flag.ingredientProductId === ingredientProductId
+  );
+  return hit ? STANDARD_COST_FALLBACK_NOTE : null;
+}
 
 function manufacturingRoleForApi(role: RoleName | undefined): string {
   if (!role) return 'KITCHEN_STAFF';
@@ -158,52 +175,42 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
     });
   }, [selectedRecipe, scaleRatio, varianceEnabled, customWeights]);
 
-  const laborRatePerHour = useMemo(
-    () =>
-      resolveLaborRatePerHour({
-        staffHourlyRate: activeUser?.hourlyRate ?? null,
-        recipeLaborRate: selectedRecipe?.laborRatePerHour ?? null,
-      }),
-    [activeUser?.hourlyRate, selectedRecipe?.laborRatePerHour]
-  );
-
-  const totalBatchCost = useMemo(() => {
-    const ingredientCost = computedBomRows.reduce((sum, r) => sum + r.lineCost, 0);
-    if (!selectedRecipe) return ingredientCost;
-    const breakdown = computeScaledBatchCost({
-      ingredientCost,
-      laborHours: selectedRecipe.laborHours ?? 0,
-      laborRatePerHour,
-      packagingCostPerUnit: selectedRecipe.packagingCostPerUnit ?? 0,
-      standardYield: selectedRecipe.standardBatchYield,
-      actualBatchOutput: batchOutputQty,
+  const resolvedLabor = useMemo(() => {
+    const recipeRate = selectedRecipe?.recipeLaborRate;
+    const recipeRateIsExplicit = recipeRate != null && recipeRate > 0;
+    return resolveLaborRate({
+      staffHourlyRate: activeUser?.hourlyRate ?? null,
+      recipeLaborRate: recipeRateIsExplicit ? recipeRate : null,
+      storeDefaultLaborRate: recipeRateIsExplicit ? null : (selectedRecipe?.laborRatePerHour ?? null),
     });
-    return breakdown.totalBatchCost;
-  }, [
-    computedBomRows,
-    selectedRecipe,
-    batchOutputQty,
-    laborRatePerHour,
-  ]);
+  }, [activeUser?.hourlyRate, selectedRecipe?.recipeLaborRate, selectedRecipe?.laborRatePerHour]);
 
-  const unitOutputCost = useMemo(
-    () =>
-      batchOutputQty > 0
-        ? Number((totalBatchCost / batchOutputQty).toFixed(2))
-        : 0,
-    [totalBatchCost, batchOutputQty]
-  );
+  const batchCost = useMemo(() => {
+    const ingredientCost = computedBomRows.reduce((sum, r) => sum + r.lineCost, 0);
+    return computeScaledBatchCost({
+      ingredientCost,
+      laborHours: selectedRecipe?.laborHours ?? 0,
+      laborRatePerHour: resolvedLabor.ratePerHour,
+      packagingCostPerUnit: selectedRecipe?.packagingCostPerUnit ?? 0,
+      standardYield: selectedRecipe?.standardBatchYield ?? batchOutputQty,
+      actualBatchOutput: batchOutputQty,
+      laborRateIsDefault: resolvedLabor.isDefault,
+      ingredients: computedBomRows.map((row) => ({
+        ingredientProductId: row.ingredientProductId,
+        name: row.name,
+        movingAverageCost: row.movingAverageCost ?? null,
+        standardCost:
+          row.catalogStandardCost === undefined ? row.movingAvgUnitCost : row.catalogStandardCost,
+      })),
+    });
+  }, [computedBomRows, selectedRecipe, batchOutputQty, resolvedLabor]);
 
-  const projectedMarginPct = useMemo(() => {
-    if (!selectedRecipe || selectedRecipe.targetRetailPrice <= 0) return 0;
-    return Number(
-      (
-        ((selectedRecipe.targetRetailPrice - unitOutputCost) /
-          selectedRecipe.targetRetailPrice) *
-        100
-      ).toFixed(1)
-    );
-  }, [selectedRecipe, unitOutputCost]);
+  const totalBatchCost = batchCost.totalBatchCost;
+  const unitOutputCost = batchCost.unitCost;
+
+  const projectedMarginPct = selectedRecipe
+    ? batchCost.grossMarginPct(selectedRecipe.targetRetailPrice)
+    : 0;
 
   const handleRecipeChange = (newRecipeId: string) => {
     const found = catalog.find((r) => r.recipeId === newRecipeId);
@@ -525,7 +532,14 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
                       </div>
                       <div>
                         <dt className="font-bold text-zinc-400">Cost</dt>
-                        <dd className="font-mono font-bold text-white">${row.lineCost.toFixed(2)}</dd>
+                        <dd className="font-mono font-bold text-white">
+                          ${row.lineCost.toFixed(2)}
+                          {ingredientFallbackNote(batchCost.standardCostFallbacks, row.ingredientProductId) ? (
+                            <span className="mt-1 block text-xs font-bold text-amber-300">
+                              {STANDARD_COST_FALLBACK_NOTE}
+                            </span>
+                          ) : null}
+                        </dd>
                       </div>
                     </dl>
                   </li>
@@ -605,6 +619,11 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
 
                         <td className="py-3 px-4 text-right font-mono font-bold text-white">
                           ${row.lineCost.toFixed(2)}
+                          {ingredientFallbackNote(batchCost.standardCostFallbacks, row.ingredientProductId) ? (
+                            <div className="mt-1 text-xs font-bold text-amber-300">
+                              {STANDARD_COST_FALLBACK_NOTE}
+                            </div>
+                          ) : null}
                         </td>
                       </tr>
                     ))}
@@ -612,39 +631,71 @@ export const RecipeProductionModal: React.FC<RecipeProductionModalProps> = ({
                 </table>
               </ScrollTable>
 
-              {/* Financial Batch Cost & Yield Summary */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-4 rounded-2xl bg-zinc-950 border border-zinc-800">
-                <div>
-                  <span className="text-xs text-zinc-500 uppercase font-bold block">
-                    Total batch cost
-                  </span>
-                  <strong className="font-mono text-base font-black tabular-nums text-white">
-                    ${totalBatchCost.toFixed(2)}
-                  </strong>
+              <div className="space-y-3 rounded-2xl border border-zinc-800 bg-zinc-950 p-4">
+                <div className="grid grid-cols-3 gap-3">
+                  <div>
+                    <span className="text-xs text-zinc-500 uppercase font-bold block">
+                      Ingredients
+                    </span>
+                    <strong className="font-mono text-base font-black tabular-nums text-white">
+                      ${batchCost.ingredientCost.toFixed(2)}
+                    </strong>
+                  </div>
+                  <div>
+                    <span className="text-xs text-zinc-500 uppercase font-bold block">
+                      Labor
+                    </span>
+                    <strong className="font-mono text-base font-black tabular-nums text-white">
+                      ${batchCost.laborCost.toFixed(2)}
+                    </strong>
+                    {batchCost.laborRateIsDefault ? (
+                      <span className="mt-1 block text-xs font-bold text-amber-300">
+                        {DEFAULT_LABOR_RATE_NOTE}
+                      </span>
+                    ) : null}
+                  </div>
+                  <div>
+                    <span className="text-xs text-zinc-500 uppercase font-bold block">
+                      Packaging
+                    </span>
+                    <strong className="font-mono text-base font-black tabular-nums text-white">
+                      ${batchCost.packagingCost.toFixed(2)}
+                    </strong>
+                  </div>
                 </div>
-                <div>
-                  <span className="text-xs text-zinc-500 uppercase font-bold block">
-                    Unit output cost
-                  </span>
-                  <strong className="font-mono text-base font-black tabular-nums text-amber-300">
-                    ${unitOutputCost.toFixed(2)} / {selectedRecipe.outputUnit}
-                  </strong>
-                </div>
-                <div>
-                  <span className="text-xs text-zinc-500 uppercase font-bold block">
-                    Suggested deli price
-                  </span>
-                  <strong className="font-mono text-base font-black tabular-nums text-emerald-400">
-                    ${selectedRecipe.targetRetailPrice.toFixed(2)}
-                  </strong>
-                </div>
-                <div>
-                  <span className="text-xs text-zinc-500 uppercase font-bold block">
-                    Gross margin
-                  </span>
-                  <strong className="font-mono text-base font-black tabular-nums text-emerald-400">
-                    {projectedMarginPct}%
-                  </strong>
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                  <div>
+                    <span className="text-xs text-zinc-500 uppercase font-bold block">
+                      Total batch cost
+                    </span>
+                    <strong className="font-mono text-base font-black tabular-nums text-white">
+                      ${batchCost.totalBatchCost.toFixed(2)}
+                    </strong>
+                  </div>
+                  <div>
+                    <span className="text-xs text-zinc-500 uppercase font-bold block">
+                      Unit output cost
+                    </span>
+                    <strong className="font-mono text-base font-black tabular-nums text-amber-300">
+                      ${batchCost.unitCost.toFixed(2)} / {selectedRecipe.outputUnit}
+                    </strong>
+                  </div>
+                  <div>
+                    <span className="text-xs text-zinc-500 uppercase font-bold block">
+                      Suggested deli price
+                    </span>
+                    <strong className="font-mono text-base font-black tabular-nums text-emerald-400">
+                      ${selectedRecipe.targetRetailPrice.toFixed(2)}
+                    </strong>
+                  </div>
+                  <div>
+                    <span className="text-xs text-zinc-500 uppercase font-bold block">
+                      Gross margin
+                    </span>
+                    <strong className="font-mono text-base font-black tabular-nums text-emerald-400">
+                      {projectedMarginPct}%
+                    </strong>
+                  </div>
                 </div>
               </div>
             </>

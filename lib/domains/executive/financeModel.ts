@@ -24,6 +24,20 @@ function finiteNumber(value: number | null | undefined): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
+/**
+ * Percent for the ROI sheet. A selected range with no sales is a dash, as is NaN.
+ * A real 0% stays "0.0%" only when that range has sales.
+ */
+export function formatExecutivePercent(
+  value: number | null | undefined,
+  grossSalesRevenue: number | null | undefined
+): string {
+  const sales = finiteNumber(grossSalesRevenue);
+  if (sales == null || sales <= 0) return '—';
+  if (value == null || !Number.isFinite(value)) return '—';
+  return `${value.toFixed(1)}%`;
+}
+
 export function buildExecutiveKpis(
   inputs: ExecutiveLiveInputs,
   scenario: ExecutiveScenario,

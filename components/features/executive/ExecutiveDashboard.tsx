@@ -17,9 +17,12 @@ import {
   buildCostVarianceSeries,
   buildExecutiveInsights,
   buildExecutiveKpis,
+  formatExecutivePercent,
 } from '@/lib/domains/executive/financeModel';
 import {
   DEFAULT_EXECUTIVE_SCENARIO,
+  ROI_ESTIMATE_LABEL,
+  executiveScenarioIsDefault,
   type ExecutiveScenario,
 } from '@/lib/domains/executive/types';
 import type { StoreStats } from '@/lib/domains/stats/storeStatsTypes';
@@ -42,12 +45,21 @@ export function ExecutiveDashboard({
   initialStats,
   initialWasteKpi,
   rangeDays = DEFAULT_KPI_LOOKBACK_DAYS,
+  grossSalesRevenue,
 }: {
   initialStats: StoreStats | null;
   initialWasteKpi: WasteKpiReport | null;
   rangeDays?: number;
+  /** Sales for the selected range. The page passes the waste KPI denominator. */
+  grossSalesRevenue?: number | null;
 }) {
   const [scenario, setScenario] = useState<ExecutiveScenario>(DEFAULT_EXECUTIVE_SCENARIO);
+  const sales =
+    grossSalesRevenue ??
+    initialWasteKpi?.grossSalesRevenue ??
+    initialStats?.grossSalesRevenue ??
+    null;
+  const estimateLabel = executiveScenarioIsDefault(scenario) ? ROI_ESTIMATE_LABEL : undefined;
 
   const liveInputs = useMemo(
     () => ({ stats: initialStats, wasteKpi: initialWasteKpi }),
@@ -84,6 +96,7 @@ export function ExecutiveDashboard({
           label="Monthly savings"
           value={formatCurrency(kpis.monthlySavingsUsd)}
           detail="Scenario: waste + labor"
+          badge={estimateLabel}
           icon={PiggyBank}
           accent="text-emerald-400"
           loading={loading}
@@ -92,23 +105,23 @@ export function ExecutiveDashboard({
           label="Annual ROI"
           value={formatCurrency(kpis.projectedAnnualRoiUsd)}
           detail="12× monthly (planning)"
+          badge={estimateLabel}
           icon={TrendingUp}
           accent="text-blue-300"
           loading={loading}
         />
         <MetricCard
           label="Efficiency"
-          value={`${kpis.operationalEfficiencyPct.toFixed(1)}%`}
+          value={formatExecutivePercent(kpis.operationalEfficiencyPct, sales)}
           detail="Rescue + modeled gains"
+          badge={estimateLabel}
           icon={LineChart}
           accent="text-amber-200"
           loading={loading}
         />
         <MetricCard
           label="Waste vs goal"
-          value={
-            kpis.baselineWastePct != null ? `${kpis.baselineWastePct.toFixed(1)}%` : '—'
-          }
+          value={formatExecutivePercent(kpis.baselineWastePct, sales)}
           detail={`Goal ≤ ${kpis.targetWastePct}%`}
           icon={DollarSign}
           accent={
@@ -134,7 +147,12 @@ export function ExecutiveDashboard({
         </CollapsibleSection>
       </div>
 
-      <ROIImpactSummary kpis={kpis} loading={loading} />
+      <ROIImpactSummary
+        kpis={kpis}
+        grossSalesRevenue={sales}
+        estimate={estimateLabel != null}
+        loading={loading}
+      />
 
       {insights.length > 1 ? (
         <CollapsibleSection
