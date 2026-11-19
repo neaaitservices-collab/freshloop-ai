@@ -279,6 +279,14 @@ export function ReceiveScreen({
 
   const openDraftId = scannedLogs.find((log) => log.draftId)?.draftId ?? '';
 
+  const rememberSupplier = (supplier: SupplierRecord) => {
+    setSuppliers((current) =>
+      current.some((row) => row.id === supplier.id)
+        ? current
+        : [...current, supplier].sort((a, b) => a.name.localeCompare(b.name))
+    );
+  };
+
   const applyDeliveryDay = (ymd: string) => {
     const next = pickDeliveryDay(
       { dateDraft, warning: scanNote, sheetOpen: true },
@@ -458,13 +466,7 @@ export function ReceiveScreen({
             invoiceDateDraft={dateDraft}
             onInvoiceDateDraft={applyDeliveryDay}
             onSupplierId={changeSupplier}
-            onSupplierCreated={(supplier) => {
-              setSuppliers((current) =>
-                current.some((row) => row.id === supplier.id)
-                  ? current
-                  : [...current, supplier].sort((a, b) => a.name.localeCompare(b.name))
-              );
-            }}
+            onSupplierCreated={rememberSupplier}
             onConfirmIdentity={confirmHold}
             screenDepartment={screenDepartment || undefined}
             onScanNext={() => setInvoiceOpen(true)}
@@ -485,6 +487,7 @@ export function ReceiveScreen({
           setLiveScan(null);
           setScanNote(vendorName ? `${vendorName} was received.` : 'Invoice received.');
         }}
+        onSupplierCreated={rememberSupplier}
       />
     </>
   );

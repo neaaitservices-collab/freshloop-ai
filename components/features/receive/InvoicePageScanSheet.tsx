@@ -26,7 +26,21 @@ import {
   type InvoicePageStatus,
 } from '@/lib/domains/receiving/invoicePageScan';
 import { selectInvoiceHeaderTotal } from '@/lib/domains/receiving/invoiceHeaderTotal';
-import { matchSupplierByName } from '@/lib/domains/suppliers/supplierInvoiceMatch';
+import {
+  addOcrSupplierLabel,
+  matchSupplierByName,
+  printedSupplierName,
+} from '@/lib/domains/suppliers/supplierInvoiceMatch';
+import {
+  clerkCannotConfirm,
+  clerkManagerReviewCopy,
+  CLERK_MANAGER_REASON,
+  invoiceRequestErrorMessage,
+  lineBlockerNeedsManager,
+  managerApprovalLabel,
+  needsManagerSignoff,
+  showManagerOverride,
+} from '@/lib/domains/receiving/receiveReviewGate';
 import type { SupplierRecord } from '@/lib/domains/suppliers/suppliers';
 import type { InvoiceLineItemExtract } from '@/lib/types';
 import {
@@ -115,6 +129,7 @@ export function InvoicePageScanSheet({
   resume,
   onDiscarded,
   onReceived,
+  onSupplierCreated,
 }: {
   open: boolean;
   onClose: () => void;
@@ -122,6 +137,7 @@ export function InvoicePageScanSheet({
   resume?: RestoredInvoiceScan | null;
   onDiscarded?: (draftId: string) => void;
   onReceived?: (vendorName: string) => void;
+  onSupplierCreated?: (supplier: SupplierRecord) => void;
 }) {
   const router = useRouter();
   const titleId = useId();
@@ -149,6 +165,7 @@ export function InvoicePageScanSheet({
   const [dateConfirmed, setDateConfirmed] = useState(false);
   const [showAllLines, setShowAllLines] = useState(false);
   const [managerApproved, setManagerApproved] = useState(false);
+  const [creatingSupplier, setCreatingSupplier] = useState(false);
   const [working, setWorking] = useState(false);
   const [lineEdits, setLineEdits] = useState<Record<number, InvoiceMatchChoice>>({});
   const [sheet, setSheet] = useState<{ index: number; fromCheck: boolean } | null>(null);
@@ -171,6 +188,7 @@ export function InvoicePageScanSheet({
     setDateConfirmed(false);
     setShowAllLines(false);
     setManagerApproved(false);
+    setCreatingSupplier(false);
     setLineEdits({});
     setSheet(null);
     setContinueAt(null);
@@ -328,7 +346,7 @@ export function InvoicePageScanSheet({
       }
     }
     if (!response.ok || json.success === false) {
-      throw new Error(typeof json.error === 'string' ? json.error : 'The invoice could not be read.');
+      throw new Error(invoiceRequestErrorMessage(response.status, json));
     }
     setContinueAt(null);
     setError(null);
@@ -525,6 +543,36 @@ export function InvoicePageScanSheet({
     }
   };
 
+  const addPrintedSupplier = async () => {
+    if (!view || creatingSupplier) return;
+    const name = printedSupplierName(view.vendorName);
+    if (!name) return;
+    setCreatingSupplier(true);
+    setError(null);
+    try {
+      const res = await fetch('/api/receiving-suppliers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: printedSupplierName(view.vendorName) }),
+      });
+      const json = (await res.json()) as {
+        success?: boolean;
+        supplier?: SupplierRecord;
+        error?: string;
+      };
+      if (!res.ok || !json.success || !json.supplier?.id) {
+        setError(json.error || 'Could not add that supplier.');
+        return;
+      }
+      setSupplierId(json.supplier.id);
+      onSupplierCreated?.(json.supplier);
+    } catch {
+      setError('Could not add that supplier. Check the connection and try again.');
+    } finally {
+      setCreatingSupplier(false);
+    }
+  };
+
   const movePage = (from: number, to: number) => {
     setPages((current) => {
       if (to < 0 || to >= current.length || from === to) return current;
@@ -547,6 +595,24 @@ export function InvoicePageScanSheet({
     invoiceDateNeedsConfirm: view?.invoiceDateNeedsConfirm === true,
     dateConfirmed,
   });
+  const signoff = view ? needsManagerSignoff(view) : false;
+  const showOverride = view
+    ? showManagerOverride({
+        manager,
+        reviewFlags: view.reviewFlags,
+        lines: view.lines,
+        blockers: view.blockers,
+      })
+    : false;
+  const clerkBlocked = view
+    ? clerkCannotConfirm({
+        manager,
+        reviewFlags: view.reviewFlags,
+        lines: view.lines,
+        blockers: view.blockers,
+      })
+    : false;
+  const confirmBlocked = clerkBlocked || (showOverride && signoff && !managerApproved);
 
   return (
     <div className="fixed inset-0 z-[80] flex items-end justify-center bg-slate-950/80 md:items-center" role="presentation">
@@ -773,6 +839,18 @@ export function InvoicePageScanSheet({
                 </div>
               ) : null}
               <SupplierSelect suppliers={suppliers} value={supplierId} onChange={setSupplierId} label="Supplier" />
+              {matchSupplierByName(view.vendorName, suppliers).status === 'none' &&
+              addOcrSupplierLabel(view.vendorName) ? (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="w-full"
+                  disabled={creatingSupplier || working}
+                  onClick={() => void addPrintedSupplier()}
+                >
+                  {creatingSupplier ? 'Adding supplier…' : addOcrSupplierLabel(view.vendorName)}
+                </Button>
+              ) : null}
               <div>
                 <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Invoice # · date</p>
                 <p className="mt-1 font-mono text-sm tabular-nums text-slate-100">
@@ -802,11 +880,13 @@ export function InvoicePageScanSheet({
                   setSheet({ index, fromCheck: true });
                 }}
               />
-              {view.blockers.some(isInvoiceLevelBlocker) ? (
+              {view.blockers.some((blocker) => isInvoiceLevelBlocker(blocker) || lineBlockerNeedsManager(blocker)) ? (
                 <ul className="space-y-1 rounded-xl border border-amber-800/50 bg-amber-950/30 px-3 py-2 text-sm text-amber-100">
-                  {view.blockers.filter(isInvoiceLevelBlocker).map((blocker) => (
-                    <li key={blocker}>{blocker}</li>
-                  ))}
+                  {view.blockers
+                    .filter((blocker) => isInvoiceLevelBlocker(blocker) || lineBlockerNeedsManager(blocker))
+                    .map((blocker) => (
+                      <li key={blocker}>{blocker}</li>
+                    ))}
                 </ul>
               ) : null}
               <ul className="divide-y divide-slate-800 rounded-2xl border border-slate-800">
@@ -935,15 +1015,21 @@ export function InvoicePageScanSheet({
                   <span className="font-mono tabular-nums">{money(invoiceTotal(view))}</span>
                 </div>
               </div>
-              {manager && view.reviewFlags.length > 0 ? (
-                <label className="flex min-h-11 items-center gap-2 text-sm text-slate-200">
+              {showOverride ? (
+                <label className="flex min-h-12 cursor-pointer items-start gap-3 rounded-2xl border border-amber-500/40 bg-amber-950/40 p-4 text-xs text-amber-100">
                   <input
                     type="checkbox"
                     checked={managerApproved}
                     onChange={(event) => setManagerApproved(event.target.checked)}
+                    className="mt-1 h-5 w-5 rounded border-amber-400"
                   />
-                  I reviewed the flagged totals
+                  <ManagerApprovalText lines={view.lines} />
                 </label>
+              ) : null}
+              {clerkBlocked ? (
+                <p className="rounded-2xl border border-rose-900/50 bg-rose-950/30 px-4 py-3 text-xs text-rose-200">
+                  {clerkManagerReviewCopy({ lines: view.lines, blockers: view.blockers })}
+                </p>
               ) : null}
             </div>
           ) : null}
@@ -995,7 +1081,8 @@ export function InvoicePageScanSheet({
               </Button>
               <Button
                 className="flex-1 bg-emerald-400 text-slate-950 hover:bg-emerald-300"
-                disabled={!supplierId || working || hardBlock || view?.status !== 'ready'}
+                disabled={!supplierId || working || hardBlock || view?.status !== 'ready' || confirmBlocked}
+                title={clerkBlocked ? CLERK_MANAGER_REASON : undefined}
                 onClick={() => void confirm()}
               >
                 {working ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
@@ -1057,6 +1144,18 @@ export function InvoicePageScanSheet({
         />
       </div>
     </div>
+  );
+}
+
+function ManagerApprovalText({ lines }: { lines: ReviewLine[] }) {
+  const text = managerApprovalLabel({ lines });
+  if (!text.startsWith('Manager approval:')) return <span>{text}</span>;
+  const detail = text.slice('Manager approval:'.length).trimStart();
+  return (
+    <span>
+      <span className="font-bold text-amber-200">Manager approval: </span>
+      {detail}
+    </span>
   );
 }
 
