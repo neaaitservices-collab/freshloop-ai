@@ -87,6 +87,9 @@ test('a validation failure keeps a safe field message and drops a stack', () => 
   });
   assert.equal(receivingPostFailureReason(unknown), STOCK_NOT_UPDATED);
   assert.equal(receivingPostFailureReason(new Error('')), STOCK_NOT_UPDATED);
+  assert.equal(receivingPostFailureReason(new Error('invalid')), RECEIVING_VALIDATION_REASON);
+  assert.equal(receivingPostFailureReason(new Error('Invalid request')), RECEIVING_VALIDATION_REASON);
+  assert.equal(receivingPostFailureReason(new Error('Invalid location for this receipt.')), MISSING_LOCATION_REASON);
   assert.equal(RECEIVING_VALIDATION_REASON.includes('validation'), true);
 });
 
