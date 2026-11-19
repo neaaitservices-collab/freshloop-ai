@@ -1,7 +1,8 @@
 'use client';
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { ArrowRightLeft, Calculator, Loader2, Minus, Plus, Trash2 } from 'lucide-react';
+import { z } from 'zod';
 import { useRole } from '@/components/auth/RoleProvider';
 import {
   BundleDealModal,
@@ -16,7 +17,8 @@ import {
 } from '@/lib/domains/inventory/inventoryMoveClient';
 import { createClientMutationId } from '@/lib/offline/queue';
 import type { StockLevel } from '@/lib/domains/inventory/stock';
-import { formatUnits, stockUnitLabel } from '@/lib/domains/receiving/yieldPricing';
+import { formatCurrency, formatUnits, stockUnitLabel } from '@/lib/domains/receiving/yieldPricing';
+import { numericInput } from '@/lib/security/numericInput';
 
 export type TransferBarVariant = 'floor' | 'kitchen' | 'both';
 
@@ -74,11 +76,54 @@ export function clampTransferQty(value: number, max: number, step: number): numb
   return Number(clamped.toFixed(fractionDigits));
 }
 
-function parseQtyInput(raw: string, max: number, step: number): number {
+const transferQtyInput = numericInput(z.number().finite().positive());
+
+/** Blank, zero, and non-numeric text stay undefined. Never coerce them to 0. */
+export function parseTransferQty(raw: string, max: number, step: number): number | undefined {
   const trimmed = raw.trim().replace(',', '.');
-  if (trimmed === '') return 0;
-  return clampTransferQty(Number(trimmed), max, step);
+  if (trimmed === '') return undefined;
+  const parsed = transferQtyInput.safeParse(trimmed);
+  if (!parsed.success) return undefined;
+  const next = clampTransferQty(parsed.data, max, step);
+  return next > 0 ? next : undefined;
 }
+
+export function positiveTransferQty(value: number): number | undefined {
+  return value > 0 ? value : undefined;
+}
+
+/** Floor waste opens a confirm step. It does not post. */
+export function requestFloorWasteAction(
+  quantity: number | undefined,
+  busy: boolean
+): { type: 'confirm'; quantity: number } | { type: 'blocked' } {
+  if (busy || quantity == null || !(quantity > 0)) return { type: 'blocked' };
+  return { type: 'confirm', quantity };
+}
+
+export function floorWasteConfirmDetails(input: {
+  name: string;
+  quantity: number;
+  unit: string;
+  unitCost?: number;
+}): {
+  item: string;
+  quantityLabel: string;
+  location: 'Floor';
+  costLabel: string | null;
+} {
+  const unitCost = input.unitCost;
+  const costKnown = unitCost != null && Number.isFinite(unitCost) && unitCost > 0;
+  return {
+    item: input.name,
+    quantityLabel: `${formatUnits(input.quantity)} ${input.unit}`,
+    location: 'Floor',
+    costLabel: costKnown ? formatCurrency(unitCost * input.quantity) : null,
+  };
+}
+
+const BLANK_QTY_ERROR = 'Enter a quantity. A blank field is not saved as zero.';
+const INVALID_QTY_ERROR = 'Enter a quantity greater than zero.';
 
 function TransferQtyPicker({
   label,
@@ -92,35 +137,52 @@ function TransferQtyPicker({
   onChange,
 }: {
   label: string;
-  value: number;
+  value: number | undefined;
   max: number;
   step: number;
   unit: string;
   compact?: boolean;
   unified?: boolean;
   busy?: boolean;
-  onChange: (n: number) => void;
+  onChange: (n: number | undefined) => void;
 }) {
-  const [draft, setDraft] = useState(() => String(value));
+  const errorId = useId();
+  const focused = useRef(false);
+  const [draft, setDraft] = useState(() => (value == null ? '' : String(value)));
+  const [qtyError, setQtyError] = useState<string | null>(null);
 
   useEffect(() => {
-    setDraft(String(value));
+    if (focused.current) return;
+    setDraft(value == null ? '' : String(value));
+    if (value != null && value > 0) setQtyError(null);
   }, [value, max]);
 
   if (!(max > 0)) return null;
 
+  const publish = (raw: string) => {
+    const next = parseTransferQty(raw, max, step);
+    onChange(next);
+    if (raw.trim() === '') setQtyError(BLANK_QTY_ERROR);
+    else if (next == null) setQtyError(INVALID_QTY_ERROR);
+    else setQtyError(null);
+    return next;
+  };
+
   const applyDraft = () => {
-    const next = parseQtyInput(draft, max, step);
-    if (next > 0) onChange(next);
-    else setDraft(String(value));
+    const next = publish(draft);
+    if (next != null) setDraft(String(next));
   };
 
   const stepper = (
     <>
       <button
         type="button"
-        disabled={busy || value <= step}
-        onClick={() => onChange(clampTransferQty(value - step, max, step))}
+        disabled={busy || value == null || value <= step}
+        onClick={() => {
+          if (value == null) return;
+          const next = clampTransferQty(value - step, max, step);
+          onChange(next > 0 ? next : undefined);
+        }}
         className={`flex min-h-11 min-w-11 items-center justify-center text-slate-200 disabled:opacity-40 ${
           unified
             ? 'rounded-l-xl border-r border-slate-700/80 bg-slate-900/80 px-3 hover:bg-slate-800'
@@ -138,8 +200,33 @@ function TransferQtyPicker({
         step={step}
         disabled={busy}
         value={draft}
-        onChange={(e) => setDraft(e.target.value)}
-        onBlur={applyDraft}
+        aria-invalid={qtyError ? true : undefined}
+        aria-errormessage={qtyError ? errorId : undefined}
+        onFocus={() => {
+          focused.current = true;
+        }}
+        onChange={(e) => {
+          const nextDraft = e.target.value;
+          setDraft(nextDraft);
+          const trimmed = nextDraft.trim().replace(',', '.');
+          if (trimmed === '') {
+            onChange(undefined);
+            setQtyError(BLANK_QTY_ERROR);
+            return;
+          }
+          const next = parseTransferQty(nextDraft, max, step);
+          if (next == null) {
+            onChange(undefined);
+            setQtyError(null);
+            return;
+          }
+          onChange(next);
+          setQtyError(null);
+        }}
+        onBlur={() => {
+          focused.current = false;
+          applyDraft();
+        }}
         onKeyDown={(e) => {
           if (e.key === 'Enter') {
             e.preventDefault();
@@ -153,8 +240,11 @@ function TransferQtyPicker({
       />
       <button
         type="button"
-        disabled={busy || value >= max}
-        onClick={() => onChange(clampTransferQty(value + step, max, step))}
+        disabled={busy || (value != null && value >= max)}
+        onClick={() => {
+          const next = clampTransferQty(value == null ? step : value + step, max, step);
+          onChange(next > 0 ? next : undefined);
+        }}
         className={`flex min-h-11 min-w-11 items-center justify-center text-slate-200 disabled:opacity-40 ${
           unified
             ? 'border-r border-slate-700/80 bg-slate-900/80 px-3 hover:bg-slate-800'
@@ -167,7 +257,7 @@ function TransferQtyPicker({
       <button
         type="button"
         disabled={busy}
-        onClick={() => onChange(max)}
+        onClick={() => onChange(max > 0 ? max : undefined)}
         className={`min-h-11 shrink-0 px-3 py-2 font-bold text-slate-300 hover:bg-slate-800/80 disabled:opacity-40 ${
           unified
             ? 'rounded-r-xl bg-slate-900/80 text-xs'
@@ -205,6 +295,82 @@ function TransferQtyPicker({
           {unit} · max {formatUnits(max)}
         </span>
       ) : null}
+      {qtyError ? (
+        <p id={errorId} role="alert" className="text-xs font-semibold text-rose-300">
+          {qtyError}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+export function FloorWasteConfirm({
+  item,
+  quantityLabel,
+  location,
+  costLabel,
+  busy,
+  onCancel,
+  onConfirm,
+}: {
+  item: string;
+  quantityLabel: string;
+  location: string;
+  costLabel: string | null;
+  busy?: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const titleId = useId();
+  const bodyId = useId();
+  return (
+    <div
+      role="alertdialog"
+      aria-labelledby={titleId}
+      aria-describedby={bodyId}
+      className="rounded-xl border border-rose-500/40 bg-rose-950/30 p-3"
+    >
+      <p id={titleId} className="text-sm font-black text-rose-100">
+        Confirm floor waste
+      </p>
+      <dl id={bodyId} className="mt-2 space-y-1 text-xs text-slate-200">
+        <div className="flex justify-between gap-3">
+          <dt className="text-slate-400">Item</dt>
+          <dd className="min-w-0 truncate text-right font-semibold text-white">{item}</dd>
+        </div>
+        <div className="flex justify-between gap-3">
+          <dt className="text-slate-400">Qty</dt>
+          <dd className="font-mono font-bold tabular-nums">{quantityLabel}</dd>
+        </div>
+        <div className="flex justify-between gap-3">
+          <dt className="text-slate-400">Location</dt>
+          <dd>{location}</dd>
+        </div>
+        {costLabel ? (
+          <div className="flex justify-between gap-3">
+            <dt className="text-slate-400">Cost</dt>
+            <dd className="font-mono font-bold tabular-nums">{costLabel}</dd>
+          </div>
+        ) : null}
+      </dl>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={onCancel}
+          disabled={busy}
+          className="inline-flex min-h-11 flex-1 items-center justify-center rounded-xl border border-slate-600 bg-slate-900 px-3 py-2 text-xs font-bold text-slate-200 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50 sm:flex-none"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={onConfirm}
+          disabled={busy}
+          className="inline-flex min-h-11 flex-1 items-center justify-center rounded-xl bg-rose-700 px-3 py-2 text-xs font-black text-white hover:bg-rose-600 disabled:cursor-not-allowed disabled:opacity-50 sm:flex-none"
+        >
+          Confirm waste
+        </button>
+      </div>
     </div>
   );
 }
@@ -236,28 +402,53 @@ export function SubInventoryTransferBar({
   const unit = stockUnitLabel(row.unitType);
 
   const initialFloorQty = useMemo(
-    () => clampTransferQty(defaultQty ?? step, floorMax, step),
+    () => positiveTransferQty(clampTransferQty(defaultQty ?? step, floorMax, step)),
     [defaultQty, floorMax, step]
   );
-  const [floorQty, setFloorQty] = useState(initialFloorQty);
-  const [kitchenQty, setKitchenQty] = useState(() => clampTransferQty(step, kitchenMax, step));
+  const [floorQty, setFloorQtyState] = useState<number | undefined>(initialFloorQty);
+  const [kitchenQty, setKitchenQtyState] = useState<number | undefined>(() =>
+    positiveTransferQty(clampTransferQty(step, kitchenMax, step))
+  );
+  const [wasteConfirm, setWasteConfirm] = useState<{ quantity: number } | null>(null);
   const [internalBusy, setInternalBusy] = useState(false);
+  const floorQtyRef = useRef(floorQty);
+  const kitchenQtyRef = useRef(kitchenQty);
 
   const busy = busyProp ?? internalBusy;
+
+  const setFloorQty = (next: number | undefined) => {
+    floorQtyRef.current = next;
+    setFloorQtyState(next);
+  };
+  const setKitchenQty = (next: number | undefined) => {
+    kitchenQtyRef.current = next;
+    setKitchenQtyState(next);
+  };
 
   const prevProductId = useRef(row.productId);
   useEffect(() => {
     if (prevProductId.current !== row.productId) {
       prevProductId.current = row.productId;
-      setFloorQty(clampTransferQty(defaultQty ?? step, floorMax, step));
+      setFloorQty(positiveTransferQty(clampTransferQty(defaultQty ?? step, floorMax, step)));
       return;
     }
-    setFloorQty((current) => clampTransferQty(current, floorMax, step));
+    const current = floorQtyRef.current;
+    if (current == null) return;
+    setFloorQty(positiveTransferQty(clampTransferQty(current, floorMax, step)));
   }, [row.productId, floorMax, defaultQty, step]);
 
   useEffect(() => {
-    setKitchenQty((current) => clampTransferQty(current || step, kitchenMax, step));
+    const current = kitchenQtyRef.current;
+    setKitchenQty(positiveTransferQty(clampTransferQty(current ?? step, kitchenMax, step)));
   }, [row.productId, kitchenMax, step]);
+
+  useEffect(() => {
+    setWasteConfirm((current) => {
+      if (!current) return current;
+      if (floorQty !== current.quantity) return null;
+      return current;
+    });
+  }, [floorQty]);
 
   const setBusy = (value: boolean) => {
     setInternalBusy(value);
@@ -316,6 +507,33 @@ export function SubInventoryTransferBar({
     }
   };
 
+  const requestFloorWaste = () => {
+    const decision = requestFloorWasteAction(floorQtyRef.current, busy);
+    if (decision.type === 'blocked') return;
+    setWasteConfirm({ quantity: decision.quantity });
+  };
+
+  const confirmFloorWaste = () => {
+    if (!wasteConfirm || busy) return;
+    const quantity = wasteConfirm.quantity;
+    setWasteConfirm(null);
+    void run('waste', quantity);
+  };
+
+  const postMove = (action: 'rescue' | 'sale' | 'kitchen_waste', quantity: number | undefined) => {
+    if (quantity == null || !(quantity > 0)) return;
+    void run(action, quantity);
+  };
+
+  const wasteDetails = wasteConfirm
+    ? floorWasteConfirmDetails({
+        name: row.name,
+        quantity: wasteConfirm.quantity,
+        unit,
+        unitCost: row.unitCost,
+      })
+    : null;
+
   const showFloor = variant === 'floor' || variant === 'both';
   const showKitchen = variant === 'kitchen' || variant === 'both';
   const operations = layoutVariant === 'operations';
@@ -368,8 +586,8 @@ export function SubInventoryTransferBar({
               <div className="flex min-w-0 flex-wrap gap-2">
                 <button
                   type="button"
-                  disabled={busy || floorQty <= 0}
-                  onClick={() => void run('rescue', floorQty)}
+                  disabled={busy || !(floorQty != null && floorQty > 0)}
+                  onClick={() => postMove('rescue', floorQtyRef.current)}
                   className={`${primaryBtn} min-w-[8.5rem] bg-emerald-600 text-white shadow-md shadow-emerald-900/30 hover:bg-emerald-500`}
                 >
                   {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ArrowRightLeft className="h-3.5 w-3.5" />}
@@ -379,16 +597,16 @@ export function SubInventoryTransferBar({
               <div className="flex min-w-0 flex-wrap gap-2">
                 <button
                   type="button"
-                  disabled={busy || floorQty <= 0}
-                  onClick={() => void run('sale', floorQty)}
+                  disabled={busy || !(floorQty != null && floorQty > 0)}
+                  onClick={() => postMove('sale', floorQtyRef.current)}
                   className={`${secondaryBtn} min-w-[8.5rem] border-blue-800/60 bg-blue-950/40 text-blue-100 hover:bg-blue-900/50`}
                 >
                   Record sale
                 </button>
                 <button
                   type="button"
-                  disabled={busy || floorQty <= 0}
-                  onClick={() => void run('waste', floorQty)}
+                  disabled={busy || !(floorQty != null && floorQty > 0)}
+                  onClick={requestFloorWaste}
                   className={`${secondaryBtn} min-w-[8.5rem] border-slate-700 bg-slate-900/50 text-slate-400 hover:border-rose-900/50 hover:bg-rose-950/30 hover:text-rose-300`}
                 >
                   <Trash2 className="h-3.5 w-3.5" />
@@ -413,8 +631,8 @@ export function SubInventoryTransferBar({
             <div className={`flex flex-wrap gap-2 ${compact ? 'gap-1' : ''}`}>
               <button
                 type="button"
-                disabled={busy || floorQty <= 0}
-                onClick={() => void run('rescue', floorQty)}
+                disabled={busy || !(floorQty != null && floorQty > 0)}
+                onClick={() => postMove('rescue', floorQtyRef.current)}
                 className={`${compact ? compactBtn : btnClass} bg-[#163832] text-[#7dcec4]`}
               >
                 {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ArrowRightLeft className="h-3.5 w-3.5" />}
@@ -422,16 +640,16 @@ export function SubInventoryTransferBar({
               </button>
               <button
                 type="button"
-                disabled={busy || floorQty <= 0}
-                onClick={() => void run('sale', floorQty)}
+                disabled={busy || !(floorQty != null && floorQty > 0)}
+                onClick={() => postMove('sale', floorQtyRef.current)}
                 className={`${compact ? compactBtn : btnClass} bg-blue-900/40 text-blue-100`}
               >
                 Record sale
               </button>
               <button
                 type="button"
-                disabled={busy || floorQty <= 0}
-                onClick={() => void run('waste', floorQty)}
+                disabled={busy || !(floorQty != null && floorQty > 0)}
+                onClick={requestFloorWaste}
                 className={`${compact ? compactBtn : btnClass} bg-[#C4847A]/15 text-[#C4847A]`}
               >
                 <Trash2 className="h-3.5 w-3.5" />
@@ -452,6 +670,17 @@ export function SubInventoryTransferBar({
               ) : null}
             </div>
           )}
+          {wasteDetails ? (
+            <FloorWasteConfirm
+              item={wasteDetails.item}
+              quantityLabel={wasteDetails.quantityLabel}
+              location={wasteDetails.location}
+              costLabel={wasteDetails.costLabel}
+              busy={busy}
+              onCancel={() => setWasteConfirm(null)}
+              onConfirm={confirmFloorWaste}
+            />
+          ) : null}
         </div>
       ) : null}
 
@@ -470,8 +699,8 @@ export function SubInventoryTransferBar({
           />
           <button
             type="button"
-            disabled={busy || kitchenQty <= 0}
-            onClick={() => void run('kitchen_waste', kitchenQty)}
+            disabled={busy || !(kitchenQty != null && kitchenQty > 0)}
+            onClick={() => postMove('kitchen_waste', kitchenQtyRef.current)}
             className={`${compact ? compactBtn : btnClass} w-full border border-rose-500/40 bg-rose-950/50 text-rose-200`}
           >
             <Trash2 className="h-3.5 w-3.5" />
