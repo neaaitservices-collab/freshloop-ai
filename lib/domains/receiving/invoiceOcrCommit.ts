@@ -13,7 +13,10 @@ import { sampleInvoiceCommitRejection } from '@/lib/domains/receiving/sampleRece
 import { canonicalInvoiceDate } from '@/lib/domains/receiving/invoiceDeliveryId';
 import {
   assertReceivingDepartmentsChosen,
+  isZeroDollarReceivingLine,
   postReceivingLogToInventory,
+  type ReceivingLogPostInput,
+  type ReceivingLogPostResult,
 } from '@/lib/domains/receiving/receivingLogPost';
 import { getSupplierNameById } from '@/lib/domains/suppliers/suppliers';
 import {
@@ -21,7 +24,52 @@ import {
   resolveSupplierInvoice,
   SUPPLIER_REQUIRED_ERROR,
 } from '@/lib/domains/receiving/supplierInvoiceIdentity';
-import type { ReceivingLogPostResult } from '@/lib/domains/receiving/receivingLogPost';
+
+export interface CommitReceiptSlot {
+  transactionId: string;
+  productId: string;
+  unitsAdded: number;
+  onHand: number;
+}
+
+/** Posts paid lines and leaves $0 review lines out of stock. Indexes stay aligned with the request. */
+export async function settleCommitPosts(
+  posts: ReceivingLogPostInput[],
+  postOne: (post: ReceivingLogPostInput) => Promise<ReceivingLogPostResult>
+): Promise<{ receipts: CommitReceiptSlot[]; postedRows: ReceivingLogPostResult[] }> {
+  const postedRows: ReceivingLogPostResult[] = [];
+  const receipts: CommitReceiptSlot[] = [];
+  for (const post of posts) {
+    if (isZeroDollarReceivingLine(post)) {
+      receipts.push({ transactionId: '', productId: '', unitsAdded: 0, onHand: 0 });
+      continue;
+    }
+    const row = await postOne(post);
+    if (!row.stock.posted) {
+      const rolledBack: ReceivingLogPostResult[] = postedRows.map((earlier) => ({
+        externalLogId: earlier.externalLogId,
+        itemName: earlier.itemName,
+        stock: {
+          posted: false,
+          reason: 'Rolled back because a later line conflicted. Stock was not added for this line.',
+        },
+      }));
+      rolledBack.push(row);
+      throw new InventoryLedgerError(row.stock.reason ?? 'Stock was not updated.', 'DELIVERY_CONFLICT', 409, {
+        committed: false,
+        results: rolledBack,
+      });
+    }
+    postedRows.push(row);
+    receipts.push({
+      transactionId: row.stock.transactionId,
+      productId: row.stock.productId,
+      unitsAdded: row.stock.unitsAdded,
+      onHand: row.stock.onHand,
+    });
+  }
+  return { receipts, postedRows };
+}
 
 export type OcrQuantityKind = 'units' | 'cases';
 
@@ -360,26 +408,11 @@ export async function commitInvoiceOcrReceipts(input: {
             );
           }
         }
-        const postedRows: ReceivingLogPostResult[] = [];
-        for (const post of posts) {
-          const row = await postReceivingLogToInventory(post, input.staffId, supplierName, tx, true);
-          if (!row.stock.posted) {
-            const rolledBack: ReceivingLogPostResult[] = postedRows.map((earlier) => ({
-              externalLogId: earlier.externalLogId,
-              itemName: earlier.itemName,
-              stock: {
-                posted: false,
-                reason: 'Rolled back because a later line conflicted. Stock was not added for this line.',
-              },
-            }));
-            rolledBack.push(row);
-            throw new InventoryLedgerError(row.stock.reason ?? 'Stock was not updated.', 'DELIVERY_CONFLICT', 409, {
-              committed: false,
-              results: rolledBack,
-            });
-          }
-          postedRows.push(row);
-        }
+        const settled = await settleCommitPosts(posts, (post) =>
+          postReceivingLogToInventory(post, input.staffId, supplierName, tx, true)
+        );
+        const postedRows = settled.postedRows;
+        const receipts = settled.receipts;
 
         const meta = input.invoiceMeta;
         let invoiceId: string | null = null;
@@ -409,16 +442,10 @@ export async function commitInvoiceOcrReceipts(input: {
           }
         }
 
-        const receipts = postedRows.map((row) => ({
-          transactionId: row.stock.posted ? row.stock.transactionId : '',
-          productId: row.stock.posted ? row.stock.productId : '',
-          unitsAdded: row.stock.posted ? row.stock.unitsAdded : 0,
-          onHand: row.stock.posted ? row.stock.onHand : 0,
-        }));
-
         if (createdHeader && invoiceId) {
           const departmentIds = await loadDepartmentCodeMap(tx);
           for (const [index, item] of input.confirmedItems.entries()) {
+            if (isZeroDollarReceivingLine({ caseCost: item.unit_cost })) continue;
             const productId = receipts[index]?.productId || String(item.product_id ?? '');
             const product = productId
               ? await tx.product.findUnique({

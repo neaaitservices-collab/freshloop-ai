@@ -4,6 +4,7 @@ import { NextRequest } from 'next/server';
 import { POST as postReceivingBatch } from '@/app/api/receiving-logs/batch/route';
 import { setReceivingStaffTestAuth } from '@/lib/auth/receivingStaffTestAuth';
 import {
+  draftIsFullyPosted,
   draftReceiveBlock,
   OCR_CLIENT_COPY_REJECTED,
   OCR_DRAFT_NOT_ACCEPTED,
@@ -575,6 +576,7 @@ test('a $0 line is returned for review and is not sent to stock', async () => {
     requires_approval: false,
   });
   const posted: InvoiceOcrPostEntry[] = [];
+  let skippedReviewIndexes: number[] | undefined;
   const outcome = await receiveAcceptedInvoiceOcr({
     actorId: 'clerk-1',
     actorIsManager: true,
@@ -592,10 +594,39 @@ test('a $0 line is returned for review and is not sent to stock', async () => {
         }),
       ],
     },
-    deps: deps(draft, posted),
+    deps: {
+      findDraft: async () => draft,
+      postLines: async (input) => {
+        skippedReviewIndexes = input.skippedReviewIndexes;
+        posted.push(...input.entries);
+        return input.entries.map(
+          (entry): ReceivingLogPostResult => ({
+            externalLogId: entry.line.externalLogId,
+            itemName: entry.line.itemName,
+            stock: {
+              posted: true,
+              unitsAdded: entry.line.casesReceived,
+              onHand: entry.line.casesReceived,
+              productId: entry.line.productId ?? '',
+              productName: entry.line.itemName,
+              transactionId: 'tx-1',
+            },
+          })
+        );
+      },
+    },
   });
   assert.equal(outcome.ok, true);
   if (!outcome.ok) return;
+  assert.deepEqual(skippedReviewIndexes, [1]);
+  assert.equal(
+    draftIsFullyPosted({
+      lines: payload.lines,
+      postedLineIndexes: [0],
+      skippedReviewIndexes,
+    }),
+    true
+  );
   assert.equal(posted.length, 1);
   assert.equal(posted[0]?.line.caseCost, 12);
   const zero = outcome.results.find((row) => row.itemName === 'Shipped zero greens');

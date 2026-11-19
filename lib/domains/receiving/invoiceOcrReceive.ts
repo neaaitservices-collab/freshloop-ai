@@ -88,6 +88,8 @@ export interface InvoiceOcrReceiveDeps {
     resolved: OcrDraftPayload;
     entries: InvoiceOcrPostEntry[];
     actorId: string;
+    /** Draft indexes for $0 review lines. They are not stock posts, and they still count as covered. */
+    skippedReviewIndexes?: number[];
   }) => Promise<ReceivingLogPostResult[]>;
 }
 
@@ -112,7 +114,7 @@ export function draftIsFullyPosted(payload: unknown): boolean {
   if (!payload || typeof payload !== 'object') return false;
   const lines = (payload as { lines?: unknown }).lines;
   if (!Array.isArray(lines) || lines.length === 0) return false;
-  const posted = new Set(postedLineIndexes(payload));
+  const posted = new Set([...postedLineIndexes(payload), ...skippedReviewIndexes(payload)]);
   return lines.every((_, index) => posted.has(index));
 }
 
@@ -199,11 +201,19 @@ function readPayload(raw: unknown): OcrDraftPayload | null {
   };
 }
 
-function postedLineIndexes(raw: unknown): number[] {
+function readIndexList(raw: unknown, key: 'postedLineIndexes' | 'skippedReviewIndexes'): number[] {
   if (!raw || typeof raw !== 'object') return [];
-  const value = (raw as { postedLineIndexes?: unknown }).postedLineIndexes;
+  const value = (raw as Record<string, unknown>)[key];
   if (!Array.isArray(value)) return [];
   return [...new Set(value.filter((entry): entry is number => Number.isInteger(entry) && entry >= 0))];
+}
+
+function postedLineIndexes(raw: unknown): number[] {
+  return readIndexList(raw, 'postedLineIndexes');
+}
+
+function skippedReviewIndexes(raw: unknown): number[] {
+  return readIndexList(raw, 'skippedReviewIndexes');
 }
 
 export interface PostedByRecord {
@@ -313,11 +323,32 @@ function idempotentLine(entry: InvoiceOcrPostEntry): ReceivingLogPostResult {
   };
 }
 
+function accountDraftLines(
+  resolved: OcrDraftPayload,
+  raw: unknown,
+  postedNow: number[],
+  skippedNow: number[],
+  actorId: string,
+  at: string
+): OcrDraftPayload & { postedLineIndexes?: number[]; postedBy?: PostedByRecord[]; skippedReviewIndexes?: number[] } {
+  const withPosted =
+    postedNow.length > 0
+      ? payloadWithPostedLines(resolved, raw, postedNow, actorId, at)
+      : {
+          ...resolved,
+          postedLineIndexes: postedLineIndexes(raw),
+          postedBy: readPostedBy(raw),
+        };
+  const skipped = [...new Set([...skippedReviewIndexes(raw), ...skippedNow])];
+  return skipped.length > 0 ? { ...withPosted, skippedReviewIndexes: skipped } : withPosted;
+}
+
 async function postDraftLines(input: {
   draft: OcrDraftRecord;
   resolved: OcrDraftPayload;
   entries: InvoiceOcrPostEntry[];
   actorId: string;
+  skippedReviewIndexes?: number[];
 }): Promise<ReceivingLogPostResult[]> {
   const supplierId = input.entries.find((entry) => entry.line.supplierId)?.line.supplierId;
   const supplierName = supplierId ? await getSupplierNameById(supplierId) : null;
@@ -357,6 +388,7 @@ async function postDraftLines(input: {
         throw new InventoryLedgerError(blocked.error, blocked.code, blocked.status);
       }
       const already = new Set(postedLineIndexes(locked[0].payload));
+      const skippedNow = input.skippedReviewIndexes ?? [];
       const rows: ReceivingLogPostResult[] = [];
       const postedNow: number[] = [];
       for (const entry of input.entries) {
@@ -371,19 +403,21 @@ async function postDraftLines(input: {
         rows.push(row);
         postedNow.push(entry.draftLineIndex);
       }
-      const covered = new Set([...already, ...postedNow]);
+      const covered = new Set([...already, ...postedNow, ...skippedReviewIndexes(locked[0].payload), ...skippedNow]);
       const fullyPosted =
         lockedPayload.lines.length > 0 && lockedPayload.lines.every((_, index) => covered.has(index));
-      if (postedNow.length > 0 || fullyPosted) {
+      const skippedChanged = skippedNow.some((index) => !skippedReviewIndexes(locked[0].payload).includes(index));
+      if (postedNow.length > 0 || skippedChanged || fullyPosted) {
         await tx.invoiceOcrDraft.updateMany({
           where: { id: input.draft.id, consumedAt: null },
           data: {
-            ...(postedNow.length > 0
+            ...(postedNow.length > 0 || skippedChanged
               ? {
-                  payload: payloadWithPostedLines(
+                  payload: accountDraftLines(
                     input.resolved,
                     locked[0].payload,
                     postedNow,
+                    skippedNow,
                     input.actorId,
                     new Date().toISOString()
                   ) as unknown as Prisma.InputJsonValue,
@@ -525,12 +559,14 @@ export async function receiveAcceptedInvoiceOcr(input: {
   const supplierId = typeof body.supplierId === 'string' ? body.supplierId.trim() : '';
   const entries: InvoiceOcrPostEntry[] = [];
   const skipped: ReceivingLogPostResult[] = [];
+  const skippedReviewIndexes: number[] = [];
   for (const client of indexed) {
     const line = resolved.lines[client.index];
     if (!line) {
       return failure(400, 'A line in this request is not on the saved invoice scan.', 'OCR_LINE_NOT_ON_DRAFT');
     }
     if (isZeroDollarDraftLine(line)) {
+      skippedReviewIndexes.push(client.index);
       skipped.push({
         externalLogId: client.externalLogId,
         itemName: line.line_name?.trim() || 'Line',
@@ -573,7 +609,7 @@ export async function receiveAcceptedInvoiceOcr(input: {
     entries.push({ line: validated.input, draftLineIndex: client.index });
   }
 
-  if (entries.length === 0) {
+  if (entries.length === 0 && skippedReviewIndexes.length === 0) {
     return { ok: true, lines: [], results: skipped };
   }
 
@@ -583,6 +619,7 @@ export async function receiveAcceptedInvoiceOcr(input: {
       resolved,
       entries,
       actorId: input.actorId,
+      skippedReviewIndexes,
     });
     return { ok: true, lines: entries.map((entry) => entry.line), results: [...skipped, ...posted] };
   } catch (error) {
