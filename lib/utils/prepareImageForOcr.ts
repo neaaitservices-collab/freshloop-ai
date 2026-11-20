@@ -1,4 +1,4 @@
-export const OCR_IMAGE_MAX_EDGE = 1200;
+export const OCR_IMAGE_MAX_EDGE = 2000;
 export const OCR_IMAGE_JPEG_QUALITY = 0.78;
 /** PDF pages use the same long edge as photos and the server JPEG quality. */
 export const OCR_PDF_JPEG_QUALITY = 0.72;
@@ -149,7 +149,7 @@ async function openPdfDocument(bytes: Uint8Array): Promise<PdfDocumentLike> {
   }).promise;
 }
 
-/** One JPEG per page, longest edge 1200px, quality about 0.72. */
+/** One JPEG per page, longest edge 2000px, quality about 0.72. */
 export async function rasterizePdfBytes(
   bytes: Uint8Array,
   options?: { maxEdge?: number; quality?: number; maxPages?: number }

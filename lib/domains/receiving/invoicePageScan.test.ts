@@ -34,10 +34,13 @@ import {
   INVOICE_PAGE_MAX,
   INVOICE_PAGE_REQUEST_BUDGET_MS,
   INVOICE_PAGE_RETRY_MARGIN_MS,
+  INVOICE_PAGE_EMPTY_LINES_MESSAGE,
   INVOICE_PAGE_TOO_DENSE_MESSAGE,
   INVOICE_PAGE_STALE_MS,
   INVOICE_PAGE_TOTAL_TOLERANCE,
   invoicePageFailureStage,
+  invoicePageLineShape,
+  invoicePageLinesMissing,
   lineIdentityKey,
   logInvoicePageReadFailure,
   markPagesScanning,
@@ -242,6 +245,79 @@ test('page failure logs finishReason and stage without invoice content', () => {
   assert.ok(calls.some((args) => args[3] === 'abort'));
   assert.ok(calls.some((args) => args[1] === 6 && args[2] === 'MAX_TOKENS' && args[3] === 'none'));
   assert.equal(calls.every((args) => args[0] === '[invoice-ocr] page=%s finishReason=%s stage=%s'), true);
+});
+
+test('a missing or empty line list fails as empty and a totals-only page stays no-stock', () => {
+  const vendor = 'SECRET MARKET';
+  const amount = '12.50';
+  const missing = { vendorName: vendor, invoiceNumber: 'INV-9', subtotal: amount };
+  const empty = { ...missing, lineItems: [] as unknown[] };
+  const alias = { vendorName: vendor, line_items: [] as unknown[] };
+  const totalsOnly = {
+    ...missing,
+    lineItems: [{ name: vendor, unit: 'CHRG', quantity: 1, unitCost: 0, totalCost: amount }],
+  };
+  const malformed = { ...missing, lineItems: vendor };
+
+  assert.equal(invoicePageLinesMissing(missing), true);
+  assert.deepEqual(invoicePageLineShape(missing), { lineCount: 0, lineItemsIsArray: false, keyCount: 3 });
+  assert.equal(invoicePageLinesMissing(empty), true);
+  assert.deepEqual(invoicePageLineShape(empty), { lineCount: 0, lineItemsIsArray: true, keyCount: 4 });
+  assert.equal(invoicePageLinesMissing({ ...missing, lineItems: null }), true);
+  assert.equal(invoicePageLinesMissing(alias), true);
+  assert.equal(invoicePageLineShape(alias)?.lineItemsIsArray, true);
+  assert.equal(invoicePageLinesMissing(totalsOnly), false);
+  assert.equal(invoicePageLineShape(totalsOnly)?.lineCount, 1);
+  assert.equal(invoicePageLinesMissing(malformed), false);
+  assert.equal(invoicePageLinesMissing(null), false);
+  assert.equal(invoicePageLinesMissing([]), false);
+
+  const emptyError = new InvoicePageReadError('empty', `${vendor} ${amount}`, 'STOP', invoicePageLineShape(empty));
+  assert.equal(invoicePageFailureStage(emptyError), 'empty');
+  assert.equal(pageFailureMessage(emptyError), INVOICE_PAGE_EMPTY_LINES_MESSAGE);
+  assert.equal(
+    INVOICE_PAGE_EMPTY_LINES_MESSAGE,
+    'No lines could be read on this page, please retake it closer and try again'
+  );
+  assert.equal(pageFailureMessage(new Error('No stock lines on this invoice')), 'No stock lines on this invoice');
+  assert.equal(invoicePageFailureStage(new Error('No stock lines on this invoice')), 'interpret');
+
+  const calls: unknown[][] = [];
+  const original = console.info;
+  console.info = (...args: unknown[]) => {
+    calls.push(args);
+  };
+  try {
+    logInvoicePageReadFailure(emptyError, 2);
+    logInvoicePageReadFailure(new InvoicePageReadError('empty', vendor, 'STOP', invoicePageLineShape(missing)), 4);
+  } finally {
+    console.info = original;
+  }
+  const logged = calls.map((args) => args.map((part) => String(part)).join(' ')).join('\n');
+  assert.equal(logged.includes(vendor), false);
+  assert.equal(logged.includes(amount), false);
+  assert.equal(logged.includes('STOP'), false);
+  assert.deepEqual(calls[0], [
+    '[invoice-ocr] page=%s lineCount=%s lineItemsIsArray=%s keyCount=%s',
+    2,
+    0,
+    true,
+    4,
+  ]);
+  assert.deepEqual(calls[1], [
+    '[invoice-ocr] page=%s lineCount=%s lineItemsIsArray=%s keyCount=%s',
+    4,
+    0,
+    false,
+    3,
+  ]);
+
+  const route = fs.readFileSync(path.join(process.cwd(), 'app/api/invoice-ocr/route.ts'), 'utf8');
+  const batch = route.slice(route.indexOf('async function extractInvoicePageForBatch'));
+  const emptyAt = batch.indexOf('invoicePageLinesMissing(parsed)');
+  const zodAt = batch.indexOf("schemaOk ? 'interpret' : 'zod'");
+  const noStockAt = batch.indexOf('error.message !== INVOICE_OCR_NO_STOCK_ERROR');
+  assert.ok(emptyAt > 0 && emptyAt < noStockAt && noStockAt < zodAt);
 });
 
 test('a failed page can be retaken without reading the pages that already succeeded', () => {

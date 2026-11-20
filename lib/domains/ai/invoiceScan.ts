@@ -1,7 +1,7 @@
 import sharp from 'sharp';
 
-/** Longest edge sent to Gemini for invoice photos. */
-export const INVOICE_PHOTO_MAX_EDGE = 1200;
+/** Longest edge sent to Gemini for invoice photos. Matches the client prepare edge. */
+export const INVOICE_PHOTO_MAX_EDGE = 2000;
 export const INVOICE_PHOTO_JPEG_QUALITY = 72;
 /** Decoded upload cap, checked before sharp runs. */
 export const INVOICE_PHOTO_MAX_BYTES = 8 * 1024 * 1024;
