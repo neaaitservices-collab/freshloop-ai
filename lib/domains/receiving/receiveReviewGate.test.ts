@@ -13,6 +13,7 @@ import {
   lineBlockerNeedsManager,
   managerApprovalLabel,
   needsManagerSignoff,
+  reviewBlockersAfterApproval,
   showManagerOverride,
 } from '@/lib/domains/receiving/receiveReviewGate';
 
@@ -84,6 +85,23 @@ test('a clerk cannot confirm a price jump, and the 409 reason stays visible', ()
 
 const subtotalFlag = 'Invoice subtotal 10.00 does not match the line sum 8.00.';
 
+test('a checked manager approval clears cost_guardrail and leaves every other blocker', () => {
+  const blockers = [
+    'Line 8 is unresolved (cost_guardrail).',
+    'Line 17 is unresolved (cost_guardrail, low_confidence).',
+    'Line 38 is unresolved (quantity_unreadable).',
+    'Line 41 is unresolved (cost_guardrail).',
+    'Pages do not agree on the invoice date. Pick the date from the paper.',
+  ];
+  assert.deepEqual(reviewBlockersAfterApproval({ manager: true, approved: true, blockers }), [
+    'Line 17 is unresolved (low_confidence).',
+    'Line 38 is unresolved (quantity_unreadable).',
+    'Pages do not agree on the invoice date. Pick the date from the paper.',
+  ]);
+  assert.deepEqual(reviewBlockersAfterApproval({ manager: true, approved: false, blockers }), blockers);
+  assert.deepEqual(reviewBlockersAfterApproval({ manager: false, approved: true, blockers }), blockers);
+});
+
 test('a receiver with only a subtotal flag can confirm', () => {
   const reviewFlags = [subtotalFlag];
   assert.equal(showManagerOverride({ manager: true, reviewFlags, lines: [] }), true);
@@ -149,6 +167,7 @@ test('the receive sheet wires the override checkbox and the new-supplier button'
   assert.match(sheet, /clerkCannotConfirm\(\{/);
   assert.match(sheet, /managerApprovalLabel\(\{/);
   assert.match(sheet, /lineBlockerNeedsManager\(blocker\)/);
+  assert.match(sheet, /reviewBlockersAfterApproval\(/);
   assert.match(sheet, /invoiceRequestErrorMessage\(response\.status, json\)/);
   assert.match(sheet, /manualReviewOverride: true/);
   assert.match(sheet, /<OcrSupplierCreateButton/);

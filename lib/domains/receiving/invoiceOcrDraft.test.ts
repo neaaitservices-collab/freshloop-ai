@@ -56,6 +56,41 @@ test('an unmatched line does not block, and a low extraction confidence still do
   );
 });
 
+test('manager approval clears cost_guardrail, including a stale scan list, and a clerk override does not', () => {
+  const draft = draftFrom([
+    source({ item_name: 'Bananas', requires_approval: true, line_confidence: 0.99 }),
+    source({ item_name: 'Unread line 2', product_id: null, quantity: 0, line_confidence: 0.99 }),
+  ]);
+  assert.match(
+    draftPostingBlockers(draft, { actorIsManager: true, manualReviewOverride: false }).join(' '),
+    /Line 1 is unresolved \(cost_guardrail\)/
+  );
+  const manager = draftPostingBlockers(draft, { actorIsManager: true, manualReviewOverride: true });
+  assert.equal(manager.some((row) => /cost_guardrail/.test(row)), false);
+  assert.match(manager.join(' '), /Line 2 is unresolved/);
+  assert.match(
+    draftPostingBlockers(draft, { actorIsManager: false, manualReviewOverride: true }).join(' '),
+    /cost_guardrail/
+  );
+
+  const stale = {
+    ...draftFrom([source({ line_confidence: 0.99, requires_approval: false })]),
+    pageScanBlockers: [
+      'Line 8 is unresolved (cost_guardrail).',
+      'Line 17 is unresolved (cost_guardrail, low_confidence).',
+      'Line 38 is unresolved (quantity_unreadable).',
+    ],
+  };
+  const cleared = draftPostingBlockers(stale, { actorIsManager: true, manualReviewOverride: true });
+  assert.equal(cleared.includes('Line 8 is unresolved (cost_guardrail).'), false);
+  assert.equal(cleared.includes('Line 17 is unresolved (low_confidence).'), true);
+  assert.equal(cleared.includes('Line 38 is unresolved (quantity_unreadable).'), true);
+  const clerk = draftPostingBlockers(stale, { actorIsManager: false, manualReviewOverride: true });
+  assert.equal(clerk.includes('Line 8 is unresolved (cost_guardrail).'), true);
+  const unchecked = draftPostingBlockers(stale, { actorIsManager: true, manualReviewOverride: false });
+  assert.equal(unchecked.includes('Line 8 is unresolved (cost_guardrail).'), true);
+});
+
 test('header total uses the printed subtotal, otherwise the line sum', () => {
   assert.equal(selectInvoiceHeaderTotal({ printedSubtotal: 1536.08, lineAmounts: [1500.75] }), 1536.08);
   assert.equal(selectInvoiceHeaderTotal({ printedSubtotal: 0, lineAmounts: [10, 5.5] }), 15.5);

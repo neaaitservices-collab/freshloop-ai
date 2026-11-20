@@ -35,6 +35,36 @@ function overrideBlocker(blocker: string): boolean {
   return /cost_guardrail|low_confidence/i.test(blocker);
 }
 
+const LINE_UNRESOLVED = /^Line (\d+) is unresolved \(([^)]+)\)\.$/;
+
+/**
+ * A checked manager approval clears cost_guardrail only.
+ * Low confidence, an unreadable field, and every other blocker stay.
+ * A clerk's checkbox state does not change the list.
+ */
+export function reviewBlockersAfterApproval(input: {
+  manager: boolean;
+  approved: boolean;
+  blockers: readonly string[];
+}): string[] {
+  if (!input.manager || !input.approved) return [...input.blockers];
+  const next: string[] = [];
+  for (const blocker of input.blockers) {
+    const match = LINE_UNRESOLVED.exec(blocker);
+    if (!match) {
+      next.push(blocker);
+      continue;
+    }
+    const reasons = match[2]!
+      .split(',')
+      .map((reason) => reason.trim())
+      .filter((reason) => reason && reason !== 'cost_guardrail');
+    if (reasons.length === 0) continue;
+    next.push(`Line ${match[1]} is unresolved (${reasons.join(', ')}).`);
+  }
+  return next;
+}
+
 /**
  * Price jumps and low confidence need a manager override.
  * A subtotal mismatch stays on the manager checkbox only. It does not block a receiver.

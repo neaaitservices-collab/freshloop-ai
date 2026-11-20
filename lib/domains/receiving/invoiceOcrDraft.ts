@@ -1,5 +1,6 @@
 import type { Department } from '@prisma/client';
 import { lineNeedsManualReview } from '@/lib/domains/receiving/invoiceOcrConfidence';
+import { reviewBlockersAfterApproval } from '@/lib/domains/receiving/receiveReviewGate';
 import { selectInvoiceHeaderTotal } from '@/lib/domains/receiving/invoiceHeaderTotal';
 import {
   MAX_RECEIVING_BATCH_SIZE,
@@ -282,10 +283,17 @@ export function draftPostingBlockers(
   if (payload.scanStatus === 'failed') {
     blockers.push('A page was not read. Retake that page before confirming.');
   }
-  for (const blocker of payload.pageScanBlockers ?? []) {
+  const managerMayResolveEarly = options.manualReviewOverride && options.actorIsManager;
+  const pageBlockers = managerMayResolveEarly
+    ? reviewBlockersAfterApproval({
+        manager: true,
+        approved: true,
+        blockers: payload.pageScanBlockers ?? [],
+      })
+    : (payload.pageScanBlockers ?? []);
+  for (const blocker of pageBlockers) {
     if (blocker.trim()) blockers.push(blocker);
   }
-  const managerMayResolveEarly = options.manualReviewOverride && options.actorIsManager;
   if (!managerMayResolveEarly) {
     for (const flag of payload.pageScanReviewFlags ?? []) {
       if (flag.trim()) blockers.push(flag);
