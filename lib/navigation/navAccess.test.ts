@@ -44,6 +44,7 @@ const ROUTE_MATRIX: Record<string, Record<RoleName, boolean>> = {
   '/profile': ALL_ROLES,
   '/admin': MANAGERS,
   '/admin/suppliers': MANAGERS,
+  '/admin/invoices': MANAGERS,
   '/admin/users': MANAGERS,
   '/admin/settings': MANAGERS,
   '/admin/departments': MANAGERS,
