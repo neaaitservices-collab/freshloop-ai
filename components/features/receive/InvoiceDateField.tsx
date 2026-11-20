@@ -26,6 +26,13 @@ function selectionLimit(max?: string): string {
   return max;
 }
 
+/** A selectable day is a confirm, including the day already shown in the field. */
+export function confirmDeliveryDayTap(ymd: string, today: string): string | null {
+  const day = ymd.trim();
+  if (!isSelectableDeliveryDay(day, today)) return null;
+  return day;
+}
+
 export function InvoiceDateField({
   value,
   onChange,
@@ -56,9 +63,9 @@ export function InvoiceDateField({
   };
 
   const choose = (ymd: string) => {
-    const nowToday = selectionLimit(max);
-    if (!isSelectableDeliveryDay(ymd, nowToday)) return;
-    onChange(ymd);
+    const picked = confirmDeliveryDayTap(ymd, selectionLimit(max));
+    if (!picked) return;
+    onChange(picked);
     setOpen(false);
   };
 
@@ -159,6 +166,7 @@ export function InvoiceDateField({
                   type="button"
                   disabled={cell.disabled}
                   aria-current={cell.isToday ? 'date' : undefined}
+                  aria-pressed={!cell.disabled && cell.ymd === value.trim() ? true : undefined}
                   aria-label={
                     cell.disabled
                       ? `${formatInvoiceDeliveryDay(cell.ymd)}, unavailable`
@@ -167,7 +175,12 @@ export function InvoiceDateField({
                   className={cn(
                     'flex h-9 items-center justify-center rounded-[10px] text-[13px] font-bold',
                     cell.disabled ? 'cursor-not-allowed font-semibold text-slate-700/40' : 'text-slate-50',
-                    cell.isToday && 'bg-emerald-950 text-emerald-400 shadow-[inset_0_0_0_2px_#34d399]'
+                    !cell.disabled &&
+                      cell.ymd === value.trim() &&
+                      'bg-emerald-400 text-slate-950',
+                    cell.isToday &&
+                      cell.ymd !== value.trim() &&
+                      'bg-emerald-950 text-emerald-400 shadow-[inset_0_0_0_2px_#34d399]'
                   )}
                   onClick={() => choose(cell.ymd)}
                 >

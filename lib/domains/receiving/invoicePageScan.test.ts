@@ -14,9 +14,12 @@ import type { OcrDraftPayload } from '@/lib/domains/receiving/invoiceOcrCommit';
 import { MAX_RECEIVING_BATCH_SIZE } from '@/lib/domains/receiving/receivingLogPost';
 import { invoiceResultFromStoredDraft, pickOpenInvoiceScan } from '@/lib/domains/receiving/openInvoiceScan';
 import { invoicePageScanBodySchema } from '@/lib/security/schemas/invoiceOcr';
+import { confirmDeliveryDayTap } from '@/components/features/receive/InvoiceDateField';
+import { formatInvoiceDeliveryDay } from '@/lib/domains/receiving/invoiceDatePicker';
 import {
   beginPageReread,
   chunkPages,
+  acceptShownInvoiceDate,
   confirmInvoiceDateResolution,
   continuablePendingIndexes,
   createScanPages,
@@ -29,6 +32,9 @@ import {
   InvoicePageReadError,
   InvoiceScanRequestError,
   invoiceReviewHardBlocked,
+  PICK_INVOICE_DATE_TO_CONFIRM,
+  prefilledInvoiceDate,
+  invoiceDateConfirmLabel,
   INVOICE_PAGE_BATCH_SIZE,
   INVOICE_PAGE_LINE_MAX,
   INVOICE_PAGE_MAX,
@@ -676,6 +682,39 @@ test('merged pages compare parsed dates and ignore a page with no date', () => {
   ]);
   assert.equal(yearMismatch.invoiceDateNeedsConfirm, true);
   assert.match(yearMismatch.invoiceDateConfirmReason ?? '', /do not agree on the invoice date/);
+
+  const shortAndLongYear = mergeReadPages([
+    { ...base, index: 1, invoiceDate: '10-11-26', lines: [first] },
+    { ...base, index: 2, invoiceDate: '10-11-2026', lines: [second] },
+  ]);
+  assert.equal(shortAndLongYear.invoiceDateNeedsConfirm, false);
+  assert.equal(shortAndLongYear.invoiceDateConfirmReason, null);
+  assert.ok(shortAndLongYear.invoiceDate === '2026-10-11' || shortAndLongYear.invoiceDate === '2026-11-10');
+
+  const slashedShortYear = mergeReadPages([
+    { ...base, index: 1, invoiceDate: '10/11/26', lines: [first] },
+    { ...base, index: 2, invoiceDate: '10-11-2026', lines: [second] },
+  ]);
+  assert.equal(slashedShortYear.invoiceDateNeedsConfirm, false);
+
+  const swappedShort = mergeReadPages([
+    { ...base, index: 1, invoiceDate: '10-11-26', lines: [first] },
+    { ...base, index: 2, invoiceDate: '11-10-26', lines: [second] },
+  ]);
+  assert.equal(swappedShort.invoiceDateNeedsConfirm, true);
+  assert.match(swappedShort.invoiceDateConfirmReason ?? '', /do not agree on the invoice date/);
+
+  const swappedMixed = mergeReadPages([
+    { ...base, index: 1, invoiceDate: '10-11-26', lines: [first] },
+    { ...base, index: 2, invoiceDate: '11-10-2026', lines: [second] },
+  ]);
+  assert.equal(swappedMixed.invoiceDateNeedsConfirm, true);
+
+  const differentShortYear = mergeReadPages([
+    { ...base, index: 1, invoiceDate: '10-11-26', lines: [first] },
+    { ...base, index: 2, invoiceDate: '10-11-25', lines: [second] },
+  ]);
+  assert.equal(differentShortYear.invoiceDateNeedsConfirm, true);
 });
 
 test('two Deodato pages keep distinct lines and drop only an exact repeat', () => {
@@ -767,6 +806,98 @@ test('a date disagreement stays until the clerk confirms the picker', () => {
   assert.match(run, /invoiceDateNeedsConfirm: payload\.invoiceDateNeedsConfirm === true/);
   assert.match(run, /actorIsManager,/);
   assert.equal(run.includes('actorIsManager: false'), false);
+
+  const shown = prefilledInvoiceDate('2026-11-13');
+  assert.equal(shown.dateDraft, '2026-11-13');
+  assert.equal(shown.dateConfirmed, false);
+  assert.equal(confirmInvoiceDateResolution(shown), undefined);
+  assert.equal(
+    invoiceReviewHardBlocked({
+      blockers: ['Pages do not agree on the invoice date. Pick the date from the paper.'],
+      invoiceDateNeedsConfirm: true,
+      dateConfirmed: shown.dateConfirmed,
+    }),
+    true
+  );
+
+  const used = acceptShownInvoiceDate(shown);
+  assert.equal(used.dateConfirmed, true);
+  assert.equal(used.dateDraft, '2026-11-13');
+  assert.equal(
+    invoiceReviewHardBlocked({
+      blockers: ['Pages do not agree on the invoice date. Pick the date from the paper.'],
+      invoiceDateNeedsConfirm: true,
+      dateConfirmed: used.dateConfirmed,
+    }),
+    false
+  );
+
+  const retapped = acceptShownInvoiceDate(shown, shown.dateDraft);
+  assert.equal(retapped.dateConfirmed, true);
+  assert.equal(retapped.dateDraft, shown.dateDraft);
+  assert.equal(confirmDeliveryDayTap(shown.dateDraft, '2026-11-20'), shown.dateDraft);
+  assert.equal(confirmDeliveryDayTap('2026-11-21', '2026-11-20'), null);
+
+  const dateResolution = confirmInvoiceDateResolution(used);
+  assert.deepEqual(dateResolution, { invoiceDate: used.dateDraft });
+  const resolutions = dateResolution ? { invoiceDate: dateResolution.invoiceDate } : undefined;
+  assert.deepEqual(resolutions, { invoiceDate: '2026-11-13' });
+  assert.equal(invoiceDateConfirmLabel(formatInvoiceDeliveryDay('2026-11-13')), 'Use this date (Fri, Nov 13, 2026)');
+  assert.equal(PICK_INVOICE_DATE_TO_CONFIRM, 'Pick the invoice date above to confirm.');
+
+  const stored = readPostedInvoiceDate({
+    data: {
+      invoiceDate: '2026-11-13',
+      invoiceDateNeedsConfirm: true,
+      invoiceDateConfirmReason: 'Pages do not agree on the invoice date. Pick the date from the paper.',
+    },
+  });
+  const resumed = prefilledInvoiceDate(stored.invoiceDate);
+  assert.equal(stored.invoiceDateNeedsConfirm, true);
+  assert.equal(resumed.dateConfirmed, false);
+  assert.equal(
+    invoiceReviewHardBlocked({
+      blockers: [],
+      invoiceDateNeedsConfirm: stored.invoiceDateNeedsConfirm,
+      dateConfirmed: resumed.dateConfirmed,
+    }),
+    true
+  );
+  const confirmedResume = acceptShownInvoiceDate(resumed);
+  assert.equal(
+    invoiceReviewHardBlocked({
+      blockers: [],
+      invoiceDateNeedsConfirm: stored.invoiceDateNeedsConfirm,
+      dateConfirmed: confirmedResume.dateConfirmed,
+    }),
+    false
+  );
+  assert.deepEqual(confirmInvoiceDateResolution(confirmedResume), { invoiceDate: stored.invoiceDate });
+
+  const sheet = fs.readFileSync(path.join(process.cwd(), 'components/features/receive/InvoicePageScanSheet.tsx'), 'utf8');
+  const field = fs.readFileSync(path.join(process.cwd(), 'components/features/receive/InvoiceDateField.tsx'), 'utf8');
+  assert.match(sheet, /prefilledInvoiceDate\(next\.invoiceDate\)/);
+  assert.match(sheet, /acceptShownInvoiceDate\(\{ dateDraft, dateConfirmed \}, ymd\)/);
+  assert.match(sheet, /acceptShownInvoiceDate\(\{ dateDraft, dateConfirmed \}\)/);
+  assert.match(sheet, /useThisDateLabel/);
+  assert.match(sheet, /dateBlocksConfirm/);
+  assert.match(sheet, /\{PICK_INVOICE_DATE_TO_CONFIRM\}/);
+  assert.match(sheet, /invoiceDate: dateResolution\.invoiceDate/);
+  assert.match(sheet, /confirmInvoiceDateResolution\(\{ dateConfirmed, dateDraft \}\)/);
+  assert.match(sheet, /clerkManagerReviewCopy/);
+  assert.match(sheet, /CLERK_MANAGER_REASON/);
+  assert.match(sheet, /<ManagerApprovalText/);
+  const warningAt = sheet.indexOf('invoiceDateConfirmReason || INVOICE_DATE_WARNING');
+  const useAt = sheet.indexOf('{useThisDateLabel}');
+  const hintAt = sheet.indexOf('{PICK_INVOICE_DATE_TO_CONFIRM}');
+  const confirmAt = sheet.indexOf('Confirm invoice');
+  assert.ok(warningAt > 0 && useAt > warningAt);
+  assert.ok(hintAt > 0 && confirmAt > hintAt);
+  const choose = field.slice(field.indexOf('const choose'), field.indexOf('return ('));
+  assert.match(choose, /confirmDeliveryDayTap\(ymd/);
+  assert.match(choose, /onChange\(picked\)/);
+  assert.equal(choose.includes('value'), false);
+  assert.match(field, /onClick=\{\(\) => choose\(cell\.ymd\)\}/);
 });
 
 test('page-scan gst is read and kept through the merged scan', () => {

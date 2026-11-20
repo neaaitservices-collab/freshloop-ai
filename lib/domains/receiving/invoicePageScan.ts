@@ -784,21 +784,33 @@ function firstText(pages: ScanPageState[], field: 'vendorName' | 'invoiceNumber'
   return '';
 }
 
+function compactPrintedDate(text: string): string {
+  return text.toLowerCase().replace(/[./]/g, '-').replace(/\s+/g, '');
+}
+
+/** A trailing 2-digit year is 20YY. Day and month text are left as printed. */
+function widenTwoDigitYear(compact: string): string {
+  return compact.replace(/^(\d{1,2}-\d{1,2}-)(\d{2})$/, (_match, head: string, year: string) => `${head}20${year}`);
+}
+
 /**
  * A page with a real date. Blank and unreadable pages are ignored.
  * Pages match only when the printed text matches, with - / . as one separator.
+ * A 2-digit year is 20YY before that check, so 10-11-26 and 10-11-2026 agree.
+ * Different day or month text still conflicts: 10-11-26 and 11-10-26 do not agree.
  * The parsed ISO is not that check: it drops the ambiguous gap and can turn
  * 03-04-2026 and 04-03-2026 into one date.
  */
 function readPrintedPageDate(raw: string | undefined): { parsed: string; printed: string } | null {
   const text = (raw ?? '').trim();
   if (!text) return null;
-  const parsed = parseOcrInvoiceDate(text).invoiceDate.trim();
+  const compact = compactPrintedDate(text);
+  const printed = widenTwoDigitYear(compact);
+  const parsed =
+    parseOcrInvoiceDate(text).invoiceDate.trim() ||
+    (printed !== compact ? parseOcrInvoiceDate(printed).invoiceDate.trim() : '');
   if (!parsed) return null;
-  return {
-    parsed,
-    printed: text.toLowerCase().replace(/[./]/g, '-').replace(/\s+/g, ''),
-  };
+  return { parsed, printed };
 }
 
 export function mergeReadPages(
@@ -1139,6 +1151,32 @@ export function readPostedInvoiceDate(json: Record<string, unknown>): PostedInvo
     invoiceDateNeedsConfirm,
     ...(typeof reasonRaw === 'string' && reasonRaw.trim() ? { invoiceDateConfirmReason: reasonRaw.trim() } : {}),
   };
+}
+
+export const PICK_INVOICE_DATE_TO_CONFIRM = 'Pick the invoice date above to confirm.';
+
+/** The scanned date is shown first. Seeing it does not confirm it. */
+export function prefilledInvoiceDate(invoiceDate: string): { dateDraft: string; dateConfirmed: false } {
+  return { dateDraft: invoiceDate, dateConfirmed: false };
+}
+
+/**
+ * Accept the date on screen. A second tap of the day already shown confirms it too.
+ * An empty draft stays unconfirmed.
+ */
+export function acceptShownInvoiceDate(
+  state: { dateDraft: string; dateConfirmed: boolean },
+  ymd?: string
+): { dateDraft: string; dateConfirmed: boolean } {
+  const dateDraft = (ymd ?? state.dateDraft).trim();
+  if (!dateDraft) return state;
+  return { dateDraft, dateConfirmed: true };
+}
+
+export function invoiceDateConfirmLabel(formattedDate: string): string {
+  const shown = formattedDate.trim();
+  if (!shown) return '';
+  return `Use this date (${shown})`;
 }
 
 /** The prefilled page-1 date is not a resolution. Only a picker confirm or change is. */
