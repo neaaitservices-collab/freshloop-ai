@@ -12,15 +12,19 @@ import type { RestoredInvoiceScan } from '@/lib/domains/receiving/openInvoiceSca
 import { INVOICE_DATE_WARNING } from '@/lib/domains/receiving/invoiceDatePicker';
 import { formatInvoiceDeliveryDay } from '@/lib/domains/receiving/invoiceDatePicker';
 import {
+  acceptShownInvoiceDate,
   confirmInvoiceDateResolution,
   continuablePendingIndexes,
   duplicateRemovalNote,
   INVOICE_PAGE_BATCH_SIZE,
   INVOICE_PAGE_MAX,
   InvoiceScanRequestError,
+  invoiceDateConfirmLabel,
   invoiceReviewHardBlocked,
   nextRemainingIndexes,
   PAGE_CAP_MESSAGE,
+  PICK_INVOICE_DATE_TO_CONFIRM,
+  prefilledInvoiceDate,
   readPostedInvoiceDate,
   retryAfterPlan,
   scanStepAfterClientFailure,
@@ -202,8 +206,9 @@ export function InvoicePageScanSheet({
     clientScanId.current = resume.pageScan.clientScanId ?? '';
     const next = viewFromRestored(resume);
     rememberView(next);
-    setDateDraft(next.invoiceDate);
-    setDateConfirmed(false);
+    const seeded = prefilledInvoiceDate(next.invoiceDate);
+    setDateDraft(seeded.dateDraft);
+    setDateConfirmed(seeded.dateConfirmed);
     setStep(next.status === 'ready' ? 'review' : 'scanning');
     setError(null);
   }, [open, resume]);
@@ -517,7 +522,10 @@ export function InvoicePageScanSheet({
       );
       const resolutions =
         dateResolution || lineResolution
-          ? { ...dateResolution, ...(lineResolution ? { lines: lineResolution.lines } : {}) }
+          ? {
+              ...(dateResolution ? { invoiceDate: dateResolution.invoiceDate } : {}),
+              ...(lineResolution ? { lines: lineResolution.lines } : {}),
+            }
           : undefined;
       const json = await postJson({
         confirmCommit: true,
@@ -595,6 +603,8 @@ export function InvoicePageScanSheet({
         blockers: view.blockers,
       })
     : [];
+  const dateBlocksConfirm = view?.invoiceDateNeedsConfirm === true && !dateConfirmed;
+  const useThisDateLabel = invoiceDateConfirmLabel(formatInvoiceDeliveryDay(dateDraft) || dateDraft.trim());
   const hardBlock = invoiceReviewHardBlocked({
     blockers: shownBlockers,
     invoiceDateNeedsConfirm: view?.invoiceDateNeedsConfirm === true,
@@ -860,15 +870,31 @@ export function InvoicePageScanSheet({
                   <InvoiceDateField
                     value={dateDraft}
                     onChange={(ymd) => {
-                      setDateDraft(ymd);
-                      setDateConfirmed(true);
+                      const next = acceptShownInvoiceDate({ dateDraft, dateConfirmed }, ymd);
+                      setDateDraft(next.dateDraft);
+                      setDateConfirmed(next.dateConfirmed);
                     }}
                   />
                 </div>
                 {view.invoiceDateNeedsConfirm && !dateConfirmed ? (
-                  <p className="mt-2 text-sm font-semibold text-amber-200">
-                    {view.invoiceDateConfirmReason || INVOICE_DATE_WARNING}
-                  </p>
+                  <div className="mt-2 space-y-2">
+                    <p className="text-sm font-semibold text-amber-200">
+                      {view.invoiceDateConfirmReason || INVOICE_DATE_WARNING}
+                    </p>
+                    {useThisDateLabel ? (
+                      <button
+                        type="button"
+                        className="min-h-11 w-full rounded-xl border border-amber-400/60 bg-amber-950/50 px-3 py-2 text-left text-sm font-bold text-amber-50"
+                        onClick={() => {
+                          const next = acceptShownInvoiceDate({ dateDraft, dateConfirmed });
+                          setDateDraft(next.dateDraft);
+                          setDateConfirmed(next.dateConfirmed);
+                        }}
+                      >
+                        {useThisDateLabel}
+                      </button>
+                    ) : null}
+                  </div>
                 ) : null}
               </div>
               <ReviewSummary
@@ -1034,61 +1060,66 @@ export function InvoicePageScanSheet({
           ) : null}
         </div>
 
-        <footer className="flex gap-2 border-t border-slate-800 px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
-          {step === 'choose' ? (
-            <Button variant="secondary" className="w-full" onClick={onClose}>
-              Cancel
-            </Button>
+        <footer className="border-t border-slate-800 px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+          {step === 'review' && dateBlocksConfirm ? (
+            <p className="mb-2 text-sm font-semibold text-amber-200">{PICK_INVOICE_DATE_TO_CONFIRM}</p>
           ) : null}
-          {step === 'pages' ? (
-            <>
-              <Button
-                className="flex-1 bg-emerald-400 text-slate-950 hover:bg-emerald-300"
-                disabled={pages.length === 0 || preparing || working}
-                onClick={() => void startScan()}
-              >
-                {working ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
-                Scan invoice · {pages.length} {pages.length === 1 ? 'page' : 'pages'}
+          <div className="flex gap-2">
+            {step === 'choose' ? (
+              <Button variant="secondary" className="w-full" onClick={onClose}>
+                Cancel
               </Button>
-              <Button variant="secondary" disabled={working} onClick={resetLocal}>
-                Discard pages
-              </Button>
-            </>
-          ) : null}
-          {step === 'scanning' ? (
-            <>
-              {continuable.length > 0 ? (
+            ) : null}
+            {step === 'pages' ? (
+              <>
                 <Button
                   className="flex-1 bg-emerald-400 text-slate-950 hover:bg-emerald-300"
-                  disabled={working || continueWaitMs > 0}
-                  onClick={() => void continueScan()}
+                  disabled={pages.length === 0 || preparing || working}
+                  onClick={() => void startScan()}
                 >
-                  {continueWaitMs > 0
-                    ? `Continue in ${Math.ceil(continueWaitMs / 1000)}s`
-                    : `Continue scan · ${continuable.length} ${continuable.length === 1 ? 'page' : 'pages'}`}
+                  {working ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+                  Scan invoice · {pages.length} {pages.length === 1 ? 'page' : 'pages'}
                 </Button>
-              ) : null}
-              <Button variant="secondary" className={continuable.length > 0 ? '' : 'w-full'} disabled={working} onClick={() => void discardScan()}>
-                Discard scan
-              </Button>
-            </>
-          ) : null}
-          {step === 'review' ? (
-            <>
-              <Button variant="secondary" disabled={working} onClick={() => void discardScan()}>
-                Discard scan
-              </Button>
-              <Button
-                className="flex-1 bg-emerald-400 text-slate-950 hover:bg-emerald-300"
-                disabled={!supplierId || working || hardBlock || view?.status !== 'ready' || confirmBlocked}
-                title={clerkBlocked ? CLERK_MANAGER_REASON : undefined}
-                onClick={() => void confirm()}
-              >
-                {working ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                Confirm invoice
-              </Button>
-            </>
-          ) : null}
+                <Button variant="secondary" disabled={working} onClick={resetLocal}>
+                  Discard pages
+                </Button>
+              </>
+            ) : null}
+            {step === 'scanning' ? (
+              <>
+                {continuable.length > 0 ? (
+                  <Button
+                    className="flex-1 bg-emerald-400 text-slate-950 hover:bg-emerald-300"
+                    disabled={working || continueWaitMs > 0}
+                    onClick={() => void continueScan()}
+                  >
+                    {continueWaitMs > 0
+                      ? `Continue in ${Math.ceil(continueWaitMs / 1000)}s`
+                      : `Continue scan · ${continuable.length} ${continuable.length === 1 ? 'page' : 'pages'}`}
+                  </Button>
+                ) : null}
+                <Button variant="secondary" className={continuable.length > 0 ? '' : 'w-full'} disabled={working} onClick={() => void discardScan()}>
+                  Discard scan
+                </Button>
+              </>
+            ) : null}
+            {step === 'review' ? (
+              <>
+                <Button variant="secondary" disabled={working} onClick={() => void discardScan()}>
+                  Discard scan
+                </Button>
+                <Button
+                  className="flex-1 bg-emerald-400 text-slate-950 hover:bg-emerald-300"
+                  disabled={!supplierId || working || hardBlock || view?.status !== 'ready' || confirmBlocked}
+                  title={clerkBlocked ? CLERK_MANAGER_REASON : undefined}
+                  onClick={() => void confirm()}
+                >
+                  {working ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                  Confirm invoice
+                </Button>
+              </>
+            ) : null}
+          </div>
         </footer>
 
         <input
