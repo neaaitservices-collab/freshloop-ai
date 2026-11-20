@@ -869,6 +869,7 @@ export function InvoicePageScanSheet({
                 <div className="mt-2">
                   <InvoiceDateField
                     value={dateDraft}
+                    zIndexClass="z-[90]"
                     onChange={(ymd) => {
                       const next = acceptShownInvoiceDate({ dateDraft, dateConfirmed }, ymd);
                       setDateDraft(next.dateDraft);
