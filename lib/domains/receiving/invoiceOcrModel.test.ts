@@ -385,3 +385,51 @@ test('a hand-written invoice fixture keeps stock math and drops non-stock lines'
   const off = interpretInvoiceOcrModel({ ...fixture, subtotal: 200 });
   assert.match(off.subtotalGap ?? '', /does not match the line sum 169.50/);
 });
+
+test('a printed page suffix stays out of the invoice number', () => {
+  const line = {
+    name: 'ORGANIC BANANA',
+    department: 'PRODUCE' as const,
+    quantity: 1,
+    unit: 'CASE',
+    unitCost: 10,
+    totalCost: 10,
+  };
+  const padded = interpretInvoiceOcrModel({
+    vendorName: 'Tony Deodato & Sons',
+    invoiceNumber: '900375 01',
+    pageNumber: '01',
+    invoiceDate: '2026-10-11',
+    lineItems: [line],
+  });
+  assert.equal(padded.invoiceNumber, '900375');
+
+  const positioned = interpretInvoiceOcrModel({
+    vendorName: 'Tony Deodato & Sons',
+    invoiceNumber: '900375 10',
+    pageNumber: 10,
+    invoiceDate: '2026-10-11',
+    lineItems: [line],
+  });
+  assert.equal(positioned.invoiceNumber, '900375');
+
+  const kept = interpretInvoiceOcrModel({
+    vendorName: 'Tony Deodato & Sons',
+    invoiceNumber: '900375 10',
+    invoiceDate: '2026-10-11',
+    lineItems: [line],
+  });
+  assert.equal(kept.invoiceNumber, '900375 10');
+
+  const parsed = invoiceOcrModelSchema.safeParse({
+    vendorName: 'Tony Deodato & Sons',
+    invoiceNumber: '900375',
+    pageNumber: '02',
+    invoiceDate: '2026-10-11',
+    lineItems: [line],
+  });
+  assert.equal(parsed.success, true);
+  if (!parsed.success) return;
+  assert.equal(parsed.data.invoiceNumber, '900375');
+  assert.equal(parsed.data.pageNumber, '02');
+});

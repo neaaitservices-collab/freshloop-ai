@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { resolveInvoiceReceipt, settleCommitPosts } from '@/lib/domains/receiving/invoiceOcrCommit';
+import {
+  resolveInvoiceReceipt,
+  settleCommitPosts,
+  vendorInvoiceDuplicateKey,
+} from '@/lib/domains/receiving/invoiceOcrCommit';
 import type { ReceivingLogPostInput, ReceivingLogPostResult } from '@/lib/domains/receiving/receivingLogPost';
 import { draftIsFullyPosted } from '@/lib/domains/receiving/invoiceOcrReceive';
 
@@ -75,6 +79,56 @@ test('a $0 line is left out of stock and the paid lines still post', async () =>
       skippedReviewIndexes: [1],
     }),
     true
+  );
+});
+
+test('duplicate guard uses supplier, the page-normalized number, and the date', () => {
+  const invoiceDate = new Date('2026-10-11T00:00:00.000Z');
+  const page1 = vendorInvoiceDuplicateKey({
+    supplierId: 'sup-tony',
+    invoiceNumber: '900375 01',
+    invoiceDate,
+  });
+  const page2 = vendorInvoiceDuplicateKey({
+    supplierId: 'sup-tony',
+    invoiceNumber: '900375-02',
+    invoiceDate,
+  });
+  assert.deepEqual(page1, page2);
+  assert.equal(page1.invoiceNumber, '900375');
+  assert.equal(page1.invoiceDate.toISOString(), '2026-10-11T00:00:00.000Z');
+
+  const otherSupplier = vendorInvoiceDuplicateKey({
+    supplierId: 'sup-other',
+    invoiceNumber: '900375 01',
+    invoiceDate,
+  });
+  assert.notEqual(otherSupplier.supplierId, page1.supplierId);
+  assert.equal(otherSupplier.invoiceNumber, page1.invoiceNumber);
+
+  const otherDate = vendorInvoiceDuplicateKey({
+    supplierId: 'sup-tony',
+    invoiceNumber: '900375 02',
+    invoiceDate: new Date('2026-11-10T00:00:00.000Z'),
+  });
+  assert.equal(otherDate.invoiceNumber, '900375');
+  assert.notEqual(otherDate.invoiceDate.getTime(), page1.invoiceDate.getTime());
+
+  assert.equal(
+    vendorInvoiceDuplicateKey({
+      supplierId: 'sup-tony',
+      invoiceNumber: '900375189271',
+      invoiceDate,
+    }).invoiceNumber,
+    '900375189271'
+  );
+  assert.equal(
+    vendorInvoiceDuplicateKey({
+      supplierId: 'sup-tony',
+      invoiceNumber: '900375',
+      invoiceDate,
+    }).invoiceNumber,
+    '900375'
   );
 });
 

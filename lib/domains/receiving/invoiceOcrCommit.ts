@@ -10,7 +10,7 @@ import {
   lineNeedsManualReview,
 } from '@/lib/domains/receiving/invoiceOcrConfidence';
 import { sampleInvoiceCommitRejection } from '@/lib/domains/receiving/sampleReceivingGuard';
-import { canonicalInvoiceDate } from '@/lib/domains/receiving/invoiceDeliveryId';
+import { canonicalInvoiceDate, normalizeInvoiceNumber } from '@/lib/domains/receiving/invoiceDeliveryId';
 import {
   assertReceivingDepartmentsChosen,
   isZeroDollarReceivingLine,
@@ -137,6 +137,19 @@ export interface OcrCommitLine {
   unlink_match?: boolean;
   /** Post a new catalog product and do not save a link. */
   create_new?: boolean;
+}
+
+/** Supplier + page-normalized invoice number + invoice date. Page 01 and page 02 share one header. */
+export function vendorInvoiceDuplicateKey(input: {
+  supplierId: string;
+  invoiceNumber: string | null | undefined;
+  invoiceDate: Date;
+}): { supplierId: string; invoiceNumber: string; invoiceDate: Date } {
+  return {
+    supplierId: input.supplierId,
+    invoiceNumber: normalizeInvoiceNumber(input.invoiceNumber),
+    invoiceDate: input.invoiceDate,
+  };
 }
 
 export interface OcrInvoiceMeta {
@@ -516,8 +529,13 @@ export async function commitInvoiceOcrReceipts(input: {
         let invoiceId: string | null = null;
         let createdHeader = false;
         if (meta) {
+          const duplicate = vendorInvoiceDuplicateKey({
+            supplierId,
+            invoiceNumber: meta.invoiceNumber,
+            invoiceDate: headerAt,
+          });
           const existingHeader = await tx.vendorInvoice.findFirst({
-            where: { supplierId, invoiceNumber: meta.invoiceNumber, invoiceDate: headerAt },
+            where: duplicate,
             select: { id: true },
           });
           if (existingHeader) {
@@ -527,7 +545,7 @@ export async function commitInvoiceOcrReceipts(input: {
               data: {
                 vendorName: meta.vendorName,
                 supplierId,
-                invoiceNumber: meta.invoiceNumber,
+                invoiceNumber: duplicate.invoiceNumber,
                 invoiceDate: headerAt,
                 totalAmount: meta.totalAmount,
                 departmentBreakdown: meta.departmentBreakdown,

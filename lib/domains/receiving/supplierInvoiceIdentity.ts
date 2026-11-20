@@ -9,6 +9,7 @@ import {
   canonicalPrintedLine,
   compactInvoiceNumber,
   INVOICE_NUMBER_REUSE_POLICY,
+  normalizeInvoiceNumber,
   SUPPLIER_REQUIRED_ERROR,
 } from '@/lib/domains/receiving/invoiceDeliveryId';
 import {
@@ -242,7 +243,8 @@ export async function resolveSupplierInvoice(input: {
 }): Promise<ResolveSupplierInvoiceResult> {
   const supplierId = input.supplierId?.trim() ?? '';
   if (!supplierId) return fail('SUPPLIER_REQUIRED', SUPPLIER_REQUIRED_ERROR);
-  const invoiceKey = canonicalInvoiceNumber(input.invoiceNumber);
+  const storedInvoiceNumber = normalizeInvoiceNumber(input.invoiceNumber);
+  const invoiceKey = canonicalInvoiceNumber(storedInvoiceNumber);
   if (!invoiceKey) return fail('INVOICE_NUMBER_REQUIRED', INVOICE_NUMBER_REQUIRED_ERROR);
   const supplier = await prisma.supplier.findUnique({ where: { id: supplierId }, select: { id: true, name: true } });
   if (!supplier) return fail('SUPPLIER_UNKNOWN', SUPPLIER_UNKNOWN_ERROR);
@@ -262,7 +264,7 @@ export async function resolveSupplierInvoice(input: {
       invoiceKey,
       compact,
       dateKey,
-      input.invoiceNumber ?? invoiceKey,
+      storedInvoiceNumber,
       input.invoiceDate ?? dateKey,
       slots
     );
@@ -276,7 +278,7 @@ export async function resolveSupplierInvoice(input: {
       invoiceKey,
       compact,
       dateKey,
-      input.invoiceNumber ?? invoiceKey,
+      storedInvoiceNumber,
       input.invoiceDate ?? dateKey,
       slots
     );
@@ -392,7 +394,8 @@ export async function reconcileSupplierInvoice(input: {
 }): Promise<ResolveSupplierInvoiceResult> {
   const supplierId = input.supplierId?.trim() ?? '';
   if (!supplierId) return fail('SUPPLIER_REQUIRED', SUPPLIER_REQUIRED_ERROR);
-  const invoiceKey = canonicalInvoiceNumber(input.invoiceNumber);
+  const storedInvoiceNumber = normalizeInvoiceNumber(input.invoiceNumber);
+  const invoiceKey = canonicalInvoiceNumber(storedInvoiceNumber);
   if (!invoiceKey) return fail('INVOICE_NUMBER_REQUIRED', INVOICE_NUMBER_REQUIRED_ERROR);
   const dateKey = canonicalInvoiceDate(input.invoiceDate);
   if (!dateKey) return fail('DATE_REQUIRED', DATE_REQUIRED_ERROR);
@@ -422,7 +425,7 @@ export async function reconcileSupplierInvoice(input: {
       const legacyKey = input.legacyKey?.trim() ?? '';
       const parsed = parseLegacyInvoiceKey(legacyKey);
       const known = await tx.ledgerIdempotencyKey.findUnique({ where: { key: legacyKey } });
-      if (!parsed || !known || !legacyKeyMatchesSupplier(legacyKey, supplier.name, input.invoiceNumber ?? invoiceKey)) {
+      if (!parsed || !known || !legacyKeyMatchesSupplier(legacyKey, supplier.name, storedInvoiceNumber)) {
         return fail(
           'LEGACY_RECEIPT_PRESENT',
           'That earlier receipt is not an exact vendor and invoice match for the selected supplier. It was not attached, and stock was not changed.'
@@ -436,7 +439,7 @@ export async function reconcileSupplierInvoice(input: {
             supplierId,
             invoiceKey,
             invoiceKeyCompact: compact,
-            invoiceNumber: (input.invoiceNumber ?? invoiceKey).trim(),
+            invoiceNumber: storedInvoiceNumber,
             invoiceDate: (input.invoiceDate ?? dateKey).trim(),
             invoiceDateKey: dateKey,
             legacyKey,
@@ -517,7 +520,7 @@ export async function reconcileSupplierInvoice(input: {
           supplierId,
           invoiceKey,
           invoiceKeyCompact: compact,
-          invoiceNumber: (input.invoiceNumber ?? invoiceKey).trim(),
+          invoiceNumber: storedInvoiceNumber,
           invoiceDate: (input.invoiceDate ?? dateKey).trim(),
           invoiceDateKey: dateKey,
           lines: {
@@ -591,7 +594,7 @@ export async function reconcileSupplierInvoice(input: {
           supplierId,
           invoiceKey,
           invoiceKeyCompact: compact,
-          invoiceNumber: (input.invoiceNumber ?? invoiceKey).trim(),
+          invoiceNumber: storedInvoiceNumber,
           invoiceDate: (input.invoiceDate ?? dateKey).trim(),
           invoiceDateKey: dateKey,
           lines: {

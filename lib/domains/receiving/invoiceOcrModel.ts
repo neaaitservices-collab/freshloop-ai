@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { CATALOG_DEPARTMENTS } from '@/lib/domains/inventory/inventoryCatalog';
 import type { DepartmentType } from '@/lib/types';
+import { normalizeInvoiceNumber } from '@/lib/domains/receiving/invoiceDeliveryId';
 import {
   parseInvoiceIdentity,
   readInvoiceDepartment,
@@ -66,6 +67,21 @@ const INVOICE_UNITS = new Set([
   'bottle',
 ]);
 
+/** Blank page suffixes are omitted. A printed `01` or `2` stays text. */
+function optionalPageNumber(value: unknown): unknown {
+  if (value == null || value === '') return undefined;
+  if (typeof value === 'number' && Number.isFinite(value)) return String(Math.trunc(value));
+  return value;
+}
+
+function printedPagePosition(value: unknown): number | null {
+  const text = optionalPageNumber(value);
+  if (typeof text !== 'string' || !/^\d{1,2}$/.test(text)) return null;
+  const page = Number(text);
+  if (!Number.isInteger(page) || page < 1 || page > 99) return null;
+  return page;
+}
+
 function enumTuple<T extends string>(values: readonly T[]): [T, ...T[]] {
   const [first, ...rest] = values;
   if (!first) throw new Error('Department list is empty.');
@@ -100,6 +116,8 @@ export const invoiceOcrDepartmentSchema = z.enum(enumTuple(CATALOG_DEPARTMENTS))
 export const invoiceOcrModelSchema = z.object({
   vendorName: z.string().trim().min(1).max(INVOICE_OCR_TEXT_LIMITS.vendorName),
   invoiceNumber: z.string().trim().min(1).max(INVOICE_OCR_TEXT_LIMITS.invoiceNumber),
+  /** Printed page suffix, such as `01` after `900375`. Absent when the number has none. */
+  pageNumber: z.preprocess(optionalPageNumber, z.string().trim().max(8).optional()),
   invoiceDate: z.string().trim().min(1).max(40),
   /** Another printed date, such as the order date. Copied as printed. */
   orderDate: z.string().trim().max(40).optional(),
@@ -356,9 +374,10 @@ export function interpretInvoiceOcrModel(
     record.invoiceNumber ?? record.invoice_number,
     INVOICE_OCR_TEXT_LIMITS.invoiceNumber
   );
+  const pagePosition = printedPagePosition(record.pageNumber ?? record.page_number);
   const identity = parseInvoiceIdentity({
     vendorName: vendor.text,
-    invoiceNumber: invoiceNumber.text,
+    invoiceNumber: normalizeInvoiceNumber(invoiceNumber.text, pagePosition),
     invoiceDate: record.invoiceDate ?? record.invoice_date,
     orderDate: record.orderDate ?? record.order_date,
     receivedOn: options?.receivedOn,

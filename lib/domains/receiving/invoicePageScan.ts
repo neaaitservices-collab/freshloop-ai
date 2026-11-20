@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { normalizeInvoiceNumber } from '@/lib/domains/receiving/invoiceDeliveryId';
 import { INVOICE_OCR_JSON_ERROR, interpretInvoiceOcrModel } from '@/lib/domains/receiving/invoiceOcrModel';
 import { numericInput } from '@/lib/security/numericInput';
 
@@ -782,20 +783,32 @@ function firstText(pages: ScanPageState[], field: 'vendorName' | 'invoiceNumber'
   return '';
 }
 
+function normalizedPageInvoice(page: ScanPageState): string {
+  return normalizeInvoiceNumber(page.invoiceNumber, page.index);
+}
+
+function firstNormalizedInvoice(pages: ScanPageState[]): string {
+  for (const page of pages) {
+    const value = normalizedPageInvoice(page);
+    if (value) return value;
+  }
+  return '';
+}
+
 export function mergeReadPages(
   pages: ScanPageState[],
   options?: { dedupeUndone?: boolean; lineMax?: number; tolerance?: number }
 ): MergedInvoicePages {
   const read = [...pages].filter((page) => page.status === 'read').sort((a, b) => a.index - b.index);
   const vendorName = firstText(read, 'vendorName');
-  const invoiceNumber = firstText(read, 'invoiceNumber');
+  const invoiceNumber = firstNormalizedInvoice(read);
   const invoiceDate = firstText(read, 'invoiceDate');
   const blockers: string[] = [];
   const vendorKey = normHeader(vendorName);
   const invoiceKey = normHeader(invoiceNumber);
   for (const page of read) {
     const vendor = normHeader(page.vendorName);
-    const invoice = normHeader(page.invoiceNumber);
+    const invoice = normHeader(normalizedPageInvoice(page));
     if ((vendor && vendorKey && vendor !== vendorKey) || (invoice && invoiceKey && invoice !== invoiceKey)) {
       blockers.push(DIFFERENT_INVOICES_BLOCKER);
       break;
@@ -834,6 +847,7 @@ export function mergeReadPages(
   let printedHst: number | undefined;
   let printedPst: number | undefined;
   let printedGst: number | undefined;
+  // A header subtotal printed again on each page is one amount. Pages are not added.
   for (const page of read) {
     if (typeof page.subtotal === 'number' && page.subtotal > 0) {
       totalsFromPage = page.index;

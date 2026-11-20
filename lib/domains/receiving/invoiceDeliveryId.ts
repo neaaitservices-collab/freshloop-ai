@@ -20,13 +20,48 @@ export function normalizeDeliveryUuid(value: string): string | null {
 }
 
 /**
+ * A trailing page suffix on a numeric invoice number.
+ * `900375 01` and `900375-02` are invoice 900375. The suffix is 1–2 digits
+ * after a space or hyphen. It is removed when it is zero-padded 01–09, or when
+ * it equals the known page position. A number with no suffix stays. A longer
+ * trailing group stays, because those digits are part of the invoice number.
+ * `1001/A`, `A 12`, and `INV 9` stay, because the base is not a numeric invoice.
+ */
+const INVOICE_PAGE_SUFFIX = /^(\d{4,})(?:\s+|\s*-\s*)(\d{1,2})$/;
+
+export function normalizeInvoiceNumber(
+  invoiceNumber: string | null | undefined,
+  pagePosition?: number | null
+): string {
+  const collapsed = (invoiceNumber ?? '').trim().replace(/\s+/g, ' ');
+  const match = INVOICE_PAGE_SUFFIX.exec(collapsed);
+  if (!match) return collapsed;
+  const base = match[1] ?? '';
+  const suffix = match[2] ?? '';
+  if (!base || suffix.length < 1 || suffix.length > 2) return collapsed;
+  const suffixPage = Number(suffix);
+  if (!Number.isInteger(suffixPage) || suffixPage < 1) return collapsed;
+  const zeroPaddedPage = /^0[1-9]$/.test(suffix);
+  const knownPage =
+    typeof pagePosition === 'number' &&
+    Number.isInteger(pagePosition) &&
+    pagePosition >= 1 &&
+    pagePosition <= 99
+      ? pagePosition
+      : null;
+  if (zeroPaddedPage || (knownPage !== null && suffixPage === knownPage)) return base;
+  return collapsed;
+}
+
+/**
  * Invoice numbers keep punctuation and meaningful spaces. `1001/A` and `1001-A`
  * are different documents. `A 12` and `A12` are different documents. Only the
  * ends are trimmed, repeated spaces collapse to one space, and letters are
- * casefolded. The date is a separate exact key and is not folded into this string.
+ * casefolded. A printed page suffix is removed first. The date is a separate
+ * exact key and is not folded into this string.
  */
 export function canonicalInvoiceNumber(invoiceNumber: string | null | undefined): string | null {
-  const collapsed = (invoiceNumber ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
+  const collapsed = normalizeInvoiceNumber(invoiceNumber).toLowerCase();
   if (!collapsed || collapsed === 'unread' || collapsed === 'unknown' || collapsed === 'n/a' || collapsed === 'na') {
     return null;
   }
