@@ -82,54 +82,42 @@ test('a $0 line is left out of stock and the paid lines still post', async () =>
   );
 });
 
-test('duplicate guard uses supplier, the page-normalized number, and the date', () => {
+test('duplicate guard loads the raw page key and the merged base without rewriting other numbers', () => {
   const invoiceDate = new Date('2026-10-11T00:00:00.000Z');
-  const page1 = vendorInvoiceDuplicateKey({
+  const legacy = vendorInvoiceDuplicateKey({
     supplierId: 'sup-tony',
     invoiceNumber: '900375 01',
     invoiceDate,
   });
-  const page2 = vendorInvoiceDuplicateKey({
+  const merged = vendorInvoiceDuplicateKey({
     supplierId: 'sup-tony',
-    invoiceNumber: '900375-02',
+    invoiceNumber: '900375',
     invoiceDate,
   });
-  assert.deepEqual(page1, page2);
-  assert.equal(page1.invoiceNumber, '900375');
-  assert.equal(page1.invoiceDate.toISOString(), '2026-10-11T00:00:00.000Z');
+  assert.equal(legacy.supplierId, merged.supplierId);
+  assert.equal(legacy.invoiceDate.getTime(), merged.invoiceDate.getTime());
+  assert.ok(legacy.invoiceNumbers.includes('900375 01'));
+  assert.ok(legacy.invoiceNumbers.includes('900375'));
+  assert.ok(merged.invoiceNumbers.includes('900375'));
+  assert.ok(merged.invoiceNumbers.includes('900375 01'));
+  assert.equal(legacy.storedInvoiceNumber, '900375 01');
+  assert.equal(merged.storedInvoiceNumber, '900375');
 
-  const otherSupplier = vendorInvoiceDuplicateKey({
-    supplierId: 'sup-other',
-    invoiceNumber: '900375 01',
+  const singlePage = vendorInvoiceDuplicateKey({
+    supplierId: 'sup-tony',
+    invoiceNumber: '2024 01',
     invoiceDate,
   });
-  assert.notEqual(otherSupplier.supplierId, page1.supplierId);
-  assert.equal(otherSupplier.invoiceNumber, page1.invoiceNumber);
+  assert.deepEqual(singlePage.invoiceNumbers, ['2024 01']);
+  assert.equal(singlePage.storedInvoiceNumber, '2024 01');
 
-  const otherDate = vendorInvoiceDuplicateKey({
+  const hyphen = vendorInvoiceDuplicateKey({
     supplierId: 'sup-tony',
-    invoiceNumber: '900375 02',
-    invoiceDate: new Date('2026-11-10T00:00:00.000Z'),
+    invoiceNumber: '1001-01',
+    invoiceDate,
   });
-  assert.equal(otherDate.invoiceNumber, '900375');
-  assert.notEqual(otherDate.invoiceDate.getTime(), page1.invoiceDate.getTime());
-
-  assert.equal(
-    vendorInvoiceDuplicateKey({
-      supplierId: 'sup-tony',
-      invoiceNumber: '900375189271',
-      invoiceDate,
-    }).invoiceNumber,
-    '900375189271'
-  );
-  assert.equal(
-    vendorInvoiceDuplicateKey({
-      supplierId: 'sup-tony',
-      invoiceNumber: '900375',
-      invoiceDate,
-    }).invoiceNumber,
-    '900375'
-  );
+  assert.deepEqual(hyphen.invoiceNumbers, ['1001-01']);
+  assert.equal(hyphen.storedInvoiceNumber, '1001-01');
 });
 
 test('a zero quantity does not invent units', () => {

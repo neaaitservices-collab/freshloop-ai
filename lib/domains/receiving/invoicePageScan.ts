@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { normalizeInvoiceNumber } from '@/lib/domains/receiving/invoiceDeliveryId';
+import { mergedPageInvoiceNumber } from '@/lib/domains/receiving/invoiceDeliveryId';
 import { INVOICE_OCR_JSON_ERROR, interpretInvoiceOcrModel } from '@/lib/domains/receiving/invoiceOcrModel';
 import { numericInput } from '@/lib/security/numericInput';
 
@@ -783,32 +783,23 @@ function firstText(pages: ScanPageState[], field: 'vendorName' | 'invoiceNumber'
   return '';
 }
 
-function normalizedPageInvoice(page: ScanPageState): string {
-  return normalizeInvoiceNumber(page.invoiceNumber, page.index);
-}
-
-function firstNormalizedInvoice(pages: ScanPageState[]): string {
-  for (const page of pages) {
-    const value = normalizedPageInvoice(page);
-    if (value) return value;
-  }
-  return '';
-}
-
 export function mergeReadPages(
   pages: ScanPageState[],
   options?: { dedupeUndone?: boolean; lineMax?: number; tolerance?: number }
 ): MergedInvoicePages {
   const read = [...pages].filter((page) => page.status === 'read').sort((a, b) => a.index - b.index);
   const vendorName = firstText(read, 'vendorName');
-  const invoiceNumber = firstNormalizedInvoice(read);
+  const mergedBase = mergedPageInvoiceNumber(
+    read.map((page) => ({ index: page.index, invoiceNumber: page.invoiceNumber }))
+  );
+  const invoiceNumber = mergedBase ?? firstText(read, 'invoiceNumber');
   const invoiceDate = firstText(read, 'invoiceDate');
   const blockers: string[] = [];
   const vendorKey = normHeader(vendorName);
   const invoiceKey = normHeader(invoiceNumber);
   for (const page of read) {
     const vendor = normHeader(page.vendorName);
-    const invoice = normHeader(normalizedPageInvoice(page));
+    const invoice = normHeader(mergedBase ?? page.invoiceNumber);
     if ((vendor && vendorKey && vendor !== vendorKey) || (invoice && invoiceKey && invoice !== invoiceKey)) {
       blockers.push(DIFFERENT_INVOICES_BLOCKER);
       break;
@@ -847,9 +838,11 @@ export function mergeReadPages(
   let printedHst: number | undefined;
   let printedPst: number | undefined;
   let printedGst: number | undefined;
-  // A header subtotal printed again on each page is one amount. Pages are not added.
+  const positiveSubtotals: number[] = [];
+  // A repeated header subtotal is one amount. A different positive subtotal is not added in.
   for (const page of read) {
     if (typeof page.subtotal === 'number' && page.subtotal > 0) {
+      positiveSubtotals.push(page.subtotal);
       totalsFromPage = page.index;
       printedSubtotal = page.subtotal;
       printedHst = page.hst;
@@ -857,6 +850,8 @@ export function mergeReadPages(
       printedGst = page.gst;
     }
   }
+  const subtotalsDisagree =
+    new Set(positiveSubtotals.map((value) => Math.round(value * 100))).size > 1;
 
   const lineMax = options?.lineMax ?? INVOICE_PAGE_LINE_MAX;
   if (deduped.kept.length > lineMax) {
@@ -864,6 +859,7 @@ export function mergeReadPages(
   }
 
   const reviewFlags: string[] = [];
+  if (subtotalsDisagree) reviewFlags.push('Pages do not agree on the printed subtotal.');
   let lineSum: number | undefined;
   if (printedSubtotal !== undefined) {
     lineSum = Number(

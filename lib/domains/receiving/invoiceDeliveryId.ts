@@ -20,57 +20,94 @@ export function normalizeDeliveryUuid(value: string): string | null {
 }
 
 /**
- * A trailing page suffix on a numeric invoice number.
- * `900375 01` and `900375-02` are invoice 900375. The suffix is 1–2 digits
- * after a space or hyphen. It is removed when it is zero-padded 01–09, or when
- * it equals the known page position. A number with no suffix stays. A longer
- * trailing group stays, because those digits are part of the invoice number.
- * `1001/A`, `A 12`, and `INV 9` stay, because the base is not a numeric invoice.
- */
-const INVOICE_PAGE_SUFFIX = /^(\d{4,})(?:\s+|\s*-\s*)(\d{1,2})$/;
-
-export function normalizeInvoiceNumber(
-  invoiceNumber: string | null | undefined,
-  pagePosition?: number | null
-): string {
-  const collapsed = (invoiceNumber ?? '').trim().replace(/\s+/g, ' ');
-  const match = INVOICE_PAGE_SUFFIX.exec(collapsed);
-  if (!match) return collapsed;
-  const base = match[1] ?? '';
-  const suffix = match[2] ?? '';
-  if (!base || suffix.length < 1 || suffix.length > 2) return collapsed;
-  const suffixPage = Number(suffix);
-  if (!Number.isInteger(suffixPage) || suffixPage < 1) return collapsed;
-  const zeroPaddedPage = /^0[1-9]$/.test(suffix);
-  const knownPage =
-    typeof pagePosition === 'number' &&
-    Number.isInteger(pagePosition) &&
-    pagePosition >= 1 &&
-    pagePosition <= 99
-      ? pagePosition
-      : null;
-  if (zeroPaddedPage || (knownPage !== null && suffixPage === knownPage)) return base;
-  return collapsed;
-}
-
-/**
  * Invoice numbers keep punctuation and meaningful spaces. `1001/A` and `1001-A`
  * are different documents. `A 12` and `A12` are different documents. Only the
  * ends are trimmed, repeated spaces collapse to one space, and letters are
- * casefolded. A printed page suffix is removed first. The date is a separate
- * exact key and is not folded into this string.
+ * casefolded. The date is a separate exact key and is not folded into this string.
+ * A printed page suffix is not removed here.
  */
 export function canonicalInvoiceNumber(invoiceNumber: string | null | undefined): string | null {
-  const collapsed = normalizeInvoiceNumber(invoiceNumber).toLowerCase();
+  const collapsed = (invoiceNumber ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
   if (!collapsed || collapsed === 'unread' || collapsed === 'unknown' || collapsed === 'n/a' || collapsed === 'na') {
     return null;
   }
   return collapsed;
 }
 
+/** Matches `INVOICE_PAGE_MAX`. A later page number is part of the invoice number. */
+const INVOICE_PAGE_SUFFIX_MAX = 8;
+
+/** `900375 01`: six or more digits, a space, and a zero-padded page. */
+const PRINTED_PAGE_SUFFIX = /^(\d{6,}) (\d{2})$/;
+
+function paddedPage(index: number): string {
+  return String(index).padStart(2, '0');
+}
+
+function printedPageSuffix(invoiceNumber: string | null | undefined): { base: string; suffix: string } | null {
+  const collapsed = (invoiceNumber ?? '').trim().replace(/\s+/g, ' ');
+  const match = PRINTED_PAGE_SUFFIX.exec(collapsed);
+  if (!match) return null;
+  const suffix = match[2] ?? '';
+  const page = Number(suffix);
+  if (!Number.isInteger(page) || page < 1 || page > INVOICE_PAGE_SUFFIX_MAX) return null;
+  if (suffix !== paddedPage(page)) return null;
+  return { base: match[1] ?? '', suffix };
+}
+
+/**
+ * Base number for one multi-page scan, or null when these pages are not that case.
+ * Every page needs the same base of at least six digits, and the space-separated
+ * suffix must be that page's position in order (`01`, then `02`, ...).
+ * One page, a gap, a mismatched base, `2024 01`, and `1001-01` return null.
+ */
+export function mergedPageInvoiceNumber(
+  pages: Array<{ index: number; invoiceNumber?: string | null }>
+): string | null {
+  if (pages.length < 2) return null;
+  const ordered = [...pages].sort((a, b) => a.index - b.index);
+  if (!ordered.every((page, index) => page.index === index + 1)) return null;
+  let base: string | null = null;
+  for (const page of ordered) {
+    const parsed = printedPageSuffix(page.invoiceNumber);
+    if (!parsed || parsed.suffix !== paddedPage(page.index)) return null;
+    if (base === null) base = parsed.base;
+    else if (base !== parsed.base) return null;
+  }
+  return base;
+}
+
 /** Comparison fingerprint only. Never use this as the stored invoice identity. */
 export function compactInvoiceNumber(invoiceNumber: string): string {
   return invoiceNumber.replace(/\s+/g, '');
+}
+
+/**
+ * Keys to load for one invoice number. The stored key is not rewritten.
+ * `900375` and `900375 01` (compact `90037501`) load each other.
+ * `2024 01` and `1001-01` stay one key.
+ */
+export function pageInvoiceDuplicateKeys(invoiceNumber: string | null | undefined): {
+  invoiceKeys: string[];
+  compacts: string[];
+} {
+  const keys = new Set<string>();
+  const add = (value: string | null | undefined) => {
+    const key = canonicalInvoiceNumber(value);
+    if (key) keys.add(key);
+  };
+  add(invoiceNumber);
+  const collapsed = (invoiceNumber ?? '').trim().replace(/\s+/g, ' ');
+  const parsed = printedPageSuffix(collapsed);
+  if (parsed) {
+    add(parsed.base);
+  } else if (/^\d{6,}$/.test(collapsed)) {
+    for (let page = 1; page <= INVOICE_PAGE_SUFFIX_MAX; page += 1) {
+      add(`${collapsed} ${paddedPage(page)}`);
+    }
+  }
+  const invoiceKeys = [...keys];
+  return { invoiceKeys, compacts: invoiceKeys.map((key) => compactInvoiceNumber(key)) };
 }
 
 /**

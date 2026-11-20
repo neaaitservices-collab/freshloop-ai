@@ -1,7 +1,6 @@
 import { z } from 'zod';
 import { CATALOG_DEPARTMENTS } from '@/lib/domains/inventory/inventoryCatalog';
 import type { DepartmentType } from '@/lib/types';
-import { normalizeInvoiceNumber } from '@/lib/domains/receiving/invoiceDeliveryId';
 import {
   parseInvoiceIdentity,
   readInvoiceDepartment,
@@ -72,14 +71,6 @@ function optionalPageNumber(value: unknown): unknown {
   if (value == null || value === '') return undefined;
   if (typeof value === 'number' && Number.isFinite(value)) return String(Math.trunc(value));
   return value;
-}
-
-function printedPagePosition(value: unknown): number | null {
-  const text = optionalPageNumber(value);
-  if (typeof text !== 'string' || !/^\d{1,2}$/.test(text)) return null;
-  const page = Number(text);
-  if (!Number.isInteger(page) || page < 1 || page > 99) return null;
-  return page;
 }
 
 function enumTuple<T extends string>(values: readonly T[]): [T, ...T[]] {
@@ -374,10 +365,9 @@ export function interpretInvoiceOcrModel(
     record.invoiceNumber ?? record.invoice_number,
     INVOICE_OCR_TEXT_LIMITS.invoiceNumber
   );
-  const pagePosition = printedPagePosition(record.pageNumber ?? record.page_number);
   const identity = parseInvoiceIdentity({
     vendorName: vendor.text,
-    invoiceNumber: normalizeInvoiceNumber(invoiceNumber.text, pagePosition),
+    invoiceNumber: invoiceNumber.text,
     invoiceDate: record.invoiceDate ?? record.invoice_date,
     orderDate: record.orderDate ?? record.order_date,
     receivedOn: options?.receivedOn,

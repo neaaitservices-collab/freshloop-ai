@@ -10,7 +10,7 @@ import {
   lineNeedsManualReview,
 } from '@/lib/domains/receiving/invoiceOcrConfidence';
 import { sampleInvoiceCommitRejection } from '@/lib/domains/receiving/sampleReceivingGuard';
-import { canonicalInvoiceDate, normalizeInvoiceNumber } from '@/lib/domains/receiving/invoiceDeliveryId';
+import { canonicalInvoiceDate, pageInvoiceDuplicateKeys } from '@/lib/domains/receiving/invoiceDeliveryId';
 import {
   assertReceivingDepartmentsChosen,
   isZeroDollarReceivingLine,
@@ -139,15 +139,22 @@ export interface OcrCommitLine {
   create_new?: boolean;
 }
 
-/** Supplier + page-normalized invoice number + invoice date. Page 01 and page 02 share one header. */
+/**
+ * Supplier + date, and both the printed number and its page-suffix pair.
+ * The stored number is the one on this scan. `2024 01` and `1001-01` are not rewritten.
+ */
 export function vendorInvoiceDuplicateKey(input: {
   supplierId: string;
   invoiceNumber: string | null | undefined;
   invoiceDate: Date;
-}): { supplierId: string; invoiceNumber: string; invoiceDate: Date } {
+}): { supplierId: string; invoiceNumbers: string[]; storedInvoiceNumber: string; invoiceDate: Date } {
+  const storedInvoiceNumber = (input.invoiceNumber ?? '').trim();
+  const keys = pageInvoiceDuplicateKeys(storedInvoiceNumber);
+  const invoiceNumbers = [...new Set([storedInvoiceNumber, ...keys.invoiceKeys].filter((value) => value))];
   return {
     supplierId: input.supplierId,
-    invoiceNumber: normalizeInvoiceNumber(input.invoiceNumber),
+    invoiceNumbers,
+    storedInvoiceNumber,
     invoiceDate: input.invoiceDate,
   };
 }
@@ -535,7 +542,11 @@ export async function commitInvoiceOcrReceipts(input: {
             invoiceDate: headerAt,
           });
           const existingHeader = await tx.vendorInvoice.findFirst({
-            where: duplicate,
+            where: {
+              supplierId: duplicate.supplierId,
+              invoiceDate: duplicate.invoiceDate,
+              invoiceNumber: { in: duplicate.invoiceNumbers },
+            },
             select: { id: true },
           });
           if (existingHeader) {
@@ -545,7 +556,7 @@ export async function commitInvoiceOcrReceipts(input: {
               data: {
                 vendorName: meta.vendorName,
                 supplierId,
-                invoiceNumber: duplicate.invoiceNumber,
+                invoiceNumber: duplicate.storedInvoiceNumber,
                 invoiceDate: headerAt,
                 totalAmount: meta.totalAmount,
                 departmentBreakdown: meta.departmentBreakdown,
