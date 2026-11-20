@@ -371,11 +371,99 @@ describe('Deodato header total from the invoice reader', { concurrency: 1 }, () 
   });
 });
 
+test('Deodato pages 900375 01 and 900375 02 are one invoice and one subtotal', () => {
+  const shared = {
+    status: 'read' as const,
+    attempt: 1,
+    updatedAt: '2026-10-11T12:00:00.000Z',
+    vendorName: 'Tony Deodato & Sons',
+    invoiceDate: '2026-10-11',
+    subtotal: 1892.71,
+  };
+  const bananas: InvoicePageLine = {
+    page: 1,
+    name: 'ORGANIC BANANA',
+    code: 'VOBA02',
+    quantity: 2,
+    unit: 'CASE',
+    unitCost: 500,
+    totalCost: 1000,
+    department: 'PRODUCE',
+    casePackSize: 1,
+    subUnit: 'units',
+  };
+  const apples: InvoicePageLine = {
+    page: 2,
+    name: 'GALA APPLES',
+    code: 'AP1C',
+    quantity: 1,
+    unit: 'CASE',
+    unitCost: 892.71,
+    totalCost: 892.71,
+    department: 'PRODUCE',
+    casePackSize: 1,
+    subUnit: 'units',
+  };
+  const merged = mergeReadPages([
+    { ...shared, index: 1, invoiceNumber: '900375 01', lines: [bananas] },
+    { ...shared, index: 2, invoiceNumber: '900375 02', lines: [apples] },
+  ]);
+  assert.equal(merged.invoiceNumber, '900375');
+  assert.deepEqual(merged.pageScanBlockers, []);
+  assert.deepEqual(
+    merged.lines.map((line) => line.name),
+    ['ORGANIC BANANA', 'GALA APPLES']
+  );
+  assert.equal(merged.printedSubtotal, 1892.71);
+  assert.notEqual(merged.printedSubtotal, 3785.42);
+  assert.equal(merged.lineSum, 1892.71);
+  assert.deepEqual(merged.pageScanReviewFlags, []);
+  assert.equal(
+    selectInvoiceHeaderTotal({
+      printedSubtotal: merged.printedSubtotal,
+      lineAmounts: merged.lines.map((line) => line.totalCost),
+    }),
+    1892.71
+  );
+
+  const otherInvoice = mergeReadPages([
+    { ...shared, index: 1, invoiceNumber: '900375 01', lines: [bananas] },
+    { ...shared, index: 2, invoiceNumber: '900376 02', lines: [apples] },
+  ]);
+  assert.equal(otherInvoice.invoiceNumber, '900375 01');
+  assert.deepEqual(otherInvoice.pageScanBlockers, ['Pages may be from different invoices']);
+
+  const singlePage = mergeReadPages([
+    { ...shared, index: 1, invoiceNumber: '2024 01', lines: [bananas] },
+  ]);
+  assert.equal(singlePage.invoiceNumber, '2024 01');
+  assert.deepEqual(singlePage.pageScanBlockers, []);
+
+  const hyphen = mergeReadPages([
+    { ...shared, index: 1, invoiceNumber: '1001-01', subtotal: 1000, lines: [bananas] },
+  ]);
+  assert.equal(hyphen.invoiceNumber, '1001-01');
+
+  const disagreed = mergeReadPages([
+    { ...shared, index: 1, invoiceNumber: '900375 01', subtotal: 1892.71, lines: [bananas] },
+    { ...shared, index: 2, invoiceNumber: '900375 02', subtotal: 1500, lines: [apples] },
+  ]);
+  assert.equal(disagreed.invoiceNumber, '900375');
+  assert.equal(disagreed.printedSubtotal, 1500);
+  assert.notEqual(disagreed.printedSubtotal, 3392.71);
+  assert.equal(
+    disagreed.pageScanReviewFlags.some((flag) => flag === 'Pages do not agree on the printed subtotal.'),
+    true
+  );
+});
+
 test('the page-scan prompt reads the printed subtotal and does not add it up', () => {
   const route = fs.readFileSync(path.join(process.cwd(), 'app/api/invoice-ocr/route.ts'), 'utf8');
   const gemini = fs.readFileSync(path.join(process.cwd(), 'lib/domains/ai/gemini.ts'), 'utf8');
   assert.equal(route.includes('subtotal is the sum of the line totals'), false);
   assert.match(route, /subtotal is read exactly as printed on the invoice and is never computed from the lines/);
+  assert.match(route, /invoiceNumber is copied exactly as printed, including a trailing page suffix/);
+  assert.match(route, /NNNNNN 0N/);
   assert.match(gemini, /selectInvoiceHeaderTotal/);
   assert.match(gemini, /printed subtotal before tax/);
   assert.equal(gemini.includes('printed invoice total'), false);

@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { resolveInvoiceReceipt, settleCommitPosts } from '@/lib/domains/receiving/invoiceOcrCommit';
+import {
+  resolveInvoiceReceipt,
+  settleCommitPosts,
+  vendorInvoiceDuplicateKey,
+} from '@/lib/domains/receiving/invoiceOcrCommit';
 import type { ReceivingLogPostInput, ReceivingLogPostResult } from '@/lib/domains/receiving/receivingLogPost';
 import { draftIsFullyPosted } from '@/lib/domains/receiving/invoiceOcrReceive';
 
@@ -76,6 +80,44 @@ test('a $0 line is left out of stock and the paid lines still post', async () =>
     }),
     true
   );
+});
+
+test('duplicate guard loads the raw page key and the merged base without rewriting other numbers', () => {
+  const invoiceDate = new Date('2026-10-11T00:00:00.000Z');
+  const legacy = vendorInvoiceDuplicateKey({
+    supplierId: 'sup-tony',
+    invoiceNumber: '900375 01',
+    invoiceDate,
+  });
+  const merged = vendorInvoiceDuplicateKey({
+    supplierId: 'sup-tony',
+    invoiceNumber: '900375',
+    invoiceDate,
+  });
+  assert.equal(legacy.supplierId, merged.supplierId);
+  assert.equal(legacy.invoiceDate.getTime(), merged.invoiceDate.getTime());
+  assert.ok(legacy.invoiceNumbers.includes('900375 01'));
+  assert.ok(legacy.invoiceNumbers.includes('900375'));
+  assert.ok(merged.invoiceNumbers.includes('900375'));
+  assert.ok(merged.invoiceNumbers.includes('900375 01'));
+  assert.equal(legacy.storedInvoiceNumber, '900375 01');
+  assert.equal(merged.storedInvoiceNumber, '900375');
+
+  const singlePage = vendorInvoiceDuplicateKey({
+    supplierId: 'sup-tony',
+    invoiceNumber: '2024 01',
+    invoiceDate,
+  });
+  assert.deepEqual(singlePage.invoiceNumbers, ['2024 01']);
+  assert.equal(singlePage.storedInvoiceNumber, '2024 01');
+
+  const hyphen = vendorInvoiceDuplicateKey({
+    supplierId: 'sup-tony',
+    invoiceNumber: '1001-01',
+    invoiceDate,
+  });
+  assert.deepEqual(hyphen.invoiceNumbers, ['1001-01']);
+  assert.equal(hyphen.storedInvoiceNumber, '1001-01');
 });
 
 test('a zero quantity does not invent units', () => {

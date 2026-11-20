@@ -9,6 +9,7 @@ import {
   canonicalPrintedLine,
   compactInvoiceNumber,
   INVOICE_NUMBER_REUSE_POLICY,
+  pageInvoiceDuplicateKeys,
   SUPPLIER_REQUIRED_ERROR,
 } from '@/lib/domains/receiving/invoiceDeliveryId';
 import {
@@ -159,11 +160,15 @@ async function legacyReceipts(db: Tx | typeof prisma, supplierName: string, invo
   });
 }
 
-async function loadCandidates(tx: Tx, supplierId: string, invoiceKey: string, compact: string) {
+async function loadCandidates(tx: Tx, supplierId: string, invoiceKeys: string[], compacts: string[]) {
   return tx.supplierInvoiceDocument.findMany({
     where: {
       supplierId,
-      OR: [{ invoiceKey }, { invoiceKeyCompact: compact }, { keyAliases: { some: { invoiceKey } } }],
+      OR: [
+        { invoiceKey: { in: invoiceKeys } },
+        { invoiceKeyCompact: { in: compacts } },
+        { keyAliases: { some: { invoiceKey: { in: invoiceKeys } } } },
+      ],
     },
     include: { lines: true, dateLinks: true, keyAliases: true, lineAliases: true },
   });
@@ -171,6 +176,10 @@ async function loadCandidates(tx: Tx, supplierId: string, invoiceKey: string, co
 
 function documentMatchesKey(document: DocumentGraph, invoiceKey: string): boolean {
   return document.invoiceKey === invoiceKey || document.keyAliases.some((alias) => alias.invoiceKey === invoiceKey);
+}
+
+function documentMatchesKeys(document: DocumentGraph, invoiceKeys: string[]): boolean {
+  return invoiceKeys.some((invoiceKey) => documentMatchesKey(document, invoiceKey));
 }
 
 function documentMatchesDate(document: DocumentGraph, dateKey: string): boolean {
@@ -244,6 +253,7 @@ export async function resolveSupplierInvoice(input: {
   if (!supplierId) return fail('SUPPLIER_REQUIRED', SUPPLIER_REQUIRED_ERROR);
   const invoiceKey = canonicalInvoiceNumber(input.invoiceNumber);
   if (!invoiceKey) return fail('INVOICE_NUMBER_REQUIRED', INVOICE_NUMBER_REQUIRED_ERROR);
+  const storedInvoiceNumber = (input.invoiceNumber ?? '').trim() || invoiceKey;
   const supplier = await prisma.supplier.findUnique({ where: { id: supplierId }, select: { id: true, name: true } });
   if (!supplier) return fail('SUPPLIER_UNKNOWN', SUPPLIER_UNKNOWN_ERROR);
   const dateKey = canonicalInvoiceDate(input.invoiceDate);
@@ -262,7 +272,7 @@ export async function resolveSupplierInvoice(input: {
       invoiceKey,
       compact,
       dateKey,
-      input.invoiceNumber ?? invoiceKey,
+      storedInvoiceNumber,
       input.invoiceDate ?? dateKey,
       slots
     );
@@ -276,7 +286,7 @@ export async function resolveSupplierInvoice(input: {
       invoiceKey,
       compact,
       dateKey,
-      input.invoiceNumber ?? invoiceKey,
+      storedInvoiceNumber,
       input.invoiceDate ?? dateKey,
       slots
     );
@@ -295,21 +305,22 @@ async function writeResolved(
 ): Promise<ResolveSupplierInvoiceResult> {
   return prisma.$transaction(async (tx) => {
     const legacy = await legacyReceipts(tx, supplierName, invoiceNumber);
-    const candidates = await loadCandidates(tx, supplierId, invoiceKey, compact);
+    const lookup = pageInvoiceDuplicateKeys(invoiceNumber);
+    const candidates = await loadCandidates(tx, supplierId, lookup.invoiceKeys, lookup.compacts);
     const exact = candidates.filter(
-      (document) => documentMatchesKey(document, invoiceKey) && documentMatchesDate(document, dateKey)
+      (document) => documentMatchesKeys(document, lookup.invoiceKeys) && documentMatchesDate(document, dateKey)
     );
     if (exact.length > 1) return fail('AMBIGUOUS_DOCUMENT', AMBIGUOUS_DOCUMENT_ERROR);
     if (exact.length === 1) return toLines(exact[0]!, slots);
 
-    const sameNumber = candidates.filter((document) => documentMatchesKey(document, invoiceKey));
+    const sameNumber = candidates.filter((document) => documentMatchesKeys(document, lookup.invoiceKeys));
     if (sameNumber.length > 0) {
       return fail('DATE_CONFLICT', DATE_CONFLICT_ERROR, {
         storedDates: sameNumber.map((document) => document.invoiceDateKey ?? ''),
       });
     }
     const spelledApart = candidates.filter(
-      (document) => document.invoiceKeyCompact === compact && !documentMatchesKey(document, invoiceKey)
+      (document) => document.invoiceKeyCompact === compact && !documentMatchesKeys(document, lookup.invoiceKeys)
     );
     if (spelledApart.length > 0) {
       return fail('WHITESPACE_CONFLICT', WHITESPACE_CONFLICT_ERROR, {
@@ -394,6 +405,7 @@ export async function reconcileSupplierInvoice(input: {
   if (!supplierId) return fail('SUPPLIER_REQUIRED', SUPPLIER_REQUIRED_ERROR);
   const invoiceKey = canonicalInvoiceNumber(input.invoiceNumber);
   if (!invoiceKey) return fail('INVOICE_NUMBER_REQUIRED', INVOICE_NUMBER_REQUIRED_ERROR);
+  const storedInvoiceNumber = (input.invoiceNumber ?? '').trim() || invoiceKey;
   const dateKey = canonicalInvoiceDate(input.invoiceDate);
   if (!dateKey) return fail('DATE_REQUIRED', DATE_REQUIRED_ERROR);
   const slots = lineSlots(input.lines);
@@ -410,19 +422,20 @@ export async function reconcileSupplierInvoice(input: {
     throw new AuthError('Only a store manager or the owner can confirm this invoice match.', 403);
   }
   const compact = compactInvoiceNumber(invoiceKey);
+  const lookup = pageInvoiceDuplicateKeys(storedInvoiceNumber);
   const actorId = input.actorId.trim() || 'staff';
 
   const run = () => prisma.$transaction(async (tx) => {
-    const candidates = await loadCandidates(tx, supplierId, invoiceKey, compact);
+    const candidates = await loadCandidates(tx, supplierId, lookup.invoiceKeys, lookup.compacts);
     const exact = candidates.filter(
-      (document) => documentMatchesKey(document, invoiceKey) && documentMatchesDate(document, dateKey)
+      (document) => documentMatchesKeys(document, lookup.invoiceKeys) && documentMatchesDate(document, dateKey)
     );
 
     if (input.action === 'adopt-legacy') {
       const legacyKey = input.legacyKey?.trim() ?? '';
       const parsed = parseLegacyInvoiceKey(legacyKey);
       const known = await tx.ledgerIdempotencyKey.findUnique({ where: { key: legacyKey } });
-      if (!parsed || !known || !legacyKeyMatchesSupplier(legacyKey, supplier.name, input.invoiceNumber ?? invoiceKey)) {
+      if (!parsed || !known || !legacyKeyMatchesSupplier(legacyKey, supplier.name, storedInvoiceNumber)) {
         return fail(
           'LEGACY_RECEIPT_PRESENT',
           'That earlier receipt is not an exact vendor and invoice match for the selected supplier. It was not attached, and stock was not changed.'
@@ -436,7 +449,7 @@ export async function reconcileSupplierInvoice(input: {
             supplierId,
             invoiceKey,
             invoiceKeyCompact: compact,
-            invoiceNumber: (input.invoiceNumber ?? invoiceKey).trim(),
+            invoiceNumber: storedInvoiceNumber,
             invoiceDate: (input.invoiceDate ?? dateKey).trim(),
             invoiceDateKey: dateKey,
             legacyKey,
@@ -484,7 +497,7 @@ export async function reconcileSupplierInvoice(input: {
     }
 
     if (input.action === 'link-date' || input.action === 'separate-document') {
-      const sameNumber = candidates.filter((document) => documentMatchesKey(document, invoiceKey));
+      const sameNumber = candidates.filter((document) => documentMatchesKeys(document, lookup.invoiceKeys));
       if (input.action === 'link-date') {
         if (sameNumber.length !== 1) return fail('AMBIGUOUS_DOCUMENT', AMBIGUOUS_DOCUMENT_ERROR, {
           storedDates: sameNumber.map((document) => document.invoiceDateKey ?? ''),
@@ -517,7 +530,7 @@ export async function reconcileSupplierInvoice(input: {
           supplierId,
           invoiceKey,
           invoiceKeyCompact: compact,
-          invoiceNumber: (input.invoiceNumber ?? invoiceKey).trim(),
+          invoiceNumber: storedInvoiceNumber,
           invoiceDate: (input.invoiceDate ?? dateKey).trim(),
           invoiceDateKey: dateKey,
           lines: {
@@ -553,7 +566,7 @@ export async function reconcileSupplierInvoice(input: {
 
     if (input.action === 'link-spelling' || input.action === 'separate-spelling') {
       const siblings = candidates.filter(
-        (document) => document.invoiceKeyCompact === compact && !documentMatchesKey(document, invoiceKey)
+        (document) => document.invoiceKeyCompact === compact && !documentMatchesKeys(document, lookup.invoiceKeys)
       );
       if (input.action === 'link-spelling') {
         if (siblings.length !== 1) return fail('AMBIGUOUS_DOCUMENT', AMBIGUOUS_DOCUMENT_ERROR, {
@@ -591,7 +604,7 @@ export async function reconcileSupplierInvoice(input: {
           supplierId,
           invoiceKey,
           invoiceKeyCompact: compact,
-          invoiceNumber: (input.invoiceNumber ?? invoiceKey).trim(),
+          invoiceNumber: storedInvoiceNumber,
           invoiceDate: (input.invoiceDate ?? dateKey).trim(),
           invoiceDateKey: dateKey,
           lines: {
