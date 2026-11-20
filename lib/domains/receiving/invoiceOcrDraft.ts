@@ -1,5 +1,6 @@
 import type { Department } from '@prisma/client';
 import { lineNeedsManualReview } from '@/lib/domains/receiving/invoiceOcrConfidence';
+import { reviewBlockersAfterApproval } from '@/lib/domains/receiving/receiveReviewGate';
 import { selectInvoiceHeaderTotal } from '@/lib/domains/receiving/invoiceHeaderTotal';
 import {
   MAX_RECEIVING_BATCH_SIZE,
@@ -34,20 +35,6 @@ export type OcrReviewReason = (typeof OCR_REVIEW_REASONS)[number];
 type ReviewReasonDrift = Exclude<OcrReviewReason, OcrReviewReasonCode> | Exclude<OcrReviewReasonCode, OcrReviewReason>;
 const _reviewReasonsMatch: [ReviewReasonDrift] extends [never] ? true : never = true;
 void _reviewReasonsMatch;
-
-const HARD_REVIEW_REASONS = new Set<OcrReviewReason>([
-  'quantity_unreadable',
-  'name_unreadable',
-  'cost_unreadable',
-]);
-
-const MANAGER_REVIEW_REASONS = new Set<OcrReviewReason>([
-  'low_confidence',
-  'cost_guardrail',
-  'department_assumed',
-  'line_total_mismatch',
-  'unit_invalid',
-]);
 
 export interface AuditedDraftSourceLine {
   item_name: string;
@@ -252,13 +239,12 @@ export function unresolvedLineReasons(
   manualReviewOverride: boolean
 ): OcrReviewReason[] {
   return reviewReasonsForLine(line).filter((reason) => {
-    if (HARD_REVIEW_REASONS.has(reason)) return true;
-    if (MANAGER_REVIEW_REASONS.has(reason)) return !manualReviewOverride;
+    if (reason === 'cost_guardrail') return !manualReviewOverride;
     return true;
   });
 }
 
-/** Hard gaps always block. Confidence, cost, an assumed department, and a line-total gap need a manager. */
+/** Hard gaps always block. A manager approval clears cost_guardrail only. */
 export function draftPostingBlockers(
   payload: Pick<
     OcrDraftPayload,
@@ -282,10 +268,17 @@ export function draftPostingBlockers(
   if (payload.scanStatus === 'failed') {
     blockers.push('A page was not read. Retake that page before confirming.');
   }
-  for (const blocker of payload.pageScanBlockers ?? []) {
+  const managerMayResolveEarly = options.manualReviewOverride && options.actorIsManager;
+  const pageBlockers = managerMayResolveEarly
+    ? reviewBlockersAfterApproval({
+        manager: true,
+        approved: true,
+        blockers: payload.pageScanBlockers ?? [],
+      })
+    : (payload.pageScanBlockers ?? []);
+  for (const blocker of pageBlockers) {
     if (blocker.trim()) blockers.push(blocker);
   }
-  const managerMayResolveEarly = options.manualReviewOverride && options.actorIsManager;
   if (!managerMayResolveEarly) {
     for (const flag of payload.pageScanReviewFlags ?? []) {
       if (flag.trim()) blockers.push(flag);

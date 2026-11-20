@@ -36,6 +36,7 @@ import {
   lineBlockerNeedsManager,
   managerApprovalLabel,
   needsManagerSignoff,
+  reviewBlockersAfterApproval,
   showManagerOverride,
 } from '@/lib/domains/receiving/receiveReviewGate';
 import type { SupplierRecord } from '@/lib/domains/suppliers/suppliers';
@@ -587,8 +588,15 @@ export function InvoicePageScanSheet({
   const readCount = chips.filter((chip) => chip.status === 'read').length;
   const continuable = continuablePendingIndexes(chips, localImages.current.keys());
   const continueWaitMs = continueAt == null ? 0 : Math.max(0, continueAt - nowMs);
+  const shownBlockers = view
+    ? reviewBlockersAfterApproval({
+        manager,
+        approved: managerApproved,
+        blockers: view.blockers,
+      })
+    : [];
   const hardBlock = invoiceReviewHardBlocked({
-    blockers: view?.blockers ?? [],
+    blockers: shownBlockers,
     invoiceDateNeedsConfirm: view?.invoiceDateNeedsConfirm === true,
     dateConfirmed,
   });
@@ -871,9 +879,9 @@ export function InvoicePageScanSheet({
                   setSheet({ index, fromCheck: true });
                 }}
               />
-              {view.blockers.some((blocker) => isInvoiceLevelBlocker(blocker) || lineBlockerNeedsManager(blocker)) ? (
+              {shownBlockers.some((blocker) => isInvoiceLevelBlocker(blocker) || lineBlockerNeedsManager(blocker)) ? (
                 <ul className="space-y-1 rounded-xl border border-amber-800/50 bg-amber-950/30 px-3 py-2 text-sm text-amber-100">
-                  {view.blockers
+                  {shownBlockers
                     .filter((blocker) => isInvoiceLevelBlocker(blocker) || lineBlockerNeedsManager(blocker))
                     .map((blocker) => (
                       <li key={blocker}>{blocker}</li>

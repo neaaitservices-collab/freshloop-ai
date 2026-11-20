@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { mergedPageInvoiceNumber } from '@/lib/domains/receiving/invoiceDeliveryId';
 import { INVOICE_OCR_JSON_ERROR, interpretInvoiceOcrModel } from '@/lib/domains/receiving/invoiceOcrModel';
+import { parseOcrInvoiceDate } from '@/lib/domains/receiving/invoiceOcrParse';
 import { numericInput } from '@/lib/security/numericInput';
 
 /**
@@ -775,12 +776,29 @@ function normHeader(value: string | undefined): string {
   return (value ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
-function firstText(pages: ScanPageState[], field: 'vendorName' | 'invoiceNumber' | 'invoiceDate'): string {
+function firstText(pages: ScanPageState[], field: 'vendorName' | 'invoiceNumber'): string {
   for (const page of pages) {
     const value = page[field]?.trim() ?? '';
     if (value) return value;
   }
   return '';
+}
+
+/**
+ * A page with a real date. Blank and unreadable pages are ignored.
+ * Pages match only when the printed text matches, with - / . as one separator.
+ * The parsed ISO is not that check: it drops the ambiguous gap and can turn
+ * 03-04-2026 and 04-03-2026 into one date.
+ */
+function readPrintedPageDate(raw: string | undefined): { parsed: string; printed: string } | null {
+  const text = (raw ?? '').trim();
+  if (!text) return null;
+  const parsed = parseOcrInvoiceDate(text).invoiceDate.trim();
+  if (!parsed) return null;
+  return {
+    parsed,
+    printed: text.toLowerCase().replace(/[./]/g, '-').replace(/\s+/g, ''),
+  };
 }
 
 export function mergeReadPages(
@@ -793,7 +811,6 @@ export function mergeReadPages(
     read.map((page) => ({ index: page.index, invoiceNumber: page.invoiceNumber }))
   );
   const invoiceNumber = mergedBase ?? firstText(read, 'invoiceNumber');
-  const invoiceDate = firstText(read, 'invoiceDate');
   const blockers: string[] = [];
   const vendorKey = normHeader(vendorName);
   const invoiceKey = normHeader(invoiceNumber);
@@ -806,22 +823,22 @@ export function mergeReadPages(
     }
   }
 
+  const datedPages = read.flatMap((page) => {
+    const date = readPrintedPageDate(page.invoiceDate);
+    return date ? [{ page, ...date }] : [];
+  });
+  const uniquePrinted = [...new Set(datedPages.map((row) => row.printed))];
+  const invoiceDate = datedPages[0]?.parsed ?? '';
   let invoiceDateNeedsConfirm = false;
   let invoiceDateConfirmReason: string | null = null;
-  const dateKey = invoiceDate.trim();
-  for (const page of read) {
-    const date = page.invoiceDate?.trim() ?? '';
-    if (date && dateKey && date !== dateKey) {
+  if (uniquePrinted.length > 1) {
+    invoiceDateNeedsConfirm = true;
+    invoiceDateConfirmReason = 'Pages do not agree on the invoice date. Pick the date from the paper.';
+  } else if (invoiceDate) {
+    const source = datedPages.find((row) => row.page.invoiceDateNeedsConfirm);
+    if (source) {
       invoiceDateNeedsConfirm = true;
-      invoiceDateConfirmReason = 'Pages do not agree on the invoice date. Pick the date from the paper.';
-      break;
-    }
-  }
-  if (!invoiceDateNeedsConfirm) {
-    const source = read.find((page) => (page.invoiceDate?.trim() ?? '') === dateKey && dateKey);
-    if (source?.invoiceDateNeedsConfirm) {
-      invoiceDateNeedsConfirm = true;
-      invoiceDateConfirmReason = source.invoiceDateConfirmReason?.trim() || null;
+      invoiceDateConfirmReason = source.page.invoiceDateConfirmReason?.trim() || null;
     }
   }
 
