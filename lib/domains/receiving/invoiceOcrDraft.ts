@@ -36,20 +36,6 @@ type ReviewReasonDrift = Exclude<OcrReviewReason, OcrReviewReasonCode> | Exclude
 const _reviewReasonsMatch: [ReviewReasonDrift] extends [never] ? true : never = true;
 void _reviewReasonsMatch;
 
-const HARD_REVIEW_REASONS = new Set<OcrReviewReason>([
-  'quantity_unreadable',
-  'name_unreadable',
-  'cost_unreadable',
-]);
-
-const MANAGER_REVIEW_REASONS = new Set<OcrReviewReason>([
-  'low_confidence',
-  'cost_guardrail',
-  'department_assumed',
-  'line_total_mismatch',
-  'unit_invalid',
-]);
-
 export interface AuditedDraftSourceLine {
   item_name: string;
   product_id: string | null;
@@ -253,13 +239,12 @@ export function unresolvedLineReasons(
   manualReviewOverride: boolean
 ): OcrReviewReason[] {
   return reviewReasonsForLine(line).filter((reason) => {
-    if (HARD_REVIEW_REASONS.has(reason)) return true;
-    if (MANAGER_REVIEW_REASONS.has(reason)) return !manualReviewOverride;
+    if (reason === 'cost_guardrail') return !manualReviewOverride;
     return true;
   });
 }
 
-/** Hard gaps always block. Confidence, cost, an assumed department, and a line-total gap need a manager. */
+/** Hard gaps always block. A manager approval clears cost_guardrail only. */
 export function draftPostingBlockers(
   payload: Pick<
     OcrDraftPayload,

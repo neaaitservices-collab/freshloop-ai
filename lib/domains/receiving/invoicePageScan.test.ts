@@ -606,19 +606,19 @@ test('merged pages compare parsed dates and ignore a page with no date', () => {
   const second = line({ page: 2, name: 'Apples', code: 'AP1C', quantity: 1, unitCost: 4, totalCost: 4 });
 
   const samePrinted = mergeReadPages([
-    { ...base, index: 1, invoiceDate: '2026-11-10T00:00:00.000Z', lines: [first] },
-    { ...base, index: 2, invoiceNumber: '900375 02', invoiceDate: '10-11-2026', lines: [second] },
+    { ...base, index: 1, invoiceDate: '10-11-2026', lines: [first] },
+    { ...base, index: 2, invoiceNumber: '900375 02', invoiceDate: '10/11/2026', lines: [second] },
   ]);
-  assert.equal(samePrinted.invoiceDate, '2026-11-10');
   assert.equal(samePrinted.invoiceDateNeedsConfirm, false);
   assert.equal(samePrinted.invoiceDateConfirmReason, null);
+  assert.ok(samePrinted.invoiceDate === '2026-10-11' || samePrinted.invoiceDate === '2026-11-10');
 
   const swapped = mergeReadPages([
     { ...base, index: 1, invoiceDate: '10-11-2026', lines: [first] },
     { ...base, index: 2, invoiceDate: '2026-10-11', lines: [second] },
   ]);
-  assert.equal(swapped.invoiceDateNeedsConfirm, false);
-  assert.ok(swapped.invoiceDate === '2026-10-11' || swapped.invoiceDate === '2026-11-10');
+  assert.equal(swapped.invoiceDateNeedsConfirm, true);
+  assert.match(swapped.invoiceDateConfirmReason ?? '', /do not agree on the invoice date/);
 
   const blankSecondPage = mergeReadPages([
     { ...base, index: 1, invoiceDate: '2026-11-10', lines: [first] },
@@ -645,17 +645,37 @@ test('merged pages compare parsed dates and ignore a page with no date', () => {
     {
       ...base,
       index: 1,
-      invoiceDate: '2026-11-10',
+      invoiceDate: '10-11-2026',
       invoiceDateNeedsConfirm: true,
       invoiceDateConfirmReason: 'Invoice date "10-11-2026" is ambiguous. Confirm this date.',
       lines: [first],
     },
-    { ...base, index: 2, invoiceDate: '10-11-2026', lines: [second] },
+    { ...base, index: 2, invoiceDate: '10.11.2026', lines: [second] },
   ]);
-  assert.equal(stillAmbiguous.invoiceDate, '2026-11-10');
   assert.equal(stillAmbiguous.invoiceDateNeedsConfirm, true);
   assert.match(stillAmbiguous.invoiceDateConfirmReason ?? '', /ambiguous/);
   assert.doesNotMatch(stillAmbiguous.invoiceDateConfirmReason ?? '', /do not agree/);
+
+  const dayMonth = mergeReadPages([
+    { ...base, index: 1, invoiceDate: '03-04-2026', lines: [first] },
+    { ...base, index: 2, invoiceDate: '04-03-2026', lines: [second] },
+  ]);
+  assert.equal(dayMonth.invoiceDateNeedsConfirm, true);
+  assert.match(dayMonth.invoiceDateConfirmReason ?? '', /do not agree on the invoice date/);
+
+  const identical = mergeReadPages([
+    { ...base, index: 1, invoiceDate: '10-11-2026', lines: [first] },
+    { ...base, index: 2, invoiceDate: '10-11-2026', lines: [second] },
+  ]);
+  assert.equal(identical.invoiceDateNeedsConfirm, false);
+  assert.equal(identical.invoiceDateConfirmReason, null);
+
+  const yearMismatch = mergeReadPages([
+    { ...base, index: 1, invoiceDate: '2026-11-10', lines: [first] },
+    { ...base, index: 2, invoiceDate: '2025-11-10', lines: [second] },
+  ]);
+  assert.equal(yearMismatch.invoiceDateNeedsConfirm, true);
+  assert.match(yearMismatch.invoiceDateConfirmReason ?? '', /do not agree on the invoice date/);
 });
 
 test('two Deodato pages keep distinct lines and drop only an exact repeat', () => {

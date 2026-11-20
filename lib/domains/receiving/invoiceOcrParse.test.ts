@@ -273,9 +273,9 @@ test('mixed draft keeps the unreadable line and blocks the whole commit', () => 
   assert.ok(
     draftPostingBlockers(assumedOnly, { actorIsManager: false, manualReviewOverride: true }).length > 0
   );
-  assert.equal(
-    draftPostingBlockers(assumedOnly, { actorIsManager: true, manualReviewOverride: true }).length,
-    0
+  assert.match(
+    draftPostingBlockers(assumedOnly, { actorIsManager: true, manualReviewOverride: true }).join(' '),
+    /department_assumed/
   );
 });
 

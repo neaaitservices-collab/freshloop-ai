@@ -46,7 +46,8 @@ test('an unmatched line does not block, and a low extraction confidence still do
   assert.equal(blockers.some((line) => /not matched/.test(line)), false);
   assert.match(blockers.join(' '), /Line 2 is unresolved/);
   const overridden = draftPostingBlockers(draft, { actorIsManager: true, manualReviewOverride: true });
-  assert.equal(overridden.some((line) => line.startsWith('Line 2 is unresolved')), false);
+  assert.match(overridden.join(' '), /Line 2 is unresolved \(low_confidence\)/);
+  assert.equal(overridden.some((line) => /cost_guardrail/.test(line)), false);
   const unreadable = draftFrom([
     source({ item_name: 'Unread line 1', product_id: null, quantity: 0, line_confidence: 0.2 }),
   ]);

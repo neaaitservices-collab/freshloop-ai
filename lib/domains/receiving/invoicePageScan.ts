@@ -784,17 +784,21 @@ function firstText(pages: ScanPageState[], field: 'vendorName' | 'invoiceNumber'
   return '';
 }
 
-/** A stored page date, or null when that page did not print one. */
-function parsedMergeDate(raw: string | undefined): string | null {
-  const parsed = parseOcrInvoiceDate(raw ?? '').invoiceDate.trim();
-  return parsed || null;
-}
-
-/** 10-11-2026 can be stored as 2026-10-11 or 2026-11-10. Those two readings are one printed date. */
-function isDayMonthSwap(left: string, right: string): boolean {
-  const [yearA, monthA, dayA] = left.split('-');
-  const [yearB, monthB, dayB] = right.split('-');
-  return Boolean(yearA && yearA === yearB && monthA === dayB && dayA === monthB && monthA !== dayA);
+/**
+ * A page with a real date. Blank and unreadable pages are ignored.
+ * Pages match only when the printed text matches, with - / . as one separator.
+ * The parsed ISO is not that check: it drops the ambiguous gap and can turn
+ * 03-04-2026 and 04-03-2026 into one date.
+ */
+function readPrintedPageDate(raw: string | undefined): { parsed: string; printed: string } | null {
+  const text = (raw ?? '').trim();
+  if (!text) return null;
+  const parsed = parseOcrInvoiceDate(text).invoiceDate.trim();
+  if (!parsed) return null;
+  return {
+    parsed,
+    printed: text.toLowerCase().replace(/[./]/g, '-').replace(/\s+/g, ''),
+  };
 }
 
 export function mergeReadPages(
@@ -820,21 +824,18 @@ export function mergeReadPages(
   }
 
   const datedPages = read.flatMap((page) => {
-    const parsed = parsedMergeDate(page.invoiceDate);
-    return parsed ? [{ page, parsed }] : [];
+    const date = readPrintedPageDate(page.invoiceDate);
+    return date ? [{ page, ...date }] : [];
   });
-  const uniqueDates = [...new Set(datedPages.map((row) => row.parsed))];
+  const uniquePrinted = [...new Set(datedPages.map((row) => row.printed))];
   const invoiceDate = datedPages[0]?.parsed ?? '';
   let invoiceDateNeedsConfirm = false;
   let invoiceDateConfirmReason: string | null = null;
-  const datesConflict =
-    uniqueDates.length > 1 &&
-    !(uniqueDates.length === 2 && isDayMonthSwap(uniqueDates[0]!, uniqueDates[1]!));
-  if (datesConflict) {
+  if (uniquePrinted.length > 1) {
     invoiceDateNeedsConfirm = true;
     invoiceDateConfirmReason = 'Pages do not agree on the invoice date. Pick the date from the paper.';
   } else if (invoiceDate) {
-    const source = datedPages.find((row) => row.parsed === invoiceDate && row.page.invoiceDateNeedsConfirm);
+    const source = datedPages.find((row) => row.page.invoiceDateNeedsConfirm);
     if (source) {
       invoiceDateNeedsConfirm = true;
       invoiceDateConfirmReason = source.page.invoiceDateConfirmReason?.trim() || null;
