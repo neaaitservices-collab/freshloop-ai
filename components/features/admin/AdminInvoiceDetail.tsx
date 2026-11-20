@@ -4,6 +4,7 @@ import {
   type AdminInvoiceDetail as AdminInvoiceDetailModel,
   type AdminInvoiceListInput,
 } from '@/lib/domains/receiving/adminInvoiceQuery';
+import { STORE_TIME_ZONE } from '@/lib/domains/stats/storeTime';
 
 const FOCUS =
   'focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-400';
@@ -17,7 +18,7 @@ function formatWhen(iso: string): string {
     month: 'short',
     day: 'numeric',
     year: 'numeric',
-    timeZone: 'UTC',
+    timeZone: STORE_TIME_ZONE,
   }).format(date);
 }
 
@@ -43,9 +44,6 @@ export function AdminInvoiceDetail({
         <p role="alert" className="text-sm font-semibold text-rose-200">
           {error}
         </p>
-      ) : null}
-      {!error && !invoice ? (
-        <p className="text-sm text-slate-400">That invoice is not in the directory.</p>
       ) : null}
       {invoice ? (
         <article className="space-y-4">

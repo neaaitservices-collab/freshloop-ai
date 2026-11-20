@@ -5,6 +5,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { AdminInvoiceDetail } from '@/components/features/admin/AdminInvoiceDetail';
 import { AdminInvoiceList } from '@/components/features/admin/AdminInvoiceList';
+import { openAdminInvoiceDetail } from '@/app/admin/invoices/[id]/page';
 import { setManagerStaffTestAuth } from '@/lib/auth/managerStaffTestAuth';
 import { AuthError } from '@/lib/auth/session';
 import type { AuthSessionUser } from '@/lib/auth/staffSnapshot';
@@ -390,6 +391,54 @@ test('the invoice list renders supplier rows and a detail link', () => {
   assert.match(detail, /Not received/);
   assert.match(detail, /Back to invoices/);
   assert.match(detail, /href="\/admin\/invoices\?q=1001%2FA"/);
+  assert.equal(detail.includes('not in the directory'), false);
+});
+
+test('a missing invoice triggers notFound', () => {
+  assert.throws(
+    () => openAdminInvoiceDetail({ ok: true, invoice: null }),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.equal((error as { digest?: string }).digest, 'NEXT_HTTP_ERROR_FALLBACK;404');
+      return true;
+    }
+  );
+
+  const invalid = openAdminInvoiceDetail({ ok: false, error: 'That invoice link is not valid.' });
+  assert.equal(invalid.ok, false);
+});
+
+test('a receipt just after midnight UTC renders as the previous Toronto date', () => {
+  const received = delivery('line-a', 'Whole milk');
+  received.createdAt = new Date('2026-11-20T01:30:00.000Z');
+  const html = renderToStaticMarkup(
+    createElement(AdminInvoiceDetail, {
+      invoice: {
+        id: DOCUMENT,
+        invoiceNumber: '1001/A',
+        invoiceKey: '1001/a',
+        invoiceDate: '2026-11-19',
+        invoiceDateKey: '2026-11-19',
+        supplierId: SUPPLIER,
+        supplierName: 'North Dairy',
+        createdAt: '2026-11-18T15:00:00.000Z',
+        lines: joinInvoiceLinesToDeliveries(
+          [{ id: 'line-a', printedKey: 'milk', occurrence: 0, ordinal: 0, heldByLegacy: false }],
+          [received]
+        ),
+      },
+      filters: {},
+      error: null,
+    })
+  );
+  const receivedAt = html.indexOf('Received Whole milk');
+  const receiptDate = html.indexOf('Nov 19, 2026', receivedAt);
+  assert.ok(receivedAt >= 0 && receiptDate > receivedAt);
+  assert.equal(html.includes('Nov 20, 2026'), false);
+  assert.match(html, /Saved Nov 18, 2026/);
+
+  const list = readFileSync('components/features/admin/AdminInvoiceList.tsx', 'utf8');
+  assert.equal(list.includes('timeZone'), false);
 });
 
 test('invoices stay off the phone bar and admin tabs, and reads do not write', () => {
