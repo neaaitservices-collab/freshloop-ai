@@ -38,12 +38,15 @@ export function InvoiceDateField({
   onChange,
   label = INVOICE_DATE_FIELD_LABEL,
   max,
+  zIndexClass = 'z-[60]',
 }: {
   value: string;
   onChange: (ymd: string) => void;
   label?: string;
   /** Latest selectable day. Store today when omitted. A later max still stops at today. */
   max?: string;
+  /** Stacking class for the portaled calendar. */
+  zIndexClass?: string;
 }) {
   const titleId = useId();
   const [open, setOpen] = useState(false);
@@ -95,7 +98,7 @@ export function InvoiceDateField({
         open={open}
         onClose={close}
         labelledBy={titleId}
-        zIndexClass="z-[60]"
+        zIndexClass={zIndexClass}
         width="sm"
         overlayClassName="bg-slate-950/60 p-0 backdrop-blur-[1px] sm:items-end sm:p-0"
         panelClassName="max-h-[min(92dvh,40rem)] max-w-md !rounded-b-none !rounded-t-[28px] border-slate-800 bg-slate-900 shadow-[0_-16px_40px_rgba(0,0,0,0.45)]"
