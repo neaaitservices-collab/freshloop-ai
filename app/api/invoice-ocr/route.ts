@@ -42,6 +42,9 @@ import { invoiceOcrCommitBodySchema, invoiceOcrResolveBodySchema } from '@/lib/s
 import { parseInvoiceIdentity } from '@/lib/domains/receiving/invoiceOcrParse';
 import {
   codesIfUnfiltered,
+  INVOICE_PAGE_EMPTY_LINES_MESSAGE,
+  invoicePageLineShape,
+  invoicePageLinesMissing,
   InvoicePageReadError,
   readPrintedMoneyFields,
   type InvoicePageLine,
@@ -621,6 +624,14 @@ async function extractInvoicePageForBatch(page: {
 }): Promise<PageFact> {
   const { parsed, finishReason, schemaOk } = await readInvoiceModelJson([page]);
   const money = readPrintedMoneyFields(parsed);
+  if (invoicePageLinesMissing(parsed)) {
+    throw new InvoicePageReadError(
+      'empty',
+      INVOICE_PAGE_EMPTY_LINES_MESSAGE,
+      finishReason,
+      invoicePageLineShape(parsed)
+    );
+  }
   try {
     const model = interpretInvoiceOcrModel(parsed);
     const codes = codesIfUnfiltered(parsed, model.lineItems.length);

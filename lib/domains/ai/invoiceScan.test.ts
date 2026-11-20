@@ -79,6 +79,8 @@ test('invoice photos are downscaled before they can be sent', async () => {
   const prepared = await downscaleInvoicePhoto(big.toString('base64'), 'image/jpeg');
   assert.equal(prepared.mimeType, 'image/jpeg');
   const meta = await sharp(Buffer.from(prepared.data, 'base64')).metadata();
+  assert.equal(INVOICE_PHOTO_MAX_EDGE, 2000);
+  assert.equal(Math.max(meta.width ?? 0, meta.height ?? 0), INVOICE_PHOTO_MAX_EDGE);
   assert.ok((meta.width ?? 0) <= INVOICE_PHOTO_MAX_EDGE);
   assert.ok((meta.height ?? 0) <= INVOICE_PHOTO_MAX_EDGE);
   assert.ok((meta.width ?? 0) > 0);

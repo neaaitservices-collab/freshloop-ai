@@ -47,6 +47,7 @@ test('a small jpeg already fits and a pdf payload does not', () => {
   assert.match(pdfTooManyPagesMessage(), /8 pages or fewer/);
   assert.equal(OCR_PDF_MAX_PAGES, 8);
   assert.equal(OCR_PDF_JPEG_QUALITY, 0.72);
+  assert.equal(OCR_IMAGE_MAX_EDGE, 2000);
 });
 
 test('createImageBitmap downscales a photo and marks the upload ready', async () => {
@@ -90,7 +91,10 @@ test('createImageBitmap downscales a photo and marks the upload ready', async ()
     assert.equal(prepared.pages.length, 1);
     assert.equal(closed, 1);
     assert.deepEqual(bitmapOptions, { imageOrientation: 'from-image' });
-    assert.deepEqual(sizes[0], { width: OCR_IMAGE_MAX_EDGE, height: 800 });
+    assert.deepEqual(sizes[0], {
+      width: OCR_IMAGE_MAX_EDGE,
+      height: Math.round((1600 * OCR_IMAGE_MAX_EDGE) / 2400),
+    });
   } finally {
     globalThis.createImageBitmap = previousBitmap;
     globalThis.document = previousDocument;

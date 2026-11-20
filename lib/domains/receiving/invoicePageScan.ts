@@ -32,6 +32,8 @@ export const INVOICE_PAGE_REQUEST_BUDGET_MS = 48_000;
 export const INVOICE_PAGE_RETRY_MARGIN_MS = 2_000;
 export const INVOICE_PAGE_TOO_DENSE_MESSAGE =
   'Page too dense to read in one pass, please retake closer or split';
+export const INVOICE_PAGE_EMPTY_LINES_MESSAGE =
+  'No lines could be read on this page, please retake it closer and try again';
 /** A scanning page older than this was abandoned (refresh or a dead request). */
 export const INVOICE_PAGE_STALE_MS = 70_000;
 /** Matches `INVOICE_LINE_TOTAL_TOLERANCE`. */
@@ -293,7 +295,7 @@ export function isGeminiRateLimitMessage(message: string): boolean {
   return /\b429\b|RESOURCE_EXHAUSTED|rate limit/i.test(message);
 }
 
-export type InvoicePageFailureStage = 'json' | 'zod' | 'interpret' | 'abort' | '429';
+export type InvoicePageFailureStage = 'json' | 'zod' | 'interpret' | 'abort' | '429' | 'empty';
 
 const INVOICE_PAGE_FAILURE_STAGES = new Set<InvoicePageFailureStage>([
   'json',
@@ -301,17 +303,63 @@ const INVOICE_PAGE_FAILURE_STAGES = new Set<InvoicePageFailureStage>([
   'interpret',
   'abort',
   '429',
+  'empty',
 ]);
+
+/** Counts only. Never vendor names, amounts, or line text. */
+export interface InvoicePageLineShape {
+  lineCount: number;
+  lineItemsIsArray: boolean;
+  keyCount: number;
+}
+
+/**
+ * Shape of a model object. `lineItems` wins over `line_items`, matching the reader.
+ * Returns null when the value is not an object. No field values are copied out.
+ */
+export function invoicePageLineShape(raw: unknown): InvoicePageLineShape | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const record = raw as Record<string, unknown>;
+  const chosen = Object.prototype.hasOwnProperty.call(record, 'lineItems') ? record.lineItems : record.line_items;
+  const lineItemsIsArray = Array.isArray(chosen);
+  return {
+    lineCount: lineItemsIsArray ? chosen.length : 0,
+    lineItemsIsArray,
+    keyCount: Object.keys(record).length,
+  };
+}
+
+/**
+ * True when the model object has no line list, a null list, or an empty list.
+ * A non-empty list is not empty, including a totals-only page whose rows do not post stock.
+ */
+export function invoicePageLinesMissing(raw: unknown): boolean {
+  if (!invoicePageLineShape(raw) || !raw || typeof raw !== 'object' || Array.isArray(raw)) return false;
+  const record = raw as Record<string, unknown>;
+  const hasLineItems = Object.prototype.hasOwnProperty.call(record, 'lineItems');
+  const hasLineItemsAlias = Object.prototype.hasOwnProperty.call(record, 'line_items');
+  if (!hasLineItems && !hasLineItemsAlias) return true;
+  const chosen = hasLineItems ? record.lineItems : record.line_items;
+  if (chosen == null) return true;
+  return Array.isArray(chosen) && chosen.length === 0;
+}
 
 /** A page read failed at a known stage. `finishReason` is set when Gemini reported one. */
 export class InvoicePageReadError extends Error {
   readonly stage: InvoicePageFailureStage;
   readonly finishReason: string | null;
-  constructor(stage: InvoicePageFailureStage, message: string, finishReason: string | null = null) {
+  readonly lineShape: InvoicePageLineShape | null;
+  constructor(
+    stage: InvoicePageFailureStage,
+    message: string,
+    finishReason: string | null = null,
+    lineShape: InvoicePageLineShape | null = null
+  ) {
     super(message);
     this.name = 'InvoicePageReadError';
     this.stage = stage;
     this.finishReason = finishReason;
+    this.lineShape = lineShape;
   }
 }
 
@@ -351,20 +399,55 @@ export function invoicePageFailureStage(error: unknown): InvoicePageFailureStage
   return null;
 }
 
+function loggedLineShape(error: unknown): InvoicePageLineShape | null {
+  if (!error || typeof error !== 'object') return null;
+  const shape = (error as { lineShape?: unknown }).lineShape;
+  if (!shape || typeof shape !== 'object' || Array.isArray(shape)) return null;
+  const record = shape as Record<string, unknown>;
+  if (
+    typeof record.lineCount !== 'number' ||
+    typeof record.keyCount !== 'number' ||
+    typeof record.lineItemsIsArray !== 'boolean'
+  ) {
+    return null;
+  }
+  return {
+    lineCount: record.lineCount,
+    lineItemsIsArray: record.lineItemsIsArray,
+    keyCount: record.keyCount,
+  };
+}
+
 /**
  * One line per failed page. The line is the page index, finishReason, and stage.
- * It must not include the model text, vendor, amounts, or any other invoice content.
+ * An empty read logs only the page index and the line-list shape.
+ * Neither line includes the model text, vendor, amounts, or any other invoice content.
  */
 export function logInvoicePageReadFailure(error: unknown, pageIndex?: number): void {
+  const page = pageIndex == null ? '-' : pageIndex;
+  if (invoicePageFailureStage(error) === 'empty') {
+    const shape = loggedLineShape(error);
+    console.info(
+      '[invoice-ocr] page=%s lineCount=%s lineItemsIsArray=%s keyCount=%s',
+      page,
+      shape?.lineCount ?? 0,
+      shape?.lineItemsIsArray === true,
+      shape?.keyCount ?? 0
+    );
+    return;
+  }
   console.info(
     '[invoice-ocr] page=%s finishReason=%s stage=%s',
-    pageIndex == null ? '-' : pageIndex,
+    page,
     invoicePageFinishReason(error) ?? 'none',
     invoicePageFailureStage(error) ?? 'none'
   );
 }
 
 export function pageFailureMessage(error: unknown): string {
+  if (invoicePageFailureStage(error) === 'empty') {
+    return INVOICE_PAGE_EMPTY_LINES_MESSAGE;
+  }
   if (isInvoiceMaxTokensError(error)) {
     return INVOICE_PAGE_TOO_DENSE_MESSAGE;
   }
