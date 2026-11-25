@@ -321,6 +321,11 @@ export function AdminInventoryWorkspace({
         groups={groups}
         loading={loading || catalogPageLoading}
         onSelect={setModalRow}
+        emptyLabel={
+          !filtersActive && catalogTotal === 0
+            ? 'No catalog SKUs yet. Receive product to add them. Sample items are not listed.'
+            : 'No items match these filters. Try reset or receive product on Receive.'
+        }
       />
 
       <ItemSettingsModal

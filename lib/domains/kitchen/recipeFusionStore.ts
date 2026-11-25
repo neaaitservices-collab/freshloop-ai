@@ -98,10 +98,19 @@ export async function saveFusionRecipe(recipe: RecipeFusionResult): Promise<Reci
   return mapRecipeFusionRow(row);
 }
 
+/** Ids minted by the retired in-process demo generator. Never treat them as live cards. */
+export function isDemoFusionRecipeId(id: string): boolean {
+  return id.trim().startsWith('rec-mock-');
+}
+
+export function visibleFusionRecipes(recipes: RecipeFusionResult[]): RecipeFusionResult[] {
+  return recipes.filter((recipe) => !isDemoFusionRecipeId(recipe.id));
+}
+
 export async function listFusionRecipes(limit = 50): Promise<RecipeFusionResult[]> {
   const rows = await prisma.recipeFusion.findMany({
     orderBy: { createdAt: 'desc' },
     take: limit,
   });
-  return rows.map(mapRecipeFusionRow);
+  return visibleFusionRecipes(rows.map(mapRecipeFusionRow));
 }

@@ -243,10 +243,12 @@ test('the scorecard renders control, inventory, scraps, sales, rescued, and lost
   const inventory = html.indexOf('Inventory value');
   const scraps = html.indexOf('Scraps');
   const sales = html.indexOf('Sales');
+  const waste = html.indexOf('>Waste<');
   const rescued = html.indexOf('Rescued');
   const lost = html.indexOf('>Lost<');
   assert.ok(control >= 0 && control < inventory);
-  assert.ok(inventory < scraps && scraps < sales && sales < rescued && rescued < lost);
+  assert.ok(inventory < scraps && scraps < sales && sales < waste && waste < rescued && rescued < lost);
+  assert.match(html, /Ledger waste ÷ sales/);
   assert.match(html, /Over goal/);
   assert.match(html, /≤ 10%/);
   assert.match(html, /On hand now/);
@@ -280,6 +282,7 @@ test('the scorecard renders control, inventory, scraps, sales, rescued, and lost
   assert.match(quiet, /0 buckets/);
   assert.match(quiet, /\$0\.00/);
   assert.match(quiet, />—</);
+  assert.match(quiet, /Ledger waste ÷ sales/);
   assert.equal(quiet.includes('Waiting for'), false);
   assert.equal(quiet.includes('POS'), false);
   assert.equal(quiet.includes('Rescue rate'), false);

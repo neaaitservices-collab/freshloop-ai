@@ -2,7 +2,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { processRecipeFusion } from '@/lib/domains/ai/gemini';
 import { getFloorPullFusionItems } from '@/lib/domains/inventory/fusionInventoryView';
 import { getKitchenPrepFusionItems } from '@/lib/domains/kitchen/prepToFusionItems';
-import { listFusionRecipes, saveFusionRecipe } from '@/lib/domains/kitchen/recipeFusionStore';
+import {
+  isDemoFusionRecipeId,
+  listFusionRecipes,
+  saveFusionRecipe,
+} from '@/lib/domains/kitchen/recipeFusionStore';
 import type { InventoryItem } from '@/types';
 import { handleApiRouteError } from '@/lib/domains/ai/apiError';
 import { authErrorResponse } from '@/lib/auth/http';
@@ -80,6 +84,12 @@ export async function POST(req: NextRequest) {
     }
 
     const fusionRecipes = await processRecipeFusion(itemsToProcess, customCategory);
+    if (fusionRecipes.some((recipe) => isDemoFusionRecipeId(recipe.id))) {
+      return NextResponse.json(
+        { success: false, error: 'Recipe fusion returned a demo card. Nothing was saved.' },
+        { status: 502 }
+      );
+    }
 
     const saved = [];
     for (const recipe of fusionRecipes) {

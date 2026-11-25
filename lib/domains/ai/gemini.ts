@@ -795,14 +795,11 @@ Rules:
     const parsed = parseModelJson<Record<string, unknown>>(text);
 
     return {
-      transcript: String(parsed.transcript || spokenText || 'Logged 10 lbs bruised apples and 4L heavy cream'),
+      transcript: String(parsed.transcript || spokenText || ''),
       targetAction: (parsed.targetAction as VoiceLoggerResult['targetAction']) || 'KITCHEN_RESCUE',
       parsedItems: (parsed.parsedItems as VoiceLoggerResult['parsedItems']) || [],
-      kitchenRescueNotes: String(
-        parsed.kitchenRescueNotes ||
-          'Transfer items immediately to production prep for Recipe Fusion.'
-      ),
-      estimatedWasteSavedValue: Number(parsed.estimatedWasteSavedValue) || 38.5,
+      kitchenRescueNotes: String(parsed.kitchenRescueNotes || ''),
+      estimatedWasteSavedValue: Number(parsed.estimatedWasteSavedValue) || 0,
     };
   } catch (error) {
     console.error('Error in processVoiceFloorLog Gemini call:', error);
@@ -820,10 +817,7 @@ export async function processRecipeFusion(
   void _targetCategory;
   const apiKey = getApiKey();
   if (!apiKey) {
-    if (process.env.NODE_ENV === 'production') {
-      rejectProductionAiMock('Recipe fusion');
-    }
-    return getMockRecipeFusion();
+    rejectProductionAiMock('Recipe fusion');
   }
 
   try {
@@ -875,10 +869,7 @@ Return a JSON array of recipes adhering strictly to this schema:
     ) {
       rawList = (parsed as Record<string, unknown>).recipes as unknown[];
     } else {
-      if (process.env.NODE_ENV === 'production') {
-        rejectProductionAiMock('Recipe fusion');
-      }
-      return getMockRecipeFusion();
+      rejectProductionAiMock('Recipe fusion');
     }
 
     return rawList.map((entry, idx) => {
@@ -895,65 +886,7 @@ Return a JSON array of recipes adhering strictly to this schema:
     });
   } catch (error) {
     console.error('Error in processRecipeFusion Gemini call:', error);
-    if (process.env.NODE_ENV === 'production') {
-      rejectProductionAiMock('Recipe fusion');
-    }
-    return getMockRecipeFusion();
+    if (error instanceof Error && error.message.includes('unavailable')) throw error;
+    rejectProductionAiMock('Recipe fusion');
   }
-}
-
-function getMockRecipeFusion(): RecipeFusionResult[] {
-  const nonce = Date.now() + '-' + Math.floor(Math.random() * 1000);
-  return [
-    {
-      id: `rec-mock-1-${nonce}`,
-      recipeName: 'Spiced Apple & Sweet Cream Bakery Crisp',
-      category: 'Parfait / Dessert',
-      ingredientsUsed: [
-        { name: 'Bruised Honeycrisp Apples', quantity: '10 lbs', department: 'PRODUCE', estimatedCost: 14.50 },
-        { name: 'Heavy Cream 40%', quantity: '4 Liters', department: 'DAIRY', estimatedCost: 15.20 },
-        { name: 'Artisanal Sourdough (Crumbs)', quantity: '4 loaves', department: 'BAKERY', estimatedCost: 8.40 }
-      ],
-      estimatedYield: '16 Individual Dessert Tubs (10 oz)',
-      estimatedCost: 38.10,
-      targetRetailPrice: 6.99,
-      grossMarginPct: 65.9, 
-      instructions: [
-        'Peel, core, and dice bruised Honeycrisp apples.',
-        'Sauté apples with brown sugar, butter, and cinnamon until tender.',
-        'Whip heavy cream with vanilla bean extract until medium peaks form.',
-        'Layer sautéed apples, whipped cream, and toasted sourdough streusel crumbs.',
-        'Label with FreshLoop "Rescued Recipe - Chef Special" sticker and display in bakery deli case.'
-      ],
-      prepTimeMinutes: 20,
-      chefTips: 'Utilizes short-dated dairy and bruised apples to yield $111.84 in retail sales from rescued ingredients.',
-      allergens: ['Milk / Dairy', 'Wheat / Gluten'],
-      createdAt: new Date().toISOString().split('T')[0]
-    },
-    {
-      id: `rec-mock-2-${nonce}`,
-      recipeName: 'Creamy Roasted Roma Tomato & Garlic Crouton Soup',
-      category: 'Soup',
-      ingredientsUsed: [
-        { name: 'Ripe Roma Tomatoes', quantity: '20 lbs', department: 'PRODUCE', estimatedCost: 23.00 },
-        { name: 'Heavy Cream 40%', quantity: '2 Liters', department: 'DAIRY', estimatedCost: 7.60 },
-        { name: 'Sourdough Boule Croutons', quantity: '6 loaves', department: 'BAKERY', estimatedCost: 12.60 },
-        { name: 'Olive Oil & Herbs', quantity: '250 ml', department: 'PANTRY', estimatedCost: 2.10 }
-      ],
-      estimatedYield: '24 Soup Deli Cups (16 oz)',
-      estimatedCost: 45.30,
-      targetRetailPrice: 7.49,
-      grossMarginPct: 74.8,
-      instructions: [
-        'Roast overripe Roma tomatoes with garlic and olive oil at 400°F for 30 minutes.',
-        'Puree in commercial blender with heavy cream and vegetable broth until silky.',
-        'Season with sea salt, cracked black pepper, and fresh basil.',
-        'Serve with crunchy roasted sourdough garlic croutons on top.'
-      ],
-      prepTimeMinutes: 35,
-      chefTips: 'Transforms 20 lbs of soft tomatoes into high-demand housemade soup.',
-      allergens: ['Milk / Dairy', 'Wheat / Gluten'],
-      createdAt: new Date().toISOString().split('T')[0]
-    }
-  ];
 }

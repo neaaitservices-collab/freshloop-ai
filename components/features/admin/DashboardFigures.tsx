@@ -130,8 +130,7 @@ export function DashboardFigures({
   initialWasteKpi?: WasteKpiReport | null;
   rangeError?: string | null;
 }) {
-  // Chip totals load inside the scorecard. This refresh is live inventory and alerts only.
-  void initialWasteKpi;
+  const [wasteKpi, setWasteKpi] = useState<WasteKpiReport | null>(initialWasteKpi);
   const [inventoryValue, setInventoryValue] = useState<number | null>(
     initialStats?.inventoryValue ?? null
   );
@@ -140,6 +139,10 @@ export function DashboardFigures({
   const [statsRefreshing, setStatsRefreshing] = useState(false);
   const [statsError, setStatsError] = useState<string | null>(null);
   const requestId = useRef(0);
+
+  useEffect(() => {
+    setWasteKpi(initialWasteKpi);
+  }, [initialWasteKpi]);
 
   useEffect(() => {
     if (!initialStats) return;
@@ -220,7 +223,7 @@ export function DashboardFigures({
 
       <AdminDashboard
         stats={initialStats}
-        wasteKpi={null}
+        wasteKpi={wasteKpi}
         inventoryValue={inventoryValue}
         refreshing={statsRefreshing}
       />
