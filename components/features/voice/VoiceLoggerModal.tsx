@@ -21,7 +21,6 @@ import {
   Square,
   Sparkles,
   X,
-  AlertOctagon,
   CheckCircle2,
   Volume2,
   ArrowRightLeft,
@@ -214,7 +213,7 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
 
   const wireRecorderCallbacks = (recorder: PushToTalkRecorder) => {
     recorder.setCallbacks({
-      onDurationTick: (elapsed, max) => {
+      onDurationTick: (elapsed) => {
         setRecordingSeconds(elapsed);
         setPipelinePhase('recording');
       },
