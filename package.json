@@ -2,6 +2,9 @@
   "name": "freshloop-ai",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=22.15"
+  },
   "scripts": {
     "dev": "next dev -p 3000 -H 0.0.0.0",
     "build": "prisma generate && next build",
