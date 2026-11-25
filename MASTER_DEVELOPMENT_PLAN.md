@@ -25,7 +25,7 @@ The store in the seed data is FreshLoop Artisanal Market - Cobourg.
 - **Rescue is a double entry.** The retail-floor quantity goes out of `Retail_Floor` and into `Kitchen_Prep`. The store total does not change.
 - **Waste is a single negative.** `Qty_Change` is negative, type `Waste`, from `Retail_Floor` to `Waste_Bin`. That quantity leaves the store total.
 - **AI confirmation.** Voice and vision return a structured draft. The person presses confirm or edit before any row is written.
-- **Acting as someone.** The signed-in person is chosen in the shell and stored in the browser under `freshloop-active-user`. It is a staff switcher, not a password login. API calls that accept a role or staff id trust the body the browser sends.
+- **Password login.** Auth.js Credentials at `/login` checks email and password against `staff_users` and issues a 12-hour JWT. Handlers re-read that row and authorize from the session, not from a role or staff id in the request body.
 - **Recipe execution.** The manufacturing route is the kitchen bill-of-materials path. Recipe rows carry `restrictedToRole` (default `KITCHEN_STAFF`).
 
 ## Departments, units, and item statuses

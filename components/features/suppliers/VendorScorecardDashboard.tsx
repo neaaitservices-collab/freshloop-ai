@@ -57,7 +57,7 @@ export function VendorScorecardDashboard({ canView }: { canView: boolean }) {
     void load();
   }, [load]);
 
-  const scorecards = bundle?.scorecards ?? [];
+  const scorecards = useMemo(() => bundle?.scorecards ?? [], [bundle]);
   const alerts = bundle?.recentPriceAlerts ?? [];
 
   const summary = useMemo(() => {
