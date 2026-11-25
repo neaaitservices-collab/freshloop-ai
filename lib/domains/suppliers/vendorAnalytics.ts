@@ -1,5 +1,6 @@
-import { prisma, VOLUMETRIC_SCRAP_REF_PREFIX } from '@/lib/domains/inventory/ledger';
 import { TransactionType } from '@prisma/client';
+import { excludeVolumetricScrapFromStock, prisma } from '@/lib/domains/inventory/ledger';
+import { excludeVolumetricScrapNotes } from '@/lib/domains/inventory/volumetricScrapLedger';
 import { buildSupplierScorecard } from '@/lib/domains/suppliers/scorecard';
 import {
   SUPPLIER_QUALITY_EVENT,
@@ -7,6 +8,11 @@ import {
   type PriceVarianceAlertRow,
   type VendorAnalyticsBundle,
 } from '@/lib/domains/suppliers/vendorAnalyticsTypes';
+
+/** Printed supplier label. TODO: join spoilage by supplierId once products store it. */
+export function supplierNameKey(name: string | null | undefined): string {
+  return (name ?? '').trim().toLowerCase();
+}
 
 function lookbackStart(days: number): Date {
   const end = new Date();
@@ -134,15 +140,13 @@ export async function getVendorAnalyticsBundle(input: {
       },
       _count: { _all: true },
     }),
+    // Row count of non-scrap Waste lines. Not quantity and not dollars.
     prisma.inventoryTransaction.groupBy({
       by: ['productId'],
       where: {
         transactionType: TransactionType.Waste,
         timestamp: { gte: periodStart, lte: periodEnd },
-        OR: [
-          { referenceId: null },
-          { NOT: { referenceId: { startsWith: VOLUMETRIC_SCRAP_REF_PREFIX } } },
-        ],
+        AND: [excludeVolumetricScrapFromStock(), excludeVolumetricScrapNotes()],
       },
       _count: { _all: true },
     }),
@@ -225,7 +229,7 @@ export async function getVendorAnalyticsBundle(input: {
           select: { id: true, supplier: true },
         });
   const supplierNameByProduct = new Map(
-    wasteProducts.map((product) => [product.id, product.supplier?.trim().toLowerCase() ?? ''])
+    wasteProducts.map((product) => [product.id, supplierNameKey(product.supplier)])
   );
   const spoilageBySupplierName = new Map<string, number>();
   for (const row of spoilageGroups) {
@@ -252,7 +256,7 @@ export async function getVendorAnalyticsBundle(input: {
       notReceivedCount: notReceivedBySupplier.get(supplier.id) ?? 0,
       priceVarianceCount: varianceCountBySupplier.get(supplier.id) ?? 0,
       avgPriceVariancePct: varianceAvgBySupplier.get(supplier.id) ?? null,
-      spoilageCount: spoilageBySupplierName.get(supplier.name.toLowerCase()) ?? 0,
+      spoilageCount: spoilageBySupplierName.get(supplierNameKey(supplier.name)) ?? 0,
       receivingVolume: invoiceLineCount + receivingVolume,
     });
   });

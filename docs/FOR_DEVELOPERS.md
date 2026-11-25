@@ -310,12 +310,14 @@ See repo `AGENTS.md` — this Next version may differ from older docs; check `no
 | `/api/inventory` PATCH | Retired (`410`). Floor status changes post with `POST /api/inventory/move` (`rescue`, `waste`, `markdown`) |
 | `/api/inventory/levels`, `/move`, receive POST | `postReceipt` / `postProductReceipt` → `InventoryTransaction` |
 | Waste % | `calculateRealTimeWastePct` → `wasteKpiFromLedgerTotals`: discard $ plus volumetric scrap $ divided by recognized `Sale` and `POS_Sale` revenue. Markdown loss is not in the ratio. Sales under $100 withhold the percent |
-| `/api/recipe-fusion` GET | `RecipeFusion` rows only. Ids prefixed `rec-mock-` are hidden. The handler does not invent cards |
+| `/api/recipe-fusion` GET | `RecipeFusion` rows only. The two retired demo cards are excluded in the Prisma query by name, batch cost, and ingredient lines, including rows that were saved under a uuid. The handler does not invent cards |
 | `/production` (Operations and Kitchen) | Saved `Recipe` rows and the manufacturing catalog. A database error does not substitute demo BOMs |
 | Voice catalog match | Live `/api/inventory/levels`. An empty or failed catalog stays empty |
-| Supplier spoilage counts | Ledger `Waste` rows joined to `Product.supplier`, not the old `InventoryItem` table |
+| Supplier spoilage counts | Count of ledger `Waste` rows (not quantity or dollars), excluding volumetric scrap by reference id and notes. Matched on the trimmed, case-folded supplier name |
 
 `lib/legacy/mockData.ts` and `lib/legacy/db.ts` are deleted. The `InventoryItem` Prisma model remains so existing databases do not need a migration; live screens do not read it. Do not reintroduce an in-memory catalog.
+
+Demo fusion rows that were already saved are hidden by the list query. They are not deleted by a migration. `scripts/cleanup-legacy-demo-fusion.ts` is an optional, idempotent cleanup (`npx tsx scripts/cleanup-legacy-demo-fusion.ts`). It is not run by install, CI, or deploy. Nelson must approve it before anyone runs it against production. Production also refuses the script unless `FRESHLOOP_ALLOW_DEMO_FUSION_CLEANUP=1`.
 
 When extending features, **wire new UI to domain functions** that write `InventoryTransaction`.
 

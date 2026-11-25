@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { StatsScorecardRows } from '@/components/features/admin/AdminStats';
+import { scorecardWastePct, StatsScorecardRows } from '@/components/features/admin/AdminStats';
 import {
   controlStatus,
   lostSharePct,
@@ -213,6 +213,13 @@ test('the admin scorecard follows the shared date range and keeps on-hand live',
   assert.equal(inventoryBlock.includes('transferRange'), false);
   assert.equal(inventoryBlock.includes('cardBounds'), false);
   assert.equal(inventoryBlock.includes('wasteKpiOptions'), false);
+});
+
+test('a withheld waste percent is not replaced by the stats copy', () => {
+  assert.equal(scorecardWastePct({ wastePct: null }, 12), null);
+  assert.equal(scorecardWastePct({ wastePct: 2.5 }, 12), 2.5);
+  assert.equal(scorecardWastePct(null, 4), 4);
+  assert.equal(scorecardWastePct(null, null), null);
 });
 
 test('lost percent is discarded over rescued plus discarded and lights a 10 percent goal', () => {

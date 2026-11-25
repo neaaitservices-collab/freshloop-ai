@@ -135,16 +135,8 @@ function mapDbRecipesToKitchenDefinitions(
 export function selectManufacturingCatalog(input: {
   error: unknown | null;
   saved: KitchenRecipeDefinition[];
-  /** Ignored. Kept so older callers cannot smuggle demo rows back in. */
-  fallback?: KitchenRecipeDefinition[];
 }): KitchenRecipeDefinition[] {
-  void input.fallback;
-  if (input.error != null) {
-    if (isDatabaseUnreachableError(input.error) || input.error instanceof Error) {
-      throw input.error;
-    }
-    throw new Error('Recipe catalog could not be read.');
-  }
+  if (input.error != null) throw input.error;
   return input.saved;
 }
 

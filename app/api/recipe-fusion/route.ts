@@ -1,17 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { processRecipeFusion } from '@/lib/domains/ai/gemini';
+import { AiUnavailableError, processRecipeFusion } from '@/lib/domains/ai/gemini';
 import { getFloorPullFusionItems } from '@/lib/domains/inventory/fusionInventoryView';
 import { getKitchenPrepFusionItems } from '@/lib/domains/kitchen/prepToFusionItems';
-import {
-  isDemoFusionRecipeId,
-  listFusionRecipes,
-  saveFusionRecipe,
-} from '@/lib/domains/kitchen/recipeFusionStore';
+import { createFusionRecipes, listFusionRecipes } from '@/lib/domains/kitchen/recipeFusionStore';
 import type { InventoryItem } from '@/types';
 import { handleApiRouteError } from '@/lib/domains/ai/apiError';
 import { authErrorResponse } from '@/lib/auth/http';
 import { requireKitchenStaff } from '@/lib/auth/guardRoute';
 import { requireSessionUser } from '@/lib/auth/session';
+import { parseJsonBody } from '@/lib/security/parseJsonBody';
+import { recipeFusionPostBodySchema } from '@/lib/security/schemas/recipes';
+import { assertMutationRateLimit } from '@/lib/security/rateLimit';
 
 export async function GET() {
   try {
@@ -27,19 +26,17 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   try {
-    await requireKitchenStaff();
-    const body = await req.json();
-    const { itemIds, kitchenPrepProductIds, customCategory, pullDays } = body as {
-      itemIds?: string[];
-      kitchenPrepProductIds?: string[];
-      customCategory?: string;
-      pullDays?: number;
-    };
+    const actor = await requireKitchenStaff();
+    const limited = assertMutationRateLimit(actor.id, 'recipe-fusion', 12);
+    if (limited) return limited;
 
-    const pullThreshold = Number.isFinite(Number(pullDays)) ? Number(pullDays) : 4;
+    const body = await parseJsonBody(req, recipeFusionPostBodySchema);
+    const { itemIds, kitchenPrepProductIds, customCategory, pullDays } = body;
+
+    const pullThreshold = pullDays ?? 4;
     let itemsToProcess: InventoryItem[] = [];
 
-    if (kitchenPrepProductIds && Array.isArray(kitchenPrepProductIds) && kitchenPrepProductIds.length > 0) {
+    if (kitchenPrepProductIds && kitchenPrepProductIds.length > 0) {
       itemsToProcess = await getKitchenPrepFusionItems(kitchenPrepProductIds);
     }
 
@@ -47,7 +44,7 @@ export async function POST(req: NextRequest) {
       itemsToProcess = await getKitchenPrepFusionItems();
     }
 
-    if (itemsToProcess.length === 0 && itemIds && Array.isArray(itemIds) && itemIds.length > 0) {
+    if (itemsToProcess.length === 0 && itemIds && itemIds.length > 0) {
       const [floor, prep] = await Promise.all([
         getFloorPullFusionItems(pullThreshold, { productIds: itemIds }),
         getKitchenPrepFusionItems(),
@@ -56,7 +53,9 @@ export async function POST(req: NextRequest) {
       for (const row of [...floor, ...prep]) {
         byId.set(row.id, row);
       }
-      itemsToProcess = itemIds.map((id) => byId.get(id)).filter((row): row is InventoryItem => Boolean(row));
+      itemsToProcess = itemIds
+        .map((id) => byId.get(id))
+        .filter((row): row is InventoryItem => Boolean(row));
     }
 
     if (itemsToProcess.length === 0) {
@@ -84,17 +83,7 @@ export async function POST(req: NextRequest) {
     }
 
     const fusionRecipes = await processRecipeFusion(itemsToProcess, customCategory);
-    if (fusionRecipes.some((recipe) => isDemoFusionRecipeId(recipe.id))) {
-      return NextResponse.json(
-        { success: false, error: 'Recipe fusion returned a demo card. Nothing was saved.' },
-        { status: 502 }
-      );
-    }
-
-    const saved = [];
-    for (const recipe of fusionRecipes) {
-      saved.push(await saveFusionRecipe(recipe));
-    }
+    const saved = await createFusionRecipes(fusionRecipes);
 
     return NextResponse.json({
       success: true,
@@ -103,6 +92,9 @@ export async function POST(req: NextRequest) {
       timestamp: new Date().toISOString(),
     });
   } catch (error: unknown) {
+    if (error instanceof AiUnavailableError) {
+      return NextResponse.json({ success: false, error: error.message }, { status: 503 });
+    }
     const authRes = authErrorResponse(error);
     if (authRes) return authRes;
     return handleApiRouteError(

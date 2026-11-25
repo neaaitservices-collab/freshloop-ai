@@ -26,6 +26,17 @@ import type { WasteKpiReport } from '@/lib/domains/inventory/ledger';
 import { officialWastePctLabel } from '@/lib/domains/stats/wasteKpi';
 import { cn } from '@/lib/utils/cn';
 
+/**
+ * A null waste percent on a loaded KPI is intentional (sales under the floor).
+ * Do not replace it with the stats copy.
+ */
+export function scorecardWastePct(
+  wasteKpi: { wastePct: number | null } | null | undefined,
+  statsWastePct: number | null | undefined
+): number | null {
+  return wasteKpi ? wasteKpi.wastePct : (statsWastePct ?? null);
+}
+
 export function formatScoreMoney(value: number, digits: 0 | 2): string {
   if (!Number.isFinite(value)) return digits === 0 ? '$0' : '$0.00';
   return value.toLocaleString('en-US', {
@@ -279,8 +290,8 @@ function AdminStatsLive({
           scrapDollars={visibleFigures?.scrapDollars ?? null}
           scrapBuckets={visibleFigures?.scrapBuckets ?? null}
           sales={visibleFigures?.sales ?? null}
-          wastePct={wasteKpi?.wastePct ?? stats?.wastePct ?? null}
-          wastePctPending={wasteKpi == null && stats == null}
+          wastePct={scorecardWastePct(wasteKpi, stats?.wastePct)}
+          wastePctPending={visibleFigures == null}
         />
       </div>
     </DashboardCard>

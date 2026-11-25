@@ -13,7 +13,7 @@ import {
   SalePayloadConflictError,
   SaleReplayUnavailableError,
 } from '@/lib/domains/inventory/saleIdempotency';
-import { SCRAP_VOLUMETRIC_BUCKET_KIND } from '@/lib/domains/inventory/volumetricScrapLedger';
+import { volumetricScrapSqlPredicate } from '@/lib/domains/inventory/volumetricScrapLedger';
 import { consumeLotsFifo, LotAllocationError } from '@/lib/domains/inventory/lots';
 import {
   computeWastePct,
@@ -799,8 +799,6 @@ export async function calculateRealTimeWastePct(
     const startDate = options?.startDate ?? defaultRange.startDate;
     const endDate = options?.endDate ?? defaultRange.endDate;
     const endExclusive = options?.endExclusive === true;
-    const volumetricPrefix = `${VOLUMETRIC_SCRAP_REF_PREFIX}%`;
-    const volumetricKind = `%${SCRAP_VOLUMETRIC_BUCKET_KIND}%`;
     const wasteTimeSql = endExclusive
       ? Prisma.sql`AND "timestamp" >= ${startDate} AND "timestamp" < ${endDate}`
       : Prisma.sql`AND "timestamp" >= ${startDate} AND "timestamp" <= ${endDate}`;
@@ -811,20 +809,14 @@ export async function calculateRealTimeWastePct(
         SELECT
           COALESCE(SUM(
             CASE
-              WHEN "Reference_ID" LIKE ${volumetricPrefix}
-                OR COALESCE("notes", '') LIKE ${volumetricKind}
-                OR LOWER(COALESCE("notes", '')) LIKE '%volumetric scrap%'
-                OR LOWER(COALESCE("notes", '')) LIKE '%cubeta%'
+              WHEN ${volumetricScrapSqlPredicate()}
               THEN 0
               ELSE ABS("Qty_Change") * "Unit_Cost_At_Time"
             END
           ), 0)::float8 AS "discardValue",
           COALESCE(SUM(
             CASE
-              WHEN "Reference_ID" LIKE ${volumetricPrefix}
-                OR COALESCE("notes", '') LIKE ${volumetricKind}
-                OR LOWER(COALESCE("notes", '')) LIKE '%volumetric scrap%'
-                OR LOWER(COALESCE("notes", '')) LIKE '%cubeta%'
+              WHEN ${volumetricScrapSqlPredicate()}
               THEN COALESCE("scrap_bucket_count", ABS("Qty_Change"))
               ELSE 0
             END
