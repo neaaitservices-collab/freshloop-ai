@@ -3,17 +3,27 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, Check, ChevronDown, Mail, Plus, Printer, Search } from 'lucide-react';
 import { PoEmailPanel } from '@/components/features/orders/PoEmailPanel';
+import { PurchaseOrderHistory } from '@/components/features/orders/PurchaseOrderHistory';
 import {
   approvedOrderRows,
   caseWord,
   draftForSupplier,
   draftsForSuppliers,
   groupBySupplier,
+  marksFromPurchaseOrders,
+  MISSING_SUPPLIER_EMAIL_HINT,
   openOrderRows,
+  orderLine,
+  ordersForSupplier,
+  purchaseOrderRecipientForSupplier,
+  singleSupplierEmail,
+  supplierRecipientHint,
+  withSavedRecipient,
   type LineMark,
   type PoDraft,
   type SupplierDirectoryEntry,
 } from '@/components/features/orders/supplierMail';
+import type { PurchaseOrderHistoryEntry } from '@/lib/domains/orders/purchaseOrderSubmit';
 import { PageIntro } from '@/components/layout/PageIntro';
 import { PageMain, ScrollTable } from '@/components/ui/layout';
 import { Badge, type BadgeVariant } from '@/components/ui/Badge';
@@ -94,6 +104,9 @@ export function BuyList({
   const [levelSyncWarning, setLevelSyncWarning] = useState<string | null>(null);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [marks, setMarks] = useState<Record<string, LineMark>>({});
+  const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrderHistoryEntry[] | null>(null);
+  const [supplierIssues, setSupplierIssues] = useState<Record<string, string>>({});
+  const [savingPoSupplier, setSavingPoSupplier] = useState<string | null>(null);
   const [supplierDirectory, setSupplierDirectory] = useState<SupplierDirectoryEntry[]>([]);
   const [directoryReady, setDirectoryReady] = useState(false);
   const [drafts, setDrafts] = useState<PoDraft[]>([]);
@@ -109,6 +122,48 @@ export function BuyList({
 
   useEffect(() => {
     setPrintedAt(new Date().toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }));
+  }, []);
+
+  useEffect(() => {
+    if (!purchaseOrders) return;
+    setDrafts((current) => {
+      if (current.length === 0) return current;
+      let changed = false;
+      const next = current.map((item) => {
+        const filled = withSavedRecipient(item, purchaseOrders);
+        if (filled.to !== item.to || filled.supplierId !== item.supplierId) changed = true;
+        return filled;
+      });
+      return changed ? next : current;
+    });
+  }, [purchaseOrders]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetch('/api/orders/purchase-order-email', { cache: 'no-store' })
+      .then(async (response) => {
+        const json = (await response.json()) as {
+          success?: boolean;
+          orders?: PurchaseOrderHistoryEntry[];
+          error?: string;
+        };
+        if (cancelled) return;
+        if (!response.ok || !json.success || !Array.isArray(json.orders)) {
+          setError(json.error ?? 'Purchase order history could not be loaded.');
+          setPurchaseOrders([]);
+          return;
+        }
+        setPurchaseOrders(json.orders);
+        setMarks((current) => ({ ...marksFromPurchaseOrders(json.orders ?? []), ...current }));
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setError('Purchase order history could not be loaded.');
+        setPurchaseOrders([]);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -233,11 +288,13 @@ export function BuyList({
         rows: groupedRows[supplier] ?? [],
       })),
       supplierDirectory
-    ).filter((item) => item.productIds.length > 0);
+    )
+      .map((item) => withSavedRecipient(item, purchaseOrders ?? []))
+      .filter((item) => item.productIds.length > 0);
     if (next.length === 0) return;
     setDrafts(next);
     setDraftIndex(0);
-  }, [alertFocus, alertDraftKey, directoryReady, orderingLevels, supplierDirectory]);
+  }, [alertFocus, alertDraftKey, directoryReady, orderingLevels, supplierDirectory, purchaseOrders]);
 
   const activeOrders = useMemo(
     () =>
@@ -359,18 +416,126 @@ export function BuyList({
   const rowsForPo = (group: (typeof activeOrders)[number]) =>
     group.approved.length > 0 ? group.approved : group.open;
 
+  const rememberOrder = (order: PurchaseOrderHistoryEntry) => {
+    setPurchaseOrders((current) => {
+      const list = current ?? [];
+      return [order, ...list.filter((item) => item.id !== order.id)];
+    });
+    setMarks((current) => ({ ...current, ...marksFromPurchaseOrders([order]) }));
+  };
+
+  const savePurchaseOrder = async (input: {
+    supplier: string;
+    supplierId: string | null;
+    to: string;
+    subject: string;
+    body: string;
+    productIds: string[];
+    status: 'APPROVED' | 'SENT';
+  }): Promise<boolean> => {
+    if (!singleSupplierEmail(input.to)) {
+      setSupplierIssues((current) => ({
+        ...current,
+        [input.supplier]:
+          supplierRecipientHint({ to: input.to, recipientIssue: 'missing' }) ?? MISSING_SUPPLIER_EMAIL_HINT,
+      }));
+      return false;
+    }
+    setSupplierIssues((current) => {
+      if (!current[input.supplier]) return current;
+      const next = { ...current };
+      delete next[input.supplier];
+      return next;
+    });
+    setSavingPoSupplier(input.supplier);
+    setError(null);
+    try {
+      const response = await fetch('/api/orders/purchase-order-email', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          supplierId: input.supplierId,
+          supplierName: input.supplier,
+          to: input.to,
+          subject: input.subject,
+          body: input.body,
+          productIds: input.productIds,
+          status: input.status,
+        }),
+      });
+      const json = (await response.json()) as {
+        success?: boolean;
+        error?: string;
+        id?: string;
+        status?: PurchaseOrderHistoryEntry['status'];
+        openedAt?: string;
+        updatedAt?: string;
+        productIds?: string[];
+        lineKey?: string;
+      };
+      if (!response.ok || !json.success || !json.id || !json.status) {
+        setError(json.error || 'The purchase order could not be saved.');
+        return false;
+      }
+      const savedAt = json.updatedAt ?? json.openedAt ?? new Date().toISOString();
+      rememberOrder({
+        id: json.id,
+        supplierId: input.supplierId,
+        supplierName: input.supplier,
+        toEmail: singleSupplierEmail(input.to) ?? input.to,
+        subject: input.subject,
+        status: json.status,
+        lineKey: json.lineKey ?? '',
+        productIds: Array.isArray(json.productIds) ? json.productIds : input.productIds,
+        createdAt: json.openedAt ?? savedAt,
+        updatedAt: savedAt,
+      });
+      return true;
+    } catch {
+      setError('The purchase order could not be saved.');
+      return false;
+    } finally {
+      setSavingPoSupplier(null);
+    }
+  };
+
+  const saveRows = async (rows: StockLevel[], status: 'APPROVED' | 'SENT') => {
+    const eligible = rows.filter((row) => row.low && (status === 'SENT' || marks[row.productId] !== 'sent'));
+    const groupedRows = groupBySupplier(eligible);
+    for (const [supplier, groupRows] of Object.entries(groupedRows)) {
+      const directoryRecipient = purchaseOrderRecipientForSupplier(supplier, supplierDirectory, drafts);
+      const recipient = withSavedRecipient(
+        {
+          supplier,
+          supplierId: directoryRecipient.supplierId,
+          to: directoryRecipient.to,
+          subject: '',
+          body: '',
+          productIds: groupRows.map((row) => row.productId),
+        },
+        purchaseOrders ?? []
+      );
+      await savePurchaseOrder({
+        supplier,
+        supplierId: recipient.supplierId,
+        to: recipient.to,
+        subject: `Supermarket Purchase Order - ${supplier}`,
+        body: groupRows.map(orderLine).join('\n'),
+        productIds: groupRows.map((row) => row.productId),
+        status,
+      });
+    }
+  };
+
   const approve = (productId: string) => {
-    setMarks((current) => (current[productId] === 'sent' ? current : { ...current, [productId]: 'approved' }));
+    if (marks[productId] === 'sent') return;
+    const row = levels.find((item) => item.productId === productId);
+    if (!row) return;
+    void saveRows([row], 'APPROVED');
   };
 
   const approveRows = (rows: StockLevel[]) => {
-    setMarks((current) => {
-      const next = { ...current };
-      for (const row of rows) {
-        if (row.low && next[row.productId] !== 'sent') next[row.productId] = 'approved';
-      }
-      return next;
-    });
+    void saveRows(rows, 'APPROVED');
   };
 
   const approveAllForecasted = () => {
@@ -382,7 +547,9 @@ export function BuyList({
   const activeDraftIndex = drafts.length === 0 ? 0 : Math.min(draftIndex, drafts.length - 1);
 
   const openDrafts = (next: PoDraft[]) => {
-    const list = next.filter((item) => item.productIds.length > 0);
+    const list = next
+      .map((item) => withSavedRecipient(item, purchaseOrders ?? []))
+      .filter((item) => item.productIds.length > 0);
     if (list.length === 0) return;
     setDrafts(list);
     setDraftIndex(0);
@@ -527,6 +694,14 @@ export function BuyList({
     const approved = approvedOrderRows(rows, marks);
     const groupSend = approved.length > 0 ? approved : toOrder;
     const groupCost = toOrder.reduce((sum, row) => sum + row.orderCost, 0);
+    const directoryMatch = supplierDirectory.find(
+      (entry) => entry.name.trim().toLowerCase() === supplier.trim().toLowerCase()
+    );
+    const history = ordersForSupplier(
+      supplier,
+      directoryMatch?.id ?? null,
+      purchaseOrders ?? []
+    );
     return (
       <Card key={supplier} className="overflow-hidden">
         <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -542,7 +717,9 @@ export function BuyList({
             <Button
               variant="secondary"
               className="text-xs"
-              disabled={toOrder.length === 0 || approved.length === toOrder.length}
+              disabled={
+                savingPoSupplier === supplier || toOrder.length === 0 || approved.length === toOrder.length
+              }
               onClick={() => approveRows(toOrder)}
             >
               <Check className="h-3.5 w-3.5" />
@@ -559,6 +736,12 @@ export function BuyList({
             </Button>
           </div>
         </CardHeader>
+        {supplierIssues[supplier] ? (
+          <p role="alert" className="px-4 pb-2 text-sm text-rose-200 sm:px-6">
+            {supplierIssues[supplier]}
+          </p>
+        ) : null}
+        <PurchaseOrderHistory orders={history} loading={purchaseOrders === null} />
         {renderRows(supplier, rows)}
       </Card>
     );
@@ -842,6 +1025,17 @@ export function BuyList({
                   onClose={() => {
                     setDrafts([]);
                     setDraftIndex(0);
+                  }}
+                  onDelivered={(item) => {
+                    void savePurchaseOrder({
+                      supplier: item.supplier,
+                      supplierId: item.supplierId ?? null,
+                      to: item.to,
+                      subject: item.subject,
+                      body: item.body,
+                      productIds: item.productIds,
+                      status: 'SENT',
+                    });
                   }}
                 />
               ) : null}

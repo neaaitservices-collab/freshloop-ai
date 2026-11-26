@@ -44,12 +44,15 @@ export function PoEmailPanel({
   onActiveIndex,
   onChange,
   onClose,
+  onDelivered,
 }: {
   drafts: PoDraft[];
   activeIndex: number;
   onActiveIndex: (index: number) => void;
   onChange: (next: PoDraft) => void;
   onClose: () => void;
+  /** Called after a mailto open is recorded, so the order can be saved for this supplier. */
+  onDelivered?: (item: PoDraft) => void;
 }) {
   const [notes, setNotes] = useState<string[]>([]);
   const [issues, setIssues] = useState<string[]>([]);
@@ -57,6 +60,7 @@ export function PoEmailPanel({
   const [skipNote, setSkipNote] = useState<string | null>(null);
   const [copyMessage, setCopyMessage] = useState<string | null>(null);
   const [known, setKnown] = useState<Record<string, KnownOpen>>({});
+  const [sendAttempt, setSendAttempt] = useState(0);
   const requestId = useRef(0);
   const index =
     drafts.length === 0 ? 0 : Math.min(Math.max(activeIndex, 0), drafts.length - 1);
@@ -133,6 +137,13 @@ export function PoEmailPanel({
   const draft = drafts[index];
   if (!draft) return null;
   const hint = supplierRecipientHint(draft);
+  const recipientInvalid = !singleSupplierEmail(draft.to);
+  const showRecipientError = sendAttempt > 0 && recipientInvalid;
+  const recipientDescribedBy = showRecipientError
+    ? 'po-draft-recipient-error'
+    : hint
+      ? 'po-draft-recipient-hint'
+      : undefined;
   const many = drafts.length > 1;
   const activeCompose = purchaseOrderCompose(draft);
   const groupCompose = purchaseOrderGroupCompose(withLines);
@@ -183,6 +194,7 @@ export function PoEmailPanel({
           purchaseOrderRememberOpen(current, purchaseOrderOpenIdentity(item), response.status, json?.openedAt)
         );
         showLog(item, grouped, { status: response.status, error: json?.error, openedAt: json?.openedAt }, generation);
+        if (response.ok || response.status === 409) onDelivered?.(item);
       })
       .catch(() => {
         showLog(item, grouped, { network: true }, generation);
@@ -275,11 +287,25 @@ export function PoEmailPanel({
                 value={draft.to}
                 onChange={(event) => onChange({ ...draft, to: event.target.value })}
                 placeholder="Supplier email"
-                aria-describedby={hint ? 'po-draft-recipient-hint' : undefined}
-                className="mt-1 text-sm font-semibold"
+                type="email"
+                inputMode="email"
+                autoComplete="email"
+                required
+                aria-invalid={showRecipientError || undefined}
+                aria-describedby={recipientDescribedBy}
+                className={cn(
+                  'mt-1 text-sm font-semibold',
+                  showRecipientError && 'border-rose-700 focus:border-rose-500 focus:ring-rose-700'
+                )}
               />
             </label>
-            {hint ? <SupplierHint message={hint} /> : null}
+            {showRecipientError ? (
+              <p id="po-draft-recipient-error" role="alert" className="text-sm text-rose-200">
+                {hint ?? 'Enter one supplier email address.'}
+              </p>
+            ) : hint ? (
+              <SupplierHint message={hint} />
+            ) : null}
             <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">
               Subject
               <Input
@@ -297,12 +323,16 @@ export function PoEmailPanel({
                 className="mt-1 w-full resize-y rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-xs leading-relaxed text-slate-200 outline-none focus:border-slate-500 focus:ring-1 focus:ring-slate-600"
               />
             </label>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
               <OrderLink
                 href={sendHref}
                 state={sendState}
                 variant="primary"
-                onOpen={(reopen) => logOpened(draft, false, reopen)}
+                onBlocked={() => setSendAttempt((count) => count + 1)}
+                onOpen={(reopen) => {
+                  setSendAttempt((count) => count + 1);
+                  logOpened(draft, false, reopen);
+                }}
               >
                 Send
               </OrderLink>
@@ -310,7 +340,9 @@ export function PoEmailPanel({
                 href={groupCompose?.mailtoUrl ?? null}
                 state={groupState}
                 variant="secondary"
+                onBlocked={() => setSendAttempt((count) => count + 1)}
                 onOpen={(reopen) => {
+                  setSendAttempt((count) => count + 1);
                   setSkipNote(purchaseOrderSkippedNoEmail(skippedNoEmail));
                   for (const item of loggable) logOpened(item, true, reopen);
                 }}
@@ -320,11 +352,13 @@ export function PoEmailPanel({
             </div>
             {sendWarning ? <p className="text-sm text-amber-100">{sendWarning}</p> : null}
             {groupState === 'opened'
-              ? groupWarnings.map((line) => (
-                  <p key={line} className="text-sm text-amber-100">
-                    {line}
-                  </p>
-                ))
+              ? groupWarnings
+                  .filter((line) => line !== sendWarning)
+                  .map((line) => (
+                    <p key={line} className="text-sm text-amber-100">
+                      {line}
+                    </p>
+                  ))
               : null}
             {activeCompose?.truncated && sendHref ? (
               <button
@@ -371,12 +405,14 @@ function OrderLink({
   href,
   state,
   onOpen,
+  onBlocked,
   children,
   variant,
 }: {
   href: string | null;
   state: 'checking' | 'ready' | 'opened' | 'unavailable';
   onOpen: (reopen: boolean) => void;
+  onBlocked?: () => void;
   children: ReactNode;
   variant: 'primary' | 'secondary';
 }) {
@@ -388,7 +424,14 @@ function OrderLink({
       : 'border border-slate-800 bg-slate-900/60 text-slate-300 hover:bg-slate-800/80 focus-visible:ring-slate-600',
     (!href || state === 'checking' || state === 'unavailable') && 'cursor-not-allowed opacity-50'
   );
-  if (!href || state === 'checking' || state === 'unavailable') {
+  if (!href) {
+    return (
+      <button type="button" className={className} onClick={onBlocked}>
+        {children}
+      </button>
+    );
+  }
+  if (state === 'checking' || state === 'unavailable') {
     return (
       <span aria-disabled="true" className={className}>
         {children}

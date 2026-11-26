@@ -60,8 +60,16 @@ export function orderLine(row: StockLevel): string {
   return `In stock - ${row.name}`;
 }
 
+/**
+ * Lines under par. `low` is ledger on-hand compared with the catalog par.
+ * Callers pass stock levels from InventoryTransaction, not legacy item rows.
+ */
+export function ledgerParOrderLines<T extends { low: boolean }>(levels: readonly T[]): T[] {
+  return levels.filter((row) => row.low);
+}
+
 export function openOrderRows(rows: StockLevel[], marks: Record<string, LineMark>): StockLevel[] {
-  return rows.filter((row) => row.low && marks[row.productId] !== 'sent');
+  return ledgerParOrderLines(rows).filter((row) => marks[row.productId] !== 'sent');
 }
 
 export function approvedOrderRows(rows: StockLevel[], marks: Record<string, LineMark>): StockLevel[] {
@@ -163,15 +171,97 @@ function hashLineKey(value: string): string {
     .join('');
 }
 
-/** Stable idempotency key for one supplier's current order lines. */
+/** Stable idempotency key for one supplier's current order lines. Repeated product ids collapse. */
 export function purchaseOrderLineKey(draft: {
   supplier: string;
   productIds: readonly string[];
   body: string;
 }): string {
-  const ids = [...draft.productIds].map((id) => id.trim()).filter(Boolean).sort();
+  const ids = [...new Set(draft.productIds.map((id) => id.trim()).filter(Boolean))].sort();
   const body = draft.body.replace(/\r\n/g, '\n').trim();
   return hashLineKey(`${draft.supplier.trim().toLowerCase()}\n${ids.join('\n')}\n${body}`);
+}
+
+export interface PurchaseOrderMarkSource {
+  productIds: readonly string[];
+  status: string;
+  updatedAt: string;
+}
+
+/** Restore line marks from saved orders. Sent stays sent when an older approved row is still on file. */
+export function marksFromPurchaseOrders(
+  orders: readonly PurchaseOrderMarkSource[]
+): Record<string, LineMark> {
+  const ranked = [...orders].sort((a, b) => a.updatedAt.localeCompare(b.updatedAt) || a.status.localeCompare(b.status));
+  const marks: Record<string, LineMark> = {};
+  for (const order of ranked) {
+    const mark: LineMark | null =
+      order.status === 'SENT' || order.status === 'OPENED'
+        ? 'sent'
+        : order.status === 'APPROVED'
+          ? 'approved'
+          : null;
+    if (!mark) continue;
+    for (const productId of order.productIds) {
+      const id = productId.trim();
+      if (!id || marks[id] === 'sent') continue;
+      marks[id] = mark;
+    }
+  }
+  return marks;
+}
+
+/** Use the newest saved recipient when the directory and the draft have none. */
+export function withSavedRecipient<T extends PoDraft>(
+  draft: T,
+  orders: readonly {
+    supplierId?: string | null;
+    supplierName: string;
+    toEmail: string;
+    updatedAt: string;
+  }[]
+): T {
+  if (singleSupplierEmail(draft.to)) return draft;
+  const saved = ordersForSupplier(draft.supplier, draft.supplierId ?? null, orders)
+    .slice()
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+    .map((order) => order.toEmail.trim())
+    .find((email) => singleSupplierEmail(email));
+  if (!saved) return draft;
+  const next: T = { ...draft, to: saved };
+  delete next.recipientIssue;
+  return next;
+}
+
+export function ordersForSupplier<T extends { supplierId?: string | null; supplierName: string }>(
+  supplier: string,
+  supplierId: string | null,
+  orders: readonly T[]
+): T[] {
+  const name = supplier.trim().toLowerCase();
+  const id = supplierId?.trim() || null;
+  return orders.filter((order) => {
+    if (id && order.supplierId === id) return true;
+    if (order.supplierId && id && order.supplierId !== id) return false;
+    return order.supplierName.trim().toLowerCase() === name;
+  });
+}
+
+/** Directory address, unless the open draft already has a single typed address. */
+export function purchaseOrderRecipientForSupplier(
+  supplier: string,
+  directory: readonly SupplierDirectoryEntry[],
+  drafts: readonly PoDraft[]
+): { to: string; supplierId: string | null } {
+  const key = supplier.trim().toLowerCase();
+  const typed = drafts.find((item) => item.supplier.trim().toLowerCase() === key);
+  const match = matchSupplierRecipient(supplier, directory);
+  const supplierId = typed?.supplierId?.trim() || (match.status === 'matched' ? match.supplierId : null);
+  if (typed && singleSupplierEmail(typed.to)) {
+    return { to: typed.to.trim(), supplierId };
+  }
+  if (match.status === 'matched') return { to: match.email, supplierId: match.supplierId };
+  return { to: '', supplierId };
 }
 
 export const GMAIL_COMPOSE_URL_LIMIT = 8000;

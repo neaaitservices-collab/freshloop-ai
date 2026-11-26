@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { describe, test } from 'node:test';
 import { NextRequest } from 'next/server';
-import { POST } from '@/app/api/orders/purchase-order-email/route';
+import { GET, POST } from '@/app/api/orders/purchase-order-email/route';
 import { setManagerStaffTestAuth } from '@/lib/auth/managerStaffTestAuth';
 import type { AuthSessionUser } from '@/lib/auth/staffSnapshot';
 import { prisma } from '@/lib/db/prisma';
@@ -34,10 +34,14 @@ describe('purchase order open log', { concurrency: 1 }, () => {
     const store = readFileSync('lib/domains/orders/purchaseOrderEmailStore.ts', 'utf8');
     for (const source of [route, panel, store]) {
       assert.equal(/resend/i.test(source), false);
+      assert.equal(/nodemailer|sendgrid|postmark/i.test(source), false);
       assert.equal(source.includes('PO_FROM_EMAIL'), false);
       assert.equal(source.includes('PO_REPLY_TO'), false);
-      assert.equal(/\bsent\b/i.test(source), false);
     }
+    assert.equal(/\bsent\b/i.test(panel), false);
+    const emailAt = route.indexOf('singleSupplierEmail(input.to)');
+    const submitAt = route.indexOf('await submitPurchaseOrder');
+    assert.ok(emailAt !== -1 && submitAt !== -1 && emailAt < submitAt);
     assert.match(route, /requireManagerStaff/);
     assert.ok(route.indexOf('requireManagerStaff') < route.indexOf('recordPurchaseOrderOpen'));
 
@@ -65,6 +69,32 @@ describe('purchase order open log', { concurrency: 1 }, () => {
       assert.equal(listed.status, 400);
       const listedJson = (await listed.json()) as { error?: string };
       assert.match(listedJson.error ?? '', /one supplier email/);
+
+      const missingRecipient = await POST(
+        request({
+          supplierName: 'Farm',
+          to: '   ',
+          subject: 'PO',
+          body: '1',
+          productIds: ['p1'],
+          status: 'SENT',
+        })
+      );
+      assert.equal(missingRecipient.status, 400);
+      const missingJson = (await missingRecipient.json()) as { error?: string };
+      assert.match(missingJson.error ?? '', /one supplier email/);
+
+      const listedSent = await POST(
+        request({
+          supplierName: 'Farm',
+          to: 'buyer@farm.test, other@farm.test',
+          subject: 'PO',
+          body: '1',
+          productIds: ['p1', 'p1'],
+          status: 'SENT',
+        })
+      );
+      assert.equal(listedSent.status, 400);
     } finally {
       setManagerStaffTestAuth(null);
     }
@@ -181,5 +211,73 @@ describe('purchase order open log', { concurrency: 1 }, () => {
     const again = await POST(request({ ...payload, checkOnly: true }));
     assert.equal(again.status, 409);
     assert.equal(await prisma.purchaseOrderEmail.count({ where: { supplierId: supplier.id } }), 1);
+  });
+
+  test('a repeated submit keeps one order and its status', { skip: !hasDb }, async (t) => {
+    try {
+      await prisma.$connect();
+    } catch {
+      t.skip('Database unreachable.');
+      return;
+    }
+
+    const stamp = `po-durable-${Date.now()}`;
+    const supplier = await prisma.supplier.create({
+      data: { name: `Farm ${stamp}`, contactEmail: 'stored@farm.test' },
+    });
+    const payload = {
+      supplierId: supplier.id,
+      supplierName: supplier.name,
+      to: 'buyer@farm.test',
+      subject: 'Purchase order',
+      body: `2 cases - Bananas ${stamp}`,
+      productIds: [`banana-${stamp}`, `banana-${stamp}`, `kale-${stamp}`],
+      status: 'APPROVED' as const,
+    };
+
+    t.after(async () => {
+      setManagerStaffTestAuth(null);
+      await prisma.purchaseOrderEmail.deleteMany({
+        where: { OR: [{ supplierId: supplier.id }, { supplierName: supplier.name }] },
+      });
+      await prisma.supplier.delete({ where: { id: supplier.id } });
+    });
+
+    setManagerStaffTestAuth(async () => manager());
+    const approved = await POST(request(payload));
+    assert.equal(approved.status, 200);
+    const approvedJson = (await approved.json()) as { id?: string; status?: string; productIds?: string[] };
+    assert.equal(approvedJson.status, 'APPROVED');
+    assert.deepEqual(approvedJson.productIds, [`banana-${stamp}`, `kale-${stamp}`]);
+
+    const repeat = await POST(request({ ...payload, productIds: [...payload.productIds, `banana-${stamp}`] }));
+    assert.equal(repeat.status, 200);
+    const repeatJson = (await repeat.json()) as { id?: string; duplicate?: boolean; status?: string };
+    assert.equal(repeatJson.duplicate, true);
+    assert.equal(repeatJson.id, approvedJson.id);
+    assert.equal(repeatJson.status, 'APPROVED');
+    assert.equal(await prisma.purchaseOrderEmail.count({ where: { supplierId: supplier.id } }), 1);
+
+    const sent = await POST(request({ ...payload, status: 'SENT' }));
+    assert.equal(sent.status, 200);
+    const sentJson = (await sent.json()) as { id?: string; status?: string; productIds?: string[] };
+    assert.equal(sentJson.id, approvedJson.id);
+    assert.equal(sentJson.status, 'SENT');
+    assert.deepEqual(sentJson.productIds, [`banana-${stamp}`, `kale-${stamp}`]);
+
+    const sentAgain = await POST(request({ ...payload, status: 'SENT', to: 'later@farm.test' }));
+    assert.equal(sentAgain.status, 200);
+    const kept = await prisma.purchaseOrderEmail.findFirst({ where: { supplierId: supplier.id } });
+    assert.equal(kept?.status, 'SENT');
+    assert.equal(kept?.id, approvedJson.id);
+    assert.deepEqual(kept?.productIds, [`banana-${stamp}`, `kale-${stamp}`]);
+    assert.equal(await prisma.purchaseOrderEmail.count({ where: { supplierId: supplier.id } }), 1);
+
+    const history = await GET(new NextRequest(`http://localhost/api/orders/purchase-order-email?supplierId=${supplier.id}`));
+    assert.equal(history.status, 200);
+    const historyJson = (await history.json()) as { orders?: Array<{ id?: string; status?: string }> };
+    assert.equal(historyJson.orders?.length, 1);
+    assert.equal(historyJson.orders?.[0]?.status, 'SENT');
+    assert.equal(historyJson.orders?.[0]?.id, approvedJson.id);
   });
 });

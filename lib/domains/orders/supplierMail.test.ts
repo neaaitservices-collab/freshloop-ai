@@ -17,7 +17,11 @@ import {
   purchaseOrderCopiedMessage,
   purchaseOrderGroupBody,
   purchaseOrderGroupCompose,
+  marksFromPurchaseOrders,
+  ordersForSupplier,
   purchaseOrderLineKey,
+  purchaseOrderRecipientForSupplier,
+  withSavedRecipient,
   purchaseOrderMailto,
   purchaseOrderCheckKey,
   purchaseOrderClickPlan,
@@ -257,6 +261,10 @@ test('a valid supplier email can be logged and a blank address cannot', () => {
 
   const key = purchaseOrderLineKey(farm);
   assert.equal(purchaseOrderLineKey({ ...farm, productIds: [...farm.productIds] }), key);
+  assert.equal(
+    purchaseOrderLineKey({ ...farm, productIds: [...farm.productIds, farm.productIds[0] ?? ''] }),
+    key
+  );
   assert.notEqual(purchaseOrderLineKey({ ...farm, body: `${farm.body}\nextra` }), key);
   assert.equal(key.includes('buyer@farm.test'), false);
 });
@@ -533,6 +541,91 @@ test('a successful or repeat open marks the order so the next click confirms', (
     panel,
     /setKnown\(\(current\) =>\s*purchaseOrderRememberOpen\(current, purchaseOrderOpenIdentity\(item\), response\.status, json\?\.openedAt\)/
   );
+});
+
+test('saved orders restore approved and sent marks for each supplier', () => {
+  const marks = marksFromPurchaseOrders([
+    {
+      productIds: ['banana', 'banana'],
+      status: 'APPROVED',
+      updatedAt: '2026-11-20T12:00:00.000Z',
+    },
+    {
+      productIds: ['banana'],
+      status: 'SENT',
+      updatedAt: '2026-11-21T12:00:00.000Z',
+    },
+    {
+      productIds: ['kale'],
+      status: 'APPROVED',
+      updatedAt: '2026-11-19T12:00:00.000Z',
+    },
+  ]);
+  assert.equal(marks.banana, 'sent');
+  assert.equal(marks.kale, 'approved');
+
+  const olderSent = marksFromPurchaseOrders([
+    { productIds: ['milk'], status: 'SENT', updatedAt: '2026-11-18T12:00:00.000Z' },
+    { productIds: ['milk'], status: 'APPROVED', updatedAt: '2026-11-22T12:00:00.000Z' },
+  ]);
+  assert.equal(olderSent.milk, 'sent');
+
+  const farm = ordersForSupplier('Farm & Sons', 'sup-farm', [
+    { supplierId: 'sup-farm', supplierName: 'Other' },
+    { supplierId: null, supplierName: 'Farm & Sons' },
+    { supplierId: 'sup-dairy', supplierName: 'Farm & Sons' },
+  ]);
+  assert.equal(farm.length, 2);
+  assert.equal(farm[0]?.supplierId, 'sup-farm');
+  assert.equal(farm[1]?.supplierName, 'Farm & Sons');
+
+  const recipient = purchaseOrderRecipientForSupplier(
+    'Farm & Sons',
+    [{ id: 'sup-farm', name: 'Farm & Sons', contactEmail: 'stored@farm.test' }],
+    [
+      {
+        supplier: 'Farm & Sons',
+        supplierId: 'sup-farm',
+        to: 'edited@farm.test',
+        subject: 'PO',
+        body: '1 case - Bananas',
+        productIds: ['banana'],
+      },
+    ]
+  );
+  assert.deepEqual(recipient, { to: 'edited@farm.test', supplierId: 'sup-farm' });
+
+  const restored = withSavedRecipient(
+    {
+      supplier: 'North Farm',
+      to: '',
+      subject: 'PO',
+      body: '2 cases - Bananas',
+      productIds: ['banana'],
+      recipientIssue: 'missing',
+    },
+    [
+      {
+        supplierId: null,
+        supplierName: 'North Farm',
+        toEmail: 'buyer@farm.test',
+        updatedAt: '2026-11-21T12:00:00.000Z',
+      },
+    ]
+  );
+  assert.equal(restored.to, 'buyer@farm.test');
+  assert.equal(restored.recipientIssue, undefined);
+  const typed = withSavedRecipient(
+    { ...restored, to: 'typed@farm.test' },
+    [
+      {
+        supplierName: 'North Farm',
+        toEmail: 'other@farm.test',
+        updatedAt: '2026-11-22T12:00:00.000Z',
+      },
+    ]
+  );
+  assert.equal(typed.to, 'typed@farm.test');
 });
 
 test('copy confirms the full order text', () => {
