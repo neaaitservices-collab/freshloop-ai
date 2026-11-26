@@ -67,7 +67,7 @@ function StatsDateFilter() {
     const parsed = statsRangeQuerySchema.safeParse({ from: capped.from, to: capped.to });
     if (!parsed.success) {
       setDraft({ from, to });
-      setError(parsed.error.errors[0]?.message ?? 'Invalid date range.');
+      setError(parsed.error.issues[0]?.message ?? 'Invalid date range.');
       return;
     }
     setError(null);

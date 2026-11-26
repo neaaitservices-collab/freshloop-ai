@@ -12,6 +12,28 @@ import { createStaffBodySchema } from '@/lib/security/schemas/staff';
 import { recipeCreateBodySchema } from '@/lib/security/schemas/recipes';
 import { signupBodySchema } from '@/lib/security/schemas/auth';
 import { posWebhookBodySchema } from '@/lib/security/schemas/posWebhook';
+import {
+  manualActivityBodySchema,
+  parseManualActivity,
+  parseVoidReason,
+  receiveCreditSchema,
+  voidActivitySchema,
+} from '@/lib/security/schemas/supplierActivity';
+
+function schemaMessages(error: { issues: readonly { message: string }[] }): string[] {
+  const messages: string[] = [];
+  const visit = (node: unknown): void => {
+    if (Array.isArray(node)) {
+      for (const item of node) visit(item);
+      return;
+    }
+    if (!node || typeof node !== 'object') return;
+    if ('message' in node && typeof node.message === 'string') messages.push(node.message);
+    if ('errors' in node) visit(node.errors);
+  };
+  visit(error.issues);
+  return messages;
+}
 
 describe('security schemas', () => {
   it('rejects unknown keys on manufacturing body', () => {
@@ -214,5 +236,86 @@ describe('security schemas', () => {
     });
     assert.equal(parsed.name, 'ChefOne');
     assert.equal('role' in parsed, false);
+  });
+
+  it('keeps required messages when supplier activity keys are missing', () => {
+    const missingNote = manualActivityBodySchema.safeParse({ type: 'NOTE' });
+    assert.equal(missingNote.success, false);
+    if (!missingNote.success) {
+      assert.ok(schemaMessages(missingNote.error).includes('Note is required.'));
+    }
+    assert.deepEqual(parseManualActivity({ type: 'NOTE' }), { ok: false, error: 'Note is required.' });
+
+    const missingAmount = manualActivityBodySchema.safeParse({
+      type: 'CREDIT',
+      invoiceRef: 'INV-1',
+      reason: 'SHORT',
+    });
+    assert.equal(missingAmount.success, false);
+    if (!missingAmount.success) {
+      assert.ok(schemaMessages(missingAmount.error).includes('Amount is required.'));
+    }
+    assert.deepEqual(
+      parseManualActivity({ type: 'CREDIT', invoiceRef: 'INV-1', reason: 'SHORT' }),
+      { ok: false, error: 'Amount is required.' }
+    );
+
+    const missingInvoice = manualActivityBodySchema.safeParse({
+      type: 'CREDIT',
+      amount: 12,
+      reason: 'DAMAGED',
+    });
+    assert.equal(missingInvoice.success, false);
+    if (!missingInvoice.success) {
+      assert.ok(schemaMessages(missingInvoice.error).includes('Invoice reference is required.'));
+    }
+    assert.deepEqual(
+      parseManualActivity({ type: 'CREDIT', amount: 12, reason: 'DAMAGED' }),
+      { ok: false, error: 'Invoice reference is required.' }
+    );
+
+    const missingReason = manualActivityBodySchema.safeParse({
+      type: 'CREDIT',
+      amount: 12,
+      invoiceRef: 'INV-1',
+    });
+    assert.equal(missingReason.success, false);
+    if (!missingReason.success) {
+      assert.ok(schemaMessages(missingReason.error).includes('Credit reason is required.'));
+    }
+    assert.deepEqual(
+      parseManualActivity({ type: 'CREDIT', amount: 12, invoiceRef: 'INV-1' }),
+      { ok: false, error: 'Credit reason is required.' }
+    );
+
+    const missingStatus = receiveCreditSchema.safeParse({});
+    assert.equal(missingStatus.success, false);
+    if (!missingStatus.success) {
+      assert.equal(missingStatus.error.issues[0]?.message, 'Credit status must be RECEIVED.');
+    }
+
+    const missingVoid = voidActivitySchema.safeParse({});
+    assert.equal(missingVoid.success, false);
+    if (!missingVoid.success) {
+      assert.equal(missingVoid.error.issues[0]?.message, 'A void reason is required.');
+    }
+    assert.deepEqual(parseVoidReason({}), { ok: false, error: 'A void reason is required.' });
+  });
+
+  it('uses the invalid message when a credit reason has the wrong type', () => {
+    const viaUnion = manualActivityBodySchema.safeParse({
+      type: 'CREDIT',
+      amount: 12,
+      invoiceRef: 'INV-1',
+      reason: 4,
+    });
+    assert.equal(viaUnion.success, false);
+    if (!viaUnion.success) {
+      assert.ok(schemaMessages(viaUnion.error).includes('Credit reason is invalid.'));
+    }
+    assert.deepEqual(
+      parseManualActivity({ type: 'CREDIT', amount: 12, invoiceRef: 'INV-1', reason: 4 }),
+      { ok: false, error: 'Credit reason is invalid.' }
+    );
   });
 });

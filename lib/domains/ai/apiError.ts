@@ -67,7 +67,7 @@ export function handleApiRouteError(
 }
 
 function zodErrorMessage(error: ZodError): string {
-  const first = error.errors[0];
+  const first = error.issues[0];
   if (!first) return 'Invalid request payload.';
   const path = first.path.length ? first.path.join('.') : 'body';
   return `${path}: ${first.message}`;
