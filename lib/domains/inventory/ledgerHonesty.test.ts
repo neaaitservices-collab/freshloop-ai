@@ -28,7 +28,7 @@ import {
 import {
   databaseTargetLabel,
   demoFusionCleanupMode,
-} from '@/lib/domains/kitchen/recipeFusionStore';
+} from '@/lib/domains/kitchen/legacyDemoFusion';
 import { supplierNameKey } from '@/lib/domains/suppliers/vendorAnalytics';
 import { readJsonResponse } from '@/lib/testing/posWebhookHttp';
 
@@ -198,6 +198,10 @@ test('demo fusion cleanup counts unless --apply, and the flag is always required
     database: '(no DATABASE_URL)',
   });
   assert.deepEqual(databaseTargetLabel('not a url'), {
+    host: '(unreadable DATABASE_URL)',
+    database: '(unreadable DATABASE_URL)',
+  });
+  assert.deepEqual(databaseTargetLabel('postgresql://user:123/abc@host/db'), {
     host: '(unreadable DATABASE_URL)',
     database: '(unreadable DATABASE_URL)',
   });

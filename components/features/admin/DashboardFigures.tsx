@@ -133,7 +133,6 @@ export function DashboardFigures({
   wasteRangeId?: string | null;
   rangeError?: string | null;
 }) {
-  const [wasteKpi, setWasteKpi] = useState<WasteKpiReport | null>(initialWasteKpi);
   const [inventoryValue, setInventoryValue] = useState<number | null>(
     initialStats?.inventoryValue ?? null
   );
@@ -142,10 +141,6 @@ export function DashboardFigures({
   const [statsRefreshing, setStatsRefreshing] = useState(false);
   const [statsError, setStatsError] = useState<string | null>(null);
   const requestId = useRef(0);
-
-  useEffect(() => {
-    setWasteKpi(initialWasteKpi);
-  }, [initialWasteKpi]);
 
   useEffect(() => {
     if (!initialStats) return;
@@ -226,7 +221,7 @@ export function DashboardFigures({
 
       <AdminDashboard
         stats={initialStats}
-        wasteKpi={wasteKpi}
+        wasteKpi={initialWasteKpi}
         wasteRangeId={wasteRangeId}
         inventoryValue={inventoryValue}
         refreshing={statsRefreshing}

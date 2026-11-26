@@ -12,12 +12,11 @@
  *   FRESHLOOP_ALLOW_DEMO_FUSION_CLEANUP=1 npx tsx scripts/cleanup-legacy-demo-fusion.ts
  *   FRESHLOOP_ALLOW_DEMO_FUSION_CLEANUP=1 npx tsx scripts/cleanup-legacy-demo-fusion.ts --apply
  */
-import { prisma } from '@/lib/domains/inventory/ledger';
 import {
   databaseTargetLabel,
   demoFusionCleanupMode,
   legacyDemoFusionMatch,
-} from '@/lib/domains/kitchen/recipeFusionStore';
+} from '../lib/domains/kitchen/legacyDemoFusion';
 
 const mode = demoFusionCleanupMode(
   process.env.FRESHLOOP_ALLOW_DEMO_FUSION_CLEANUP,
@@ -35,29 +34,32 @@ const where = { OR: legacyDemoFusionMatch() };
 const target = databaseTargetLabel(process.env.DATABASE_URL);
 
 async function main(): Promise<void> {
+  const { PrismaClient } = await import('@prisma/client');
+  const prisma = new PrismaClient();
   console.log(`Target database host: ${target.host}`);
   console.log(`Target database name: ${target.database}`);
-  const rows = await prisma.recipeFusion.findMany({
-    where,
-    select: { id: true, recipeName: true, estimatedCost: true },
-    orderBy: { recipeName: 'asc' },
-  });
-  console.log(`Legacy demo fusion rows matched: ${rows.length}`);
-  for (const row of rows) {
-    console.log(`${row.id}\t${row.recipeName}\t${row.estimatedCost}`);
-  }
-  if (mode === 'count') {
-    console.log('Dry run. Nothing was deleted. Pass --apply to delete.');
+  try {
+    const rows = await prisma.recipeFusion.findMany({
+      where,
+      select: { id: true, recipeName: true, estimatedCost: true },
+      orderBy: { recipeName: 'asc' },
+    });
+    console.log(`Legacy demo fusion rows matched: ${rows.length}`);
+    for (const row of rows) {
+      console.log(`${row.id}\t${row.recipeName}\t${row.estimatedCost}`);
+    }
+    if (mode === 'count') {
+      console.log('Dry run. Nothing was deleted. Pass --apply to delete.');
+      return;
+    }
+    const removed = await prisma.recipeFusion.deleteMany({ where });
+    console.log(`Deleted ${removed.count} legacy demo fusion row(s) on ${target.host}.`);
+  } finally {
     await prisma.$disconnect();
-    return;
   }
-  const removed = await prisma.recipeFusion.deleteMany({ where });
-  console.log(`Deleted ${removed.count} legacy demo fusion row(s) on ${target.host}.`);
-  await prisma.$disconnect();
 }
 
-main().catch(async (error: unknown) => {
+main().catch((error: unknown) => {
   console.error(error);
-  await prisma.$disconnect();
   process.exit(1);
 });
