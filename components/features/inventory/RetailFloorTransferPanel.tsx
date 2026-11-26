@@ -19,7 +19,8 @@ import { fieldMatchesNeedle } from '@/lib/utils/searchNeedle';
 
 export interface RetailFloorTransferPanelProps {
   levels: StockLevel[];
-  pullDays?: number;
+  /** Store pull window. Callers pass the saved value; there is no silent 3-day default. */
+  pullDays: number;
   staffId?: string;
   /** When true, only short-dated / low / markdown items (floor action board). */
   priorityOnly?: boolean;
@@ -36,7 +37,7 @@ export interface RetailFloorTransferPanelProps {
 
 export function RetailFloorTransferPanel({
   levels,
-  pullDays = 3,
+  pullDays,
   staffId,
   priorityOnly = false,
   query = '',

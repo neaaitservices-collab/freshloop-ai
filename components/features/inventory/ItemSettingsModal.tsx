@@ -155,8 +155,12 @@ export function ItemSettingsModal({
   }, [department, loadedDepartments]);
   const [supplier, setSupplier] = useState('');
   const [origin, setOrigin] = useState('');
-  const { pullDays: storePullDefault, ready: storePullReady } =
-    useStorePullSensitivityDays(storePullDays);
+  const {
+    pullDays: storePullDefault,
+    ready: storePullReady,
+    failed: storePullFailed,
+    retry: retryStorePull,
+  } = useStorePullSensitivityDays(storePullDays);
   const storeDefaultParCases = useStoreDefaultParCases();
   const [pullSensitivityDays, setPullSensitivityDays] = useState<PullSensitivityDays | null>(null);
   const [followStorePar, setFollowStorePar] = useState(true);
@@ -563,6 +567,15 @@ export function ItemSettingsModal({
                       {storePullReady
                         ? 'Store pull window could not be loaded.'
                         : 'Loading pull window…'}
+                      {storePullFailed ? (
+                        <button
+                          type="button"
+                          onClick={retryStorePull}
+                          className="ml-2 font-bold text-emerald-300 underline-offset-2 hover:underline"
+                        >
+                          Retry
+                        </button>
+                      ) : null}
                     </p>
                   )}
                 </div>

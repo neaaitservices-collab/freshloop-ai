@@ -71,7 +71,12 @@ export function AdminInventoryWorkspace({
   const fullCatalogLoadingRef = useRef(false);
 
   const router = useRouter();
-  const { pullDays, ready: pullReady } = useStorePullSensitivityDays(storePullDays);
+  const {
+    pullDays,
+    ready: pullReady,
+    failed: pullFailed,
+    retry: retryPull,
+  } = useStorePullSensitivityDays(storePullDays);
   const [savingPull, setSavingPull] = useState(false);
   const [pendingPullDays, setPendingPullDays] = useState<PullSensitivityDays | null>(null);
   const [pullError, setPullError] = useState<string | null>(null);
@@ -343,6 +348,15 @@ export function AdminInventoryWorkspace({
             ) : (
               <span className="mt-1 block text-sm font-semibold text-slate-500">
                 {pullReady ? 'Pull window unavailable.' : 'Loading pull window…'}
+                {pullFailed ? (
+                  <button
+                    type="button"
+                    onClick={retryPull}
+                    className="ml-2 font-bold text-emerald-300 underline-offset-2 hover:underline"
+                  >
+                    Retry
+                  </button>
+                ) : null}
               </span>
             )}
             <span className="mt-1 block text-[11px] font-normal text-slate-500">
