@@ -124,14 +124,15 @@ function DepartmentAlertList({
 export function DashboardFigures({
   stats: initialStats,
   initialWasteKpi = null,
+  wasteRangeId = null,
   rangeError = null,
 }: {
   stats: StoreStats | null;
   initialWasteKpi?: WasteKpiReport | null;
+  /** Range id that `initialWasteKpi` was loaded for. */
+  wasteRangeId?: string | null;
   rangeError?: string | null;
 }) {
-  // Chip totals load inside the scorecard. This refresh is live inventory and alerts only.
-  void initialWasteKpi;
   const [inventoryValue, setInventoryValue] = useState<number | null>(
     initialStats?.inventoryValue ?? null
   );
@@ -220,7 +221,8 @@ export function DashboardFigures({
 
       <AdminDashboard
         stats={initialStats}
-        wasteKpi={null}
+        wasteKpi={initialWasteKpi}
+        wasteRangeId={wasteRangeId}
         inventoryValue={inventoryValue}
         refreshing={statsRefreshing}
       />

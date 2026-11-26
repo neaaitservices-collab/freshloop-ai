@@ -116,7 +116,16 @@ export function SlateInventory({
       </div>
 
       <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-4 lg:gap-4">
-        {[
+        {loading
+          ? Array.from({ length: 4 }, (_, index) => (
+              <Card key={index} aria-hidden>
+                <CardBody className="py-3.5 sm:py-4">
+                  <span className="block h-3 w-20 animate-pulse rounded bg-slate-800" />
+                  <span className="mt-2 block h-7 w-16 animate-pulse rounded bg-slate-800" />
+                </CardBody>
+              </Card>
+            ))
+          : [
           {
             label: 'Value at risk',
             value: formatCurrency(totalValueAtRisk),

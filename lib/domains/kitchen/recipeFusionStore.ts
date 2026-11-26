@@ -1,6 +1,12 @@
 import { Prisma, RecipeStatus } from '@prisma/client';
 import { prisma } from '@/lib/domains/inventory/ledger';
+import { legacyDemoFusionMatch } from '@/lib/domains/kitchen/legacyDemoFusion';
 import type { RecipeFusionResult } from '@/types';
+
+export {
+  LEGACY_DEMO_FUSION_FINGERPRINTS,
+  legacyDemoFusionMatch,
+} from '@/lib/domains/kitchen/legacyDemoFusion';
 
 const FUSION_CATEGORIES = new Set<RecipeFusionResult['category']>([
   'Soup',
@@ -67,11 +73,46 @@ export function mapRecipeFusionRow(row: {
   };
 }
 
-export async function saveFusionRecipe(recipe: RecipeFusionResult): Promise<RecipeFusionResult> {
-  const data = {
+/** Applied inside `findMany` so the page size is not shortened by a later filter. */
+export function legacyDemoFusionWhere(): Prisma.RecipeFusionWhereInput {
+  const matches = legacyDemoFusionMatch();
+  return {
+    NOT: {
+      OR: matches.map((demo) => ({
+        recipeName: demo.recipeName,
+        estimatedCost: demo.estimatedCost,
+        ingredientsUsed: {
+          equals: demo.ingredientsUsed.equals.map((line) => ({
+            name: line.name,
+            quantity: line.quantity,
+            department: line.department,
+            estimatedCost: line.estimatedCost,
+          })),
+        },
+      })),
+    },
+  };
+}
+
+function fusionIngredientsJson(
+  ingredients: RecipeFusionResult['ingredientsUsed']
+): Prisma.InputJsonArray {
+  return ingredients.map((line) => ({
+    name: line.name,
+    quantity: line.quantity,
+    department: line.department,
+    estimatedCost: line.estimatedCost,
+    ...(line.inventoryItemId ? { inventoryItemId: line.inventoryItemId } : {}),
+  }));
+}
+
+export function fusionRecipeCreateData(
+  recipe: RecipeFusionResult
+): Prisma.RecipeFusionCreateInput {
+  return {
     recipeName: recipe.recipeName,
     category: recipe.category,
-    ingredientsUsed: recipe.ingredientsUsed as unknown as Prisma.InputJsonValue,
+    ingredientsUsed: fusionIngredientsJson(recipe.ingredientsUsed),
     estimatedYield: recipe.estimatedYield,
     estimatedCost: recipe.estimatedCost,
     targetRetailPrice: recipe.targetRetailPrice,
@@ -82,24 +123,24 @@ export async function saveFusionRecipe(recipe: RecipeFusionResult): Promise<Reci
     chefTips: recipe.chefTips ?? null,
     allergens: recipe.allergens ?? [],
   };
+}
 
-  const existing =
-    recipe.id && !recipe.id.startsWith('rec-gen-') && !recipe.id.startsWith('rec-mock-')
-      ? await prisma.recipeFusion.findUnique({ where: { id: recipe.id } })
-      : null;
-
-  const row = existing
-    ? await prisma.recipeFusion.update({
-        where: { id: existing.id },
-        data,
-      })
-    : await prisma.recipeFusion.create({ data });
-
-  return mapRecipeFusionRow(row);
+/** Always inserts. Model ids are ignored so a suggestion cannot reset an existing row. */
+export async function createFusionRecipes(
+  recipes: RecipeFusionResult[]
+): Promise<RecipeFusionResult[]> {
+  if (recipes.length === 0) return [];
+  const rows = await prisma.$transaction(
+    recipes.map((recipe) =>
+      prisma.recipeFusion.create({ data: fusionRecipeCreateData(recipe) })
+    )
+  );
+  return rows.map(mapRecipeFusionRow);
 }
 
 export async function listFusionRecipes(limit = 50): Promise<RecipeFusionResult[]> {
   const rows = await prisma.recipeFusion.findMany({
+    where: legacyDemoFusionWhere(),
     orderBy: { createdAt: 'desc' },
     take: limit,
   });

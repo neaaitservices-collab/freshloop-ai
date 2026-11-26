@@ -29,3 +29,12 @@ export const recipeCreateBodySchema = recipeCoreSchema.strict();
 export const recipeUpdateBodySchema = recipeCoreSchema.strict();
 
 export const recipeIdParamSchema = z.string().trim().min(1).max(128);
+
+export const recipeFusionPostBodySchema = z
+  .object({
+    itemIds: z.array(z.string().trim().min(1).max(128)).max(100).optional(),
+    kitchenPrepProductIds: z.array(z.string().trim().min(1).max(128)).max(100).optional(),
+    customCategory: z.string().trim().max(100).optional(),
+    pullDays: z.number().finite().min(1).max(30).optional(),
+  })
+  .strict();

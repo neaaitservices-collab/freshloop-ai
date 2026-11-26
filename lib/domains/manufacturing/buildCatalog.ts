@@ -2,11 +2,7 @@ import type { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/domains/inventory/ledger';
 import { rememberLedgerRead } from '@/lib/domains/inventory/ledgerCache';
 import { getStockLevels, type StockLevel } from '@/lib/domains/inventory/stock';
-import {
-  FALLBACK_RECIPES,
-  isDatabaseUnreachableError,
-  type FallbackRecipeCatalogEntry,
-} from '@/lib/domains/manufacturing/fallbackRecipes';
+import { isDatabaseUnreachableError } from '@/lib/domains/manufacturing/fallbackRecipes';
 import type { KitchenRecipeDefinition } from '@/lib/domains/manufacturing/types';
 import { findLatestStoreSetting } from '@/lib/domains/stats/storeSettingSelect';
 
@@ -80,46 +76,6 @@ function lineFromSnapshot(
   };
 }
 
-function mapFallbackToKitchenRecipe(
-  entry: FallbackRecipeCatalogEntry,
-  snapshots: Map<string, IngredientSnapshot>,
-  defaultLaborRate: number
-): KitchenRecipeDefinition {
-  const bom = entry.bomItems.map((bi) =>
-    lineFromSnapshot(
-      snapshots,
-      bi.ingredientProductId,
-      bi.ingredientName,
-      bi.requiredQty,
-      String(bi.unit),
-      bi.defaultMacCost,
-      bi.allowVariance,
-      { standardCost: bi.defaultMacCost, movingAverageCost: null }
-    )
-  );
-  const recipeLaborRate =
-    entry.laborRatePerHour != null && entry.laborRatePerHour > 0 ? entry.laborRatePerHour : null;
-
-  return {
-    recipeId: entry.id,
-    recipeName: entry.name,
-    category: 'Production BOM',
-    outputProductId: entry.outputProductId,
-    outputProductName: entry.outputProductName,
-    standardBatchYield: entry.batchYieldQty,
-    outputUnit: String(entry.outputUnit),
-    targetRetailPrice: entry.targetRetailPrice,
-    prepTimeMinutes: 25,
-    laborHours: entry.laborHours ?? 0,
-    laborRatePerHour: recipeLaborRate ?? defaultLaborRate,
-    recipeLaborRate,
-    packagingCostPerUnit: entry.packagingCostPerUnit ?? 0,
-    bom,
-    fallback: true,
-    readOnly: true,
-  };
-}
-
 function mapDbRecipesToKitchenDefinitions(
   dbRecipes: RecipeWithBom[],
   snapshots: Map<string, IngredientSnapshot>,
@@ -172,50 +128,27 @@ function mapDbRecipesToKitchenDefinitions(
   }
 }
 
-/** Empty and not-found reads stay empty. Only a connection error may return fallback rows. */
+/**
+ * Saved BOM rows only. An empty catalog stays empty.
+ * Connection failures and other read errors throw — they do not fill in demo recipes.
+ */
 export function selectManufacturingCatalog(input: {
   error: unknown | null;
   saved: KitchenRecipeDefinition[];
-  fallback: KitchenRecipeDefinition[];
 }): KitchenRecipeDefinition[] {
-  if (input.error == null) return input.saved;
-  if (!isDatabaseUnreachableError(input.error)) throw input.error;
-  return input.fallback;
-}
-
-function fallbackCatalog(
-  snapshots: Map<string, IngredientSnapshot>,
-  defaultLaborRate: number
-): KitchenRecipeDefinition[] {
-  return FALLBACK_RECIPES.filter((recipe) => recipe.isActive).map((recipe) =>
-    mapFallbackToKitchenRecipe(recipe, snapshots, defaultLaborRate)
-  );
+  if (input.error != null) throw input.error;
+  return input.saved;
 }
 
 async function buildManufacturingRecipeCatalogUncached(
   options?: BuildManufacturingCatalogOptions
 ): Promise<KitchenRecipeDefinition[]> {
-  let snapshots = options?.ingredientSnapshots;
-  let unreachable = false;
-  if (!snapshots) {
-    try {
-      snapshots = await loadIngredientSnapshots();
-    } catch (error) {
-      if (!isDatabaseUnreachableError(error)) throw error;
-      snapshots = new Map();
-      unreachable = true;
-    }
-  }
-  const storeSetting = await findLatestStoreSetting().catch(() => null);
+  const snapshots = options?.ingredientSnapshots ?? (await loadIngredientSnapshots());
+  const storeSetting = await findLatestStoreSetting().catch((error: unknown) => {
+    if (isDatabaseUnreachableError(error)) throw error;
+    return null;
+  });
   const defaultLaborRate = storeSetting?.defaultLaborRatePerHour ?? 17.6;
-
-  if (unreachable) {
-    return selectManufacturingCatalog({
-      error: Object.assign(new Error("Can't reach database server"), { code: 'P1001' }),
-      saved: [],
-      fallback: fallbackCatalog(snapshots, defaultLaborRate),
-    });
-  }
 
   const byPrimaryId = new Map<string, KitchenRecipeDefinition>();
 
@@ -238,18 +171,13 @@ async function buildManufacturingRecipeCatalogUncached(
       });
       mapDbRecipesToKitchenDefinitions(dbRecipes, snapshots, defaultLaborRate, byPrimaryId);
     } catch (error) {
-      return selectManufacturingCatalog({
-        error,
-        saved: [],
-        fallback: fallbackCatalog(snapshots, defaultLaborRate),
-      });
+      return selectManufacturingCatalog({ error, saved: [] });
     }
   }
 
   return selectManufacturingCatalog({
     error: null,
     saved: Array.from(byPrimaryId.values()),
-    fallback: [],
   });
 }
 
