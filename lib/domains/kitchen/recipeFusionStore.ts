@@ -135,14 +135,22 @@ export function demoFusionCleanupMode(
   return apply ? 'delete' : 'count';
 }
 
-/** Host and port only. User, password, and path stay out of the log. */
-export function databaseHostLabel(databaseUrl: string | undefined): string {
+/** Host, port, and database name. User, password, and the full URL stay out of the log. */
+export function databaseTargetLabel(databaseUrl: string | undefined): {
+  host: string;
+  database: string;
+} {
   const raw = databaseUrl?.trim();
-  if (!raw) return '(no DATABASE_URL)';
+  if (!raw) return { host: '(no DATABASE_URL)', database: '(no DATABASE_URL)' };
   try {
-    return new URL(raw).host || '(no host)';
+    const parsed = new URL(raw);
+    const database = decodeURIComponent(parsed.pathname.replace(/^\//, ''));
+    return {
+      host: parsed.host || '(no host)',
+      database: database || '(no database)',
+    };
   } catch {
-    return '(unreadable DATABASE_URL)';
+    return { host: '(unreadable DATABASE_URL)', database: '(unreadable DATABASE_URL)' };
   }
 }
 

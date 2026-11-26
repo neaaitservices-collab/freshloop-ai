@@ -26,7 +26,7 @@ import {
   officialWastePctLabel,
 } from '@/lib/domains/stats/wasteKpi';
 import {
-  databaseHostLabel,
+  databaseTargetLabel,
   demoFusionCleanupMode,
 } from '@/lib/domains/kitchen/recipeFusionStore';
 import { supplierNameKey } from '@/lib/domains/suppliers/vendorAnalytics';
@@ -186,12 +186,21 @@ test('demo fusion cleanup counts unless --apply, and the flag is always required
   assert.equal(demoFusionCleanupMode('0', false), 'refuse');
   assert.equal(demoFusionCleanupMode('1', false), 'count');
   assert.equal(demoFusionCleanupMode('1', true), 'delete');
-  assert.equal(
-    databaseHostLabel('postgresql://user:secret@db.example:5432/fresh?sslmode=require'),
-    'db.example:5432'
+  const target = databaseTargetLabel(
+    'postgresql://user:secret@db.example:5432/fresh?sslmode=require'
   );
-  assert.equal(databaseHostLabel(undefined), '(no DATABASE_URL)');
-  assert.equal(databaseHostLabel('not a url'), '(unreadable DATABASE_URL)');
+  assert.equal(target.host, 'db.example:5432');
+  assert.equal(target.database, 'fresh');
+  assert.equal(target.host.includes('secret'), false);
+  assert.equal(target.database.includes('secret'), false);
+  assert.deepEqual(databaseTargetLabel(undefined), {
+    host: '(no DATABASE_URL)',
+    database: '(no DATABASE_URL)',
+  });
+  assert.deepEqual(databaseTargetLabel('not a url'), {
+    host: '(unreadable DATABASE_URL)',
+    database: '(unreadable DATABASE_URL)',
+  });
 });
 
 test('supplier name matching trims and case-folds both sides', () => {
