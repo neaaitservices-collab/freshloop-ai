@@ -23,7 +23,7 @@ Repo artifacts:
 |------|---------|
 | [`.env.example`](../.env.example) | Env template for local + Vercel |
 | [`vercel.json`](../vercel.json) | Build/install commands, default region (`iad1`) |
-| [`instrumentation.ts`](../instrumentation.ts) | Warns if production env is incomplete |
+| [`instrumentation.ts`](../instrumentation.ts) | On the Node.js runtime, calls `assertProductionEnv()` in [`lib/env/server.ts`](../lib/env/server.ts), which **throws** if production env is incomplete |
 | [`lib/env/server.ts`](../lib/env/server.ts) | Site URL + auth secret helpers |
 | [`GET /api/health`](../app/api/health/route.ts) | Deploy smoke test (DB ping) |
 | [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) | PR / `main` CI: lint, typecheck, `prisma migrate deploy` on ephemeral Postgres 16, tests, build |
@@ -33,7 +33,7 @@ Repo artifacts:
 
 ## Migrate-before-promote checklist
 
-Vercel auto-deploys every push or merge to `main`. Production schema is **not** applied by that deploy. The only production migrate path is the manual GitHub Actions workflow **Database migrate (production)** (`.github/workflows/database-migrate.yml`), which runs `npm run db:push:prod` → `scripts/prisma-migrate-deploy.mjs` → `prisma migrate deploy`.
+Vercel auto-deploys every push or merge to `main`. Production schema is **not** applied by that deploy. The **only** production migrate path is the manual GitHub Actions workflow **Database migrate (production)** (`.github/workflows/database-migrate.yml`). That workflow checks out the selected ref and runs `scripts/prisma-migrate-deploy.mjs` (`prisma migrate deploy`) with the repository secrets. Do not treat local `npm run db:push:prod` as a production migrate path.
 
 **Do not run a production migrate, and do not merge a schema-dependent PR, without Nelson’s explicit yes.** Lead Code & Reviewer approval is also required before any production deploy of a PR.
 
@@ -51,7 +51,7 @@ Vercel auto-deploys every push or merge to `main`. Production schema is **not** 
 
 ### Check migration status before promoting or merging
 
-With production `DATABASE_URL` and `DIRECT_URL` loaded in a **local, read-only** shell (do not run `prisma migrate dev` or `db:seed:prod` against production):
+With production `DATABASE_URL` and `DIRECT_URL` loaded in a **local, read-only** shell (do not run `prisma migrate dev`, `npm run db:push:prod`, or `db:seed:prod` against production):
 
 ```bash
 npx prisma migrate status
@@ -112,9 +112,9 @@ Production origin: `https://freshloop-ai-zeta.vercel.app`
 |-------|-------------------|----------|
 | Health (app + DB) | `GET https://freshloop-ai-zeta.vercel.app/api/health` | HTTP 200 and `{ "status": "ok", "checks": { "app": "ok", "database": "ok" }, "timestamp": "..." }`. HTTP 503 with `"status": "degraded"` and `"database": "error"` means the app is up but the database ping failed. |
 | Auth | `https://freshloop-ai-zeta.vercel.app/login` | Login page loads; a known staff account can sign in. `NEXTAUTH_URL` must match this origin. |
-| AI (if that release touches OCR / voice) | Invoice OCR or voice route | Structured response, not a missing-key 500 (`GEMINI_API_KEY`; `OPENAI_API_KEY` for Whisper). |
-| POS (if that release touches ingest) | `POST /api/pos/webhook` with a test client using `POS_WEBHOOK_SECRET` | Authorized request is accepted; unauthorized is rejected. |
-| Signup lock (when intended) | `/signup` | `ALLOW_PUBLIC_SIGNUP=false` rejects public signup. |
+| AI (if that release touches OCR / voice) | Invoice OCR (`POST /api/invoice-ocr`) or voice (`POST /api/voice`, `POST /api/voice-logger`) **without** `confirmCommit` | Structured parse/transcript response, not a missing-key 500 (`GEMINI_API_KEY`; `OPENAI_API_KEY` for Whisper). **Never send `confirmCommit: true` in a production smoke test.** On `/api/invoice-ocr`, `confirmCommit: true` commits the stored draft via `commitInvoiceOcrReceipts` (ledger receipts). On `/api/voice-logger`, `confirmCommit: true` with `confirmedItems` writes `InventoryTransaction` rows. |
+| POS (if that release touches ingest) | `POST /api/pos/webhook` | **Do not ingest a new `externalRef` in production.** (1) Missing or wrong `Authorization: Bearer` must return HTTP 401 `{ "success": false, "error": "Unauthorized POS webhook." }` — the secret is `POS_WEBHOOK_SECRET` (timing-safe compare to `Bearer ${secret}`). (2) Allowed smoke: replay a **known existing** `externalRef` with the same lines; expect HTTP 200 `{ "success": true, "idempotent": true }` and **no new ledger rows** (`InventoryTransaction` where `referenceId` is that ref is unchanged). (3) Posting a **new** `externalRef` actually records sales (`idempotent: false`) — do that in production **only with Nelson’s explicit yes**. |
+| Signup lock | `POST /api/auth/signup` and `/signup` | In production, signup is locked unless `ALLOW_PUBLIC_SIGNUP` is exactly `true` (`isPublicSignupEnabled()` in `lib/auth/registerStaff.ts`). Unset or any other value → registration closed; `POST /api/auth/signup` returns HTTP 403 (`Registration is closed…`). `/signup` may still render the form; the API is the gate. Do not create an account in a smoke test. |
 
 ---
 
@@ -162,7 +162,7 @@ Copy from [`.env.example`](../.env.example):
 | `OPENAI_API_KEY` | If Whisper push-to-talk is used |
 | `POS_WEBHOOK_SECRET` | If `POST /api/pos/webhook` is used |
 | `RESEND_API_KEY`, `EMAIL_FROM` | Optional (password reset email) |
-| `ALLOW_PUBLIC_SIGNUP` | Optional — `false` to lock `/signup` |
+| `ALLOW_PUBLIC_SIGNUP` | Locked in production unless set to exactly `true`. Leave unset (or any other value) to keep `POST /api/auth/signup` closed. |
 
 **Do not** run `prisma migrate dev` against production.
 
@@ -186,7 +186,7 @@ This is a required status check on `main`. It is **not** a production migrate.
 
 **Manual only** (`workflow_dispatch`). There are **no inputs**. Pushing `main` does not run this workflow. See [Migrate-before-promote checklist](#migrate-before-promote-checklist) for the required order, Nelson’s yes, status check, and race avoidance.
 
-The job checks out the ref you select and runs `npm run db:push:prod` (`scripts/prisma-migrate-deploy.mjs` → `prisma migrate deploy`).
+The job checks out the ref you select and runs `scripts/prisma-migrate-deploy.mjs` (`prisma migrate deploy`) with the `DATABASE_URL` and `DIRECT_URL` repository secrets. That is the only production migrate path — do not run the same script locally against production.
 
 **Repository secrets** (Settings → Secrets and variables → Actions):
 
@@ -201,17 +201,13 @@ Seed is **not** part of this workflow.
 
 ## 4. First production bootstrap
 
-After the Vercel project exists, apply migrations before traffic depends on the schema. Prefer the workflow in §3 (backup first, Nelson’s yes). With production `DATABASE_URL` and `DIRECT_URL` loaded locally, the same command is:
-
-```bash
-npm run db:push:prod
-```
+After the Vercel project exists, apply migrations before traffic depends on the schema. The **only** production migrate path is the manual workflow in §3 (Supabase backup or snapshot first, then Nelson’s explicit yes). Do not run `npm run db:push:prod` (or `prisma migrate deploy` / `prisma migrate dev`) locally against production.
 
 Do not seed production. `db:seed:prod` is blocked unless `FRESHLOOP_ALLOW_DEMO_SEED=1`, and that override deletes catalog and ledger rows and sets demo passwords to `freshloop`.
 
 | Script | Command |
 |--------|---------|
-| `db:push:prod` | `prisma migrate deploy` (via `scripts/prisma-migrate-deploy.mjs`) |
+| `db:push:prod` | Invoked **only** by the manual GitHub workflow (`scripts/prisma-migrate-deploy.mjs` → `prisma migrate deploy`). **Do not run locally against production.** |
 | `db:seed:prod` | `NODE_ENV=production prisma db seed` — **never against production** |
 | `ci` | lint + typecheck + test + build |
 
@@ -228,7 +224,7 @@ Follow [Post-deploy smoke tests](#post-deploy-smoke-tests). Also confirm the Ver
 | Symptom | Fix |
 |---------|-----|
 | `prepared statement already exists` | Pooler URL + `pgbouncer=true` on `DATABASE_URL` |
-| Migrations fail on Vercel build | Migrations are not part of `next build`. Apply them with the manual workflow or `npm run db:push:prod` using `DIRECT_URL` |
+| Migrations fail on Vercel build | Migrations are not part of `next build`. Apply them only with the manual **Database migrate (production)** workflow (backup first, Nelson’s yes). Do not run `npm run db:push:prod` locally against production. |
 | Auth redirect loops | `NEXTAUTH_URL` = production URL; set `AUTH_SECRET` |
 | Health `database: error` / HTTP 503 | Wrong `DATABASE_URL`, IP allowlist, or migrations not applied |
 | Too many DB connections | Pooler + `connection_limit=1`; Prisma client is singleton per instance |
