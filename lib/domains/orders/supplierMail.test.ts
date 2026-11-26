@@ -260,6 +260,11 @@ test('a valid supplier email can be logged and a blank address cannot', () => {
   assert.equal(purchaseOrderMailto({ ...farm, to: 'buyer@farm.test, other@farm.test' }), null);
 
   const key = purchaseOrderLineKey(farm);
+  const suffixed = farm.body
+    .split('\n')
+    .map((line, index) => `${line}\t${farm.productIds[index] ?? ''}`)
+    .join('\n');
+  assert.equal(purchaseOrderLineKey({ ...farm, body: suffixed }), key);
   assert.equal(purchaseOrderLineKey({ ...farm, productIds: [...farm.productIds] }), key);
   assert.equal(
     purchaseOrderLineKey({ ...farm, productIds: [...farm.productIds, farm.productIds[0] ?? ''] }),

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import test from 'node:test';
+import test, { after } from 'node:test';
 import { prisma } from '@/lib/db/prisma';
 import { purchaseOrderLineKey } from '@/components/features/orders/supplierMail';
 import {
@@ -16,6 +16,42 @@ import {
 
 const databaseUrl = process.env.DATABASE_URL?.trim() ?? '';
 const hasDb = Boolean(databaseUrl) && process.env.FRESHLOOP_DB_TESTS !== '0';
+
+let restoreDatabaseTimezone: (() => Promise<void>) | null = null;
+
+after(async () => {
+  if (!restoreDatabaseTimezone) return;
+  const restore = restoreDatabaseTimezone;
+  restoreDatabaseTimezone = null;
+  await restore();
+});
+
+function quoteDatabaseIdent(name: string): string {
+  return `"${name.replace(/"/g, '""')}"`;
+}
+
+/** Point new connections at America/Toronto, then put the original zone back in after(). */
+async function useTorontoTimezone(t: { after: (fn: () => Promise<void>) => void }): Promise<void> {
+  const shown = await prisma.$queryRawUnsafe<Array<Record<string, string>>>('SHOW timezone');
+  const original = Object.values(shown[0] ?? {})[0] || 'UTC';
+  const [{ name }] = await prisma.$queryRaw<[{ name: string }]>`SELECT current_database() AS name`;
+  const database = quoteDatabaseIdent(name);
+  const zone = `'${original.replace(/'/g, "''")}'`;
+  const restore = async () => {
+    await prisma.$executeRawUnsafe(`ALTER DATABASE ${database} SET timezone TO ${zone}`);
+    await prisma.$disconnect();
+    await prisma.$connect();
+  };
+  restoreDatabaseTimezone = restore;
+  t.after(async () => {
+    if (!restoreDatabaseTimezone) return;
+    await restoreDatabaseTimezone();
+    restoreDatabaseTimezone = null;
+  });
+  await prisma.$executeRawUnsafe(`ALTER DATABASE ${database} SET timezone TO 'America/Toronto'`);
+  await prisma.$disconnect();
+  await prisma.$connect();
+}
 
 test('marking an order sent without a recipient is rejected', async () => {
   const result = await submitPurchaseOrder({
@@ -412,16 +448,7 @@ test('sending one product leaves the other approved and orderable', { skip: !has
     t.skip('Database unreachable.');
     return;
   }
-  const [{ name }] = await prisma.$queryRaw<[{ name: string }]>`SELECT current_database() AS name`;
-  const database = `"${name.replace(/"/g, '""')}"`;
-  await prisma.$executeRawUnsafe(`ALTER DATABASE ${database} SET timezone TO 'America/Toronto'`);
-  await prisma.$disconnect();
-  await prisma.$connect();
-  t.after(async () => {
-    await prisma.$executeRawUnsafe(`ALTER DATABASE ${database} SET timezone TO 'UTC'`);
-    await prisma.$disconnect();
-    await prisma.$connect();
-  });
+  await useTorontoTimezone(t);
 
   const stamp = `po-partial-${Date.now()}`;
   const supplier = await prisma.supplier.create({ data: { name: `PO Partial ${stamp}` } });
@@ -471,6 +498,127 @@ test('sending one product leaves the other approved and orderable', { skip: !has
   const sentRow = await prisma.purchaseOrderEmail.findFirst({ where: { id: sent.id } });
   assert.equal(sentRow?.status, 'SENT');
   assert.deepEqual(sentRow?.productIds, ['A']);
+});
+
+test('approve then send the same lines is one sent purchase order', { skip: !hasDb }, async (t) => {
+  try {
+    await prisma.$connect();
+  } catch {
+    t.skip('Database unreachable.');
+    return;
+  }
+
+  const stamp = `po-same-${Date.now()}`;
+  const supplier = await prisma.supplier.create({ data: { name: `PO Same ${stamp}` } });
+  const productIds = ['A'];
+  const plain = '1 case - A';
+  const stored = `${plain}\tA`;
+  const lineKey = purchaseOrderLineKey({
+    supplier: supplier.name,
+    productIds,
+    body: stored,
+  });
+
+  t.after(async () => {
+    await prisma.purchaseOrderEmail.deleteMany({ where: { supplierId: supplier.id } });
+    await prisma.supplier.delete({ where: { id: supplier.id } });
+  });
+
+  assert.equal(
+    purchaseOrderLineKey({ supplier: supplier.name, productIds, body: plain }),
+    lineKey
+  );
+  const approved = await submitPurchaseOrder({
+    supplierId: supplier.id,
+    supplierName: supplier.name,
+    toEmail: 'buyer@farm.test',
+    subject: 'Purchase order',
+    body: stored,
+    lineKey,
+    productIds,
+    actorId: 'staff-1',
+    status: 'APPROVED',
+  });
+  assert.equal(approved.ok, true);
+  if (!approved.ok) return;
+  const sent = await submitPurchaseOrder({
+    supplierId: supplier.id,
+    supplierName: supplier.name,
+    toEmail: 'buyer@farm.test',
+    subject: 'Purchase order',
+    body: plain,
+    lineKey,
+    productIds,
+    actorId: 'staff-1',
+    status: 'SENT',
+  });
+  assert.equal(sent.ok, true);
+  if (!sent.ok) return;
+  assert.equal(sent.id, approved.id);
+  assert.equal(sent.status, 'SENT');
+  const rows = await prisma.purchaseOrderEmail.findMany({ where: { supplierId: supplier.id } });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]?.status, 'SENT');
+  assert.deepEqual(rows[0]?.productIds, ['A']);
+});
+
+test('a trimmed approval that already has an open order is removed', { skip: !hasDb }, async (t) => {
+  try {
+    await prisma.$connect();
+  } catch {
+    t.skip('Database unreachable.');
+    return;
+  }
+
+  const stamp = `po-empty-${Date.now()}`;
+  const supplier = await prisma.supplier.create({ data: { name: `PO Empty ${stamp}` } });
+  const base = {
+    supplierId: supplier.id,
+    supplierName: supplier.name,
+    toEmail: 'buyer@farm.test',
+    subject: 'Purchase order',
+    actorId: 'staff-1',
+  };
+
+  t.after(async () => {
+    await prisma.purchaseOrderEmail.deleteMany({ where: { supplierId: supplier.id } });
+    await prisma.supplier.delete({ where: { id: supplier.id } });
+  });
+
+  const approvedC = await submitPurchaseOrder({
+    ...base,
+    body: '1 case - C\tC',
+    lineKey: 'c-only',
+    productIds: ['C'],
+    status: 'APPROVED',
+  });
+  const approvedBoth = await submitPurchaseOrder({
+    ...base,
+    body: '1 case - A\tA\n1 case - C\tC',
+    lineKey: 'ac',
+    productIds: ['A', 'C'],
+    status: 'APPROVED',
+  });
+  assert.equal(approvedC.ok && approvedBoth.ok, true);
+  if (!approvedC.ok || !approvedBoth.ok) return;
+  const sent = await submitPurchaseOrder({
+    ...base,
+    body: '1 case - A',
+    lineKey: 'a-only',
+    productIds: ['A'],
+    status: 'SENT',
+  });
+  assert.equal(sent.ok, true);
+
+  const leftover = await prisma.purchaseOrderEmail.findFirst({ where: { id: approvedBoth.id } });
+  assert.equal(leftover, null);
+  const kept = await prisma.purchaseOrderEmail.findFirst({ where: { id: approvedC.id } });
+  assert.equal(kept?.status, 'APPROVED');
+  assert.deepEqual(kept?.productIds, ['C']);
+  const empty = await prisma.purchaseOrderEmail.count({
+    where: { supplierId: supplier.id, status: 'APPROVED', productIds: { isEmpty: true } },
+  });
+  assert.equal(empty, 0);
 });
 
 test('history dedupes supplier ids and caps each supplier at 50 rows', { skip: !hasDb }, async (t) => {
