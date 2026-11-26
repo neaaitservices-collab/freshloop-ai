@@ -9,7 +9,7 @@ import type { ReceivingLogPostInput } from '@/lib/domains/receiving/receivingLog
 const databaseUrl = process.env.DATABASE_URL?.trim() ?? '';
 const hasDb = Boolean(databaseUrl) && process.env.FRESHLOOP_DB_TESTS !== '0';
 
-function line(overrides: Partial<ReceivingLogPostInput>): ReceivingLogPostInput {
+function line(overrides: Partial<ReceivingLogPostInput> & { remember?: boolean }): ReceivingLogPostInput {
   return {
     itemName: 'RED CABBAGE CASE',
     supplierCode: 'CAB4C',
@@ -225,6 +225,167 @@ test('a second invoice of the same codes reuses the products', { skip: !hasDb },
       where: { supplierId: supplier.id, matchType: 'code', productId: { in: firstIds } },
     }),
     2
+  );
+});
+
+test('a LEMONS 90/95 name tie creates no LEM95 link', { skip: !hasDb }, async (t) => {
+  try {
+    await prisma.$connect();
+  } catch {
+    t.skip('Database unreachable.');
+    return;
+  }
+  const token = `lx${Date.now().toString(36)}`;
+  const supplier = await prisma.supplier.create({ data: { name: `Deodato lemons ${token}` } });
+  const lemons = await Promise.all(
+    ['LEMONS 90', 'LEMONS 95'].map((name) =>
+      prisma.product.create({
+        data: {
+          name: `${name} ${token}`,
+          department: 'PRODUCE',
+          supplier: 'Old dock',
+          standardCost: 4,
+          shelfLifeDays: 7,
+        },
+      })
+    )
+  );
+  const ids = lemons.map((row) => row.id);
+  t.after(() => cleanup(ids, [supplier.id]));
+  const invoiceName = `LEMONS 90/95 ${token}`;
+  const posted = await prisma.$transaction((tx) =>
+    postInvoiceReceiptBatch(tx, [line({ itemName: invoiceName, supplierCode: 'LEM95' })], {
+      staffId: 'staff-review',
+      supplierName: supplier.name,
+      supplierId: supplier.id,
+    })
+  );
+  const receivedId = posted.postedRows[0]?.stock.posted ? posted.postedRows[0].stock.productId : '';
+  const keptId = [...ids].sort()[0];
+  assert.equal(receivedId, keptId);
+  assert.equal(await prisma.product.count({ where: { name: invoiceName } }), 0);
+  assert.equal(
+    await prisma.supplierProductMatch.count({
+      where: { supplierId: supplier.id, matchType: 'code', matchKey: 'LEM95' },
+    }),
+    0
+  );
+});
+
+test('Kale with remember unticked creates no link', { skip: !hasDb }, async (t) => {
+  try {
+    await prisma.$connect();
+  } catch {
+    t.skip('Database unreachable.');
+    return;
+  }
+  const token = `kx${Date.now().toString(36)}`;
+  const supplier = await prisma.supplier.create({ data: { name: `Deodato kale ${token}` } });
+  const kale = await prisma.product.create({
+    data: {
+      name: `Kale ${token}`,
+      department: 'PRODUCE',
+      supplier: 'Old dock',
+      standardCost: 3,
+      shelfLifeDays: 7,
+    },
+  });
+  t.after(() => cleanup([kale.id], [supplier.id]));
+  const posted = await prisma.$transaction((tx) =>
+    postInvoiceReceiptBatch(
+      tx,
+      [line({ itemName: `Kale ${token}`, supplierCode: `KA${token.slice(-4).toUpperCase()}`, remember: false })],
+      { staffId: 'staff-review', supplierName: supplier.name, supplierId: supplier.id }
+    )
+  );
+  assert.equal(posted.postedRows[0]?.stock.posted, true);
+  if (posted.postedRows[0]?.stock.posted) {
+    assert.equal(posted.postedRows[0].stock.productId, kale.id);
+  }
+  assert.equal(
+    await prisma.supplierProductMatch.count({
+      where: { supplierId: supplier.id, matchType: 'code' },
+    }),
+    0
+  );
+});
+
+test('Kale with remember ticked saves the code link', { skip: !hasDb }, async (t) => {
+  try {
+    await prisma.$connect();
+  } catch {
+    t.skip('Database unreachable.');
+    return;
+  }
+  const token = `kr${Date.now().toString(36)}`;
+  const code = `KR${token.slice(-4).toUpperCase()}`;
+  const supplier = await prisma.supplier.create({ data: { name: `Deodato kale remember ${token}` } });
+  const kale = await prisma.product.create({
+    data: {
+      name: `Kale ${token}`,
+      department: 'PRODUCE',
+      supplier: 'Old dock',
+      standardCost: 3,
+      shelfLifeDays: 7,
+    },
+  });
+  t.after(() => cleanup([kale.id], [supplier.id]));
+  const posted = await prisma.$transaction((tx) =>
+    postInvoiceReceiptBatch(tx, [line({ itemName: `Kale ${token}`, supplierCode: code, remember: true })], {
+      staffId: 'staff-review',
+      supplierName: supplier.name,
+      supplierId: supplier.id,
+    })
+  );
+  const receivedId = posted.postedRows[0]?.stock.posted ? posted.postedRows[0].stock.productId : '';
+  assert.equal(receivedId, kale.id);
+  const link = await prisma.supplierProductMatch.findFirst({
+    where: { supplierId: supplier.id, matchType: 'code', matchKey: code },
+  });
+  assert.equal(link?.productId, kale.id);
+});
+
+test('a new product still gets its link and is reused on a second invoice', { skip: !hasDb }, async (t) => {
+  try {
+    await prisma.$connect();
+  } catch {
+    t.skip('Database unreachable.');
+    return;
+  }
+  const token = `nx${Date.now().toString(36)}`;
+  const code = `NW${token.slice(-6).toUpperCase()}`;
+  const supplier = await prisma.supplier.create({ data: { name: `Deodato new ${token}` } });
+  const createdIds: string[] = [];
+  t.after(() => cleanup(createdIds, [supplier.id]));
+  const first = await prisma.$transaction((tx) =>
+    postInvoiceReceiptBatch(tx, [line({ itemName: `New herb ${token}`, supplierCode: code })], {
+      staffId: 'staff-review',
+      supplierName: supplier.name,
+      supplierId: supplier.id,
+    })
+  );
+  const productId = first.postedRows[0]?.stock.posted ? first.postedRows[0].stock.productId : '';
+  assert.ok(productId);
+  createdIds.push(productId);
+  const link = await prisma.supplierProductMatch.findFirst({
+    where: { supplierId: supplier.id, matchType: 'code', matchKey: code },
+  });
+  assert.equal(link?.productId, productId);
+  const second = await prisma.$transaction((tx) =>
+    postInvoiceReceiptBatch(tx, [line({ itemName: `Renamed herb ${token}`, supplierCode: code })], {
+      staffId: 'staff-review',
+      supplierName: supplier.name,
+      supplierId: supplier.id,
+    })
+  );
+  const reusedId = second.postedRows[0]?.stock.posted ? second.postedRows[0].stock.productId : '';
+  assert.equal(reusedId, productId);
+  assert.equal(await prisma.product.count({ where: { id: productId } }), 1);
+  assert.equal(
+    await prisma.supplierProductMatch.count({
+      where: { supplierId: supplier.id, matchType: 'code', matchKey: code },
+    }),
+    1
   );
 });
 

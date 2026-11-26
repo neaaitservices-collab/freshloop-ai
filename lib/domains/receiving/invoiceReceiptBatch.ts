@@ -473,7 +473,7 @@ export async function postInvoiceReceiptBatch(
   );
 
   await updateExistingProducts(tx, catalogRowsFor(work, productFor, pending, label));
-  await saveSupplierCodeLinks(tx, work, productFor, supplierId, staffId);
+  await saveSupplierCodeLinks(tx, work, productFor, supplierId, staffId, assignment);
 
   const sums = await tx.inventoryTransaction.groupBy({
     by: ['productId'],
@@ -715,18 +715,26 @@ async function updateExistingProducts(tx: LotTx, rows: ExistingCatalogUpdate[]):
   );
 }
 
+/** Clerk remember opt-in copied onto the receipt line. */
+function rememberSupplierCode(post: ReceivingLogPostInput): boolean {
+  return (post as ReceivingLogPostInput & { remember?: boolean }).remember === true;
+}
+
 async function saveSupplierCodeLinks(
   tx: LotTx,
   work: PreparedLine[],
   productFor: (index: number) => CatalogProduct,
   supplierId: string,
-  staffId: string
+  staffId: string,
+  assignment: ReadonlyMap<number, { existingId: string | null }>
 ): Promise<void> {
   if (!supplierId) return;
   const rows = new Map<string, Prisma.SupplierProductMatchCreateManyInput>();
   for (const line of work) {
     const matchKey = skuOf(line.post);
     if (!matchKey || rows.has(matchKey)) continue;
+    const createdHere = assignment.get(line.index)?.existingId == null;
+    if (!createdHere && !rememberSupplierCode(line.post)) continue;
     const printed = (line.post.supplierCode ?? matchKey).trim().slice(0, 160);
     rows.set(matchKey, {
       supplierId,
