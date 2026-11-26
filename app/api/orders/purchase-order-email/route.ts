@@ -7,7 +7,7 @@ import { prisma } from '@/lib/db/prisma';
 import { purchaseOrderLineKey, singleSupplierEmail } from '@/components/features/orders/supplierMail';
 import {
   dedupePurchaseOrderLines,
-  purchaseOrderSupplierIdSchema,
+  purchaseOrderSupplierIdsSchema,
 } from '@/lib/domains/orders/purchaseOrderSubmit';
 import {
   findOpenPurchaseOrder,
@@ -59,7 +59,7 @@ export async function GET(req: NextRequest) {
     const actor = await requireManagerStaff();
     const limited = assertMutationRateLimit(actor.id, 'purchase-order-history', 60);
     if (limited) return limited;
-    const parsed = purchaseOrderSupplierIdSchema.safeParse(req.nextUrl.searchParams.get('supplierId') ?? '');
+    const parsed = purchaseOrderSupplierIdsSchema.safeParse(req.nextUrl.searchParams.getAll('supplierId'));
     if (!parsed.success) {
       return apiError('A supplier id is required.', 400);
     }

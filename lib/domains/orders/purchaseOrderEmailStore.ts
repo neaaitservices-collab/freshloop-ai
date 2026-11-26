@@ -7,6 +7,7 @@ import {
   planPurchaseOrderSubmit,
   PURCHASE_ORDER_HISTORY_LIMIT,
   purchaseOrderRecipientBlock,
+  trimCoveredPurchaseOrder,
   type DurablePurchaseOrderStatus,
   type PurchaseOrderHistoryEntry,
   type PurchaseOrderLineRecord,
@@ -256,7 +257,7 @@ async function closeCoveredApproved(
       updatedAt: { gte: windowStart },
       id: { not: keepId },
     },
-    select: { id: true, status: true, productIds: true, updatedAt: true },
+    select: { id: true, status: true, productIds: true, updatedAt: true, supplierName: true, body: true },
   });
   const receipts = await latestReceipts(
     db,
@@ -284,12 +285,18 @@ async function closeCoveredApproved(
     if (fullIds.includes(row.id)) continue;
     const lines = dedupePurchaseOrderLines(row.productIds);
     if (!lines.some((id) => sent.has(id))) continue;
-    const remaining = lines.filter((id) => !sent.has(id));
-    if (remaining.length === 0) continue;
+    const trimmed = trimCoveredPurchaseOrder({
+      supplier: row.supplierName,
+      productIds: lines,
+      body: row.body,
+      sentProductIds,
+    });
+    if (!trimmed) continue;
     await db.purchaseOrderEmail.updateMany({
       where: { id: row.id, status: 'APPROVED', updatedAt: { gte: windowStart } },
-      data: { productIds: remaining },
+      data: { productIds: trimmed.productIds, body: trimmed.body, lineKey: trimmed.lineKey },
     });
+    await db.$executeRaw`UPDATE "purchase_order_emails" SET "updated_at" = ${row.updatedAt} WHERE "id" = ${row.id}`;
   }
   return closedIds;
 }
@@ -370,11 +377,12 @@ export async function submitPurchaseOrder(
   });
 }
 
-/** Newest purchase orders for one supplier, by the same timestamp used for open marks. */
-export async function listPurchaseOrders(supplierId: string): Promise<PurchaseOrderHistoryEntry[]> {
+const historyOrder = [{ updatedAt: 'desc' }, { createdAt: 'desc' }, { id: 'desc' }] as const;
+
+async function listSupplierOrders(supplierId: string) {
   const rows = await prisma.purchaseOrderEmail.findMany({
     where: { supplierId },
-    orderBy: [{ updatedAt: 'desc' }],
+    orderBy: [...historyOrder],
     take: PURCHASE_ORDER_HISTORY_LIMIT,
     select: {
       id: true,
@@ -389,6 +397,35 @@ export async function listPurchaseOrders(supplierId: string): Promise<PurchaseOr
       updatedAt: true,
     },
   });
+  if (rows.length < PURCHASE_ORDER_HISTORY_LIMIT) return rows;
+  const windowStart = new Date(Date.now() - PURCHASE_ORDER_OPEN_WINDOW_MS);
+  const extra = await prisma.purchaseOrderEmail.findMany({
+    where: {
+      supplierId,
+      id: { notIn: rows.map((row) => row.id) },
+      updatedAt: { gte: windowStart },
+    },
+    orderBy: [...historyOrder],
+    select: {
+      id: true,
+      supplierId: true,
+      supplierName: true,
+      toEmail: true,
+      subject: true,
+      status: true,
+      lineKey: true,
+      productIds: true,
+      createdAt: true,
+      updatedAt: true,
+    },
+  });
+  return [...rows, ...extra];
+}
+
+/** Newest purchase orders for these suppliers. Open cycles are included even past the page cap. */
+export async function listPurchaseOrders(supplierIds: readonly string[]): Promise<PurchaseOrderHistoryEntry[]> {
+  const groups = await Promise.all(supplierIds.map((supplierId) => listSupplierOrders(supplierId)));
+  const rows = groups.flat();
   const now = new Date();
   const receipts = await latestReceipts(
     prisma,

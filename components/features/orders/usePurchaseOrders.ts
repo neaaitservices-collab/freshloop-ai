@@ -15,6 +15,7 @@ import {
 } from '@/components/features/orders/supplierMail';
 import type { StockLevel } from '@/lib/domains/inventory/stock';
 import {
+  applyPurchaseOrderHistoryLoad,
   purchaseOrderHistoryEntrySchema,
   purchaseOrderHistoryResponseSchema,
   purchaseOrderSaveResponseSchema,
@@ -56,27 +57,24 @@ export function usePurchaseOrders(input: {
       return;
     }
     let cancelled = false;
-    void Promise.all(
-      ids.map(async (supplierId) => {
-        const response = await fetch(
-          `/api/orders/purchase-order-email?supplierId=${encodeURIComponent(supplierId)}`,
-          { cache: 'no-store' }
-        );
+    const params = new URLSearchParams();
+    for (const id of ids) params.append('supplierId', id);
+    void fetch(`/api/orders/purchase-order-email?${params.toString()}`, { cache: 'no-store' })
+      .then(async (response) => {
         const parsed = purchaseOrderHistoryResponseSchema.safeParse(await response.json());
         if (!response.ok || !parsed.success || !parsed.data.success || !parsed.data.orders) {
           throw new Error(parsed.success ? parsed.data.error : undefined);
         }
         return parsed.data.orders;
       })
-    )
-      .then((groups) => {
-        if (!cancelled) setOrders(groups.flat());
+      .then((loaded) => {
+        if (!cancelled) setOrders((current) => applyPurchaseOrderHistoryLoad(current, { ok: true, orders: loaded }));
       })
       .catch((error: unknown) => {
         if (cancelled) return;
         const message = error instanceof Error && error.message ? error.message : '';
         onError(message || 'Purchase order history could not be loaded.');
-        setOrders([]);
+        setOrders((current) => applyPurchaseOrderHistoryLoad(current, { ok: false }));
       });
     return () => {
       cancelled = true;

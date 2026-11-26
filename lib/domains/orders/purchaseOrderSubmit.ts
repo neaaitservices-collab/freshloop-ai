@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { singleSupplierEmail } from '@/components/features/orders/supplierMail';
+import { purchaseOrderLineKey, singleSupplierEmail } from '@/components/features/orders/supplierMail';
 
 export const purchaseOrderStatusSchema = z.enum(['PENDING', 'SENT', 'FAILED', 'OPENED', 'APPROVED']);
 
@@ -38,6 +38,48 @@ export const purchaseOrderSaveResponseSchema = z.object({
 });
 
 export const purchaseOrderSupplierIdSchema = z.string().trim().min(1).max(128);
+
+/** One history request can name every supplier on the buy list. */
+export const purchaseOrderSupplierIdsSchema = z.array(purchaseOrderSupplierIdSchema).min(1).max(200);
+
+/**
+ * A failed history load must not replace orders already on screen.
+ * Replacing them with an empty list drops Sent and Approved marks.
+ */
+export function applyPurchaseOrderHistoryLoad<T>(
+  current: readonly T[] | null,
+  loaded: { ok: true; orders: readonly T[] } | { ok: false }
+): T[] {
+  if (!loaded.ok) return current ? [...current] : [];
+  return [...loaded.orders];
+}
+
+/** Drop sent products from an approved order and rebuild its line key. Null when nothing is trimmed. */
+export function trimCoveredPurchaseOrder(input: {
+  supplier: string;
+  productIds: readonly string[];
+  body: string;
+  sentProductIds: readonly string[];
+}): { productIds: string[]; body: string; lineKey: string } | null {
+  const sent = new Set(dedupePurchaseOrderLines(input.sentProductIds));
+  const ids = dedupePurchaseOrderLines(input.productIds);
+  const bodyLines = input.body.replace(/\r\n/g, '\n').split('\n');
+  const keptIds: string[] = [];
+  const keptLines: string[] = [];
+  ids.forEach((id, index) => {
+    if (sent.has(id)) return;
+    keptIds.push(id);
+    const line = bodyLines[index];
+    if (typeof line === 'string') keptLines.push(line);
+  });
+  if (keptIds.length === 0 || keptIds.length === ids.length) return null;
+  const body = keptLines.join('\n');
+  return {
+    productIds: keptIds,
+    body,
+    lineKey: purchaseOrderLineKey({ supplier: input.supplier, productIds: keptIds, body }),
+  };
+}
 
 export const PURCHASE_ORDER_RECIPIENT_REQUIRED = 'Enter one supplier email address.';
 

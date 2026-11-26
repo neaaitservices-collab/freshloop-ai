@@ -1,10 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { purchaseOrderLineKey } from '@/components/features/orders/supplierMail';
+import { marksFromPurchaseOrders } from '@/components/features/orders/supplierMail';
 import {
   PURCHASE_ORDER_RECIPIENT_REQUIRED,
+  applyPurchaseOrderHistoryLoad,
   coveredApprovedOrderIds,
   dedupePurchaseOrderLines,
   planPurchaseOrderSubmit,
+  trimCoveredPurchaseOrder,
+  type PurchaseOrderHistoryEntry,
   type PurchaseOrderLineRecord,
 } from '@/lib/domains/orders/purchaseOrderSubmit';
 
@@ -116,4 +121,51 @@ test('approved stays approved, sent stays sent, and sent is not downgraded', () 
   if (!downgrade.ok) return;
   assert.equal(downgrade.decision.status, null);
   assert.equal(downgrade.decision.duplicate, true);
+});
+
+test('a failed history load keeps sent marks', () => {
+  const current: PurchaseOrderHistoryEntry[] = [
+    {
+      id: 'po-a',
+      supplierId: 'sup-1',
+      supplierName: 'Farm',
+      toEmail: 'buyer@farm.test',
+      subject: 'PO',
+      status: 'SENT',
+      lineKey: 'a',
+      productIds: ['A'],
+      createdAt: '2026-11-20T00:00:00.000Z',
+      updatedAt: '2026-11-20T00:00:00.000Z',
+      open: true,
+    },
+  ];
+  const kept = applyPurchaseOrderHistoryLoad(current, { ok: false });
+  assert.equal(marksFromPurchaseOrders(kept).A, 'sent');
+  const replaced = applyPurchaseOrderHistoryLoad(current, { ok: true, orders: [] });
+  assert.equal(marksFromPurchaseOrders(replaced).A, undefined);
+});
+
+test('trimming a partial send rebuilds the line key and body', () => {
+  const trimmed = trimCoveredPurchaseOrder({
+    supplier: 'Farm',
+    productIds: ['A', 'C'],
+    body: '1 case - A\n1 case - C',
+    sentProductIds: ['A'],
+  });
+  assert.ok(trimmed);
+  assert.deepEqual(trimmed?.productIds, ['C']);
+  assert.equal(trimmed?.body, '1 case - C');
+  assert.equal(
+    trimmed?.lineKey,
+    purchaseOrderLineKey({ supplier: 'Farm', productIds: ['C'], body: '1 case - C' })
+  );
+  assert.equal(
+    trimCoveredPurchaseOrder({
+      supplier: 'Farm',
+      productIds: ['A', 'C'],
+      body: '1 case - A\n1 case - C',
+      sentProductIds: ['A', 'C'],
+    }),
+    null
+  );
 });
