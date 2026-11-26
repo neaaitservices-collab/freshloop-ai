@@ -17,6 +17,7 @@ import {
   RETIRED_POSITIONAL_DELIVERY_ERROR,
 } from '@/lib/domains/receiving/deliveryIdentity';
 import { sampleReceivingRejection } from '@/lib/domains/receiving/sampleReceivingGuard';
+import { normalizeSupplierCode } from '@/lib/domains/receiving/supplierProductMatch';
 import { getSupplierNameById } from '@/lib/domains/suppliers/suppliers';
 import { Prisma } from '@prisma/client';
 import { z, ZodError } from 'zod';
@@ -29,14 +30,17 @@ import {
   RETAIL_UNITS,
 } from '@/lib/domains/receiving/yieldPricing';
 import {
+  receivingDepartment,
   receivingDepartmentFieldErrors,
+  resolveReceivingDepartment,
   type ReceivingDepartmentFieldError,
 } from '@/lib/domains/inventory/receivingDepartment';
-import { receivingDepartment } from '@/lib/domains/inventory/receivingDepartment';
 
 export const MAX_RECEIVING_BATCH_SIZE = 80;
 
 export const STOCK_NOT_UPDATED = 'Stock was not updated.';
+export const RECEIPT_TIMEOUT_REASON =
+  'The receipt did not finish in time, so stock was not changed. Try confirming again.';
 export const UNMATCHED_PRODUCT_REASON = 'This line is not matched to a catalog product.';
 export const MISSING_LOCATION_REASON = 'A stock location is missing for this receipt.';
 export const RECEIVING_VALIDATION_REASON = 'A receiving field failed validation.';
@@ -47,6 +51,28 @@ export const ZERO_DOLLAR_REVIEW_REASON =
 /** Explicit numeric zero. A blank cost stays a validation error. */
 export function isZeroDollarReceivingLine(line: { caseCost?: unknown }): boolean {
   return typeof line.caseCost === 'number' && Number.isFinite(line.caseCost) && line.caseCost === 0;
+}
+
+const NON_STOCK_SUPPLIER_CODES = new Set(['FUEL', 'XCALL']);
+
+/** Fuel surcharges and comment rows are not stock, even when a price is printed. */
+export function isNonStockInvoiceLine(line: {
+  supplierCode?: string | null;
+  itemName?: string | null;
+}): boolean {
+  const code = normalizeSupplierCode(line.supplierCode);
+  if (code && NON_STOCK_SUPPLIER_CODES.has(code)) return true;
+  const name = (line.itemName ?? '').trim().toLowerCase();
+  return name === 'fuel surcharge' || name === 'see comment line';
+}
+
+/** $0 rows and non-stock charges stay off the ledger. */
+export function isSkippedInvoiceReceipt(line: {
+  caseCost?: unknown;
+  supplierCode?: string | null;
+  itemName?: string | null;
+}): boolean {
+  return isZeroDollarReceivingLine(line) || isNonStockInvoiceLine(line);
 }
 
 function looksLikeInternalDetail(message: string): boolean {
@@ -100,6 +126,7 @@ export function receivingPostFailureReason(error: unknown): string {
       return STOCK_NOT_UPDATED;
     }
     if (error.code === 'P2002') return 'This delivery is already recorded.';
+    if (error.code === 'P2028') return RECEIPT_TIMEOUT_REASON;
     return STOCK_NOT_UPDATED;
   }
   if (
@@ -146,6 +173,8 @@ export interface ReceivingLogPostInput {
   category?: string;
   /** Receive-screen department, used only when the line cannot be classified. */
   screenDepartment?: string;
+  /** Printed supplier item code. New catalog rows use this as the SKU. */
+  supplierCode?: string;
   /** Client log id (invoice line) for batch result mapping. */
   externalLogId?: string;
 }
@@ -199,6 +228,18 @@ export async function receivingDepartmentGaps(
     (line) => !sampleReceivingRejection(line) && !isZeroDollarReceivingLine(line)
   );
   if (postable.length === 0) return [];
+  const needsCatalog = postable.some(
+    (line) =>
+      resolveReceivingDepartment({
+        itemName: line.itemName,
+        explicitDepartment: line.department,
+        departmentAssumed: line.departmentAssumed,
+        supplier: supplierName,
+        category: line.category,
+        screenDepartment: line.screenDepartment,
+      }) === null
+  );
+  if (!needsCatalog) return [];
   const catalog = await prisma.product.findMany({
     where: { isManufactured: false },
     select: { id: true, name: true },
