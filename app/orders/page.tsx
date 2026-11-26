@@ -1,5 +1,6 @@
 import { cache, Suspense } from 'react';
 import { BuyList } from '@/components/features/orders/BuyList';
+import { PurchaseOrderErrorBoundary } from '@/components/features/orders/PurchaseOrderErrorBoundary';
 import { guardFreshPage } from '@/lib/auth/pageGuard';
 import { parseOrderAlertSearch } from '@/lib/domains/orders/orderAlertLink';
 import { getBuyListLevelsRsc } from '@/lib/domains/serverDataCache';
@@ -35,8 +36,10 @@ export default async function OrdersPage({
     name: oneParam(raw.name),
   });
   return (
-    <Suspense fallback={<BuyList levels={null} alertFocus={alertFocus} />}>
-      <LiveOrders alertFocus={alertFocus} />
-    </Suspense>
+    <PurchaseOrderErrorBoundary>
+      <Suspense fallback={<BuyList levels={null} alertFocus={alertFocus} />}>
+        <LiveOrders alertFocus={alertFocus} />
+      </Suspense>
+    </PurchaseOrderErrorBoundary>
   );
 }

@@ -3,6 +3,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, Check, ChevronDown, Mail, Plus, Printer, Search } from 'lucide-react';
 import { PoEmailPanel } from '@/components/features/orders/PoEmailPanel';
+import { PurchaseOrderHistory } from '@/components/features/orders/PurchaseOrderHistory';
+import { usePurchaseOrders } from '@/components/features/orders/usePurchaseOrders';
 import {
   approvedOrderRows,
   caseWord,
@@ -10,6 +12,8 @@ import {
   draftsForSuppliers,
   groupBySupplier,
   openOrderRows,
+  ordersForSupplier,
+  withSavedRecipient,
   type LineMark,
   type PoDraft,
   type SupplierDirectoryEntry,
@@ -93,7 +97,6 @@ export function BuyList({
   const [error, setError] = useState<string | null>(null);
   const [levelSyncWarning, setLevelSyncWarning] = useState<string | null>(null);
   const [savingId, setSavingId] = useState<string | null>(null);
-  const [marks, setMarks] = useState<Record<string, LineMark>>({});
   const [supplierDirectory, setSupplierDirectory] = useState<SupplierDirectoryEntry[]>([]);
   const [directoryReady, setDirectoryReady] = useState(false);
   const [drafts, setDrafts] = useState<PoDraft[]>([]);
@@ -107,9 +110,40 @@ export function BuyList({
   const saveTimers = useRef<Record<string, number>>({});
   const [printedAt, setPrintedAt] = useState('');
 
+  const {
+    orders: purchaseOrders,
+    ordersLoading,
+    historyReady,
+    marks,
+    supplierIssues,
+    savingSupplier: savingPoSupplier,
+    saveRows,
+    savePurchaseOrder,
+  } = usePurchaseOrders({
+    levels,
+    supplierDirectory,
+    directoryReady,
+    drafts,
+    onError: setError,
+  });
+
   useEffect(() => {
     setPrintedAt(new Date().toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }));
   }, []);
+
+  useEffect(() => {
+    if (!purchaseOrders) return;
+    setDrafts((current) => {
+      if (current.length === 0) return current;
+      let changed = false;
+      const next = current.map((item) => {
+        const filled = withSavedRecipient(item, purchaseOrders);
+        if (filled.to !== item.to || filled.supplierId !== item.supplierId) changed = true;
+        return filled;
+      });
+      return changed ? next : current;
+    });
+  }, [purchaseOrders]);
 
   useEffect(() => {
     let cancelled = false;
@@ -233,11 +267,13 @@ export function BuyList({
         rows: groupedRows[supplier] ?? [],
       })),
       supplierDirectory
-    ).filter((item) => item.productIds.length > 0);
+    )
+      .map((item) => withSavedRecipient(item, purchaseOrders ?? []))
+      .filter((item) => item.productIds.length > 0);
     if (next.length === 0) return;
     setDrafts(next);
     setDraftIndex(0);
-  }, [alertFocus, alertDraftKey, directoryReady, orderingLevels, supplierDirectory]);
+  }, [alertFocus, alertDraftKey, directoryReady, orderingLevels, supplierDirectory, purchaseOrders]);
 
   const activeOrders = useMemo(
     () =>
@@ -360,17 +396,14 @@ export function BuyList({
     group.approved.length > 0 ? group.approved : group.open;
 
   const approve = (productId: string) => {
-    setMarks((current) => (current[productId] === 'sent' ? current : { ...current, [productId]: 'approved' }));
+    if (marks[productId] === 'sent') return;
+    const row = levels.find((item) => item.productId === productId);
+    if (!row) return;
+    void saveRows([row], 'APPROVED');
   };
 
   const approveRows = (rows: StockLevel[]) => {
-    setMarks((current) => {
-      const next = { ...current };
-      for (const row of rows) {
-        if (row.low && next[row.productId] !== 'sent') next[row.productId] = 'approved';
-      }
-      return next;
-    });
+    void saveRows(rows, 'APPROVED');
   };
 
   const approveAllForecasted = () => {
@@ -382,7 +415,9 @@ export function BuyList({
   const activeDraftIndex = drafts.length === 0 ? 0 : Math.min(draftIndex, drafts.length - 1);
 
   const openDrafts = (next: PoDraft[]) => {
-    const list = next.filter((item) => item.productIds.length > 0);
+    const list = next
+      .map((item) => withSavedRecipient(item, purchaseOrders ?? []))
+      .filter((item) => item.productIds.length > 0);
     if (list.length === 0) return;
     setDrafts(list);
     setDraftIndex(0);
@@ -441,6 +476,7 @@ export function BuyList({
                 onEmail={() =>
                   openDrafts([draftForSupplier(supplier, [row], supplierDirectory)])
                 }
+                locked={!historyReady}
                 onApprove={() => approve(row.productId)}
               />
             </li>
@@ -499,7 +535,8 @@ export function BuyList({
                       onEmail={() =>
                         openDrafts([draftForSupplier(supplier, [row], supplierDirectory)])
                       }
-                      onApprove={() => approve(row.productId)}
+                      locked={!historyReady}
+                onApprove={() => approve(row.productId)}
                     />
                   </td>
                 </tr>
@@ -527,6 +564,14 @@ export function BuyList({
     const approved = approvedOrderRows(rows, marks);
     const groupSend = approved.length > 0 ? approved : toOrder;
     const groupCost = toOrder.reduce((sum, row) => sum + row.orderCost, 0);
+    const directoryMatch = supplierDirectory.find(
+      (entry) => entry.name.trim().toLowerCase() === supplier.trim().toLowerCase()
+    );
+    const history = ordersForSupplier(
+      supplier,
+      directoryMatch?.id ?? null,
+      purchaseOrders ?? []
+    );
     return (
       <Card key={supplier} className="overflow-hidden">
         <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -542,7 +587,12 @@ export function BuyList({
             <Button
               variant="secondary"
               className="text-xs"
-              disabled={toOrder.length === 0 || approved.length === toOrder.length}
+              disabled={
+                !historyReady ||
+                savingPoSupplier === supplier ||
+                toOrder.length === 0 ||
+                approved.length === toOrder.length
+              }
               onClick={() => approveRows(toOrder)}
             >
               <Check className="h-3.5 w-3.5" />
@@ -559,6 +609,12 @@ export function BuyList({
             </Button>
           </div>
         </CardHeader>
+        {supplierIssues[supplier] ? (
+          <p role="alert" className="px-4 pb-2 text-sm text-rose-200 sm:px-6">
+            {supplierIssues[supplier]}
+          </p>
+        ) : null}
+        <PurchaseOrderHistory orders={history} loading={ordersLoading} />
         {renderRows(supplier, rows)}
       </Card>
     );
@@ -650,7 +706,7 @@ export function BuyList({
             <Button
               variant="primary"
               className="text-xs"
-              disabled={forecastLines.length === 0}
+              disabled={!historyReady || forecastLines.length === 0}
               onClick={approveAllForecasted}
             >
               <Check className="h-3.5 w-3.5" />
@@ -839,9 +895,21 @@ export function BuyList({
                       current.map((item, index) => (index === activeDraftIndex ? next : item))
                     )
                   }
+                  sendEnabled={historyReady}
                   onClose={() => {
                     setDrafts([]);
                     setDraftIndex(0);
+                  }}
+                  onDelivered={(item) => {
+                    void savePurchaseOrder({
+                      supplier: item.supplier,
+                      supplierId: item.supplierId ?? null,
+                      to: item.to,
+                      subject: item.subject,
+                      body: item.body,
+                      productIds: item.productIds,
+                      status: 'SENT',
+                    });
                   }}
                 />
               ) : null}
@@ -1054,6 +1122,7 @@ function LineActions({
   onAdd,
   onEmail,
   onApprove,
+  locked = false,
 }: {
   row: StockLevel;
   mark: LineMark | undefined;
@@ -1061,6 +1130,7 @@ function LineActions({
   onAdd: () => void;
   onEmail: () => void;
   onApprove: () => void;
+  locked?: boolean;
 }) {
   return (
     <div className="flex flex-wrap justify-end gap-1.5">
@@ -1086,7 +1156,7 @@ function LineActions({
         variant={mark === 'approved' || mark === 'sent' ? 'success' : 'secondary'}
         className="px-2 py-1 text-[11px]"
         aria-pressed={mark === 'approved' || mark === 'sent'}
-        disabled={mark === 'sent' || mark === 'approved' || !row.low}
+        disabled={locked || mark === 'sent' || mark === 'approved' || !row.low}
         onClick={onApprove}
       >
         <Check className="h-3 w-3" />

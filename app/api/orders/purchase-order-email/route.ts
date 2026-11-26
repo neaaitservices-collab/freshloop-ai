@@ -5,7 +5,16 @@ import { requireManagerStaff } from '@/lib/auth/guardRoute';
 import { apiError, apiErrorFromUnknown } from '@/lib/domains/ai/apiError';
 import { prisma } from '@/lib/db/prisma';
 import { purchaseOrderLineKey, singleSupplierEmail } from '@/components/features/orders/supplierMail';
-import { recordPurchaseOrderOpen } from '@/lib/domains/orders/purchaseOrderEmailStore';
+import {
+  dedupePurchaseOrderLines,
+  purchaseOrderSupplierIdsSchema,
+} from '@/lib/domains/orders/purchaseOrderSubmit';
+import {
+  findOpenPurchaseOrder,
+  listPurchaseOrders,
+  recordPurchaseOrderOpen,
+  submitPurchaseOrder,
+} from '@/lib/domains/orders/purchaseOrderEmailStore';
 import { parseJsonBody } from '@/lib/security/parseJsonBody';
 import { assertMutationRateLimit } from '@/lib/security/rateLimit';
 
@@ -22,6 +31,8 @@ const purchaseOrderEmailSchema = z
     reopen: z.boolean().optional(),
     /** Look up an existing open without inserting a row. */
     checkOnly: z.boolean().optional(),
+    /** Persist Approved, or Sent when the buyer uses the mailto link. */
+    status: z.enum(['APPROVED', 'SENT']).optional(),
   })
   .strict();
 
@@ -43,6 +54,24 @@ async function resolveSupplierId(
   return byName?.id ?? null;
 }
 
+export async function GET(req: NextRequest) {
+  try {
+    const actor = await requireManagerStaff();
+    const limited = assertMutationRateLimit(actor.id, 'purchase-order-history', 60);
+    if (limited) return limited;
+    const parsed = purchaseOrderSupplierIdsSchema.safeParse(req.nextUrl.searchParams.getAll('supplierId'));
+    if (!parsed.success) {
+      return apiError('A supplier id is required.', 400);
+    }
+    const orders = await listPurchaseOrders(parsed.data);
+    return NextResponse.json({ success: true, orders });
+  } catch (error) {
+    const authRes = authErrorResponse(error);
+    if (authRes) return authRes;
+    return apiErrorFromUnknown(error, 'Purchase order history could not be loaded.');
+  }
+}
+
 export async function POST(req: NextRequest) {
   try {
     const actor = await requireManagerStaff();
@@ -60,18 +89,16 @@ export async function POST(req: NextRequest) {
       return apiError('A saved supplier is required before opening.', 400);
     }
 
+    const productIds = dedupePurchaseOrderLines(input.productIds);
     const lineKey = purchaseOrderLineKey({
       supplier: input.supplierName,
-      productIds: input.productIds,
+      productIds,
       body: input.body,
     });
 
     if (input.checkOnly === true) {
-      const existing = await prisma.purchaseOrderEmail.findFirst({
-        where: { supplierId, lineKey },
-        select: { createdAt: true },
-      });
-      if (existing) {
+      const existing = await findOpenPurchaseOrder(supplierId, lineKey, productIds);
+      if (existing && existing.status !== 'APPROVED') {
         return NextResponse.json(
           {
             success: false,
@@ -86,6 +113,34 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: true, status: 'READY' });
     }
 
+    if (input.status === 'APPROVED' || input.status === 'SENT') {
+      const submitted = await submitPurchaseOrder({
+        supplierId,
+        supplierName: input.supplierName,
+        toEmail,
+        subject: input.subject,
+        body: input.body,
+        lineKey,
+        productIds,
+        actorId: actor.id,
+        status: input.status,
+      });
+      if (!submitted.ok) {
+        return apiError(submitted.error, 400);
+      }
+      return NextResponse.json({
+        success: true,
+        id: submitted.id,
+        status: submitted.status,
+        openedAt: submitted.openedAt,
+        updatedAt: submitted.updatedAt,
+        duplicate: submitted.duplicate,
+        productIds: submitted.productIds,
+        lineKey: submitted.lineKey,
+        closedIds: submitted.closedIds,
+      });
+    }
+
     const recorded = await recordPurchaseOrderOpen(
       {
         supplierId,
@@ -94,6 +149,7 @@ export async function POST(req: NextRequest) {
         subject: input.subject,
         body: input.body,
         lineKey,
+        productIds,
         actorId: actor.id,
       },
       input.reopen === true
