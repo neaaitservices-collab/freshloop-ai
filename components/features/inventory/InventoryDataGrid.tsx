@@ -140,10 +140,12 @@ export function InventoryDataGrid({
   groups,
   loading,
   onSelect,
+  emptyLabel = 'No items match these filters. Try reset or receive product on Receive.',
 }: {
   groups: Array<{ key: string; label: string; rows: StockLevel[] }>;
   loading: boolean;
   onSelect: (row: StockLevel) => void;
+  emptyLabel?: string;
 }) {
   if (loading) {
     return (
@@ -158,8 +160,8 @@ export function InventoryDataGrid({
   const total = groups.reduce((n, g) => n + g.rows.length, 0);
   if (total === 0) {
     return (
-      <div className="rounded-2xl border border-slate-800 bg-slate-900/50 px-4 py-12 text-center text-sm text-slate-400">
-        No items match these filters. Try reset or receive product on Receive.
+      <div className="rounded-2xl border border-dashed border-slate-700 bg-slate-900/50 px-4 py-12 text-center text-sm text-slate-300 sm:px-6">
+        {emptyLabel}
       </div>
     );
   }

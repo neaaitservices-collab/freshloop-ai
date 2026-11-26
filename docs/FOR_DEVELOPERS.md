@@ -6,7 +6,7 @@ Technical overview for engineers working in this repo: architecture, data model,
 
 ## Product intent (one paragraph)
 
-FreshLoop is a **monolithic Next.js App Router** app for independent grocers. The **canonical source of truth** for floor stock and waste KPIs is the **Prisma `InventoryTransaction` ledger** (`lib/domains/inventory/ledger.ts`, `stock.ts`). UI routes under `app/` call **Route Handlers** in `app/api/*`, which delegate to **`lib/domains/*`**. Some screens (notably parts of **OperationsCenter**) still blend **live ledger data** with **`lib/legacy/mockData`** demo rows when the DB is empty or for UX prototypes.
+FreshLoop is a **monolithic Next.js 16 App Router** app (Node.js **24**) for independent grocers. The **only source of truth** for floor stock, rescue, and waste KPIs is the **Prisma `InventoryTransaction` ledger** (`lib/domains/inventory/ledger.ts`, `stock.ts`, `wasteKpiFromLedgerTotals`). UI routes under `app/` call **Route Handlers** in `app/api/*`, which delegate to **`lib/domains/*`**. Operations, Kitchen, Inventory, and Admin do not read `lib/legacy` (those files are removed). An empty database shows zero dollar KPIs, a withheld waste % when sales are under the ratio floor, and no sample SKUs or sample fusion cards.
 
 ---
 
@@ -14,7 +14,7 @@ FreshLoop is a **monolithic Next.js App Router** app for independent grocers. Th
 
 | Layer | Choice |
 |-------|--------|
-| Runtime | Node.js, Next.js **16.x** App Router |
+| Runtime | Node.js **24** (`engines` / `.nvmrc`), Next.js **16.x** App Router |
 | UI | React **19**, Tailwind **4**, Lucide, Recharts |
 | DB | PostgreSQL (often Supabase), **Prisma 6** |
 | AI | `@google/generative-ai` / `@google/genai`, Gemini for OCR, voice, recipe fusion |
@@ -93,8 +93,7 @@ components/
   auth/                 # RoleProvider
   features/<domain>/    # Feature UI grouped by business area
 lib/
-  domains/              # Business logic (prefer importing from here)
-  legacy/               # mockData, in-memory fallbacks, old db helper
+  domains/              # Ledger-only inventory, stats, kitchen, manufacturing
   utils/                # roles, cn, units
 types/                  # Shared TS types (@/types, re-export @/lib/types)
 prisma/                 # schema, migrations, seed
@@ -123,8 +122,8 @@ See also [PROJECT_STRUCTURE.md](./PROJECT_STRUCTURE.md).
 | `/receive` | ReceiveScreen | YieldPricingDashboard, dispositions |
 | `/inventory` | SlateInventory + master-detail | PATCH/GET via `/api/inventory/levels` |
 | `/inventory/floor` | FloorTransferPage | Clerk-focused transfers |
-| `/operations` | OperationsCenter | KPI + demo ledger + OperationsLiveTransfers |
-| `/kitchen` | Recipe fusion hub | `/api/recipe-fusion`, KitchenSubInventoryPanel |
+| `/operations` | Redirect | Opens `/production`. Recipes, stock, and waste KPI come from the ledger and saved `Recipe` rows |
+| `/kitchen` | Redirect | Opens `/production`. Same ledger-backed production workspace |
 | `/orders` | BuyList | Par/low stock from levels API |
 | `/dashboard`, `/floor`, `/recipes`, `/rescue` | Legacy/alternate entry points | Check before linking in nav |
 
@@ -303,16 +302,24 @@ See repo `AGENTS.md` — this Next version may differ from older docs; check `no
 
 ---
 
-## Legacy vs live (important)
+## Ledger-only data
 
-| Live (Prisma ledger + lots) | Legacy / demo |
-|-----------------------------|----------------|
-| `/api/inventory/levels`, `/move`, receive POST → `postReceipt` / `postProductReceipt` | `lib/legacy/mockData.ts` (avoid for new features) |
-| `InventoryLot` FIFO + `MarkdownEvent` audit | `lib/legacy/db.ts` in-memory helpers (deprecated) |
-| Recipe fusion → `RecipeFusion` table | — |
-| Voice / invoice catalog matching | `loadProductCatalog()` → `Product` rows only |
+| Screen or route | Source |
+|-----------------|--------|
+| `/api/inventory` GET | `getLedgerInventoryItems` (on-hand and kitchen prep from `InventoryTransaction`). Empty catalog returns `liveLedger: null` and `items: []` |
+| `/api/inventory` PATCH | Retired (`410`). Floor status changes post with `POST /api/inventory/move` (`rescue`, `waste`, `markdown`) |
+| `/api/inventory/levels`, `/move`, receive POST | `postReceipt` / `postProductReceipt` → `InventoryTransaction` |
+| Waste % | `calculateRealTimeWastePct` → `wasteKpiFromLedgerTotals`: discard $ plus volumetric scrap $ divided by recognized `Sale` and `POS_Sale` revenue. Markdown loss is not in the ratio. Sales under $100 withhold the percent |
+| `/api/recipe-fusion` GET | `RecipeFusion` rows only. The two retired demo cards are excluded in the Prisma query by name, batch cost, and ingredient lines, including rows that were saved under a uuid. The handler does not invent cards |
+| `/production` (Operations and Kitchen) | Saved `Recipe` rows and the manufacturing catalog. A database error does not substitute demo BOMs |
+| Voice catalog match | Live `/api/inventory/levels`. An empty or failed catalog stays empty |
+| Supplier spoilage counts | Count of ledger `Waste` rows (not quantity or dollars), excluding volumetric scrap by reference id and notes. Matched on the trimmed, case-folded supplier name |
 
-When extending features, **wire new UI to domain functions** that write `InventoryTransaction`. Avoid adding new dependencies on in-memory stores.
+`lib/legacy/mockData.ts` and `lib/legacy/db.ts` are deleted. The `InventoryItem` Prisma model remains so existing databases do not need a migration; live screens do not read it. Do not reintroduce an in-memory catalog.
+
+Demo fusion rows that were already saved are hidden by the list query. They are not deleted by a migration. `scripts/cleanup-legacy-demo-fusion.ts` is an optional, idempotent cleanup. It is not run by install, CI, or deploy. It imports the fingerprint helpers directly and creates its own Prisma client, so `npx tsx scripts/cleanup-legacy-demo-fusion.ts` does not load the app's `server-only` database module. Every environment, including a laptop dry run, requires `FRESHLOOP_ALLOW_DEMO_FUSION_CLEANUP=1` or the script exits non-zero with `Refusing to run` and does not touch the database. It prints the database host and database name, never the password or the full URL. Without `--apply` it lists each match (`id`, name, cost) and the count, and deletes nothing. `FRESHLOOP_ALLOW_DEMO_FUSION_CLEANUP=1 npx tsx scripts/cleanup-legacy-demo-fusion.ts --apply` deletes those same rows; a second `--apply` finds 0. Any run against production needs Nelson's explicit approval before that flag is set.
+
+When extending features, **wire new UI to domain functions** that write `InventoryTransaction`.
 
 ---
 

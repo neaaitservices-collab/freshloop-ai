@@ -360,10 +360,18 @@ export function InventoryMasterDetail({
   };
 
   if (catalog.length === 0) {
+    const storeEmpty = levels.every((row) => !(row.onHand > 0));
     return (
-      <Card>
-        <CardBody className="py-12 text-center text-sm text-slate-400">
-          No in-stock items match your filters.
+      <Card className="border-dashed">
+        <CardBody className="px-4 py-12 text-center sm:px-6">
+          <p className="text-sm font-bold text-slate-200">
+            {storeEmpty ? 'No stock on the ledger' : 'No in-stock items match your filters.'}
+          </p>
+          <p className="mx-auto mt-2 max-w-sm text-sm text-slate-400">
+            {storeEmpty
+              ? 'Receive product to see SKUs here. Sample items are not filled in.'
+              : 'Try another department or clear the search.'}
+          </p>
         </CardBody>
       </Card>
     );

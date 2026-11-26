@@ -13,7 +13,7 @@ import {
   SalePayloadConflictError,
   SaleReplayUnavailableError,
 } from '@/lib/domains/inventory/saleIdempotency';
-import { SCRAP_VOLUMETRIC_BUCKET_KIND } from '@/lib/domains/inventory/volumetricScrapLedger';
+import { volumetricScrapSqlPredicate } from '@/lib/domains/inventory/volumetricScrapLedger';
 import { consumeLotsFifo, LotAllocationError } from '@/lib/domains/inventory/lots';
 import {
   computeWastePct,
@@ -27,6 +27,7 @@ import {
   scrapDollarsPerBucket,
   scrapTotalsForBucketCount,
   wasteNumeratorDollars,
+  type ScrapBucketInputs,
 } from '@/lib/domains/stats/scrapBucketEconomics';
 
 import { prisma } from '@/lib/db/prisma';
@@ -709,6 +710,68 @@ export async function executeBundleSale(
   }
 }
 
+/**
+ * Waste % from ledger totals only: (discard $ + volumetric scrap $) / recognized
+ * Sale and POS_Sale revenue. Markdown loss and the legacy InventoryItem table
+ * are not inputs.
+ */
+export function wasteKpiFromLedgerTotals(input: {
+  discardValue: number;
+  volumetricScrapValue: number;
+  volumetricScrapBucketsCount: number;
+  grossSalesRevenue: number;
+  targetWastePct: number;
+  legacyUnpricedSaleCount: number;
+  legacyUnpricedSaleUnits: number;
+  scrapInputs: ScrapBucketInputs;
+}): WasteKpiReport {
+  const roundedDiscardValue = Number(input.discardValue.toFixed(2));
+  const roundedVolumetricValue = Number(input.volumetricScrapValue.toFixed(2));
+  const totalWasteValue = wasteNumeratorDollars(roundedDiscardValue, roundedVolumetricValue);
+  const roundedGrossSales = input.grossSalesRevenue;
+  const wastePct = computeWastePct(totalWasteValue, roundedGrossSales);
+  const wasteRatio = wastePct === null ? 0 : Number((wastePct / 100).toFixed(4));
+  const isExceedingTarget = wastePct !== null && wastePct > input.targetWastePct;
+  const formulaBreakdown = describeWasteFormulaBreakdown({
+    discard: roundedDiscardValue,
+    scrap: roundedVolumetricValue,
+    sales: roundedGrossSales,
+    wastePct,
+    targetPct: input.targetWastePct,
+    minSalesForRatio: MIN_GROSS_SALES_FOR_WASTE_RATIO,
+  });
+  const legacyDisclosure = legacySaleDisclosure(
+    input.legacyUnpricedSaleCount,
+    input.legacyUnpricedSaleUnits
+  );
+  const oneBucket = scrapTotalsForBucketCount(1, input.scrapInputs);
+
+  return {
+    wastePct,
+    wasteRatio: Number(wasteRatio.toFixed(4)),
+    targetWastePct: input.targetWastePct,
+    isExceedingTarget,
+    trafficLightStatus: isExceedingTarget ? 'RED_BLINKING' : 'GREEN',
+    totalDiscardValue: roundedDiscardValue,
+    volumetricScrapValue: roundedVolumetricValue,
+    volumetricScrapBucketsCount: Number(input.volumetricScrapBucketsCount.toFixed(2)),
+    totalWasteValue,
+    grossSalesRevenue: roundedGrossSales,
+    legacyUnpricedSaleCount: input.legacyUnpricedSaleCount,
+    legacyUnpricedSaleUnits: input.legacyUnpricedSaleUnits,
+    formulaBreakdown: legacyDisclosure
+      ? `${formulaBreakdown} ${legacyDisclosure}`
+      : formulaBreakdown,
+    scrapBucketInputs: {
+      volumeL: input.scrapInputs.volumeL,
+      densityKgPerL: input.scrapInputs.densityKgPerL,
+      costPerKg: input.scrapInputs.costPerKg,
+      kgPerBucket: oneBucket.totalKg,
+      dollarsPerBucket: scrapDollarsPerBucket(input.scrapInputs),
+    },
+  };
+}
+
 // ============================================================================
 // 4. calculateRealTimeWastePct(options)
 // ============================================================================
@@ -736,8 +799,6 @@ export async function calculateRealTimeWastePct(
     const startDate = options?.startDate ?? defaultRange.startDate;
     const endDate = options?.endDate ?? defaultRange.endDate;
     const endExclusive = options?.endExclusive === true;
-    const volumetricPrefix = `${VOLUMETRIC_SCRAP_REF_PREFIX}%`;
-    const volumetricKind = `%${SCRAP_VOLUMETRIC_BUCKET_KIND}%`;
     const wasteTimeSql = endExclusive
       ? Prisma.sql`AND "timestamp" >= ${startDate} AND "timestamp" < ${endDate}`
       : Prisma.sql`AND "timestamp" >= ${startDate} AND "timestamp" <= ${endDate}`;
@@ -748,20 +809,14 @@ export async function calculateRealTimeWastePct(
         SELECT
           COALESCE(SUM(
             CASE
-              WHEN "Reference_ID" LIKE ${volumetricPrefix}
-                OR COALESCE("notes", '') LIKE ${volumetricKind}
-                OR LOWER(COALESCE("notes", '')) LIKE '%volumetric scrap%'
-                OR LOWER(COALESCE("notes", '')) LIKE '%cubeta%'
+              WHEN ${volumetricScrapSqlPredicate()}
               THEN 0
               ELSE ABS("Qty_Change") * "Unit_Cost_At_Time"
             END
           ), 0)::float8 AS "discardValue",
           COALESCE(SUM(
             CASE
-              WHEN "Reference_ID" LIKE ${volumetricPrefix}
-                OR COALESCE("notes", '') LIKE ${volumetricKind}
-                OR LOWER(COALESCE("notes", '')) LIKE '%volumetric scrap%'
-                OR LOWER(COALESCE("notes", '')) LIKE '%cubeta%'
+              WHEN ${volumetricScrapSqlPredicate()}
               THEN COALESCE("scrap_bucket_count", ABS("Qty_Change"))
               ELSE 0
             END
@@ -792,8 +847,6 @@ export async function calculateRealTimeWastePct(
       estimatedWeightPerLiterKg: storeSetting?.estimatedWeightPerLiterKg ?? 0.65,
       defaultScrapCostPerKg: storeSetting?.defaultScrapCostPerKg ?? 3.5,
     });
-    const costPerScrapBucket = scrapDollarsPerBucket(scrapInputs);
-
     const wasteAgg = wasteAggRows[0];
     const totalDiscardValue = Number((wasteAgg?.discardValue ?? 0).toFixed(2));
     let volumetricScrapBucketsCount = Number((wasteAgg?.bucketUnits ?? 0).toFixed(2));
@@ -811,62 +864,17 @@ export async function calculateRealTimeWastePct(
     }
 
     const recognizedSales = sumRecognizedGrossSales(saleLines);
-    const grossSalesRevenue = recognizedSales.grossSalesRevenue;
 
-    // 4. Apply Master Plan Formula: (Valor Total Descarte + Valor Scraps Volumétricos) / Ventas Brutas Totales
-    const roundedDiscardValue = Number(totalDiscardValue.toFixed(2));
-    const roundedVolumetricValue = Number(volumetricScrapValue.toFixed(2));
-    const totalWasteValue = wasteNumeratorDollars(roundedDiscardValue, roundedVolumetricValue);
-    const roundedGrossSales = grossSalesRevenue;
-
-    const wastePct = computeWastePct(totalWasteValue, roundedGrossSales);
-    const wasteRatio =
-      wastePct === null ? 0 : Number((wastePct / 100).toFixed(4));
-    const isExceedingTarget =
-      wastePct !== null && wastePct > targetWastePct;
-    const trafficLightStatus: 'GREEN' | 'RED_BLINKING' = isExceedingTarget
-      ? 'RED_BLINKING'
-      : 'GREEN';
-
-    const formulaBreakdown = describeWasteFormulaBreakdown({
-      discard: roundedDiscardValue,
-      scrap: roundedVolumetricValue,
-      sales: roundedGrossSales,
-      wastePct,
-      targetPct: targetWastePct,
-      minSalesForRatio: MIN_GROSS_SALES_FOR_WASTE_RATIO,
-    });
-    const legacyDisclosure = legacySaleDisclosure(
-      recognizedSales.legacyUnpricedSaleCount,
-      recognizedSales.legacyUnpricedSaleUnits
-    );
-
-    const econ = scrapTotalsForBucketCount(1, scrapInputs);
-
-    return {
-      wastePct,
-      wasteRatio: Number(wasteRatio.toFixed(4)),
+    return wasteKpiFromLedgerTotals({
+      discardValue: totalDiscardValue,
+      volumetricScrapValue,
+      volumetricScrapBucketsCount,
+      grossSalesRevenue: recognizedSales.grossSalesRevenue,
       targetWastePct,
-      isExceedingTarget,
-      trafficLightStatus,
-      totalDiscardValue: roundedDiscardValue,
-      volumetricScrapValue: roundedVolumetricValue,
-      volumetricScrapBucketsCount: Number(volumetricScrapBucketsCount.toFixed(2)),
-      totalWasteValue,
-      grossSalesRevenue: roundedGrossSales,
       legacyUnpricedSaleCount: recognizedSales.legacyUnpricedSaleCount,
       legacyUnpricedSaleUnits: recognizedSales.legacyUnpricedSaleUnits,
-      formulaBreakdown: legacyDisclosure
-        ? `${formulaBreakdown} ${legacyDisclosure}`
-        : formulaBreakdown,
-      scrapBucketInputs: {
-        volumeL: scrapInputs.volumeL,
-        densityKgPerL: scrapInputs.densityKgPerL,
-        costPerKg: scrapInputs.costPerKg,
-        kgPerBucket: econ.totalKg,
-        dollarsPerBucket: costPerScrapBucket,
-      },
-    };
+      scrapInputs,
+    });
   } catch (error) {
     if (error instanceof InventoryLedgerError) throw error;
     throw new InventoryLedgerError(

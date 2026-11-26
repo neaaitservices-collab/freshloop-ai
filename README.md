@@ -7,7 +7,7 @@ FreshLoop AI helps independent fresh grocers eliminate inventory shrinkage and m
 
 ## For developers
 
-**Architecture:** Next.js App Router monolith — UI in `app/` + `components/features/*`, business logic in **`lib/domains/*`**, PostgreSQL via **Prisma**. Floor stock and waste KPIs come from **`InventoryTransaction`** (`lib/domains/inventory/ledger.ts`, `stock.ts`), not from ad hoc UI state.
+**Architecture:** Next.js 16 App Router monolith on Node.js 24 — UI in `app/` + `components/features/*`, business logic in **`lib/domains/*`**, PostgreSQL via **Prisma**. Floor stock, rescue, and waste KPIs come only from the **`InventoryTransaction` ledger** (`lib/domains/inventory/ledger.ts`, `stock.ts`). Operations (`/operations` → `/production`), Kitchen (`/kitchen` → `/production`), Inventory, and Admin render an empty store as zeros and empty lists. They do not fill sample SKUs or sample fusion cards.
 
 **Start here:**
 
@@ -23,7 +23,7 @@ FreshLoop AI helps independent fresh grocers eliminate inventory shrinkage and m
 | Yield & receiving | `lib/domains/receiving/*` |
 | Route handlers | `app/api/**/route.ts` |
 | Staff auth | Auth.js — `middleware.ts`, `components/auth/RoleProvider.tsx` |
-| Mock / demo data | `lib/legacy/*` (avoid for new features) |
+| Waste % | Ledger waste $ ÷ recognized `Sale` / `POS_Sale` revenue (`wasteKpiFromLedgerTotals`) |
 
 After changes: `npm run build`. Client refresh hook: `freshloop-inventory-updated` event.
 
@@ -32,7 +32,8 @@ After changes: `npm run build`. Client refresh hook: `freshloop-inventory-update
 ---
 
 ## 🛠️ Technical Stack
-- **Framework & Frontend**: Next.js 15 (App Router), TypeScript, Tailwind CSS v4, Lucide React icons
+- **Runtime**: Node.js 24 (`package.json` `engines` and `.nvmrc`)
+- **Framework & Frontend**: Next.js 16 (App Router), React 19, TypeScript, Tailwind CSS v4, Lucide React icons
 - **Database & ORM**: Supabase / PostgreSQL with Prisma ORM
 - **AI Engine**: Google Gemini 1.5 Flash via `@google/generative-ai` SDK
 
@@ -114,5 +115,5 @@ See **[docs/PROJECT_STRUCTURE.md](./docs/PROJECT_STRUCTURE.md)** for the current
 
 - `app/` — routes and API handlers only  
 - `components/ui`, `components/layout`, `components/features/*` — UI by domain  
-- `lib/domains/*` — ledger, receiving, stats, AI; `lib/legacy/` for demo APIs  
+- `lib/domains/*` — ledger, receiving, stats, AI. Stock and waste reads and writes go through `InventoryTransaction`  
 - `types/`, `hooks/`, `prisma/`

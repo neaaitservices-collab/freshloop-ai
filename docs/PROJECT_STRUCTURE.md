@@ -39,8 +39,7 @@ Legacy URLs redirect: `/dashboard` → `/admin`, `/floor` → `/inventory/floor`
 | `domains/kitchen/` | Recipe fusion store, prep → fusion items |
 | `domains/catalog/` | Product catalog loaders |
 | `domains/pricing/` | Markdown suggestions |
-| `domains/ai/` | Gemini helpers, API errors |
-| `legacy/` | In-memory demo DB + mock catalog (do not use for new features) |
+| `domains/ai/` | Gemini helpers, API errors. Recipe fusion does not return demo cards |
 | `utils/` | Roles, units, money |
 | `lib/types.ts` | Re-export of `@/types` for backward-compatible imports |
 
