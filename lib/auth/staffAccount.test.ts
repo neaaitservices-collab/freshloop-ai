@@ -11,7 +11,7 @@ import {
 } from '@/lib/auth/staffAccount';
 import type { AuthSessionUser } from '@/lib/auth/staffSnapshot';
 import { activeStaffDirectoryWhere } from '@/lib/domains/auth/staffDirectory';
-import { staffRoleSchema } from '@/lib/security/schemas/staff';
+import { staffRoleSchema, staffUpdateBodySchema } from '@/lib/security/schemas/staff';
 import { houseForRole } from '@/lib/utils/positions';
 import { ROLES, type RoleName } from '@/lib/utils/roles';
 
@@ -37,6 +37,59 @@ function person(overrides: Partial<StaffRecord> = {}): StaffRecord {
     deactivatedAt: null,
     ...overrides,
   };
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function racingMemory(initial: StaffRecord[]) {
+  const users = initial.map((user) => ({ ...user }));
+  let tail: Promise<void> = Promise.resolve();
+  let writes = 0;
+  const db: StaffAccountDb = {
+    async findById(id) {
+      const found = users.find((user) => user.id === id);
+      return found ? { ...found } : null;
+    },
+    async countActiveOwners(exceptId) {
+      const count = users.filter(
+        (user) => user.role === 'ADMIN' && user.deactivatedAt == null && user.id !== exceptId
+      ).length;
+      await delay(20);
+      return count;
+    },
+    async passwordHashFor() {
+      return 'hash';
+    },
+    async update(id, data) {
+      await delay(20);
+      const user = users.find((row) => row.id === id);
+      if (!user) throw new Error(`missing ${id}`);
+      writes += 1;
+      if (data.name !== undefined) user.name = data.name;
+      if (data.email !== undefined) user.email = data.email;
+      if (data.position !== undefined) user.position = data.position;
+      if (data.role !== undefined) user.role = data.role;
+      if (data.deactivatedAt !== undefined) user.deactivatedAt = data.deactivatedAt;
+      if (data.credentialVersionIncrement) user.credentialVersion += 1;
+      return { ...user };
+    },
+    async withActiveOwnerLock(fn) {
+      const previous = tail;
+      let release = () => {};
+      tail = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      await previous;
+      try {
+        return await fn(db);
+      } finally {
+        release();
+      }
+    },
+  };
+  return { db, users, writes: () => writes };
 }
 
 function memory(initial: StaffRecord[]) {
@@ -68,6 +121,9 @@ function memory(initial: StaffRecord[]) {
       if (data.deactivatedAt !== undefined) user.deactivatedAt = data.deactivatedAt;
       if (data.credentialVersionIncrement) user.credentialVersion += 1;
       return { ...user };
+    },
+    async withActiveOwnerLock(fn) {
+      return fn(db);
     },
   };
   return {
@@ -115,7 +171,10 @@ test('role edits are forbidden for every role except owner', async () => {
       (error: unknown) => {
         assert.ok(error instanceof StaffAccountError);
         assert.equal(error.status, 403);
-        assert.match(error.message, /owner/);
+        assert.match(
+          error.message,
+          role === 'STORE_MANAGER' ? /owner/ : /at or above your role/
+        );
         return true;
       }
     );
@@ -278,6 +337,101 @@ test('deactivate keeps the staff row and ledger attribution and blocks that logi
   assert.equal(store.ledgerIntact(), true);
 });
 
+test('a store manager cannot edit an owner or another manager', async () => {
+  const store = memory([
+    person({ id: 'owner-1', name: 'Owner', email: 'owner@freshloop.test', position: 'Owner', role: 'ADMIN' }),
+    person({ id: 'manager-2', name: 'Manager', email: 'manager2@freshloop.test', position: 'Store manager', role: 'STORE_MANAGER' }),
+    person(),
+  ]);
+  await assert.rejects(
+    () =>
+      saveStaffProfile(store.db, actor('STORE_MANAGER', 'manager-1'), 'owner-1', {
+        name: 'Owner',
+        email: 'thief@freshloop.test',
+      }),
+    (error: unknown) => {
+      assert.ok(error instanceof StaffAccountError);
+      assert.equal(error.status, 403);
+      assert.match(error.message, /at or above your role/);
+      return true;
+    }
+  );
+  await assert.rejects(
+    () =>
+      saveStaffProfile(store.db, actor('STORE_MANAGER', 'manager-1'), 'manager-2', {
+        name: 'Manager',
+        email: 'manager2@freshloop.test',
+      }),
+    (error: unknown) => {
+      assert.ok(error instanceof StaffAccountError);
+      assert.equal(error.status, 403);
+      return true;
+    }
+  );
+  const saved = await saveStaffProfile(store.db, actor('STORE_MANAGER', 'manager-1'), 'floor-1', profile);
+  assert.equal(saved.role, 'FLOOR_STAFF');
+  assert.equal(store.users.find((user) => user.id === 'owner-1')?.email, 'owner@freshloop.test');
+  assert.equal(store.writes(), 1);
+});
+
+test('an explicit role is not overridden by a conflicting position', async () => {
+  const store = memory([
+    person(),
+    person({ id: 'owner-1', role: 'ADMIN', position: 'Owner', email: 'owner@freshloop.test' }),
+  ]);
+  await assert.rejects(
+    () =>
+      saveStaffProfile(store.db, actor('ADMIN', 'owner-1'), 'floor-1', {
+        ...profile,
+        role: 'FLOOR_STAFF',
+        position: 'Owner',
+      }),
+    (error: unknown) => {
+      assert.ok(error instanceof StaffAccountError);
+      assert.equal(error.status, 400);
+      assert.match(error.message, /do not match/);
+      return true;
+    }
+  );
+  assert.equal(store.users.find((user) => user.id === 'floor-1')?.role, 'FLOOR_STAFF');
+  assert.equal(store.writes(), 0);
+});
+
+test('concurrent demote and deactivate leave one owner', async () => {
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const store = racingMemory([
+      person({ id: 'owner-a', name: 'A', email: 'a@freshloop.test', position: 'Owner', role: 'ADMIN' }),
+      person({ id: 'owner-b', name: 'B', email: 'b@freshloop.test', position: 'Owner', role: 'ADMIN' }),
+    ]);
+    const results = await Promise.allSettled([
+      saveStaffProfile(store.db, actor('ADMIN', 'owner-a'), 'owner-b', {
+        name: 'B',
+        email: 'b@freshloop.test',
+        role: 'STORE_MANAGER',
+      }),
+      deactivateStaff(store.db, actor('ADMIN', 'owner-b'), 'owner-a'),
+    ]);
+    const activeOwners = store.users.filter((user) => user.role === 'ADMIN' && user.deactivatedAt == null);
+    assert.equal(activeOwners.length, 1, `attempt ${attempt}`);
+    assert.equal(results.filter((result) => result.status === 'fulfilled').length, 1);
+    assert.equal(results.filter((result) => result.status === 'rejected').length, 1);
+    assert.equal(store.users.length, 2);
+  }
+});
+
+test('staff update schema rejects an unknown field and accepts a real role', () => {
+  assert.equal(
+    staffUpdateBodySchema.safeParse({
+      name: 'Ada',
+      email: 'ada@freshloop.test',
+      role: 'FLOOR_STAFF',
+      extra: true,
+    }).success,
+    false
+  );
+  assert.equal(staffUpdateBodySchema.safeParse({ name: 'Ada', email: 'ada@freshloop.test' }).success, true);
+});
+
 test('the active roster filter hides deactivated staff', () => {
   assert.deepEqual(activeStaffDirectoryWhere(false), { deactivatedAt: null });
   assert.equal(activeStaffDirectoryWhere(true), undefined);
@@ -307,6 +461,8 @@ test('deactivation is an update of deactivated_at, not a staff or ledger delete'
   assert.equal(store.includes('.delete'), false);
   assert.match(store, /deactivatedAt/);
   assert.match(store, /credentialVersion: \{ increment: 1 \}/);
+  assert.match(store, /FOR UPDATE/);
+  assert.match(store, /ORDER BY "id"/);
   assert.match(route, /deactivateStaff/);
   assert.equal(route.includes('user.delete'), false);
   assert.equal(route.includes('.delete('), false);

@@ -4,9 +4,18 @@ import React from 'react';
 
 type BoundaryState = { error: Error | null };
 
+/** Reload the roster, then show the cards again. */
+export async function runRosterRetry(
+  onRetry: (() => void | Promise<void>) | undefined,
+  clear: () => void
+): Promise<void> {
+  await onRetry?.();
+  clear();
+}
+
 /** Catches a render error in the staff roster without blanking the rest of settings. */
 export class StaffRosterErrorBoundary extends React.Component<
-  { children: React.ReactNode },
+  { children: React.ReactNode; onRetry?: () => void | Promise<void> },
   BoundaryState
 > {
   state: BoundaryState = { error: null };
@@ -33,7 +42,9 @@ export class StaffRosterErrorBoundary extends React.Component<
         <button
           type="button"
           className="inline-flex min-h-11 items-center justify-center rounded-xl border border-rose-800/60 bg-rose-950 px-4 text-sm font-bold text-rose-50 hover:bg-rose-900"
-          onClick={() => this.setState({ error: null })}
+          onClick={() => {
+            void runRosterRetry(this.props.onRetry, () => this.setState({ error: null }));
+          }}
         >
           Try again
         </button>

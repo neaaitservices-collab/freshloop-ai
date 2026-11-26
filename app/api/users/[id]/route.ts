@@ -2,16 +2,17 @@ import { NextRequest, NextResponse } from 'next/server';
 import { handleApiRouteError } from '@/lib/domains/ai/apiError';
 import { authErrorResponse } from '@/lib/auth/http';
 import { verifyPassword } from '@/lib/auth/password';
-import { requireAdminStaff } from '@/lib/auth/guardRoute';
-import { AuthError, requireSessionUser } from '@/lib/auth/session';
+import { requireAdminStaff, requireStaffEditor } from '@/lib/auth/guardRoute';
+import { AuthError } from '@/lib/auth/session';
 import {
+  assertMayEditStaff,
   deactivateStaff,
   reactivateStaff,
   saveStaffProfile,
   StaffAccountError,
   type StaffRecord,
 } from '@/lib/auth/staffAccount';
-import { staffAccountDb } from '@/lib/auth/staffAccountStore';
+import { getStaffAccountDb } from '@/lib/auth/staffAccountStore';
 import { invalidateReferenceDataCaches } from '@/lib/domains/inventory/inventoryCache';
 import { getStaffHourlyRate, setStaffHourlyRate } from '@/lib/auth/staffHourlyRate';
 import { InvalidJsonBodyError } from '@/lib/security/parseJsonBody';
@@ -57,23 +58,20 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
     const raw = await readJson(req);
     if (staffReactivateBodySchema.safeParse(raw).success) {
       const actor = await requireAdminStaff();
-      const user = await reactivateStaff(staffAccountDb, actor, id);
+      const user = await reactivateStaff(getStaffAccountDb(), actor, id);
       const hourlyRate = await getStaffHourlyRate(id);
       invalidateReferenceDataCaches();
       return NextResponse.json({ success: true, user: toStaffUser(user, hourlyRate) });
     }
 
-    if (bodyHasRole(raw)) {
-      await requireAdminStaff();
-    }
+    const actor = bodyHasRole(raw) ? await requireAdminStaff() : await requireStaffEditor();
     const body = staffUpdateBodySchema.parse(raw);
-    const actor = bodyHasRole(raw) ? await requireAdminStaff() : await requireSessionUser();
     const isSelf = actor.id === id;
     if (!isSelf && !isManager(actor.role)) {
       throw new AuthError('Forbidden — managers only.', 403);
     }
 
-    const current = await staffAccountDb.findById(id);
+    const current = await getStaffAccountDb().findById(id);
     if (!current || !isRoleName(current.role)) {
       return NextResponse.json(
         { success: false, error: 'That person is already gone.' },
@@ -88,10 +86,12 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
       );
     }
 
+    assertMayEditStaff(actor, current);
+
     const emailChanged = body.email !== current.email;
     if (emailChanged && isSelf) {
       const supplied = body.currentPassword ?? '';
-      const secret = await staffAccountDb.passwordHashFor(id);
+      const secret = await getStaffAccountDb().passwordHashFor(id);
       const matches = Boolean(secret) && (await verifyPassword(supplied, secret ?? ''));
       if (!matches) {
         return NextResponse.json(
@@ -112,7 +112,7 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
       hourlyRateUpdate = body.hourlyRate;
     }
 
-    const saved = await saveStaffProfile(staffAccountDb, actor, id, {
+    const saved = await saveStaffProfile(getStaffAccountDb(), actor, id, {
       name: body.name,
       email: body.email,
       position: body.position,
@@ -140,7 +140,7 @@ export async function DELETE(_req: NextRequest, context: { params: Promise<{ id:
   try {
     const actor = await requireAdminStaff();
     const { id } = await context.params;
-    await deactivateStaff(staffAccountDb, actor, id);
+    await deactivateStaff(getStaffAccountDb(), actor, id);
     invalidateReferenceDataCaches();
     return NextResponse.json({ success: true });
   } catch (error) {

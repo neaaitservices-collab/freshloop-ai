@@ -32,7 +32,7 @@ export const staffUpdateBodySchema = z
     role: staffRoleSchema.optional(),
     currentPassword: z.string().max(200).optional(),
   })
-  .strip();
+  .strict();
 
 export const staffReactivateBodySchema = z
   .object({

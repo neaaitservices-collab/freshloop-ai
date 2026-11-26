@@ -49,6 +49,20 @@ export function isAdmin(role: RoleName): boolean {
   return role === 'ADMIN';
 }
 
+/** Higher means more authority. Floor roles share one rank. */
+const ROLE_RANK: Record<RoleName, number> = {
+  ADMIN: 2,
+  STORE_MANAGER: 1,
+  RECEIVING_CLERK: 0,
+  FLOOR_STAFF: 0,
+  DELI_CHEF: 0,
+};
+
+/** True when `target` has the same authority as `actor` or more. */
+export function roleAtOrAbove(actor: RoleName, target: RoleName): boolean {
+  return ROLE_RANK[target] >= ROLE_RANK[actor];
+}
+
 export function homeForRole(role: RoleName): string {
   return homePathForRole(role);
 }

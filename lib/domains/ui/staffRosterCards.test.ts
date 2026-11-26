@@ -4,7 +4,7 @@ import test from 'node:test';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { StaffRosterCards, StaffRosterSkeleton } from '@/components/features/admin/StaffRosterCards';
-import { StaffRosterErrorBoundary } from '@/components/features/admin/StaffRosterErrorBoundary';
+import { StaffRosterErrorBoundary, runRosterRetry } from '@/components/features/admin/StaffRosterErrorBoundary';
 
 test('staff cards show name, email, house, department, and wage without a wide table', () => {
   const html = renderToStaticMarkup(
@@ -52,7 +52,7 @@ test('staff cards show name, email, house, department, and wage without a wide t
   assert.match(skeleton, /Loading staff/);
 });
 
-test('the staff roster error boundary catches a render error', () => {
+test('the staff roster error boundary catches a render error', async () => {
   const state = StaffRosterErrorBoundary.getDerivedStateFromError(new Error('roster blew up'));
   assert.match(state.error?.message ?? '', /roster blew up/);
   const boundary = new StaffRosterErrorBoundary({ children: null });
@@ -64,6 +64,20 @@ test('the staff roster error boundary catches a render error', () => {
   const source = readFileSync('components/features/admin/StaffRosterErrorBoundary.tsx', 'utf8');
   assert.match(source, /componentDidCatch/);
   assert.match(source, /getDerivedStateFromError/);
+  assert.match(source, /runRosterRetry/);
+  let retried = false;
+  let cleared = false;
+  await runRosterRetry(
+    async () => {
+      retried = true;
+    },
+    () => {
+      cleared = true;
+    }
+  );
+  assert.equal(retried, true);
+  assert.equal(cleared, true);
+  assert.match(readFileSync('components/features/admin/UserManagementTable.tsx', 'utf8'), /onRetry=\{\(\) => refresh\(\)\}/);
 });
 
 test('the staff screen is cards, a confirm dialog, and a show-inactive toggle', () => {

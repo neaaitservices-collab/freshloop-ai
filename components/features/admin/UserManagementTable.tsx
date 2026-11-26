@@ -397,8 +397,9 @@ function StaffRoster({ embedded = false }: { embedded?: boolean }) {
 }
 
 export function UserManagementTable({ embedded = false }: { embedded?: boolean }) {
+  const { refresh } = useRole();
   return (
-    <StaffRosterErrorBoundary>
+    <StaffRosterErrorBoundary onRetry={() => refresh()}>
       <StaffRoster embedded={embedded} />
     </StaffRosterErrorBoundary>
   );
