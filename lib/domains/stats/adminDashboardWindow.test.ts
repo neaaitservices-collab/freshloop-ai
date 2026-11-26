@@ -3,7 +3,11 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { StatsScorecardRows } from '@/components/features/admin/AdminStats';
+import {
+  scorecardWastePct,
+  StatsScorecardRows,
+  wastePctPendingForRange,
+} from '@/components/features/admin/AdminStats';
 import {
   controlStatus,
   lostSharePct,
@@ -215,6 +219,16 @@ test('the admin scorecard follows the shared date range and keeps on-hand live',
   assert.equal(inventoryBlock.includes('wasteKpiOptions'), false);
 });
 
+test('a withheld waste percent is not replaced by the stats copy', () => {
+  assert.equal(scorecardWastePct({ wastePct: null }, 12), null);
+  assert.equal(scorecardWastePct({ wastePct: 2.5 }, 12), 2.5);
+  assert.equal(scorecardWastePct(null, 4), 4);
+  assert.equal(scorecardWastePct(null, null), null);
+  assert.equal(wastePctPendingForRange('mtd', 'week'), true);
+  assert.equal(wastePctPendingForRange('mtd', 'mtd'), false);
+  assert.equal(wastePctPendingForRange('mtd', null), true);
+});
+
 test('lost percent is discarded over rescued plus discarded and lights a 10 percent goal', () => {
   assert.equal(lostSharePct(0, 0), null);
   assert.equal(lostSharePct(100, 0), 0);
@@ -243,10 +257,12 @@ test('the scorecard renders control, inventory, scraps, sales, rescued, and lost
   const inventory = html.indexOf('Inventory value');
   const scraps = html.indexOf('Scraps');
   const sales = html.indexOf('Sales');
+  const waste = html.indexOf('>Waste<');
   const rescued = html.indexOf('Rescued');
   const lost = html.indexOf('>Lost<');
   assert.ok(control >= 0 && control < inventory);
-  assert.ok(inventory < scraps && scraps < sales && sales < rescued && rescued < lost);
+  assert.ok(inventory < scraps && scraps < sales && sales < waste && waste < rescued && rescued < lost);
+  assert.match(html, /Ledger waste ÷ sales/);
   assert.match(html, /Over goal/);
   assert.match(html, /≤ 10%/);
   assert.match(html, /On hand now/);
@@ -280,6 +296,7 @@ test('the scorecard renders control, inventory, scraps, sales, rescued, and lost
   assert.match(quiet, /0 buckets/);
   assert.match(quiet, /\$0\.00/);
   assert.match(quiet, />—</);
+  assert.match(quiet, /Ledger waste ÷ sales/);
   assert.equal(quiet.includes('Waiting for'), false);
   assert.equal(quiet.includes('POS'), false);
   assert.equal(quiet.includes('Rescue rate'), false);

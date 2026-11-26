@@ -28,16 +28,6 @@ const saved: KitchenRecipeDefinition[] = [
   },
 ];
 
-const fallback: KitchenRecipeDefinition[] = [
-  {
-    ...saved[0],
-    recipeId: 'rec-panzanella-001',
-    recipeName: 'Demo',
-    fallback: true,
-    readOnly: true,
-  },
-];
-
 test('fallback recipe ids are rejected as display-only ids', () => {
   assert.equal(isFallbackRecipeId('rec-panzanella-001'), true);
   assert.equal(isFallbackRecipeId('rec-001'), true);
@@ -48,34 +38,30 @@ test('fallback recipe ids are rejected as display-only ids', () => {
 });
 
 test('an empty or missing recipe list is not a fallback catalog', () => {
-  assert.deepEqual(
-    selectManufacturingCatalog({ error: null, saved: [], fallback }),
-    []
-  );
-  assert.deepEqual(
-    selectManufacturingCatalog({ error: null, saved, fallback }),
-    saved
-  );
+  assert.deepEqual(selectManufacturingCatalog({ error: null, saved: [] }), []);
+  assert.deepEqual(selectManufacturingCatalog({ error: null, saved }), saved);
   assert.throws(
     () =>
       selectManufacturingCatalog({
         error: Object.assign(new Error('Record not found'), { code: 'P2025' }),
         saved: [],
-        fallback,
       }),
     (error: unknown) => !isDatabaseUnreachableError(error)
   );
 });
 
-test('a connection error returns read-only fallback recipes', () => {
-  const recipes = selectManufacturingCatalog({
-    error: Object.assign(new Error("Can't reach database server"), { code: 'P1001' }),
-    saved: [],
-    fallback,
-  });
-  assert.equal(recipes.length, 1);
-  assert.equal(recipes[0]?.fallback, true);
-  assert.equal(recipes[0]?.readOnly, true);
+test('a connection error does not return demo recipes', () => {
+  assert.throws(
+    () =>
+      selectManufacturingCatalog({
+        error: Object.assign(new Error("Can't reach database server"), { code: 'P1001' }),
+        saved: [],
+      }),
+    (error: unknown) => isDatabaseUnreachableError(error)
+  );
+  const catalog = readFileSync('lib/domains/manufacturing/buildCatalog.ts', 'utf8');
+  assert.equal(catalog.includes('FALLBACK_RECIPES'), false);
+  assert.equal(catalog.includes('mapFallbackToKitchenRecipe'), false);
 });
 
 test('execute path rejects fallback ids before a stock write, and the UI hides execute', () => {

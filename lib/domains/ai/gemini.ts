@@ -1,8 +1,8 @@
+import { z } from 'zod';
 import {
   InventoryItem,
   InvoiceOcrResult,
   RecipeFusionResult,
-  VoiceLoggerResult,
 } from '@/lib/types';
 import { boundedAttemptMs, createAttemptAbort, geminiFailureDetail } from '@/lib/domains/ai/invoiceScan';
 import { GEMINI_FLASH_MODEL_FALLBACKS } from '@/lib/domains/ai/geminiModels';
@@ -559,10 +559,15 @@ export async function generateContentWithFallback(
   );
 }
 
+export class AiUnavailableError extends Error {
+  constructor(feature: string) {
+    super(`${feature} is unavailable. Configure GEMINI_API_KEY or try again later.`);
+    this.name = 'AiUnavailableError';
+  }
+}
+
 function rejectProductionAiMock(feature: string): never {
-  throw new Error(
-    `${feature} is unavailable. Configure GEMINI_API_KEY or try again later.`
-  );
+  throw new AiUnavailableError(feature);
 }
 
 function getMockOcrResult(): InvoiceOcrResult {
@@ -576,17 +581,6 @@ function getMockOcrResult(): InvoiceOcrResult {
     lineItems: [],
     rawSummary: 'Demo OCR (no API key). Set GEMINI_API_KEY to analyze invoice images.',
     source: 'sample',
-  };
-}
-
-function getMockVoiceResult(spokenText?: string): VoiceLoggerResult {
-  return {
-    transcript:
-      spokenText?.trim() || 'Logged 10 lbs bruised apples and 4L heavy cream',
-    targetAction: 'KITCHEN_RESCUE',
-    parsedItems: [],
-    kitchenRescueNotes: 'Demo voice parse (no API key).',
-    estimatedWasteSavedValue: 0,
   };
 }
 
@@ -743,71 +737,83 @@ totalAmount is the printed subtotal before tax. subtotal, hst, pst, and gst are 
   }
 }
 
-/**
- * Ambient Voice Floor Logger using Gemini Audio parsing
- */
-export async function processVoiceFloorLog(
-  audioBase64?: string,
-  mimeType: string = 'audio/webm',
-  spokenText?: string
-): Promise<VoiceLoggerResult> {
-  const apiKey = getApiKey();
-  if (!apiKey) {
-    return getMockVoiceResult(spokenText);
-  }
+const fusionIngredientSchema = z.object({
+  name: z.string().trim().min(1).max(200),
+  quantity: z.string().trim().min(1).max(80),
+  department: z.enum(['PRODUCE', 'DAIRY', 'BAKERY', 'PANTRY', 'DELI_KITCHEN', 'GROCERY']),
+  inventoryItemId: z.string().trim().min(1).max(128).optional(),
+  estimatedCost: z.number().finite().min(0).max(1_000_000),
+});
 
-  try {
-    const prompt = `You are Ambient Voice Floor Logger for FreshLoop AI in a fresh grocery store / production.
-Your task is to listen to spoken floor audio or transcript (e.g., "Logged 10 lbs bruised apples and 4L heavy cream") and return structured JSON adhering to this schema:
-{
-  "transcript": "string (verbatim transcript of spoken audio)",
-  "targetAction": "KITCHEN_RESCUE" | "MARKDOWN" | "DISCARD",
-  "parsedItems": [
-    {
-      "name": "string",
-      "quantity": number,
-      "unit": "lbs" | "Liters" | "kg" | "units" | "cases" | "loaves",
-      "department": "PRODUCE" | "DAIRY" | "BAKERY" | "PANTRY" | "DELI_KITCHEN" | "GROCERY",
-      "condition": "Pristine" | "Slightly Blemished" | "Bruised" | "Overripe" | "Near Expiry",
-      "allergenWarnings": ["string"]
-    }
-  ],
-  "kitchenRescueNotes": "string (suggested immediate production action or store markdown note)",
-  "estimatedWasteSavedValue": number
+const fusionRecipeSchema = z.object({
+  recipeName: z.string().trim().min(1).max(200),
+  category: z.enum([
+    'Soup',
+    'Salad / Panzanella',
+    'Parfait / Dessert',
+    'Prepared Hot Meal',
+    'Bakery / Bread',
+  ]),
+  ingredientsUsed: z.array(fusionIngredientSchema).min(1).max(40),
+  estimatedYield: z.string().trim().min(1).max(200),
+  estimatedCost: z.number().finite().min(0).max(1_000_000),
+  targetRetailPrice: z.number().finite().min(0).max(1_000_000),
+  grossMarginPct: z.number().finite().min(0).max(100),
+  instructions: z.array(z.string().trim().min(1).max(500)).min(1).max(40),
+  prepTimeMinutes: z.number().int().positive().max(24 * 60),
+  chefTips: z.string().trim().max(2000).optional(),
+  allergens: z.array(z.string().trim().min(1).max(80)).max(20).optional(),
+});
+
+/** Model ids are dropped. Invalid entries are skipped. An empty list is unavailable. */
+export function fusionRecipesFromModelPayload(parsed: unknown): RecipeFusionResult[] {
+  const list = Array.isArray(parsed)
+    ? parsed
+    : parsed &&
+        typeof parsed === 'object' &&
+        Array.isArray((parsed as { recipes?: unknown }).recipes)
+      ? (parsed as { recipes: unknown[] }).recipes
+      : null;
+  if (!list) throw new AiUnavailableError('Recipe fusion');
+
+  const today = new Date().toISOString().split('T')[0];
+  const recipes: RecipeFusionResult[] = [];
+  for (const entry of list) {
+    const parsedEntry = fusionRecipeSchema.safeParse(entry);
+    if (!parsedEntry.success) continue;
+    const recipe = parsedEntry.data;
+    recipes.push({
+      id: '',
+      recipeName: recipe.recipeName,
+      category: recipe.category,
+      ingredientsUsed: recipe.ingredientsUsed,
+      estimatedYield: recipe.estimatedYield,
+      estimatedCost: recipe.estimatedCost,
+      targetRetailPrice: recipe.targetRetailPrice,
+      grossMarginPct: recipe.grossMarginPct,
+      instructions: recipe.instructions,
+      prepTimeMinutes: recipe.prepTimeMinutes,
+      chefTips: recipe.chefTips,
+      allergens: recipe.allergens,
+      createdAt: today,
+    });
+  }
+  if (recipes.length === 0) throw new AiUnavailableError('Recipe fusion');
+  return recipes;
 }
 
-Rules:
-- If items are bruised, overripe, or short-dated but safe for cooking, recommend targetAction = "KITCHEN_RESCUE".
-- If items are pristine or slightly past display peak, recommend targetAction = "MARKDOWN".
-- If items are spoiled/damaged beyond safe use, recommend targetAction = "DISCARD".
-- Identify allergens (Milk, Eggs, Wheat, Soy, Tree Nuts, Peanuts, Fish, Shellfish).`;
+type FusionModelReader = (prompt: string) => Promise<string>;
+let fusionModelReaderForTest: FusionModelReader | null = null;
 
-    let cleanAudio = '';
-    if (audioBase64) {
-      cleanAudio = audioBase64.includes(',') ? audioBase64.split(',')[1] : audioBase64;
-    }
+function fusionModelReader(): FusionModelReader | null {
+  if (process.env.NODE_ENV === 'production') return null;
+  return fusionModelReaderForTest;
+}
 
-    const { text } = await generateContentWithFallback(
-      prompt + (spokenText ? `\nSpoken Text: "${spokenText}"` : ''),
-      cleanAudio ? { data: cleanAudio, mimeType: mimeType || 'audio/webm' } : undefined
-    );
-
-    const parsed = parseModelJson<Record<string, unknown>>(text);
-
-    return {
-      transcript: String(parsed.transcript || spokenText || 'Logged 10 lbs bruised apples and 4L heavy cream'),
-      targetAction: (parsed.targetAction as VoiceLoggerResult['targetAction']) || 'KITCHEN_RESCUE',
-      parsedItems: (parsed.parsedItems as VoiceLoggerResult['parsedItems']) || [],
-      kitchenRescueNotes: String(
-        parsed.kitchenRescueNotes ||
-          'Transfer items immediately to production prep for Recipe Fusion.'
-      ),
-      estimatedWasteSavedValue: Number(parsed.estimatedWasteSavedValue) || 38.5,
-    };
-  } catch (error) {
-    console.error('Error in processVoiceFloorLog Gemini call:', error);
-    return getMockVoiceResult(spokenText);
-  }
+/** Test-only stand-in for the Gemini call. Ignored when NODE_ENV is production. */
+export function setFusionModelReaderForTest(reader: FusionModelReader | null): void {
+  if (process.env.NODE_ENV === 'production') return;
+  fusionModelReaderForTest = reader;
 }
 
 /**
@@ -815,15 +821,14 @@ Rules:
  */
 export async function processRecipeFusion(
   shortDatedItems: InventoryItem[],
-  _targetCategory?: string
+  targetCategory?: string
 ): Promise<RecipeFusionResult[]> {
-  void _targetCategory;
+  const categoryHint = targetCategory?.trim()
+    ? `\nPrefer the category "${targetCategory.trim()}" when the ingredients support it.`
+    : '';
   const apiKey = getApiKey();
   if (!apiKey) {
-    if (process.env.NODE_ENV === 'production') {
-      rejectProductionAiMock('Recipe fusion');
-    }
-    return getMockRecipeFusion();
+    rejectProductionAiMock('Recipe fusion');
   }
 
   try {
@@ -831,7 +836,7 @@ export async function processRecipeFusion(
 
     const prompt = `You are the Executive Chef and Yield Management AI for FreshLoop AI.
 Analyze these short-dated/excess inventory items from different departments:
-${itemsSummary}
+${itemsSummary}${categoryHint}
 
 Generate 2 innovative, high-margin prepared food recipes (e.g. Soups, Panzanella Salads, Parfaits, Prepared Meals, Bakery Loaves) that cross-match items across Produce, Dairy, Bakery, and Pantry to rescue food waste and maximize grocery profit margin.
 
@@ -862,98 +867,14 @@ Return a JSON array of recipes adhering strictly to this schema:
   }
 ]`;
 
-    const { text } = await generateContentWithFallback(prompt);
-    const parsed = parseModelJson<unknown>(text);
-
-    let rawList: unknown[] = [];
-    if (Array.isArray(parsed)) {
-      rawList = parsed;
-    } else if (
-      parsed &&
-      typeof parsed === 'object' &&
-      Array.isArray((parsed as Record<string, unknown>).recipes)
-    ) {
-      rawList = (parsed as Record<string, unknown>).recipes as unknown[];
-    } else {
-      if (process.env.NODE_ENV === 'production') {
-        rejectProductionAiMock('Recipe fusion');
-      }
-      return getMockRecipeFusion();
-    }
-
-    return rawList.map((entry, idx) => {
-      const r =
-        entry && typeof entry === 'object'
-          ? (entry as Record<string, unknown>)
-          : ({} as Record<string, unknown>);
-      const id = r.id;
-      const recipeId =
-        typeof id === 'string' && id.length > 0 && !id.includes('string')
-          ? id
-          : `rec-gen-${Date.now()}-${idx}-${Math.floor(Math.random() * 1000)}`;
-      return { ...r, id: recipeId } as RecipeFusionResult;
-    });
+    const reader = fusionModelReader();
+    const text = reader
+      ? await reader(prompt)
+      : (await generateContentWithFallback(prompt)).text;
+    return fusionRecipesFromModelPayload(parseModelJson<unknown>(text));
   } catch (error) {
     console.error('Error in processRecipeFusion Gemini call:', error);
-    if (process.env.NODE_ENV === 'production') {
-      rejectProductionAiMock('Recipe fusion');
-    }
-    return getMockRecipeFusion();
+    if (error instanceof AiUnavailableError) throw error;
+    throw new AiUnavailableError('Recipe fusion');
   }
-}
-
-function getMockRecipeFusion(): RecipeFusionResult[] {
-  const nonce = Date.now() + '-' + Math.floor(Math.random() * 1000);
-  return [
-    {
-      id: `rec-mock-1-${nonce}`,
-      recipeName: 'Spiced Apple & Sweet Cream Bakery Crisp',
-      category: 'Parfait / Dessert',
-      ingredientsUsed: [
-        { name: 'Bruised Honeycrisp Apples', quantity: '10 lbs', department: 'PRODUCE', estimatedCost: 14.50 },
-        { name: 'Heavy Cream 40%', quantity: '4 Liters', department: 'DAIRY', estimatedCost: 15.20 },
-        { name: 'Artisanal Sourdough (Crumbs)', quantity: '4 loaves', department: 'BAKERY', estimatedCost: 8.40 }
-      ],
-      estimatedYield: '16 Individual Dessert Tubs (10 oz)',
-      estimatedCost: 38.10,
-      targetRetailPrice: 6.99,
-      grossMarginPct: 65.9, 
-      instructions: [
-        'Peel, core, and dice bruised Honeycrisp apples.',
-        'Sauté apples with brown sugar, butter, and cinnamon until tender.',
-        'Whip heavy cream with vanilla bean extract until medium peaks form.',
-        'Layer sautéed apples, whipped cream, and toasted sourdough streusel crumbs.',
-        'Label with FreshLoop "Rescued Recipe - Chef Special" sticker and display in bakery deli case.'
-      ],
-      prepTimeMinutes: 20,
-      chefTips: 'Utilizes short-dated dairy and bruised apples to yield $111.84 in retail sales from rescued ingredients.',
-      allergens: ['Milk / Dairy', 'Wheat / Gluten'],
-      createdAt: new Date().toISOString().split('T')[0]
-    },
-    {
-      id: `rec-mock-2-${nonce}`,
-      recipeName: 'Creamy Roasted Roma Tomato & Garlic Crouton Soup',
-      category: 'Soup',
-      ingredientsUsed: [
-        { name: 'Ripe Roma Tomatoes', quantity: '20 lbs', department: 'PRODUCE', estimatedCost: 23.00 },
-        { name: 'Heavy Cream 40%', quantity: '2 Liters', department: 'DAIRY', estimatedCost: 7.60 },
-        { name: 'Sourdough Boule Croutons', quantity: '6 loaves', department: 'BAKERY', estimatedCost: 12.60 },
-        { name: 'Olive Oil & Herbs', quantity: '250 ml', department: 'PANTRY', estimatedCost: 2.10 }
-      ],
-      estimatedYield: '24 Soup Deli Cups (16 oz)',
-      estimatedCost: 45.30,
-      targetRetailPrice: 7.49,
-      grossMarginPct: 74.8,
-      instructions: [
-        'Roast overripe Roma tomatoes with garlic and olive oil at 400°F for 30 minutes.',
-        'Puree in commercial blender with heavy cream and vegetable broth until silky.',
-        'Season with sea salt, cracked black pepper, and fresh basil.',
-        'Serve with crunchy roasted sourdough garlic croutons on top.'
-      ],
-      prepTimeMinutes: 35,
-      chefTips: 'Transforms 20 lbs of soft tomatoes into high-demand housemade soup.',
-      allergens: ['Milk / Dairy', 'Wheat / Gluten'],
-      createdAt: new Date().toISOString().split('T')[0]
-    }
-  ];
 }
