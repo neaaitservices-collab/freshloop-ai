@@ -187,6 +187,8 @@ export interface PurchaseOrderMarkSource {
   status: string;
   updatedAt: string;
   createdAt?: string;
+  /** Set by the server from its clock. When present, the client does not recompute the window. */
+  open?: boolean;
 }
 
 /**
@@ -229,7 +231,7 @@ export function purchaseOrderMarkIsOpen(
 /** Restore line marks from orders that are still open. An open Sent mark is not replaced by Approved. */
 export function marksFromPurchaseOrders(
   orders: readonly PurchaseOrderMarkSource[],
-  input: {
+  input?: {
     now: Date;
     lastReceiptAt?: Readonly<Record<string, string | Date | null | undefined>>;
     openWindowMs?: number;
@@ -250,11 +252,37 @@ export function marksFromPurchaseOrders(
     for (const productId of order.productIds) {
       const id = productId.trim();
       if (!id || marks[id] === 'sent') continue;
-      if (!purchaseOrderMarkIsOpen(order, id, input)) continue;
+      const open =
+        typeof order.open === 'boolean'
+          ? order.open
+          : input?.now
+            ? purchaseOrderMarkIsOpen(order, id, input)
+            : false;
+      if (!open) continue;
       marks[id] = mark;
     }
   }
   return marks;
+}
+
+/** The whole cycle is open only while every line on it is still open. */
+export function purchaseOrderCycleIsOpen(input: {
+  updatedAt: Date | string;
+  productIds: readonly string[];
+  now: Date;
+  lastReceiptAt?: Readonly<Record<string, string | Date | null | undefined>>;
+  openWindowMs?: number;
+}): boolean {
+  const at = input.updatedAt instanceof Date ? input.updatedAt.toISOString() : input.updatedAt;
+  const ids = [...new Set(input.productIds.map((id) => id.trim()).filter(Boolean))];
+  const probe = ids.length > 0 ? ids : [''];
+  return probe.every((id) =>
+    purchaseOrderMarkIsOpen(
+      { productIds: probe, status: 'SENT', updatedAt: at },
+      id,
+      { now: input.now, lastReceiptAt: input.lastReceiptAt, openWindowMs: input.openWindowMs }
+    )
+  );
 }
 
 /** Use the newest saved recipient when the directory and the draft have none. */

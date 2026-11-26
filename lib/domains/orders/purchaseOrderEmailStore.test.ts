@@ -278,3 +278,173 @@ test('concurrent submits keep one sent row and do not raise a unique conflict', 
   assert.equal(rows.length, 1);
   assert.equal(rows[0]?.status, 'SENT');
 });
+
+test('an order older than the open window starts a new cycle', { skip: !hasDb }, async (t) => {
+  try {
+    await prisma.$connect();
+  } catch {
+    t.skip('Database unreachable.');
+    return;
+  }
+
+  const stamp = `po-window-${Date.now()}`;
+  const supplier = await prisma.supplier.create({ data: { name: `PO Window ${stamp}` } });
+  const draft = {
+    supplierId: supplier.id,
+    supplierName: supplier.name,
+    toEmail: 'buyer@farm.test',
+    subject: 'Purchase order',
+    body: '2 cases - Bananas',
+    lineKey: 'bananas',
+    productIds: ['bananas'],
+    actorId: 'staff-1',
+    status: 'SENT' as const,
+  };
+
+  t.after(async () => {
+    await prisma.purchaseOrderEmail.deleteMany({ where: { supplierId: supplier.id } });
+    await prisma.supplier.delete({ where: { id: supplier.id } });
+  });
+
+  const sent = await submitPurchaseOrder(draft);
+  assert.equal(sent.ok, true);
+  if (!sent.ok) return;
+  const old = new Date(Date.now() - 20 * 24 * 60 * 60 * 1000);
+  await prisma.$executeRaw`UPDATE "purchase_order_emails" SET "updated_at" = ${old}, "created_at" = ${old} WHERE "id" = ${sent.id}`;
+
+  const approved = await submitPurchaseOrder({ ...draft, status: 'APPROVED' });
+  assert.equal(approved.ok, true);
+  if (!approved.ok) return;
+  assert.equal(approved.status, 'APPROVED');
+  assert.notEqual(approved.id, sent.id);
+  const rows = await prisma.purchaseOrderEmail.count({ where: { supplierId: supplier.id, lineKey: 'bananas' } });
+  assert.equal(rows, 2);
+});
+
+test('a receipt starts a new cycle and history keeps both rows', { skip: !hasDb }, async (t) => {
+  try {
+    await prisma.$connect();
+  } catch {
+    t.skip('Database unreachable.');
+    return;
+  }
+
+  const stamp = `po-cycle-${Date.now()}`;
+  const supplier = await prisma.supplier.create({ data: { name: `PO Cycle ${stamp}` } });
+  const product = await prisma.product.create({
+    data: { name: `Bananas ${stamp}`, department: 'PRODUCE', supplier: supplier.name, casePackSize: 6, parCases: 2 },
+  });
+  const draft = {
+    supplierId: supplier.id,
+    supplierName: supplier.name,
+    toEmail: 'buyer@farm.test',
+    subject: 'Purchase order',
+    body: '2 cases - Bananas',
+    lineKey: 'bananas',
+    productIds: [product.id],
+    actorId: 'staff-1',
+  };
+
+  t.after(async () => {
+    await prisma.purchaseOrderEmail.deleteMany({ where: { supplierId: supplier.id } });
+    await prisma.inventoryTransaction.deleteMany({ where: { productId: product.id } });
+    await prisma.product.delete({ where: { id: product.id } });
+    await prisma.supplier.delete({ where: { id: supplier.id } });
+  });
+
+  const sent = await submitPurchaseOrder({ ...draft, status: 'SENT' });
+  assert.equal(sent.ok, true);
+  if (!sent.ok) return;
+
+  await prisma.inventoryTransaction.create({
+    data: {
+      productId: product.id,
+      staffId: 'test-staff',
+      qtyChange: 12,
+      transactionType: 'Receive',
+      fromLocation: 'External_Vendor',
+      toLocation: 'Retail_Floor',
+      unitCostAtTime: 1.5,
+      timestamp: new Date(sent.updatedAt),
+    },
+  });
+
+  const approved = await submitPurchaseOrder({ ...draft, status: 'APPROVED' });
+  assert.equal(approved.ok, true);
+  if (!approved.ok) return;
+  assert.equal(approved.status, 'APPROVED');
+  assert.notEqual(approved.id, sent.id);
+
+  const sentAgain = await submitPurchaseOrder({ ...draft, status: 'SENT' });
+  assert.equal(sentAgain.ok, true);
+  if (!sentAgain.ok) return;
+  assert.equal(sentAgain.id, approved.id);
+  assert.equal(sentAgain.status, 'SENT');
+  assert.equal(sentAgain.duplicate, true);
+
+  const repeat = await submitPurchaseOrder({ ...draft, status: 'SENT' });
+  assert.equal(repeat.ok, true);
+  if (!repeat.ok) return;
+  assert.equal(repeat.id, sentAgain.id);
+
+  const history = await prisma.purchaseOrderEmail.findMany({
+    where: { supplierId: supplier.id, lineKey: 'bananas' },
+    orderBy: { createdAt: 'asc' },
+  });
+  assert.equal(history.length, 2);
+  assert.deepEqual(
+    history.map((row) => row.status),
+    ['SENT', 'SENT']
+  );
+  assert.notEqual(history[0]?.cycleKey, history[1]?.cycleKey);
+});
+
+test('sending one product leaves the other approved and orderable', { skip: !hasDb }, async (t) => {
+  try {
+    await prisma.$connect();
+  } catch {
+    t.skip('Database unreachable.');
+    return;
+  }
+
+  const stamp = `po-partial-${Date.now()}`;
+  const supplier = await prisma.supplier.create({ data: { name: `PO Partial ${stamp}` } });
+  const base = {
+    supplierId: supplier.id,
+    supplierName: supplier.name,
+    toEmail: 'buyer@farm.test',
+    subject: 'Purchase order',
+    actorId: 'staff-1',
+  };
+
+  t.after(async () => {
+    await prisma.purchaseOrderEmail.deleteMany({ where: { supplierId: supplier.id } });
+    await prisma.supplier.delete({ where: { id: supplier.id } });
+  });
+
+  const approved = await submitPurchaseOrder({
+    ...base,
+    body: '1 case - A\n1 case - C',
+    lineKey: 'ac',
+    productIds: ['A', 'C'],
+    status: 'APPROVED',
+  });
+  assert.equal(approved.ok, true);
+  const sent = await submitPurchaseOrder({
+    ...base,
+    body: '1 case - A',
+    lineKey: 'a-only',
+    productIds: ['A'],
+    status: 'SENT',
+  });
+  assert.equal(sent.ok, true);
+  if (!sent.ok || !approved.ok) return;
+  assert.equal(sent.closedIds.includes(approved.id), false);
+
+  const partial = await prisma.purchaseOrderEmail.findFirst({ where: { id: approved.id } });
+  assert.equal(partial?.status, 'APPROVED');
+  assert.deepEqual(partial?.productIds, ['C']);
+  const sentRow = await prisma.purchaseOrderEmail.findFirst({ where: { id: sent.id } });
+  assert.equal(sentRow?.status, 'SENT');
+  assert.deepEqual(sentRow?.productIds, ['A']);
+});

@@ -35,14 +35,6 @@ function supplierIdsOnList(
   return ids;
 }
 
-function receiptMap(levels: readonly StockLevel[]): Record<string, string | null> {
-  const map: Record<string, string | null> = {};
-  for (const row of levels) {
-    map[row.productId] = row.lastReceiptAt ?? null;
-  }
-  return map;
-}
-
 export function usePurchaseOrders(input: {
   levels: readonly StockLevel[];
   supplierDirectory: readonly SupplierDirectoryEntry[];
@@ -91,12 +83,7 @@ export function usePurchaseOrders(input: {
     };
   }, [directoryReady, supplierKey, onError]);
 
-  const marks = useMemo(() => {
-    return marksFromPurchaseOrders(orders ?? [], {
-      now: new Date(),
-      lastReceiptAt: receiptMap(levels),
-    });
-  }, [orders, levels]);
+  const marks = useMemo(() => marksFromPurchaseOrders(orders ?? []), [orders]);
 
   const remember = (order: PurchaseOrderHistoryEntry, closedIds: readonly string[]) => {
     const parsed = purchaseOrderHistoryEntrySchema.parse(order);
@@ -166,6 +153,7 @@ export function usePurchaseOrders(input: {
           productIds: parsed.data.productIds ?? draft.productIds,
           createdAt: parsed.data.openedAt ?? savedAt,
           updatedAt: savedAt,
+          open: true,
         },
         parsed.data.closedIds ?? []
       );

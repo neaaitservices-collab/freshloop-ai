@@ -10,6 +10,7 @@ import {
   purchaseOrderSupplierIdSchema,
 } from '@/lib/domains/orders/purchaseOrderSubmit';
 import {
+  findOpenPurchaseOrder,
   listPurchaseOrders,
   recordPurchaseOrderOpen,
   submitPurchaseOrder,
@@ -55,7 +56,9 @@ async function resolveSupplierId(
 
 export async function GET(req: NextRequest) {
   try {
-    await requireManagerStaff();
+    const actor = await requireManagerStaff();
+    const limited = assertMutationRateLimit(actor.id, 'purchase-order-history', 60);
+    if (limited) return limited;
     const parsed = purchaseOrderSupplierIdSchema.safeParse(req.nextUrl.searchParams.get('supplierId') ?? '');
     if (!parsed.success) {
       return apiError('A supplier id is required.', 400);
@@ -94,10 +97,7 @@ export async function POST(req: NextRequest) {
     });
 
     if (input.checkOnly === true) {
-      const existing = await prisma.purchaseOrderEmail.findFirst({
-        where: { supplierId, lineKey },
-        select: { createdAt: true, status: true },
-      });
+      const existing = await findOpenPurchaseOrder(supplierId, lineKey, productIds);
       if (existing && existing.status !== 'APPROVED') {
         return NextResponse.json(
           {

@@ -508,8 +508,10 @@ model PurchaseOrderEmail {
   replyTo      String?                  @map("reply_to")
   subject      String
   body         String                   @db.Text
-  /// Idempotency key for this supplier's order lines.
+  /// Idempotency key for this supplier's order lines within one open cycle.
   lineKey      String                   @map("line_key")
+  /// A later order for the same lines gets a new cycle after the previous one closes.
+  cycleKey     String                   @default(uuid()) @map("cycle_key")
   /// Catalog product ids on this order. Blank and repeated ids are removed before save.
   productIds   String[]                 @default([]) @map("product_ids")
   status       PurchaseOrderEmailStatus
@@ -519,7 +521,7 @@ model PurchaseOrderEmail {
   createdAt    DateTime                 @default(now()) @map("created_at")
   updatedAt    DateTime                 @default(now()) @updatedAt @map("updated_at")
 
-  @@unique([supplierId, lineKey])
+  @@unique([supplierId, lineKey, cycleKey])
   @@index([supplierId, createdAt])
   @@index([supplierId, updatedAt])
   @@map("purchase_order_emails")

@@ -1,4 +1,6 @@
+import { randomUUID } from 'node:crypto';
 import { prisma } from '@/lib/db/prisma';
+import { PURCHASE_ORDER_OPEN_WINDOW_MS, purchaseOrderCycleIsOpen } from '@/components/features/orders/supplierMail';
 import {
   coveredApprovedOrderIds,
   dedupePurchaseOrderLines,
@@ -61,6 +63,7 @@ const lineSelect = {
   status: true,
   productIds: true,
   toEmail: true,
+  cycleKey: true,
 } as const;
 
 type LineRow = {
@@ -70,9 +73,10 @@ type LineRow = {
   status: StoredPurchaseOrderStatus;
   productIds: string[];
   toEmail: string;
+  cycleKey: string;
 };
 
-type OrderTx = Pick<Prisma.TransactionClient, 'purchaseOrderEmail'>;
+type OrderTx = Prisma.TransactionClient;
 
 function requiredSupplierId(supplierId: string): string {
   const id = typeof supplierId === 'string' ? supplierId.trim() : '';
@@ -98,11 +102,63 @@ function openData(draft: PurchaseOrderOpenDraft, supplierId: string) {
   };
 }
 
-function findLine(db: OrderTx, supplierId: string, lineKey: string) {
-  return db.purchaseOrderEmail.findFirst({
+async function lockLine(db: OrderTx, supplierId: string, lineKey: string) {
+  await db.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${supplierId}), hashtext(${lineKey}))`;
+}
+
+async function latestReceipts(
+  db: OrderTx,
+  productIds: readonly string[]
+): Promise<Record<string, Date | null>> {
+  const ids = [...new Set(productIds.map((id) => id.trim()).filter(Boolean))];
+  const receipts: Record<string, Date | null> = {};
+  if (ids.length === 0) return receipts;
+  const groups = await db.inventoryTransaction.groupBy({
+    by: ['productId'],
+    where: { productId: { in: ids }, transactionType: 'Receive' },
+    _max: { timestamp: true },
+  });
+  for (const group of groups) receipts[group.productId] = group._max.timestamp;
+  return receipts;
+}
+
+async function findOpenCycle(
+  db: OrderTx,
+  supplierId: string,
+  lineKey: string,
+  productIds: readonly string[],
+  now: Date
+): Promise<LineRow | null> {
+  const rows = await db.purchaseOrderEmail.findMany({
     where: { supplierId, lineKey },
+    orderBy: { updatedAt: 'desc' },
     select: lineSelect,
   });
+  const receipts = await latestReceipts(db, [
+    ...productIds,
+    ...rows.flatMap((row) => row.productIds),
+  ]);
+  return (
+    rows.find((row) =>
+      purchaseOrderCycleIsOpen({
+        updatedAt: row.updatedAt,
+        productIds: row.productIds.length > 0 ? row.productIds : productIds,
+        now,
+        lastReceiptAt: receipts,
+      })
+    ) ?? null
+  );
+}
+
+/** The open cycle for this supplier and line key, using the server clock. */
+export async function findOpenPurchaseOrder(
+  supplierId: string,
+  lineKey: string,
+  productIds: readonly string[]
+): Promise<{ id: string; createdAt: Date; status: StoredPurchaseOrderStatus } | null> {
+  const open = await findOpenCycle(prisma, supplierId, lineKey, productIds, new Date());
+  if (!open) return null;
+  return { id: open.id, createdAt: open.createdAt, status: open.status };
 }
 
 /** Insert unless this supplier and lineKey already exist. A conflict does not throw. */
@@ -114,7 +170,7 @@ async function insertLine(db: OrderTx, data: Prisma.PurchaseOrderEmailCreateMany
   return created.count === 1;
 }
 
-function asLineRecord(row: NonNullable<Awaited<ReturnType<typeof findLine>>>): PurchaseOrderLineRecord {
+function asLineRecord(row: LineRow): PurchaseOrderLineRecord {
   return {
     id: row.id,
     status: row.status,
@@ -123,35 +179,41 @@ function asLineRecord(row: NonNullable<Awaited<ReturnType<typeof findLine>>>): P
   };
 }
 
-/** Record that this supplier's order was opened. An existing row blocks another open until the caller confirms. */
+async function insertCycle(
+  db: OrderTx,
+  data: Prisma.PurchaseOrderEmailCreateManyInput
+): Promise<LineRow> {
+  const cycleKey = typeof data.cycleKey === 'string' ? data.cycleKey : randomUUID();
+  await insertLine(db, { ...data, cycleKey });
+  const row = await db.purchaseOrderEmail.findFirst({
+    where: { supplierId: data.supplierId, lineKey: data.lineKey, cycleKey },
+    select: lineSelect,
+  });
+  if (!row) throw new Error('Purchase order could not be saved.');
+  return row;
+}
+
+/** Record that this supplier's order was opened. A closed cycle does not block the next one. */
 export async function recordPurchaseOrderOpen(
   draft: PurchaseOrderOpenDraft,
   reopen: boolean
 ): Promise<PurchaseOrderOpenResult> {
   const supplierId = requiredSupplierId(draft.supplierId);
   const data = openData(draft, supplierId);
-
-  if (!reopen) {
-    const inserted = await insertLine(prisma, data);
-    if (inserted) {
-      const row = await findLine(prisma, supplierId, draft.lineKey);
-      if (!row) throw new Error('Purchase order could not be saved.');
+  return prisma.$transaction(async (tx) => {
+    await lockLine(tx, supplierId, draft.lineKey);
+    const now = new Date();
+    const existing = await findOpenCycle(tx, supplierId, draft.lineKey, data.productIds, now);
+    if (!existing) {
+      const row = await insertCycle(tx, data);
       return { ok: true, id: row.id, openedAt: row.createdAt.toISOString() };
     }
-  }
-
-  const existing = await findLine(prisma, supplierId, draft.lineKey);
-  if (!existing) {
-    await insertLine(prisma, data);
-    const row = await findLine(prisma, supplierId, draft.lineKey);
-    if (!row) throw new Error('Purchase order could not be saved.');
-    return { ok: true, id: row.id, openedAt: row.createdAt.toISOString() };
-  }
-  // Approved is saved, not mailed. The first mailto is still the first open.
-  if (!reopen && existing.status !== 'APPROVED') {
-    return { ok: false, id: existing.id, openedAt: existing.createdAt.toISOString() };
-  }
-  return { ok: true, id: existing.id, openedAt: existing.createdAt.toISOString() };
+    // Approved is saved, not mailed. The first mailto of this cycle is still the first open.
+    if (!reopen && existing.status !== 'APPROVED') {
+      return { ok: false, id: existing.id, openedAt: existing.createdAt.toISOString() };
+    }
+    return { ok: true, id: existing.id, openedAt: existing.createdAt.toISOString() };
+  });
 }
 
 function savedResult(
@@ -183,19 +245,53 @@ async function closeCoveredApproved(
   db: OrderTx,
   supplierId: string,
   sentProductIds: readonly string[],
-  keepId: string
+  keepId: string,
+  now: Date
 ): Promise<string[]> {
+  const windowStart = new Date(now.getTime() - PURCHASE_ORDER_OPEN_WINDOW_MS);
   const approved = await db.purchaseOrderEmail.findMany({
-    where: { supplierId, status: 'APPROVED' },
-    select: { id: true, status: true, productIds: true },
+    where: {
+      supplierId,
+      status: 'APPROVED',
+      updatedAt: { gte: windowStart },
+      id: { not: keepId },
+    },
+    select: { id: true, status: true, productIds: true, updatedAt: true },
   });
-  const ids = coveredApprovedOrderIds(approved, sentProductIds).filter((id) => id !== keepId);
-  if (ids.length === 0) return [];
-  await db.purchaseOrderEmail.updateMany({
-    where: { id: { in: ids }, status: 'APPROVED' },
-    data: { status: 'SENT' },
-  });
-  return ids;
+  const receipts = await latestReceipts(
+    db,
+    approved.flatMap((row) => row.productIds)
+  );
+  const stillOpen = approved.filter((row) =>
+    purchaseOrderCycleIsOpen({
+      updatedAt: row.updatedAt,
+      productIds: row.productIds,
+      now,
+      lastReceiptAt: receipts,
+    })
+  );
+  const sent = new Set(dedupePurchaseOrderLines(sentProductIds));
+  const fullIds = coveredApprovedOrderIds(stillOpen, sentProductIds);
+  const closedIds: string[] = [];
+  if (fullIds.length > 0) {
+    await db.purchaseOrderEmail.updateMany({
+      where: { id: { in: fullIds }, status: 'APPROVED', updatedAt: { gte: windowStart } },
+      data: { status: 'SENT' },
+    });
+    closedIds.push(...fullIds);
+  }
+  for (const row of stillOpen) {
+    if (fullIds.includes(row.id)) continue;
+    const lines = dedupePurchaseOrderLines(row.productIds);
+    if (!lines.some((id) => sent.has(id))) continue;
+    const remaining = lines.filter((id) => !sent.has(id));
+    if (remaining.length === 0) continue;
+    await db.purchaseOrderEmail.updateMany({
+      where: { id: row.id, status: 'APPROVED', updatedAt: { gte: windowStart } },
+      data: { productIds: remaining },
+    });
+  }
+  return closedIds;
 }
 
 async function writePurchaseOrder(
@@ -213,7 +309,7 @@ async function writePurchaseOrder(
   if (!plan.ok) return plan;
 
   if (!existing) {
-    const inserted = await insertLine(db, {
+    const row = await insertCycle(db, {
       supplierId,
       supplierName: draft.supplierName,
       toEmail: plan.decision.toEmail,
@@ -227,10 +323,8 @@ async function writePurchaseOrder(
       status: plan.decision.status ?? draft.status,
       providerId: null,
       error: null,
+      cycleKey: randomUUID(),
     });
-    const row = await findLine(db, supplierId, draft.lineKey);
-    if (!row) throw new Error('Purchase order could not be saved.');
-    if (!inserted) return writePurchaseOrder(db, draft, supplierId, row);
     return savedResult(row, draft.lineKey, false, []);
   }
 
@@ -266,10 +360,12 @@ export async function submitPurchaseOrder(
   if (blocked) return { ok: false, error: blocked };
 
   return prisma.$transaction(async (tx) => {
-    const existing = await findLine(tx, supplierId, draft.lineKey);
+    await lockLine(tx, supplierId, draft.lineKey);
+    const now = new Date();
+    const existing = await findOpenCycle(tx, supplierId, draft.lineKey, draft.productIds, now);
     const written = await writePurchaseOrder(tx, draft, supplierId, existing);
     if (!written.ok || written.status !== 'SENT') return written;
-    const closedIds = await closeCoveredApproved(tx, supplierId, written.productIds, written.id);
+    const closedIds = await closeCoveredApproved(tx, supplierId, written.productIds, written.id, now);
     return { ...written, closedIds };
   });
 }
@@ -293,6 +389,11 @@ export async function listPurchaseOrders(supplierId: string): Promise<PurchaseOr
       updatedAt: true,
     },
   });
+  const now = new Date();
+  const receipts = await latestReceipts(
+    prisma,
+    rows.flatMap((row) => row.productIds)
+  );
   return rows.map((row) => ({
     id: row.id,
     supplierId: row.supplierId,
@@ -304,5 +405,11 @@ export async function listPurchaseOrders(supplierId: string): Promise<PurchaseOr
     productIds: row.productIds,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
+    open: purchaseOrderCycleIsOpen({
+      updatedAt: row.updatedAt,
+      productIds: row.productIds,
+      now,
+      lastReceiptAt: receipts,
+    }),
   }));
 }

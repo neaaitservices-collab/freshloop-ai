@@ -14,6 +14,8 @@ export const purchaseOrderHistoryEntrySchema = z.object({
   productIds: z.array(z.string()),
   createdAt: z.string(),
   updatedAt: z.string(),
+  /** Server clock. True while this cycle is still inside the open window and newer than receipts. */
+  open: z.boolean(),
 });
 
 export const purchaseOrderHistoryResponseSchema = z.object({
@@ -54,6 +56,7 @@ export interface PurchaseOrderHistoryEntry {
   productIds: string[];
   createdAt: string;
   updatedAt: string;
+  open: boolean;
 }
 
 export interface PurchaseOrderLineRecord {
