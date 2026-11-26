@@ -71,12 +71,13 @@ test('phone polish screens use at least 12px text', () => {
   }
 });
 
-test('admin views are inline tabs for Overview, ROI, Suppliers, and Departments', () => {
+test('admin views are inline tabs for Overview, ROI, Suppliers, Departments, and Sales CSV', () => {
   assert.equal(selectedAdminViewHref('/admin'), '/admin');
   assert.equal(selectedAdminViewHref('/admin/executive'), '/admin/executive');
   assert.equal(selectedAdminViewHref('/admin/executive/detail'), '/admin/executive');
   assert.equal(selectedAdminViewHref('/admin/suppliers'), '/admin/suppliers');
   assert.equal(selectedAdminViewHref('/admin/departments'), '/admin/departments');
+  assert.equal(selectedAdminViewHref('/admin/sales-import'), '/admin/sales-import');
   assert.equal(selectedAdminViewHref('/admin/settings'), '');
   assert.equal(selectedAdminViewHref('/receive'), '');
   assert.equal(isAdminViewTabActive('/admin/suppliers', '/admin'), false);
@@ -91,7 +92,14 @@ test('admin views are inline tabs for Overview, ROI, Suppliers, and Departments'
   pushAdminView(push, '/production');
   pushAdminView(push, '/admin/executive');
   pushAdminView(push, '/admin/departments');
-  assert.deepEqual(pushed, ['/admin', '/admin/suppliers', '/admin/executive', '/admin/departments']);
+  pushAdminView(push, '/admin/sales-import');
+  assert.deepEqual(pushed, [
+    '/admin',
+    '/admin/suppliers',
+    '/admin/executive',
+    '/admin/departments',
+    '/admin/sales-import',
+  ]);
 
   const views = readFileSync('components/features/admin/AdminViewTabs.tsx', 'utf8');
   assert.equal(views.includes('<select'), false);
@@ -100,6 +108,7 @@ test('admin views are inline tabs for Overview, ROI, Suppliers, and Departments'
   assert.match(views, /ROI/);
   assert.match(views, /Suppliers/);
   assert.match(views, /Departments/);
+  assert.match(views, /Sales CSV/);
   assert.match(views, /aria-label="Admin views"/);
   assert.match(views, /aria-current=\{active \? 'page' : undefined\}/);
   assert.match(views, /border-emerald-400 text-slate-50/);

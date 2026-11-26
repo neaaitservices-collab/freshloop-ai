@@ -119,6 +119,25 @@ export function priceProductSale(input: ProductSalePriceInput): RecordedSalePric
   };
 }
 
+/**
+ * CSV line revenue is stored as given (cents). Unit price is that total divided
+ * by quantity, so a total that does not divide evenly is not rewritten by
+ * unit × quantity.
+ */
+export function priceImportedLine(quantity: number, lineRevenue: number): RecordedSalePrice & {
+  unitPrice: number;
+  grossRevenue: number;
+} {
+  const realizedLineRevenue = Number(lineRevenue.toFixed(2));
+  const unitPrice = quantity > 0 ? Number((realizedLineRevenue / quantity).toFixed(4)) : 0;
+  return {
+    unitPrice,
+    grossRevenue: realizedLineRevenue,
+    realizedUnitPrice: unitPrice,
+    realizedLineRevenue,
+  };
+}
+
 /** Bundle catalog total, matching the historical execution formula. */
 export function bundleCatalogGrossRevenue(bundlePrice: number, quantitySold: number): number {
   const raw = Number((bundlePrice * quantitySold).toFixed(2));

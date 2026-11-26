@@ -15,6 +15,7 @@ const boundaries: Array<[string, string]> = [
   ['app/admin/departments/page.tsx', 'loadAdminDepartments('],
   ['app/admin/invoices/page.tsx', 'listAdminInvoices('],
   ['app/admin/invoices/[id]/page.tsx', 'getAdminInvoiceDetail('],
+  ['app/admin/sales-import/page.tsx', 'loadCsvColumnMapping('],
 ];
 
 test('protected pages guard before sensitive loaders', () => {
