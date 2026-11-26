@@ -6,7 +6,11 @@ import {
   SubInventoryTransferList,
 } from '@/components/features/inventory/SubInventoryTransferList';
 import type { PerformInventoryMove } from '@/components/features/inventory/SubInventoryTransferBar';
-import { inShortDatedTransferQueue } from '@/lib/domains/inventory/pullSensitivity';
+import {
+  effectivePullDays,
+  inShortDatedTransferQueue,
+  normalizePullSensitivityDays,
+} from '@/lib/domains/inventory/pullSensitivity';
 import { filterRetailFloorLevels } from '@/lib/domains/inventory/subInventoryView';
 import { useRole } from '@/components/auth/RoleProvider';
 import { canManageBundleDeals } from '@/lib/auth/staffCapabilities';
@@ -15,7 +19,8 @@ import { fieldMatchesNeedle } from '@/lib/utils/searchNeedle';
 
 export interface RetailFloorTransferPanelProps {
   levels: StockLevel[];
-  pullDays?: number;
+  /** Store pull window. Callers pass the saved value; there is no silent 3-day default. */
+  pullDays: number;
   staffId?: string;
   /** When true, only short-dated / low / markdown items (floor action board). */
   priorityOnly?: boolean;
@@ -32,7 +37,7 @@ export interface RetailFloorTransferPanelProps {
 
 export function RetailFloorTransferPanel({
   levels,
-  pullDays = 3,
+  pullDays,
   staffId,
   priorityOnly = false,
   query = '',
@@ -47,6 +52,7 @@ export function RetailFloorTransferPanel({
   const operations = layoutVariant === 'operations';
   const { activeUser } = useRole();
   const showBundleTools = canManageBundleDeals(activeUser?.role);
+  const storeDays = normalizePullSensitivityDays(pullDays);
   const rows = useMemo(() => {
     let list = filterRetailFloorLevels(levels);
     if (departmentFilter) list = list.filter(departmentFilter);
@@ -60,14 +66,19 @@ export function RetailFloorTransferPanel({
       );
     }
     if (priorityOnly) {
-      list = list.filter((row) => inShortDatedTransferQueue(row.daysRemaining, pullDays));
+      list = list.filter((row) =>
+        inShortDatedTransferQueue(
+          row.daysRemaining,
+          effectivePullDays(row.pullSensitivityDays, storeDays)
+        )
+      );
     }
     return list.sort(
       (a, b) =>
         (priorityOnly ? a.daysRemaining - b.daysRemaining : 0) ||
         a.name.localeCompare(b.name)
     );
-  }, [levels, priorityOnly, pullDays, query, departmentFilter]);
+  }, [levels, priorityOnly, storeDays, query, departmentFilter]);
 
   return (
     <div
@@ -76,6 +87,7 @@ export function RetailFloorTransferPanel({
           ? 'min-w-0 max-w-full overflow-hidden rounded-xl border border-slate-800/90 bg-slate-900/50'
           : 'overflow-hidden rounded-2xl border border-emerald-900/40 bg-slate-950/80'
       }
+      data-store-pull-days={priorityOnly ? storeDays : undefined}
     >
       <div
         className={
@@ -93,10 +105,12 @@ export function RetailFloorTransferPanel({
             <p className="text-[11px] text-slate-400">
               {priorityOnly
                 ? showBundleTools
-                  ? 'Pull window — swipe for quick moves; owner / store manager can open bundle calc.'
-                  : 'Pull window — swipe for quick moves or tap a row to transfer / waste.'
+                  ? `Pull window ≤${storeDays} days. A per-SKU override replaces the store default. Swipe for quick moves; owner / store manager can open bundle calc.`
+                  : `Pull window ≤${storeDays} days. A per-SKU override replaces the store default.`
                 : 'Shelf stock — swipe on phone or use actions below each row.'}
             </p>
+          ) : priorityOnly ? (
+            <p className="text-[11px] text-slate-400">Pull window ≤{storeDays} days.</p>
           ) : null}
         </div>
         <span className="ml-auto rounded-full border border-emerald-500/30 bg-emerald-950/50 px-2.5 py-0.5 text-[10px] font-bold text-emerald-300">
@@ -106,7 +120,7 @@ export function RetailFloorTransferPanel({
       <SubInventoryTransferList
         rows={rows}
         location="retail_floor"
-        pullDays={pullDays}
+        pullDays={storeDays}
         staffId={staffId}
         compact={compact}
         layoutVariant={layoutVariant}

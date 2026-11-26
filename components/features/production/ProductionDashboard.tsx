@@ -40,6 +40,7 @@ import { mapDbRecipeToFusionResult } from '@/lib/domains/manufacturing/mapDbReci
 import { manufacturingCatalogIsReadOnly } from '@/lib/domains/manufacturing/fallbackRecipes';
 import type { KitchenRecipeDefinition } from '@/lib/domains/manufacturing/types';
 import type { ProductionBootstrapData } from '@/lib/domains/manufacturing/productionBootstrap';
+import type { PullSensitivityDays } from '@/lib/domains/inventory/pullSensitivity';
 import type { StockLevel } from '@/lib/domains/inventory/stock';
 import {
   FRESHLOOP_SETTINGS_UPDATED,
@@ -56,7 +57,11 @@ import {
   canExecuteProductionBatch,
 } from '@/lib/auth/staffCapabilities';
 
-function ProductionDashboardContent() {
+function ProductionDashboardContent({
+  storePullDays,
+}: {
+  storePullDays: PullSensitivityDays;
+}) {
   const router = useRouter();
   const catalogRef = useRef<HTMLDetailsElement>(null);
 
@@ -97,7 +102,7 @@ function ProductionDashboardContent() {
   const [productionOpen, setProductionOpen] = useState(false);
   const [productionRecipeId, setProductionRecipeId] = useState<string | undefined>();
   const [batchToast, setBatchToast] = useState<string | null>(null);
-  const [pullSensitivityDays, setPullSensitivityDays] = useState<2 | 3 | 4>(3);
+  const [pullSensitivityDays, setPullSensitivityDays] = useState<PullSensitivityDays>(storePullDays);
   const [bomSummary, setBomSummary] = useState<ProductionBomSummary>({
     totalRecipes: 0,
     belowPar: 0,
@@ -397,6 +402,10 @@ function ProductionDashboardContent() {
   );
 }
 
-export function ProductionDashboard() {
-  return <ProductionDashboardContent />;
+export function ProductionDashboard({
+  storePullDays,
+}: {
+  storePullDays: PullSensitivityDays;
+}) {
+  return <ProductionDashboardContent storePullDays={storePullDays} />;
 }

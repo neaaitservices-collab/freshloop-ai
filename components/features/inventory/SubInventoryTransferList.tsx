@@ -14,6 +14,10 @@ import {
 } from '@/components/features/inventory/RetailFloorItemCardMeta';
 import { FRESHLOOP_BUNDLE_PROMOS_UPDATED } from '@/components/features/pricing/SetBundlesListPanel';
 import { stockLevelToTransferRow } from '@/lib/domains/inventory/inventoryMoveClient';
+import {
+  effectivePullDays,
+  normalizePullSensitivityDays,
+} from '@/lib/domains/inventory/pullSensitivity';
 import type { StockLevel } from '@/lib/domains/inventory/stock';
 import { formatCurrency, formatUnits, stockUnitLabel } from '@/lib/domains/receiving/yieldPricing';
 import { useRole } from '@/components/auth/RoleProvider';
@@ -160,6 +164,10 @@ export function SubInventoryTransferList({
     >
       {rows.map((row) => {
         const unit = stockUnitLabel(row.unitType);
+        const labeledPullDays = effectivePullDays(
+          row.pullSensitivityDays,
+          normalizePullSensitivityDays(pullDays)
+        );
         const qtyAtLocation = location === 'retail_floor' ? row.onHand : row.kitchenPrepQty;
         const defaultQty =
           location === 'retail_floor' ? suggestedPullQty(row) : Math.min(row.kitchenPrepQty, 1);
@@ -202,6 +210,7 @@ export function SubInventoryTransferList({
                 <RetailFloorItemCardMeta
                   row={row}
                   dense={dense}
+                  pullWindowDays={actionQueue ? labeledPullDays : undefined}
                   bundlePromo={bundleByProductId.get(row.productId) ?? null}
                 />
               ) : operations ? (
@@ -302,6 +311,7 @@ export function SubInventoryTransferList({
         return (
           <li
             key={row.productId}
+            data-pull-window={actionQueue ? labeledPullDays : undefined}
             className={cn(
               operations &&
                 'min-w-0 max-w-full overflow-hidden rounded-xl border border-slate-800/90 bg-slate-950/60 shadow-sm',

@@ -19,6 +19,7 @@ import {
   type RetailUnit,
   type YieldQuote,
 } from "@/lib/domains/receiving/yieldPricing";
+import type { PullSensitivityDays } from "@/lib/domains/inventory/pullSensitivity";
 import type { StockLevel } from "@/lib/domains/inventory/stock";
 import { fieldMatchesNeedle } from "@/lib/utils/searchNeedle";
 import { AdminInventoryWorkspace } from "@/components/features/inventory/AdminInventoryWorkspace";
@@ -62,11 +63,13 @@ export function CaseBoard({
   showIntro = false,
   showReceipt = false,
   focused = false,
+  storePullDays = null,
 }: {
   levels: StockLevel[] | null;
   showIntro?: boolean;
   showReceipt?: boolean;
   focused?: boolean;
+  storePullDays?: PullSensitivityDays | null;
 }) {
   const loading = initialLevels === null;
   const [levels, setLevels] = useState<StockLevel[]>(() => initialLevels ?? []);
@@ -379,7 +382,7 @@ export function CaseBoard({
 
       {focused ? null : showReceipt ? (
         <div className="mt-4">
-          <AdminInventoryWorkspace levels={initialLevels} />
+          <AdminInventoryWorkspace levels={initialLevels} storePullDays={storePullDays} />
         </div>
       ) : (
         <>

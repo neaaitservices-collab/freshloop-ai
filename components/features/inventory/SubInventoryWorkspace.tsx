@@ -18,7 +18,8 @@ import type { StockLevel } from '@/lib/domains/inventory/stock';
 export interface SubInventoryWorkspaceProps {
   levels: StockLevel[];
   loading?: boolean;
-  pullDays?: number;
+  /** Store pull window. Callers pass the saved value; there is no silent 3-day default. */
+  pullDays: number;
   staffId?: string;
   query?: string;
   departmentFilter?: (row: StockLevel) => boolean;
@@ -39,7 +40,7 @@ export interface SubInventoryWorkspaceProps {
 export function SubInventoryWorkspace({
   levels,
   loading,
-  pullDays = 3,
+  pullDays,
   staffId,
   query = '',
   departmentFilter,

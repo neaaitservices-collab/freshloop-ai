@@ -7,9 +7,15 @@ import { Card, CardBody, CardDescription, CardHeader, CardTitle } from '@/compon
 import { Toast } from '@/components/ui/Toast';
 import type { StockLevel } from '@/lib/domains/inventory/stock';
 import { useOptimisticInventoryLevels } from '@/hooks/use-optimistic-inventory-levels';
+import { useStorePullSensitivityDays } from '@/hooks/use-store-pull-sensitivity-days';
 
 export function KitchenSubInventoryPanel() {
   const { activeUser } = useRole();
+  const {
+    pullDays,
+    failed: pullFailed,
+    retry: retryPull,
+  } = useStorePullSensitivityDays();
   const { levels, setLevels, performMove } = useOptimisticInventoryLevels(null);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState<string | null>(null);
@@ -53,20 +59,36 @@ export function KitchenSubInventoryPanel() {
           </CardDescription>
         </CardHeader>
         <CardBody className="pt-0">
-          <SubInventoryWorkspace
-            levels={levels}
-            loading={loading}
-            staffId={activeUser?.id}
-            retailPriorityOnly={false}
-            showRetailCatalog={false}
-            performMove={performMove}
-            onSuccess={(message, level) => {
-              patchLevel(level);
-              setToast(message);
-              setError(null);
-            }}
-            onError={(message) => setError(message)}
-          />
+          {pullDays != null ? (
+            <SubInventoryWorkspace
+              levels={levels}
+              loading={loading}
+              pullDays={pullDays}
+              staffId={activeUser?.id}
+              retailPriorityOnly={false}
+              showRetailCatalog={false}
+              performMove={performMove}
+              onSuccess={(message, level) => {
+                patchLevel(level);
+                setToast(message);
+                setError(null);
+              }}
+              onError={(message) => setError(message)}
+            />
+          ) : (
+            <p className="text-sm text-slate-400">
+              {pullFailed ? 'Pull window unavailable.' : 'Loading pull window…'}
+              {pullFailed ? (
+                <button
+                  type="button"
+                  onClick={retryPull}
+                  className="ml-2 font-bold text-emerald-300 underline-offset-2 hover:underline"
+                >
+                  Retry
+                </button>
+              ) : null}
+            </p>
+          )}
           {error ? (
             <p className="mt-3 rounded-xl border border-rose-900/50 bg-rose-950/30 px-3 py-2 text-xs font-semibold text-rose-200">
               {error}

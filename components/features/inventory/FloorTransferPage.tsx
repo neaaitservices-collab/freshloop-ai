@@ -6,6 +6,7 @@ import { Search } from 'lucide-react';
 import { useRole } from '@/components/auth/RoleProvider';
 import { RetailFloorTransferPanel } from '@/components/features/inventory/RetailFloorTransferPanel';
 import { useStorePullSensitivityDays } from '@/hooks/use-store-pull-sensitivity-days';
+import type { PullSensitivityDays } from '@/lib/domains/inventory/pullSensitivity';
 import { SetBundlesListPanel } from '@/components/features/pricing/SetBundlesListPanel';
 import { PageMain } from '@/components/ui/layout';
 import { canViewSetBundlePromos } from '@/lib/auth/staffCapabilities';
@@ -20,14 +21,21 @@ import { useDepartmentOptions } from '@/hooks/use-department-options';
 import type { StockLevel } from '@/lib/domains/inventory/stock';
 import { useOptimisticInventoryLevels } from '@/hooks/use-optimistic-inventory-levels';
 
-export function FloorTransferPage({ levels: initialLevels }: { levels: StockLevel[] | null }) {
+export function FloorTransferPage({
+  levels: initialLevels,
+  storePullDays,
+}: {
+  levels: StockLevel[] | null;
+  storePullDays: PullSensitivityDays;
+}) {
   const loading = initialLevels === null;
   const router = useRouter();
   const { levels, performMove, setLevels } = useOptimisticInventoryLevels(initialLevels);
   const [query, setQuery] = useState('');
   const [department, setDepartment] = useState<string>('ALL');
   const departmentOptions = useDepartmentOptions();
-  const pullDays = useStorePullSensitivityDays();
+  const { pullDays } = useStorePullSensitivityDays(storePullDays);
+  const windowDays = pullDays ?? storePullDays;
   const [toast, setToast] = useState<{ text: string; kitchen?: boolean } | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [refreshError, setRefreshError] = useState<string | null>(null);
@@ -36,7 +44,7 @@ export function FloorTransferPage({ levels: initialLevels }: { levels: StockLeve
   useEffect(() => {
     const sync = () => {
       void fetch(
-        `/api/inventory/levels?includePosSales=1&salesDays=${encodeURIComponent(String(pullDays))}`,
+        `/api/inventory/levels?includePosSales=1&salesDays=${encodeURIComponent(String(windowDays))}`,
         { cache: 'no-store' }
       )
         .then(async (response) => {
@@ -59,7 +67,7 @@ export function FloorTransferPage({ levels: initialLevels }: { levels: StockLeve
     };
     window.addEventListener('freshloop-inventory-updated', sync);
     return () => window.removeEventListener('freshloop-inventory-updated', sync);
-  }, [setLevels, pullDays]);
+  }, [setLevels, windowDays]);
 
   const departmentFilter = useCallback(
     (row: StockLevel) => matchesStoredDepartment(row.department, department),
@@ -85,9 +93,9 @@ export function FloorTransferPage({ levels: initialLevels }: { levels: StockLeve
           <h1 className="text-xl font-black text-slate-100 sm:text-2xl">Move shelf stock</h1>
           <p className="mt-1 max-w-lg text-xs text-slate-400">
             Send stock to production prep or log floor waste — choose amounts in lbs or units. Pull
-            window is set by the owner in{' '}
-            <span className="font-semibold text-slate-300">Admin → Settings</span> (currently ≤
-            {pullDays} days left).
+            window is the store default set in{' '}
+            <span className="font-semibold text-slate-300">Admin → Settings</span> or Inventory
+            (currently ≤{windowDays} days left). A per-SKU override replaces that default.
           </p>
         </div>
       </div>
@@ -141,7 +149,7 @@ export function FloorTransferPage({ levels: initialLevels }: { levels: StockLeve
         <>
           <RetailFloorTransferPanel
             levels={levels}
-            pullDays={pullDays}
+            pullDays={windowDays}
             staffId={activeUser?.id}
             priorityOnly
             query={query}
@@ -157,7 +165,7 @@ export function FloorTransferPage({ levels: initialLevels }: { levels: StockLeve
             </summary>
             <RetailFloorTransferPanel
               levels={levels}
-              pullDays={pullDays}
+              pullDays={windowDays}
               staffId={activeUser?.id}
               priorityOnly={false}
               query={query}

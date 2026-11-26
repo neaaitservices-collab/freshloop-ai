@@ -109,6 +109,7 @@ export function ItemSettingsModal({
   row,
   open,
   onClose,
+  storePullDays = null,
   canOverride,
   canRemoveFromCatalog,
   onRemoveFromCatalog,
@@ -119,6 +120,7 @@ export function ItemSettingsModal({
   row: StockLevel | null;
   open: boolean;
   onClose: () => void;
+  storePullDays?: PullSensitivityDays | null;
   canOverride: boolean;
   canRemoveFromCatalog?: boolean;
   onRemoveFromCatalog?: () => Promise<void>;
@@ -153,7 +155,12 @@ export function ItemSettingsModal({
   }, [department, loadedDepartments]);
   const [supplier, setSupplier] = useState('');
   const [origin, setOrigin] = useState('');
-  const storePullDefault = useStorePullSensitivityDays();
+  const {
+    pullDays: storePullDefault,
+    ready: storePullReady,
+    failed: storePullFailed,
+    retry: retryStorePull,
+  } = useStorePullSensitivityDays(storePullDays);
   const storeDefaultParCases = useStoreDefaultParCases();
   const [pullSensitivityDays, setPullSensitivityDays] = useState<PullSensitivityDays | null>(null);
   const [followStorePar, setFollowStorePar] = useState(true);
@@ -534,18 +541,43 @@ export function ItemSettingsModal({
                 <div className="mt-5 border-t border-slate-800/80 pt-5">
                   <p className={LABEL}>Pull / freshness window</p>
                   <p className="mt-1 text-xs leading-relaxed text-slate-500">
-                    Flag this SKU for rescue when shelf life is within N days. Active window: ≤
-                    {pullSensitivityDays ?? storePullDefault}d
-                    {pullSensitivityDays === null ? ' (store default)' : ''}.
+                    Flag this SKU for rescue when shelf life is within N days. Active window:{' '}
+                    {storePullReady && storePullDefault != null ? (
+                      <>
+                        ≤{pullSensitivityDays ?? storePullDefault}d
+                        {pullSensitivityDays === null ? ' (store default)' : ''}.
+                      </>
+                    ) : storePullReady ? (
+                      'unavailable.'
+                    ) : (
+                      'loading…'
+                    )}
                   </p>
-                  <PullDaysToggle
-                    className="mt-3"
-                    idPrefix="catalog-pull"
-                    allowStoreDefault
-                    storeDefault={storePullDefault}
-                    value={pullSensitivityDays}
-                    onChange={setPullSensitivityDays}
-                  />
+                  {storePullReady && storePullDefault != null ? (
+                    <PullDaysToggle
+                      className="mt-3"
+                      idPrefix="catalog-pull"
+                      allowStoreDefault
+                      storeDefault={storePullDefault}
+                      value={pullSensitivityDays}
+                      onChange={setPullSensitivityDays}
+                    />
+                  ) : (
+                    <p className="mt-3 text-xs text-slate-500">
+                      {storePullReady
+                        ? 'Store pull window could not be loaded.'
+                        : 'Loading pull window…'}
+                      {storePullFailed ? (
+                        <button
+                          type="button"
+                          onClick={retryStorePull}
+                          className="ml-2 font-bold text-emerald-300 underline-offset-2 hover:underline"
+                        >
+                          Retry
+                        </button>
+                      ) : null}
+                    </p>
+                  )}
                 </div>
                 <div className="mt-5 border-t border-slate-800/80 pt-5">
                   <p className={LABEL}>Order minimum (cases)</p>

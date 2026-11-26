@@ -69,6 +69,7 @@ export function RetailFloorItemCardMeta({
   bundlePromo,
   dense = false,
   showShelfLife = true,
+  pullWindowDays,
   showBundleActions = false,
   onEditBundle,
   onRemoveBundle,
@@ -78,6 +79,8 @@ export function RetailFloorItemCardMeta({
   bundlePromo?: ItemBundlePromoHint | null;
   dense?: boolean;
   showShelfLife?: boolean;
+  /** Same days value that decided this row is on the short-dated board. */
+  pullWindowDays?: number;
   /** Owner / store manager — edit or remove saved bundle promo. */
   showBundleActions?: boolean;
   onEditBundle?: () => void;
@@ -115,6 +118,11 @@ export function RetailFloorItemCardMeta({
             {shelf.warn ? <TriangleAlert className="h-3 w-3 shrink-0" aria-hidden /> : null}
             {shelf.label}
           </span>
+          {pullWindowDays != null ? (
+            <span className="rounded-lg border border-emerald-500/30 bg-emerald-950/40 px-2 py-0.5 text-[10px] font-bold text-emerald-200">
+              ≤{pullWindowDays}d pull
+            </span>
+          ) : null}
           {row.isMarkdown ? (
             <span className="rounded-lg border border-amber-500/40 bg-amber-500/15 px-2 py-0.5 text-[10px] font-bold text-amber-200">
               {row.markdownPct ? `${row.markdownPct}% off` : 'Markdown'}
