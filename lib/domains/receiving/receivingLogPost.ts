@@ -41,6 +41,8 @@ export const MAX_RECEIVING_BATCH_SIZE = 80;
 export const STOCK_NOT_UPDATED = 'Stock was not updated.';
 export const RECEIPT_TIMEOUT_REASON =
   'The receipt did not finish in time, so stock was not changed. Try confirming again.';
+export const RECEIPT_COLLISION_REASON =
+  'Another confirm saved this line at the same time. Nothing was posted. Confirm again.';
 export const UNMATCHED_PRODUCT_REASON = 'This line is not matched to a catalog product.';
 export const MISSING_LOCATION_REASON = 'A stock location is missing for this receipt.';
 export const RECEIVING_VALIDATION_REASON = 'A receiving field failed validation.';

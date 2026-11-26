@@ -5,6 +5,10 @@ import { excludeVolumetricScrapFromStock, InventoryLedgerError } from '@/lib/dom
 import type { LotTx } from '@/lib/domains/inventory/lots';
 import { DEFAULT_PAR_CASES, normalizeParCases } from '@/lib/domains/inventory/parLevel';
 import {
+  normalizeProductNameForMatch,
+  selectPurchaseProductByName,
+} from '@/lib/domains/inventory/productMatching';
+import {
   productPackWriteData,
   type ProductPackFields,
 } from '@/lib/domains/inventory/stock';
@@ -18,15 +22,15 @@ import {
   DELIVERY_PAYLOAD_CONFLICT_ERROR,
   DELIVERY_UUID_REQUIRED_ERROR,
 } from '@/lib/domains/receiving/deliveryIdentity';
-import { normalizeSupplierCode } from '@/lib/domains/receiving/supplierProductMatch';
+import { isMissingSupplierProductMatches, normalizeSupplierCode } from '@/lib/domains/receiving/supplierProductMatch';
 import { sampleReceivingRejection } from '@/lib/domains/receiving/sampleReceivingGuard';
 import {
   isSkippedInvoiceReceipt,
+  RECEIPT_COLLISION_REASON,
   type ReceivingLogPostInput,
   type ReceivingLogPostResult,
 } from '@/lib/domains/receiving/receivingLogPost';
 import { resolveTargetMargin } from '@/lib/domains/receiving/yieldPricing';
-import { findLatestStoreSetting } from '@/lib/domains/stats/storeSettingSelect';
 
 export interface InvoiceReceiptSlot {
   posted: boolean;
@@ -102,7 +106,7 @@ async function lockRows(
   if (ids.length === 0) return;
   const placeholders = ids.map((_, index) => `$${index + 1}`).join(', ');
   await tx.$queryRawUnsafe(
-    `SELECT id FROM ${table} WHERE ${column} IN (${placeholders}) FOR UPDATE`,
+    `SELECT id FROM ${table} WHERE ${column} IN (${placeholders}) ORDER BY id FOR UPDATE`,
     ...ids
   );
 }
@@ -132,11 +136,12 @@ function packOf(post: ReceivingLogPostInput): ProductPackFields {
 export async function postInvoiceReceiptBatch(
   tx: LotTx,
   posts: ReceivingLogPostInput[],
-  actor: { staffId: string; supplierName: string | null }
+  actor: { staffId: string; supplierName: string | null; supplierId?: string | null }
 ): Promise<{
   slots: InvoiceReceiptSlot[];
   receipts: { transactionId: string; productId: string; unitsAdded: number; onHand: number }[];
   postedRows: ReceivingLogPostResult[];
+  catalogUpdates: { id: string; data: Prisma.ProductUpdateInput }[];
 }> {
   const slots = posts.map(() => emptySlot());
   const postedRows: ReceivingLogPostResult[] = [];
@@ -266,35 +271,65 @@ export async function postInvoiceReceiptBatch(
   }
 
   if (work.length === 0) {
-    return { slots, receipts: slots.map(receiptOf), postedRows };
+    return { slots, receipts: slots.map(receiptOf), postedRows, catalogUpdates: [] };
   }
 
   const explicitIds = [
     ...new Set(work.map((line) => line.post.productId?.trim()).filter((id): id is string => Boolean(id))),
   ];
   const skus = [...new Set(work.map((line) => skuOf(line.post)).filter((sku): sku is string => Boolean(sku)))];
-  const [byIdRows, bySkuRows, departmentIds, setting] = await Promise.all([
+  const supplierId = actor.supplierId?.trim() ?? '';
+  const [explicitRows, catalogRows, departmentIds, setting, codeLinks] = await Promise.all([
     explicitIds.length
       ? tx.product.findMany({ where: { id: { in: explicitIds }, isManufactured: false }, select: productSelect })
       : Promise.resolve([]),
-    skus.length
-      ? tx.product.findMany({ where: { barcode: { in: skus }, isManufactured: false }, select: productSelect })
-      : Promise.resolve([]),
+    tx.product.findMany({ where: { isManufactured: false }, select: productSelect }),
     loadDepartmentCodeMap(tx),
-    findLatestStoreSetting(),
+    tx.storeSetting.findFirst({ orderBy: { updatedAt: 'desc' }, select: { defaultParCases: true } }),
+    supplierId && skus.length
+      ? tx.supplierProductMatch
+          .findMany({
+            where: {
+              supplierId,
+              matchType: 'code',
+              matchKey: { in: skus },
+              product: { isManufactured: false },
+            },
+            select: { matchKey: true, product: { select: productSelect } },
+          })
+          .catch((error: unknown) => {
+            if (isMissingSupplierProductMatches(error)) return [];
+            throw error;
+          })
+      : Promise.resolve([]),
   ]);
-  const byId = new Map(byIdRows.map((row) => [row.id, normalizeProduct(row)]));
-  const bySku = new Map(
-    bySkuRows.flatMap((row) => {
-      const sku = normalizeSupplierCode(row.barcode);
-      return sku ? [[sku, normalizeProduct(row)] as const] : [];
-    })
-  );
+  const byId = new Map<string, CatalogProduct>();
+  const nameCatalog: { id: string; name: string }[] = [];
+  for (const row of catalogRows) {
+    const product = normalizeProduct(row);
+    byId.set(product.id, product);
+    nameCatalog.push({ id: product.id, name: product.name });
+  }
+  for (const row of explicitRows) {
+    const product = normalizeProduct(row);
+    if (!byId.has(product.id)) {
+      byId.set(product.id, product);
+      nameCatalog.push({ id: product.id, name: product.name });
+    }
+  }
+  const byCode = new Map<string, CatalogProduct>();
+  for (const link of codeLinks) {
+    const product = normalizeProduct(link.product);
+    byId.set(product.id, product);
+    byCode.set(link.matchKey, product);
+  }
   const parCases = normalizeParCases(setting?.defaultParCases ?? DEFAULT_PAR_CASES);
   const label = supplierLabel(actor.supplierName);
 
   const creates = new Map<string, Prisma.ProductCreateManyInput>();
   const assignment = new Map<number, { key: string; existing: CatalogProduct | null }>();
+  const keyByBarcode = new Map<string, string>();
+  const keyByName = new Map<string, string>();
   for (const line of work) {
     const explicit = line.post.productId?.trim() || '';
     const known = explicit ? byId.get(explicit) : undefined;
@@ -303,59 +338,51 @@ export async function postInvoiceReceiptBatch(
       continue;
     }
     const sku = skuOf(line.post);
-    const coded = sku ? bySku.get(sku) : undefined;
-    if (coded) {
-      assignment.set(line.index, { key: `id:${coded.id}`, existing: coded });
+    const linked = sku ? byCode.get(sku) : undefined;
+    if (linked) {
+      assignment.set(line.index, { key: `id:${linked.id}`, existing: linked });
       continue;
     }
-    const key = sku ? `sku:${sku}` : `name:${line.post.itemName.trim().toLowerCase()}`;
-    assignment.set(line.index, { key, existing: null });
-    if (creates.has(key)) continue;
-    const department = resolveReceivingDepartment({
-      itemName: line.post.itemName,
-      explicitDepartment: line.post.department,
-      departmentAssumed: line.post.departmentAssumed,
-      supplier: actor.supplierName,
-      category: line.post.category,
-      screenDepartment: line.post.screenDepartment,
-    });
-    if (!department) {
-      throw new InventoryLedgerError(receivingDepartmentRequiredMessage(line.post.itemName), 'DEPARTMENT_REQUIRED', 400, {
-        committed: false,
-      });
+    const pendingSku = sku ? `pending:sku:${sku}` : '';
+    if (pendingSku && creates.has(pendingSku)) {
+      assignment.set(line.index, { key: pendingSku, existing: null });
+      continue;
     }
-    const economics = economicsOf(line, label, parCases, department, departmentIds, sku);
-    creates.set(key, economics);
-  }
-
-  // Later lines for the same new SKU win the catalog cost, matching a sequential post.
-  for (const line of work) {
-    const assigned = assignment.get(line.index);
-    if (!assigned || assigned.existing || !creates.has(assigned.key)) continue;
-    const department = resolveReceivingDepartment({
-      itemName: line.post.itemName,
-      explicitDepartment: line.post.department,
-      departmentAssumed: line.post.departmentAssumed,
-      supplier: actor.supplierName,
-      category: line.post.category,
-      screenDepartment: line.post.screenDepartment,
-    });
-    if (!department) continue;
-    creates.set(assigned.key, economicsOf(line, label, parCases, department, departmentIds, skuOf(line.post)));
+    const named = selectPurchaseProductByName(line.post.itemName, nameCatalog);
+    const namedProduct = named ? byId.get(named.id) : undefined;
+    if (namedProduct) {
+      assignment.set(line.index, { key: `id:${namedProduct.id}`, existing: namedProduct });
+      continue;
+    }
+    const pendingName = `pending:name:${normalizeProductNameForMatch(line.post.itemName) || line.index}`;
+    if (creates.has(pendingName)) {
+      assignment.set(line.index, { key: pendingName, existing: null });
+      continue;
+    }
+    const department = departmentFor(line, actor.supplierName);
+    const key = pendingSku || pendingName;
+    assignment.set(line.index, { key, existing: null });
+    creates.set(key, economicsOf(line, label, parCases, department, departmentIds, sku));
+    if (sku) keyByBarcode.set(sku, key);
+    keyByName.set(line.post.itemName.trim().toLowerCase(), key);
   }
 
   const createdRows = creates.size
-    ? await tx.product.createManyAndReturn({
-        data: [...creates.values()],
-        select: productSelect,
-      })
+    ? await orConfirmAgain(
+        () =>
+          tx.product.createManyAndReturn({
+            data: [...creates.values()],
+            select: productSelect,
+          }),
+        work
+      )
     : [];
   const createdByKey = new Map<string, CatalogProduct>();
   for (const row of createdRows) {
     const product = normalizeProduct(row);
     const sku = normalizeSupplierCode(product.barcode);
-    if (sku && creates.has(`sku:${sku}`)) createdByKey.set(`sku:${sku}`, product);
-    else createdByKey.set(`name:${product.name.trim().toLowerCase()}`, product);
+    const key = (sku && keyByBarcode.get(sku)) || keyByName.get(product.name.trim().toLowerCase());
+    if (key) createdByKey.set(key, product);
   }
 
   const productFor = (index: number): CatalogProduct => {
@@ -400,10 +427,14 @@ export async function postInvoiceReceiptBatch(
       notes: `Received ${line.post.casesReceived} cases of ${line.post.itemName}`,
     };
   });
-  const transactions = await tx.inventoryTransaction.createManyAndReturn({
-    data: transactionRows,
-    select: { id: true, referenceId: true },
-  });
+  const transactions = await orConfirmAgain(
+    () =>
+      tx.inventoryTransaction.createManyAndReturn({
+        data: transactionRows,
+        select: { id: true, referenceId: true },
+      }),
+    work
+  );
   const transactionByRef = new Map(
     transactions.flatMap((row) => (row.referenceId ? [[row.referenceId, row.id] as const] : []))
   );
@@ -429,7 +460,9 @@ export async function postInvoiceReceiptBatch(
     }),
   });
 
-  await tx.receivingDelivery.createMany({
+  await orConfirmAgain(
+    () =>
+      tx.receivingDelivery.createMany({
     data: work.map((line) => {
       const product = productFor(line.index);
       const referenceId = `recv:${line.deliveryId}`;
@@ -448,28 +481,39 @@ export async function postInvoiceReceiptBatch(
         productName: product.name,
       };
     }),
-  });
-  await tx.ledgerIdempotencyKey.createMany({
-    data: work.map((line) => ({ key: `recv:${line.deliveryId}` })),
-  });
+      }),
+    work
+  );
+  await orConfirmAgain(
+    () =>
+      tx.ledgerIdempotencyKey.createMany({
+        data: work.map((line) => ({ key: `recv:${line.deliveryId}` })),
+      }),
+    work
+  );
 
-  const updates = new Map<string, Prisma.ProductUpdateInput>();
+  const catalogUpdates: { id: string; data: Prisma.ProductUpdateInput }[] = [];
+  const seenUpdates = new Set<string>();
   for (const line of work) {
     const product = productFor(line.index);
-    if (createdByKeyHas(createdByKey, product.id)) continue;
-    updates.set(product.id, {
-      ...line.pack,
-      unitType: unitTypeFor(line.post.retailUnit),
-      standardCost: Number(line.unitCost.toFixed(4)),
-      receiveCaseCost: Number(line.post.caseCost.toFixed(4)),
-      supplier: label,
-      ...(line.post.currentRetailPrice > 0 ? { retailPrice: line.post.currentRetailPrice } : {}),
-      targetMargin: resolveTargetMargin(line.post.marginMode, line.post.customMarginPercent ?? 0),
-      catalogActive: true,
+    if (createdByKeyHas(createdByKey, product.id) || seenUpdates.has(product.id)) continue;
+    seenUpdates.add(product.id);
+    const caseRetail =
+      line.post.caseRetailPrice != null && line.post.caseRetailPrice > 0 ? line.post.caseRetailPrice : undefined;
+    catalogUpdates.push({
+      id: product.id,
+      data: {
+        ...line.pack,
+        unitType: unitTypeFor(line.post.retailUnit),
+        standardCost: Number(line.unitCost.toFixed(4)),
+        receiveCaseCost: Number(line.post.caseCost.toFixed(4)),
+        supplier: label,
+        ...(line.post.currentRetailPrice > 0 ? { retailPrice: line.post.currentRetailPrice } : {}),
+        ...(caseRetail !== undefined ? { caseRetailPrice: caseRetail } : {}),
+        targetMargin: resolveTargetMargin(line.post.marginMode, line.post.customMarginPercent ?? 0),
+        catalogActive: true,
+      },
     });
-  }
-  for (const [id, data] of updates) {
-    await tx.product.update({ where: { id }, data });
   }
 
   const sums = await tx.inventoryTransaction.groupBy({
@@ -510,7 +554,7 @@ export async function postInvoiceReceiptBatch(
     });
   }
 
-  return { slots, receipts: slots.map(receiptOf), postedRows };
+  return { slots, receipts: slots.map(receiptOf), postedRows, catalogUpdates };
 }
 
 function receiptOf(slot: InvoiceReceiptSlot): {
@@ -549,6 +593,47 @@ function normalizeProduct(row: {
   };
 }
 
+function departmentFor(line: PreparedLine, supplierName: string | null): Department {
+  const department = resolveReceivingDepartment({
+    itemName: line.post.itemName,
+    explicitDepartment: line.post.department,
+    departmentAssumed: line.post.departmentAssumed,
+    supplier: supplierName,
+    category: line.post.category,
+    screenDepartment: line.post.screenDepartment,
+  });
+  if (!department) {
+    throw new InventoryLedgerError(receivingDepartmentRequiredMessage(line.post.itemName), 'DEPARTMENT_REQUIRED', 400, {
+      committed: false,
+    });
+  }
+  return department;
+}
+
+function isUniqueConflict(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && 'code' in error && (error as { code?: string }).code === 'P2002';
+}
+
+function collisionError(lines: PreparedLine[]): InventoryLedgerError {
+  return new InventoryLedgerError(RECEIPT_COLLISION_REASON, 'DELIVERY_CONFLICT', 409, {
+    committed: false,
+    results: lines.map((line) => ({
+      externalLogId: line.post.externalLogId,
+      itemName: line.post.itemName,
+      stock: { posted: false, conflict: true, reason: RECEIPT_COLLISION_REASON },
+    })),
+  });
+}
+
+async function orConfirmAgain<T>(run: () => Promise<T>, lines: PreparedLine[]): Promise<T> {
+  try {
+    return await run();
+  } catch (error) {
+    if (isUniqueConflict(error)) throw collisionError(lines);
+    throw error;
+  }
+}
+
 function economicsOf(
   line: PreparedLine,
   label: string,
@@ -568,6 +653,9 @@ function economicsOf(
     splitFactor: line.pack.splitFactor,
     standardCost: Number(line.unitCost.toFixed(4)),
     receiveCaseCost: Number(line.post.caseCost.toFixed(4)),
+    ...(line.post.caseRetailPrice != null && line.post.caseRetailPrice > 0
+      ? { caseRetailPrice: line.post.caseRetailPrice }
+      : {}),
     supplier: label,
     shelfLifeDays: 7,
     parCases,

@@ -15,6 +15,7 @@ import {
   isNonStockInvoiceLine,
   isSkippedInvoiceReceipt,
   isZeroDollarReceivingLine,
+  RECEIPT_COLLISION_REASON,
   RECEIPT_TIMEOUT_REASON,
   type ReceivingLogPostInput,
   type ReceivingLogPostResult,
@@ -489,6 +490,7 @@ export async function commitInvoiceOcrReceipts(input: {
     receipts: { transactionId: string; productId: string; unitsAdded: number; onHand: number }[];
     transactionsCreated: number;
   };
+  let catalogUpdates: { id: string; data: Prisma.ProductUpdateInput }[] = [];
   try {
     result = await prisma.$transaction(
       async (tx) => {
@@ -521,7 +523,9 @@ export async function commitInvoiceOcrReceipts(input: {
         const settled = await postInvoiceReceiptBatch(tx, posts, {
           staffId: input.staffId,
           supplierName,
+          supplierId,
         });
+        catalogUpdates = settled.catalogUpdates;
         const postedRows = settled.postedRows;
         const receipts = settled.receipts;
 
@@ -640,7 +644,16 @@ export async function commitInvoiceOcrReceipts(input: {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2028') {
       throw new InventoryLedgerError(RECEIPT_TIMEOUT_REASON, 'DELIVERY_CONFLICT', 409, { committed: false });
     }
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+      throw new InventoryLedgerError(RECEIPT_COLLISION_REASON, 'DELIVERY_CONFLICT', 409, { committed: false });
+    }
     throw error;
+  }
+
+  if (catalogUpdates.length > 0) {
+    for (const update of catalogUpdates) {
+      await prisma.product.update({ where: { id: update.id }, data: update.data });
+    }
   }
 
   invalidateInventoryCaches();

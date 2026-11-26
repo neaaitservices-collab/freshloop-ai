@@ -54,6 +54,17 @@ test('confirming invoice 901452 creates SKUs and posts every shipped line once',
       shelfLifeDays: 7,
     },
   });
+  await prisma.supplierProductMatch.create({
+    data: {
+      supplierId: supplier.id,
+      matchType: 'code',
+      matchKey: 'POFY25',
+      printedValue: 'POFY25',
+      productId: fingerling.id,
+      createdById: staffId,
+      updatedById: staffId,
+    },
+  });
   const lines = commitLines();
   const fingerlingLine = lines.find((line) => line.supplier_code === 'POFY25');
   assert.ok(fingerlingLine);
