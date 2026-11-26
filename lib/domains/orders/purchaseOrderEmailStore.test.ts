@@ -412,11 +412,13 @@ test('sending one product leaves the other approved and orderable', { skip: !has
     t.skip('Database unreachable.');
     return;
   }
-  await prisma.$executeRawUnsafe(`ALTER DATABASE freshloop_test SET timezone TO 'America/Toronto'`);
+  const [{ name }] = await prisma.$queryRaw<[{ name: string }]>`SELECT current_database() AS name`;
+  const database = `"${name.replace(/"/g, '""')}"`;
+  await prisma.$executeRawUnsafe(`ALTER DATABASE ${database} SET timezone TO 'America/Toronto'`);
   await prisma.$disconnect();
   await prisma.$connect();
   t.after(async () => {
-    await prisma.$executeRawUnsafe(`ALTER DATABASE freshloop_test SET timezone TO 'UTC'`);
+    await prisma.$executeRawUnsafe(`ALTER DATABASE ${database} SET timezone TO 'UTC'`);
     await prisma.$disconnect();
     await prisma.$connect();
   });
