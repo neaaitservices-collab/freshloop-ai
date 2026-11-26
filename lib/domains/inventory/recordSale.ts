@@ -3,7 +3,7 @@ import { getCurrentStock, prisma } from '@/lib/domains/inventory/ledger';
 import { invalidateInventoryCaches } from '@/lib/domains/inventory/inventoryCache';
 import { consumeLotsFifo, lockProductInventory } from '@/lib/domains/inventory/lots';
 import { isLedgerIdempotencyConflict } from '@/lib/domains/inventory/idempotencyConflict';
-import { priceProductSale } from '@/lib/domains/inventory/saleRevenue';
+import { priceImportedLine, priceProductSale } from '@/lib/domains/inventory/saleRevenue';
 import { claimProductSaleReplay } from '@/lib/domains/inventory/saleIdempotency';
 
 export type SaleLocation = 'floor' | 'deli';
@@ -41,6 +41,10 @@ export async function recordProductSale(input: {
   staffId: string;
   location?: SaleLocation;
   unitPriceOverride?: number;
+  /** Exact line total. Stored on realizedLineRevenue; unit price is total / quantity. */
+  lineRevenue?: number;
+  /** Ledger timestamp. Omitted sales keep the database default. */
+  soldAt?: Date;
   referenceId?: string;
   /** `sale:staff:<clientMutationId>`. Inserted in the same transaction as the sale row. */
   idempotencyKey?: string;
@@ -51,6 +55,15 @@ export async function recordProductSale(input: {
   if (!Number.isFinite(qty) || qty <= 0) {
     throw new Error('Sale quantity must be greater than zero.');
   }
+  if (
+    input.lineRevenue != null &&
+    (!Number.isFinite(input.lineRevenue) || input.lineRevenue < 0)
+  ) {
+    throw new Error('Sale line revenue must be zero or greater.');
+  }
+  if (input.soldAt != null && !Number.isFinite(input.soldAt.getTime())) {
+    throw new Error('Sale date is not a valid date.');
+  }
 
   const client = input.db ?? prisma;
   const product = await client.product.findUnique({ where: { id: input.productId } });
@@ -58,13 +71,17 @@ export async function recordProductSale(input: {
 
   const location = resolveSaleLocation(product, input.location);
 
-  const priced = priceProductSale({
-    quantity: qty,
-    unitPriceOverride: input.unitPriceOverride,
-    retailPrice: product.retailPrice,
-    standardCost: product.standardCost,
-    targetMargin: product.targetMargin,
-  });
+  const priced =
+    input.lineRevenue == null
+      ? priceProductSale({
+          quantity: qty,
+          unitPriceOverride: input.unitPriceOverride,
+          retailPrice: product.retailPrice,
+          standardCost: product.standardCost,
+          targetMargin: product.targetMargin,
+        })
+      : priceImportedLine(qty, input.lineRevenue);
+  const explicitPrice = input.unitPriceOverride != null || input.lineRevenue != null;
 
   const referenceId = input.referenceId ?? input.idempotencyKey ?? `SALE-${Date.now()}`;
 
@@ -75,7 +92,7 @@ export async function recordProductSale(input: {
       productId: product.id,
       quantity: qty,
       location,
-      unitPrice: input.unitPriceOverride == null ? null : priced.unitPrice,
+      unitPrice: explicitPrice ? priced.unitPrice : null,
     });
 
   if (!input.db && input.idempotencyKey) {
@@ -113,6 +130,7 @@ export async function recordProductSale(input: {
         realizedUnitPrice: priced.realizedUnitPrice,
         realizedLineRevenue: priced.realizedLineRevenue,
         referenceId,
+        ...(input.soldAt ? { timestamp: input.soldAt } : {}),
         notes: `Retail sale (${qty} × $${priced.unitPrice.toFixed(2)})`,
       },
     });

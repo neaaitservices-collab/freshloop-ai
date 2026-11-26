@@ -10,6 +10,7 @@ const TABS = [
   { href: '/admin/executive', label: 'ROI' },
   { href: '/admin/suppliers', label: 'Suppliers' },
   { href: '/admin/departments', label: 'Departments' },
+  { href: '/admin/sales-import', label: 'Sales CSV' },
 ] as const;
 
 export type AdminViewHref = (typeof TABS)[number]['href'];
@@ -18,6 +19,7 @@ export function isAdminViewTabActive(pathname: string, href: AdminViewHref): boo
   if (href === '/admin/executive') return pathname.startsWith('/admin/executive');
   if (href === '/admin/suppliers') return pathname.startsWith('/admin/suppliers');
   if (href === '/admin/departments') return pathname.startsWith('/admin/departments');
+  if (href === '/admin/sales-import') return pathname.startsWith('/admin/sales-import');
   return pathname === '/admin';
 }
 
