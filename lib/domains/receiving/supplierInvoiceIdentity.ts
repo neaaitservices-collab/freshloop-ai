@@ -769,6 +769,7 @@ export interface NumberedInvoicePostLine {
   departmentAssumed?: boolean;
   category?: string | null;
   screenDepartment?: string | null;
+  supplierCode?: string | null;
 }
 
 export async function invoiceLinePostInput(
@@ -806,6 +807,7 @@ export async function invoiceLinePostInput(
     ...(line.departmentAssumed ? { departmentAssumed: true } : {}),
     ...(line.category ? { category: line.category } : {}),
     ...(line.screenDepartment ? { screenDepartment: line.screenDepartment } : {}),
+    ...(line.supplierCode?.trim() ? { supplierCode: line.supplierCode.trim() } : {}),
   };
 }
 

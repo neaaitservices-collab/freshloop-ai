@@ -3,7 +3,6 @@ import { departmentIdColumns } from '@/lib/domains/catalog/departmentRef';
 import { loadDepartmentCodeMap } from '@/lib/domains/catalog/departmentRefStore';
 import { InventoryLedgerError, prisma } from '@/lib/domains/inventory/ledger';
 import { invalidateInventoryCaches } from '@/lib/domains/inventory/inventoryCache';
-import { normalizeProductPackFields } from '@/lib/domains/inventory/stock';
 import {
   INVOICE_OCR_CONFIDENCE_THRESHOLD,
   computeCommitLineConfidence,
@@ -13,11 +12,16 @@ import { sampleInvoiceCommitRejection } from '@/lib/domains/receiving/sampleRece
 import { canonicalInvoiceDate, pageInvoiceDuplicateKeys } from '@/lib/domains/receiving/invoiceDeliveryId';
 import {
   assertReceivingDepartmentsChosen,
+  isNonStockInvoiceLine,
+  isSkippedInvoiceReceipt,
   isZeroDollarReceivingLine,
-  postReceivingLogToInventory,
+  RECEIPT_COLLISION_REASON,
+  RECEIPT_TIMEOUT_REASON,
   type ReceivingLogPostInput,
   type ReceivingLogPostResult,
 } from '@/lib/domains/receiving/receivingLogPost';
+import { postInvoiceReceiptBatch } from '@/lib/domains/receiving/invoiceReceiptBatch';
+import { ReceivingDeliveryConflict } from '@/lib/domains/receiving/deliveryIdentity';
 import { getSupplierNameById } from '@/lib/domains/suppliers/suppliers';
 import { loadProductCatalog } from '@/lib/domains/catalog/productCatalog';
 import {
@@ -48,7 +52,7 @@ export async function settleCommitPosts(
   const postedRows: ReceivingLogPostResult[] = [];
   const receipts: CommitReceiptSlot[] = [];
   for (const post of posts) {
-    if (isZeroDollarReceivingLine(post)) {
+    if (isSkippedInvoiceReceipt(post)) {
       receipts.push({ transactionId: '', productId: '', unitsAdded: 0, onHand: 0 });
       continue;
     }
@@ -168,14 +172,6 @@ export interface OcrInvoiceMeta {
   departmentBreakdown: Record<string, number>;
   rawOcrJson?: unknown;
 }
-
-const receiptProductSelect = {
-  casePackSize: true,
-  receivePackSize: true,
-  splitFactor: true,
-  name: true,
-  department: true,
-} as const;
 
 /** Case invoices quote a cost per case; inventory stores a per-unit cost and retail units. */
 export function resolveInvoiceReceipt(
@@ -403,6 +399,8 @@ export async function commitInvoiceOcrReceipts(input: {
   actorIsManager?: boolean;
   idempotencyKey?: string;
   draftId?: string;
+  /** Runs after stock is committed. A failure is logged and does not undo the receipt. */
+  afterCommit?: () => Promise<void> | void;
 }) {
   if (input.confirmedItems.length === 0) {
     throw new Error('No confirmed invoice lines to receive.');
@@ -478,6 +476,7 @@ export async function commitInvoiceOcrReceipts(input: {
           casePackSize: item.case_pack_size,
           department: item.department_assumed ? undefined : item.department,
           departmentAssumed: item.department_assumed === true,
+          supplierCode: item.supplier_code,
         },
         identity.deliveryId,
         supplierId
@@ -522,13 +521,11 @@ export async function commitInvoiceOcrReceipts(input: {
             );
           }
         }
-        const nameCatalog = await tx.product.findMany({
-          where: { isManufactured: false },
-          select: { id: true, name: true },
+        const settled = await postInvoiceReceiptBatch(tx, posts, {
+          staffId: input.staffId,
+          supplierName,
+          supplierId,
         });
-        const settled = await settleCommitPosts(posts, (post) =>
-          postReceivingLogToInventory(post, input.staffId, supplierName, tx, true, nameCatalog)
-        );
         const postedRows = settled.postedRows;
         const receipts = settled.receipts;
 
@@ -571,24 +568,15 @@ export async function commitInvoiceOcrReceipts(input: {
 
         if (createdHeader && invoiceId) {
           const departmentIds = await loadDepartmentCodeMap(tx);
+          const lineRows = [];
           for (const [index, item] of confirmedItems.entries()) {
             if (isZeroDollarReceivingLine({ caseCost: item.unit_cost })) continue;
-            const productId = receipts[index]?.productId || String(item.product_id ?? '');
-            const product = productId
-              ? await tx.product.findUnique({
-                  where: { id: productId },
-                  select: receiptProductSelect,
-                })
-              : null;
-            const packFields = normalizeProductPackFields({
-              receivePackSize: product?.receivePackSize,
-              splitFactor: product?.splitFactor,
-              casePackSize: product?.casePackSize,
-            });
-            const { units, unitCost } = resolveInvoiceReceipt(item, packFields.casePackSize);
+            if (isNonStockInvoiceLine({ supplierCode: item.supplier_code, itemName: item.line_name })) continue;
+            const slot = settled.slots[index];
+            if (!slot?.posted || !slot.productId) continue;
             const lineDepartment = item.department_assumed
-              ? product?.department
-              : item.department || product?.department;
+              ? slot.department
+              : item.department || slot.department;
             if (!lineDepartment) {
               throw new InventoryLedgerError(
                 'Pick a department for this new item before receiving it.',
@@ -597,20 +585,23 @@ export async function commitInvoiceOcrReceipts(input: {
                 { committed: false }
               );
             }
-            await tx.invoiceLineItem.create({
-              data: {
-                invoiceId,
-                name: item.line_name ?? product?.name ?? 'Invoice line',
-                department: lineDepartment,
-                ...departmentIdColumns(lineDepartment, departmentIds),
-                quantity: units > 0 ? units : item.quantity,
-                unit: 'units',
-                unitCost,
-                totalCost: Number((unitCost * (units > 0 ? units : item.quantity)).toFixed(2)),
-                casePackSize: packFields.receivePackSize,
-                ocrLineConfidence: computeCommitLineConfidence(item, product?.name),
-              },
+            const { units, unitCost } = resolveInvoiceReceipt(item, slot.casePackSize);
+            const quantity = units > 0 ? units : item.quantity;
+            lineRows.push({
+              invoiceId,
+              name: item.line_name ?? slot.productName ?? 'Invoice line',
+              department: lineDepartment,
+              ...departmentIdColumns(lineDepartment, departmentIds),
+              quantity,
+              unit: 'units',
+              unitCost,
+              totalCost: Number((unitCost * quantity).toFixed(2)),
+              casePackSize: slot.receivePackSize,
+              ocrLineConfidence: computeCommitLineConfidence(item, slot.productName),
             });
+          }
+          if (lineRows.length > 0) {
+            await tx.invoiceLineItem.createMany({ data: lineRows });
           }
         }
 
@@ -619,7 +610,11 @@ export async function commitInvoiceOcrReceipts(input: {
           supplierId,
           input.staffId,
           planSupplierMatchWrites(
-            confirmedItems.filter((item) => !isZeroDollarReceivingLine({ caseCost: item.unit_cost })),
+            confirmedItems.filter(
+              (item) =>
+                !isZeroDollarReceivingLine({ caseCost: item.unit_cost }) &&
+                !isNonStockInvoiceLine({ supplierCode: item.supplier_code, itemName: item.line_name })
+            ),
             supplierId
           )
         );
@@ -643,9 +638,29 @@ export async function commitInvoiceOcrReceipts(input: {
     );
   } catch (error) {
     if (error instanceof InventoryLedgerError) throw error;
+    if (error instanceof ReceivingDeliveryConflict) {
+      throw new InventoryLedgerError(error.message, 'DELIVERY_CONFLICT', 409, { committed: false });
+    }
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2028') {
+      throw new InventoryLedgerError(RECEIPT_TIMEOUT_REASON, 'DELIVERY_CONFLICT', 409, { committed: false });
+    }
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+      throw new InventoryLedgerError(RECEIPT_COLLISION_REASON, 'DELIVERY_CONFLICT', 409, { committed: false });
+    }
     throw error;
   }
 
-  invalidateInventoryCaches();
+  await completeInvoiceCommit(input.afterCommit);
   return result;
+}
+
+/** Stock is already saved. A later step may fail without turning the confirm into an error. */
+export async function completeInvoiceCommit(afterCommit?: () => Promise<void> | void): Promise<void> {
+  try {
+    if (afterCommit) await afterCommit();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'post-commit step failed';
+    console.warn(`[commitInvoiceOcrReceipts] post-commit step failed: ${message}`);
+  }
+  invalidateInventoryCaches();
 }
