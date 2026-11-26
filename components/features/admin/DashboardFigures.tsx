@@ -124,10 +124,13 @@ function DepartmentAlertList({
 export function DashboardFigures({
   stats: initialStats,
   initialWasteKpi = null,
+  wasteRangeId = null,
   rangeError = null,
 }: {
   stats: StoreStats | null;
   initialWasteKpi?: WasteKpiReport | null;
+  /** Range id that `initialWasteKpi` was loaded for. */
+  wasteRangeId?: string | null;
   rangeError?: string | null;
 }) {
   const [wasteKpi, setWasteKpi] = useState<WasteKpiReport | null>(initialWasteKpi);
@@ -224,6 +227,7 @@ export function DashboardFigures({
       <AdminDashboard
         stats={initialStats}
         wasteKpi={wasteKpi}
+        wasteRangeId={wasteRangeId}
         inventoryValue={inventoryValue}
         refreshing={statsRefreshing}
       />

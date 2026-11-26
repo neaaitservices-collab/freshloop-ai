@@ -3,7 +3,11 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { scorecardWastePct, StatsScorecardRows } from '@/components/features/admin/AdminStats';
+import {
+  scorecardWastePct,
+  StatsScorecardRows,
+  wastePctPendingForRange,
+} from '@/components/features/admin/AdminStats';
 import {
   controlStatus,
   lostSharePct,
@@ -220,6 +224,9 @@ test('a withheld waste percent is not replaced by the stats copy', () => {
   assert.equal(scorecardWastePct({ wastePct: 2.5 }, 12), 2.5);
   assert.equal(scorecardWastePct(null, 4), 4);
   assert.equal(scorecardWastePct(null, null), null);
+  assert.equal(wastePctPendingForRange('mtd', 'week'), true);
+  assert.equal(wastePctPendingForRange('mtd', 'mtd'), false);
+  assert.equal(wastePctPendingForRange('mtd', null), true);
 });
 
 test('lost percent is discarded over rescued plus discarded and lights a 10 percent goal', () => {

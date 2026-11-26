@@ -76,7 +76,7 @@ export function mapRecipeFusionRow(row: {
 export const LEGACY_DEMO_FUSION_FINGERPRINTS: ReadonlyArray<{
   recipeName: string;
   estimatedCost: number;
-  ingredientsUsed: RecipeFusionResult['ingredientsUsed'];
+  ingredientsUsed: Prisma.InputJsonArray;
 }> = [
   {
     recipeName: 'Spiced Apple & Sweet Cream Bakery Crisp',
@@ -112,17 +112,50 @@ export function isLegacyDemoFusionRow(row: {
   );
 }
 
+/** One fingerprint match. The list hides these rows; the cleanup script deletes them. */
+export function legacyDemoFusionMatch(): Prisma.RecipeFusionWhereInput[] {
+  return LEGACY_DEMO_FUSION_FINGERPRINTS.map((demo) => ({
+    recipeName: demo.recipeName,
+    estimatedCost: demo.estimatedCost,
+    ingredientsUsed: { equals: demo.ingredientsUsed },
+  }));
+}
+
 /** Applied inside `findMany` so the page size is not shortened by a later filter. */
 export function legacyDemoFusionWhere(): Prisma.RecipeFusionWhereInput {
-  return {
-    NOT: {
-      OR: LEGACY_DEMO_FUSION_FINGERPRINTS.map((demo) => ({
-        recipeName: demo.recipeName,
-        estimatedCost: demo.estimatedCost,
-        ingredientsUsed: { equals: demo.ingredientsUsed as unknown as Prisma.InputJsonValue },
-      })),
-    },
-  };
+  return { NOT: { OR: legacyDemoFusionMatch() } };
+}
+
+/** `npx tsx` does not set NODE_ENV, so the flag is required on every run. */
+export function demoFusionCleanupMode(
+  allowFlag: string | undefined,
+  apply: boolean
+): 'refuse' | 'count' | 'delete' {
+  if (allowFlag !== '1') return 'refuse';
+  return apply ? 'delete' : 'count';
+}
+
+/** Host and port only. User, password, and path stay out of the log. */
+export function databaseHostLabel(databaseUrl: string | undefined): string {
+  const raw = databaseUrl?.trim();
+  if (!raw) return '(no DATABASE_URL)';
+  try {
+    return new URL(raw).host || '(no host)';
+  } catch {
+    return '(unreadable DATABASE_URL)';
+  }
+}
+
+function fusionIngredientsJson(
+  ingredients: RecipeFusionResult['ingredientsUsed']
+): Prisma.InputJsonArray {
+  return ingredients.map((line) => ({
+    name: line.name,
+    quantity: line.quantity,
+    department: line.department,
+    estimatedCost: line.estimatedCost,
+    ...(line.inventoryItemId ? { inventoryItemId: line.inventoryItemId } : {}),
+  }));
 }
 
 export function fusionRecipeCreateData(
@@ -131,7 +164,7 @@ export function fusionRecipeCreateData(
   return {
     recipeName: recipe.recipeName,
     category: recipe.category,
-    ingredientsUsed: recipe.ingredientsUsed as unknown as Prisma.InputJsonValue,
+    ingredientsUsed: fusionIngredientsJson(recipe.ingredientsUsed),
     estimatedYield: recipe.estimatedYield,
     estimatedCost: recipe.estimatedCost,
     targetRetailPrice: recipe.targetRetailPrice,

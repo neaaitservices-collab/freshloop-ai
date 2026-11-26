@@ -14,13 +14,21 @@ import {
   setFusionModelReaderForTest,
 } from '@/lib/domains/ai/gemini';
 import { fusionRecipeCreateData } from '@/lib/domains/kitchen/recipeFusionStore';
-import { isVolumetricScrapLedgerRow } from '@/lib/domains/inventory/volumetricScrapLedger';
+import {
+  excludeVolumetricScrapNotes,
+  isVolumetricScrapLedgerRow,
+  isVolumetricScrapNotes,
+} from '@/lib/domains/inventory/volumetricScrapLedger';
 import { VOLUMETRIC_SCRAP_REF_PREFIX } from '@/lib/domains/inventory/ledger';
 import {
   computeWastePct,
   MIN_GROSS_SALES_FOR_WASTE_RATIO,
   officialWastePctLabel,
 } from '@/lib/domains/stats/wasteKpi';
+import {
+  databaseHostLabel,
+  demoFusionCleanupMode,
+} from '@/lib/domains/kitchen/recipeFusionStore';
 import { supplierNameKey } from '@/lib/domains/suppliers/vendorAnalytics';
 import { readJsonResponse } from '@/lib/testing/posWebhookHttp';
 
@@ -132,6 +140,58 @@ test('spoilage treats scrap reference ids and scrap notes as not product waste',
     false
   );
   assert.equal(isVolumetricScrapLedgerRow({ referenceId: null, notes: null }), false);
+});
+
+test('scrap note exclusion matches isVolumetricScrapNotes', () => {
+  const where = excludeVolumetricScrapNotes();
+  const blocked = where.OR?.[1];
+  assert.ok(blocked && 'NOT' in blocked && blocked.NOT && typeof blocked.NOT === 'object');
+  const nested = blocked.NOT as { OR?: unknown[] };
+  const clauses = (nested.OR ?? []).flatMap((clause) => {
+    if (!clause || typeof clause !== 'object' || !('notes' in clause)) return [];
+    const notes = clause.notes;
+    if (!notes || typeof notes !== 'object' || !('contains' in notes)) return [];
+    const contains = notes.contains;
+    if (typeof contains !== 'string') return [];
+    const mode = 'mode' in notes && notes.mode === 'insensitive' ? 'insensitive' : 'default';
+    return [{ contains, mode }];
+  });
+  assert.ok(clauses.length > 0);
+  for (const clause of clauses) {
+    const sample = clause.mode === 'insensitive' ? clause.contains.toUpperCase() : clause.contains;
+    assert.equal(isVolumetricScrapNotes(sample), true, clause.contains);
+  }
+  const samples = [
+    null,
+    'moldy berries',
+    'cubeta 2',
+    'Volumetric scrap from prep',
+    '{"kind":"SCRAP_VOLUMETRIC_BUCKET"}',
+  ];
+  for (const notes of samples) {
+    const excluded =
+      notes != null &&
+      clauses.some((clause) =>
+        clause.mode === 'insensitive'
+          ? notes.toLowerCase().includes(clause.contains.toLowerCase())
+          : notes.includes(clause.contains)
+      );
+    assert.equal(excluded, isVolumetricScrapNotes(notes), String(notes));
+  }
+  assert.equal(where.OR?.[0]?.notes, null);
+});
+
+test('demo fusion cleanup counts unless --apply, and the flag is always required', () => {
+  assert.equal(demoFusionCleanupMode(undefined, true), 'refuse');
+  assert.equal(demoFusionCleanupMode('0', false), 'refuse');
+  assert.equal(demoFusionCleanupMode('1', false), 'count');
+  assert.equal(demoFusionCleanupMode('1', true), 'delete');
+  assert.equal(
+    databaseHostLabel('postgresql://user:secret@db.example:5432/fresh?sslmode=require'),
+    'db.example:5432'
+  );
+  assert.equal(databaseHostLabel(undefined), '(no DATABASE_URL)');
+  assert.equal(databaseHostLabel('not a url'), '(unreadable DATABASE_URL)');
 });
 
 test('supplier name matching trims and case-folds both sides', () => {

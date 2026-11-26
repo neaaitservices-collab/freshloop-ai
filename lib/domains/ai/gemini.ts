@@ -805,8 +805,14 @@ export function fusionRecipesFromModelPayload(parsed: unknown): RecipeFusionResu
 type FusionModelReader = (prompt: string) => Promise<string>;
 let fusionModelReaderForTest: FusionModelReader | null = null;
 
-/** Test-only stand-in for the Gemini call. Production leaves this unset. */
+function fusionModelReader(): FusionModelReader | null {
+  if (process.env.NODE_ENV === 'production') return null;
+  return fusionModelReaderForTest;
+}
+
+/** Test-only stand-in for the Gemini call. Ignored when NODE_ENV is production. */
 export function setFusionModelReaderForTest(reader: FusionModelReader | null): void {
+  if (process.env.NODE_ENV === 'production') return;
   fusionModelReaderForTest = reader;
 }
 
@@ -815,9 +821,11 @@ export function setFusionModelReaderForTest(reader: FusionModelReader | null): v
  */
 export async function processRecipeFusion(
   shortDatedItems: InventoryItem[],
-  _targetCategory?: string
+  targetCategory?: string
 ): Promise<RecipeFusionResult[]> {
-  void _targetCategory;
+  const categoryHint = targetCategory?.trim()
+    ? `\nPrefer the category "${targetCategory.trim()}" when the ingredients support it.`
+    : '';
   const apiKey = getApiKey();
   if (!apiKey) {
     rejectProductionAiMock('Recipe fusion');
@@ -828,7 +836,7 @@ export async function processRecipeFusion(
 
     const prompt = `You are the Executive Chef and Yield Management AI for FreshLoop AI.
 Analyze these short-dated/excess inventory items from different departments:
-${itemsSummary}
+${itemsSummary}${categoryHint}
 
 Generate 2 innovative, high-margin prepared food recipes (e.g. Soups, Panzanella Salads, Parfaits, Prepared Meals, Bakery Loaves) that cross-match items across Produce, Dairy, Bakery, and Pantry to rescue food waste and maximize grocery profit margin.
 
@@ -859,8 +867,9 @@ Return a JSON array of recipes adhering strictly to this schema:
   }
 ]`;
 
-    const text = fusionModelReaderForTest
-      ? await fusionModelReaderForTest(prompt)
+    const reader = fusionModelReader();
+    const text = reader
+      ? await reader(prompt)
       : (await generateContentWithFallback(prompt)).text;
     return fusionRecipesFromModelPayload(parseModelJson<unknown>(text));
   } catch (error) {

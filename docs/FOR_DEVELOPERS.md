@@ -317,7 +317,7 @@ See repo `AGENTS.md` — this Next version may differ from older docs; check `no
 
 `lib/legacy/mockData.ts` and `lib/legacy/db.ts` are deleted. The `InventoryItem` Prisma model remains so existing databases do not need a migration; live screens do not read it. Do not reintroduce an in-memory catalog.
 
-Demo fusion rows that were already saved are hidden by the list query. They are not deleted by a migration. `scripts/cleanup-legacy-demo-fusion.ts` is an optional, idempotent cleanup (`npx tsx scripts/cleanup-legacy-demo-fusion.ts`). It is not run by install, CI, or deploy. Nelson must approve it before anyone runs it against production. Production also refuses the script unless `FRESHLOOP_ALLOW_DEMO_FUSION_CLEANUP=1`.
+Demo fusion rows that were already saved are hidden by the list query. They are not deleted by a migration. `scripts/cleanup-legacy-demo-fusion.ts` is an optional, idempotent cleanup. It is not run by install, CI, or deploy. Every run, including a dry run, requires `FRESHLOOP_ALLOW_DEMO_FUSION_CLEANUP=1`. Without `--apply` it only prints the database host and a `count()`. `npx tsx scripts/cleanup-legacy-demo-fusion.ts --apply` deletes the same rows. Any run against production needs Nelson's explicit approval before that flag is set.
 
 When extending features, **wire new UI to domain functions** that write `InventoryTransaction`.
 

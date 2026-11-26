@@ -1,10 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/domains/inventory/ledger';
 import {
   LEGACY_DEMO_FUSION_FINGERPRINTS,
-  listFusionRecipes,
+  legacyDemoFusionWhere,
 } from '@/lib/domains/kitchen/recipeFusionStore';
 
 const databaseUrl = process.env.DATABASE_URL?.trim() ?? '';
@@ -25,7 +24,7 @@ test('a uuid demo fusion row is not listed', { skip: !hasDb }, async (t) => {
     data: {
       recipeName: demo.recipeName,
       category: 'Parfait / Dessert',
-      ingredientsUsed: demo.ingredientsUsed as unknown as Prisma.InputJsonValue,
+      ingredientsUsed: demo.ingredientsUsed,
       estimatedYield: '16 Individual Dessert Tubs (10 oz)',
       estimatedCost: demo.estimatedCost,
       targetRetailPrice: 6.99,
@@ -69,7 +68,12 @@ test('a uuid demo fusion row is not listed', { skip: !hasDb }, async (t) => {
   });
 
   assert.equal(demoRow.id.includes('rec-mock-'), false);
-  const listed = await listFusionRecipes(500);
+  const listed = await prisma.recipeFusion.findMany({
+    where: {
+      AND: [{ id: { in: [demoRow.id, liveRow.id, sameName.id] } }, legacyDemoFusionWhere()],
+    },
+    select: { id: true },
+  });
   const ids = new Set(listed.map((row) => row.id));
   assert.equal(ids.has(demoRow.id), false);
   assert.equal(ids.has(liveRow.id), true);

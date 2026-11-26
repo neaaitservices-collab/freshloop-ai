@@ -30,6 +30,14 @@ import { cn } from '@/lib/utils/cn';
  * A null waste percent on a loaded KPI is intentional (sales under the floor).
  * Do not replace it with the stats copy.
  */
+/** Pending while the loaded waste KPI belongs to a different range than the chip. */
+export function wastePctPendingForRange(
+  selectedRangeId: string,
+  wasteRangeId: string | null | undefined
+): boolean {
+  return wasteRangeId == null || wasteRangeId !== selectedRangeId;
+}
+
 export function scorecardWastePct(
   wasteKpi: { wastePct: number | null } | null | undefined,
   statsWastePct: number | null | undefined
@@ -161,11 +169,14 @@ export function StatsScorecardRows({
 function AdminStatsLive({
   stats,
   wasteKpi = null,
+  wasteRangeId = null,
   inventoryValue = null,
 }: {
   stats: StoreStats | null;
-  /** Ledger waste % for the selected range. Sales under the floor stay null. */
+  /** Ledger waste % for `wasteRangeId`. Sales under the floor stay null. */
   wasteKpi?: WasteKpiReport | null;
+  /** Range id that `wasteKpi` was loaded for. Null until that payload arrives. */
+  wasteRangeId?: string | null;
   /** Live on-hand total. Wins over `stats.inventoryValue` so the range cannot replace it. */
   inventoryValue?: number | null;
 }) {
@@ -291,7 +302,7 @@ function AdminStatsLive({
           scrapBuckets={visibleFigures?.scrapBuckets ?? null}
           sales={visibleFigures?.sales ?? null}
           wastePct={scorecardWastePct(wasteKpi, stats?.wastePct)}
-          wastePctPending={visibleFigures == null}
+          wastePctPending={wastePctPendingForRange(preset, wasteRangeId)}
         />
       </div>
     </DashboardCard>
@@ -301,6 +312,7 @@ function AdminStatsLive({
 export function AdminStatsCard(props: {
   stats: StoreStats | null;
   wasteKpi?: WasteKpiReport | null;
+  wasteRangeId?: string | null;
   inventoryValue?: number | null;
 }) {
   return (

@@ -1,37 +1,50 @@
 /**
- * Delete legacy demo RecipeFusion rows that were saved with database uuids.
+ * Count or delete legacy demo RecipeFusion rows that were saved with database uuids.
  *
  * Matches the two retired generator cards by recipe name, batch cost, and
- * ingredient lines. Safe to run more than once: a second run deletes nothing.
+ * ingredient lines. Safe to run more than once.
  *
- * Not part of install, CI, or deploy. Do not run against production until
- * Nelson approves it. Production also requires FRESHLOOP_ALLOW_DEMO_FUSION_CLEANUP=1.
+ * Not part of install, CI, or deploy. Every run requires
+ * FRESHLOOP_ALLOW_DEMO_FUSION_CLEANUP=1, including a dry run. Without --apply
+ * the script only counts. Any run against production needs Nelson's explicit
+ * approval before that flag is set.
  *
- *   npx tsx scripts/cleanup-legacy-demo-fusion.ts
+ *   FRESHLOOP_ALLOW_DEMO_FUSION_CLEANUP=1 npx tsx scripts/cleanup-legacy-demo-fusion.ts
+ *   FRESHLOOP_ALLOW_DEMO_FUSION_CLEANUP=1 npx tsx scripts/cleanup-legacy-demo-fusion.ts --apply
  */
-import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/domains/inventory/ledger';
-import { LEGACY_DEMO_FUSION_FINGERPRINTS } from '@/lib/domains/kitchen/recipeFusionStore';
+import {
+  databaseHostLabel,
+  demoFusionCleanupMode,
+  legacyDemoFusionMatch,
+} from '@/lib/domains/kitchen/recipeFusionStore';
 
-const production = process.env.NODE_ENV === 'production';
-if (production && process.env.FRESHLOOP_ALLOW_DEMO_FUSION_CLEANUP !== '1') {
+const mode = demoFusionCleanupMode(
+  process.env.FRESHLOOP_ALLOW_DEMO_FUSION_CLEANUP,
+  process.argv.includes('--apply')
+);
+
+if (mode === 'refuse') {
   console.error(
-    'Refusing to delete demo fusion rows in production. Nelson must approve this run. Set FRESHLOOP_ALLOW_DEMO_FUSION_CLEANUP=1 only after that approval.'
+    'Refusing to run. Set FRESHLOOP_ALLOW_DEMO_FUSION_CLEANUP=1 on every run. A production database also needs Nelson\'s explicit approval before that flag is set.'
   );
   process.exit(1);
 }
 
+const where = { OR: legacyDemoFusionMatch() };
+const host = databaseHostLabel(process.env.DATABASE_URL);
+
 async function main(): Promise<void> {
-  const removed = await prisma.recipeFusion.deleteMany({
-    where: {
-      OR: LEGACY_DEMO_FUSION_FINGERPRINTS.map((demo) => ({
-        recipeName: demo.recipeName,
-        estimatedCost: demo.estimatedCost,
-        ingredientsUsed: { equals: demo.ingredientsUsed as unknown as Prisma.InputJsonValue },
-      })),
-    },
-  });
-  console.log(`Deleted ${removed.count} legacy demo fusion row(s).`);
+  const matched = await prisma.recipeFusion.count({ where });
+  console.log(`Target database host: ${host}`);
+  console.log(`Legacy demo fusion rows matched: ${matched}`);
+  if (mode === 'count') {
+    console.log('Dry run. Pass --apply to delete.');
+    await prisma.$disconnect();
+    return;
+  }
+  const removed = await prisma.recipeFusion.deleteMany({ where });
+  console.log(`Deleted ${removed.count} legacy demo fusion row(s) on ${host}.`);
   await prisma.$disconnect();
 }
 
