@@ -16,6 +16,7 @@ function user(role: StaffAuthRow['role']) {
     hourlyRate: 20,
     passwordHash: 'hash',
     credentialVersion: 0,
+    deactivatedAt: null,
   });
 }
 

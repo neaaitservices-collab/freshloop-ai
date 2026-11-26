@@ -18,10 +18,18 @@ function resetIdentifier(email: string): string {
   return `${RESET_PREFIX}${email.trim().toLowerCase()}`;
 }
 
+/** Deactivated staff must not receive a reset link or complete one issued earlier. */
+export function passwordResetBlocked(deactivatedAt: Date | null | undefined): boolean {
+  return deactivatedAt != null;
+}
+
 export async function createPasswordResetToken(email: string): Promise<string | null> {
   const normalized = email.trim().toLowerCase();
-  const user = await prisma.user.findUnique({ where: { email: normalized } });
-  if (!user) return null;
+  const user = await prisma.user.findUnique({
+    where: { email: normalized },
+    select: { deactivatedAt: true },
+  });
+  if (!user || passwordResetBlocked(user.deactivatedAt)) return null;
 
   const token = generateResetToken();
   const identifier = resetIdentifier(normalized);
@@ -59,7 +67,15 @@ export async function resetPasswordWithToken(input: {
   }
 
   const passwordHash = await hashPassword(input.newPassword);
-  await prisma.$transaction(async (tx) => {
+  return prisma.$transaction(async (tx) => {
+    const user = await tx.user.findUnique({
+      where: { email: normalized },
+      select: { deactivatedAt: true },
+    });
+    if (!user || passwordResetBlocked(user.deactivatedAt)) {
+      await tx.verificationToken.deleteMany({ where: { identifier } });
+      return false;
+    }
     await tx.user.update({
       where: { email: normalized },
       data: {
@@ -68,8 +84,8 @@ export async function resetPasswordWithToken(input: {
       },
     });
     await tx.verificationToken.deleteMany({ where: { identifier } });
+    return true;
   });
-  return true;
 }
 
 export function passwordResetUrl(email: string, token: string): string {

@@ -6,7 +6,7 @@ import { prisma } from '@/lib/domains/inventory/ledger';
 import { verifyPassword } from '@/lib/auth/password';
 import { loadStaffAuthRow } from '@/lib/auth/loadStaffAuth';
 import { getStaffHourlyRate } from '@/lib/auth/staffHourlyRate';
-import { sessionClaimsFromLookup } from '@/lib/auth/staffSnapshot';
+import { sessionClaimsFromLookup, staffRowIfPasswordAccepted } from '@/lib/auth/staffSnapshot';
 import { isRoleName } from '@/lib/utils/roles';
 import { checkRateLimit, isOverRateLimit } from '@/lib/security/rateLimit';
 
@@ -115,6 +115,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
             position: true,
             passwordHash: true,
             credentialVersion: true,
+            deactivatedAt: true,
           },
         });
         if (!user?.passwordHash) return null;
@@ -129,7 +130,21 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           return null;
         }
 
-        if (!isRoleName(user.role)) return null;
+        const accepted = staffRowIfPasswordAccepted(
+          {
+            id: user.id,
+            name: user.name,
+            email: user.email,
+            role: user.role,
+            position: user.position,
+            hourlyRate: null,
+            passwordHash: user.passwordHash,
+            credentialVersion: user.credentialVersion,
+            deactivatedAt: user.deactivatedAt,
+          },
+          true
+        );
+        if (!accepted) return null;
 
         const hourlyRate = await getStaffHourlyRate(user.id);
 

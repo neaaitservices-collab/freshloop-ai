@@ -49,3 +49,15 @@ export function positionForRole(role: RoleName): StaffPosition {
 export function positionForStaff(position: string, role: RoleName): StaffPosition {
   return positionByLabel(position) ?? positionForRole(role);
 }
+
+/** Floor and store leadership are front of house. Receiving and production are back. */
+export function houseForRole(role: RoleName): 'Front' | 'Back' {
+  if (role === 'RECEIVING_CLERK' || role === 'DELI_CHEF') return 'Back';
+  return 'Front';
+}
+
+/** Department shown on the staff card. The stored position is the department name. */
+export function departmentLabel(position: string, role: RoleName): string {
+  const trimmed = position.trim();
+  return trimmed || positionForRole(role).label;
+}

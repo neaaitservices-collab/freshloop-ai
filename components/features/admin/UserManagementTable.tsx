@@ -1,41 +1,41 @@
 'use client';
 
-import React, { useCallback, useState } from 'react';
-import { Pencil, Plus, Trash2 } from 'lucide-react';
+import React, { useCallback, useId, useState } from 'react';
+import { Plus } from 'lucide-react';
 import { useRole } from '@/components/auth/RoleProvider';
 import { readApiError } from '@/lib/api/readApiError';
 import {
   DEFAULT_HOURLY,
-  formatHourlyRate,
   hourlyRateInputString,
   parseHourlyRateInput,
 } from '@/lib/utils/hourlyRateDisplay';
-import { positionForStaff, STAFF_POSITIONS } from '@/lib/utils/positions';
-import { ScrollTable } from '@/components/ui/layout';
-import {
-  canManageStaff,
-  canRemoveStaff,
-} from '@/lib/auth/staffCapabilities';
-import { ROLE_LABELS, type StaffUser } from '@/lib/utils/roles';
-import { Button } from '@/components/ui/Button';
+import { departmentLabel, houseForRole, positionForRole, positionForStaff, STAFF_POSITIONS } from '@/lib/utils/positions';
+import { canManageStaff, canRemoveStaff } from '@/lib/auth/staffCapabilities';
 import { cn } from '@/lib/utils/cn';
+import { type StaffUser } from '@/lib/utils/roles';
+import { Button } from '@/components/ui/Button';
+import { ModalBody, ModalFooter, ModalHeader, ModalShell } from '@/components/ui/layout';
 import {
   StaffEmployeeModal,
   type StaffEmployeeFormValues,
 } from '@/components/features/admin/StaffEmployeeModal';
+import { StaffRosterCards, StaffRosterSkeleton } from '@/components/features/admin/StaffRosterCards';
+import { StaffRosterErrorBoundary } from '@/components/features/admin/StaffRosterErrorBoundary';
 
 const EMPTY_FORM: StaffEmployeeFormValues = {
   name: '',
   email: '',
   position: STAFF_POSITIONS[3].label,
+  role: 'FLOOR_STAFF',
   hourlyRate: hourlyRateInputString(DEFAULT_HOURLY),
   currentPassword: '',
 };
 
-export function UserManagementTable({ embedded = false }: { embedded?: boolean }) {
+function StaffRoster({ embedded = false }: { embedded?: boolean }) {
   const { users, activeUser, loading, refresh, rosterError } = useRole();
   const canManage = Boolean(activeUser && canManageStaff(activeUser.role));
   const canRemove = Boolean(activeUser && canRemoveStaff(activeUser.role));
+  const canAssignRole = canRemove;
   const canManageWage = canManage;
 
   const [modalMode, setModalMode] = useState<'closed' | 'add' | 'edit'>('closed');
@@ -44,6 +44,11 @@ export function UserManagementTable({ embedded = false }: { embedded?: boolean }
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState<string | null>(null);
+  const [showInactive, setShowInactive] = useState(false);
+  const [inactiveIncluded, setInactiveIncluded] = useState<StaffUser[] | null>(null);
+  const [listLoading, setListLoading] = useState(false);
+  const [pendingDeactivate, setPendingDeactivate] = useState<StaffUser | null>(null);
+  const confirmTitleId = useId();
 
   const closeModal = useCallback(() => {
     setModalMode('closed');
@@ -51,6 +56,40 @@ export function UserManagementTable({ embedded = false }: { embedded?: boolean }
     setForm(EMPTY_FORM);
     setError(null);
   }, []);
+
+  const loadInactive = useCallback(async () => {
+    setListLoading(true);
+    try {
+      const response = await fetch('/api/users?includeInactive=1', { cache: 'no-store' });
+      const json = await response.json();
+      if (!response.ok || !json.success || !Array.isArray(json.users)) {
+        setError(readApiError(json, 'Could not load inactive staff.'));
+        return;
+      }
+      setInactiveIncluded(json.users as StaffUser[]);
+    } catch {
+      setError('Could not load inactive staff.');
+    } finally {
+      setListLoading(false);
+    }
+  }, []);
+
+  const reload = useCallback(async () => {
+    await refresh();
+    if (showInactive) await loadInactive();
+  }, [refresh, showInactive, loadInactive]);
+
+  const toggleInactive = () => {
+    const next = !showInactive;
+    setShowInactive(next);
+    setError(null);
+    if (next) void loadInactive();
+  };
+
+  const roster = showInactive && inactiveIncluded ? inactiveIncluded : users;
+  const visible = roster.filter((user) => showInactive || !user.deactivatedAt);
+  const activeOwnerCount = roster.filter((user) => user.role === 'ADMIN' && !user.deactivatedAt).length;
+  const editing = roster.find((user) => user.id === editingId) ?? null;
 
   const openAdd = () => {
     setEditingId(null);
@@ -65,11 +104,22 @@ export function UserManagementTable({ embedded = false }: { embedded?: boolean }
       name: user.name,
       email: user.email,
       position: positionForStaff(user.position, user.role).label,
+      role: user.role,
       hourlyRate: hourlyRateInputString(user.hourlyRate),
       currentPassword: '',
     });
     setError(null);
     setModalMode('edit');
+  };
+
+  const changeForm = (patch: Partial<StaffEmployeeFormValues>) => {
+    setForm((current) => {
+      const next = { ...current, ...patch };
+      if (patch.role && patch.role !== current.role) {
+        next.position = positionForRole(patch.role).label;
+      }
+      return next;
+    });
   };
 
   const save = async () => {
@@ -90,6 +140,9 @@ export function UserManagementTable({ embedded = false }: { embedded?: boolean }
         email: form.email.trim(),
         position: form.position,
       };
+      if ((modalMode === 'add' || canAssignRole) && form.role) {
+        payload.role = form.role;
+      }
       if (canManageWage && hourlyRate != null) {
         payload.hourlyRate = hourlyRate;
       }
@@ -115,7 +168,7 @@ export function UserManagementTable({ embedded = false }: { embedded?: boolean }
             ? 'Employee updated.'
             : 'Employee added.'
       );
-      await refresh();
+      await reload();
     } catch {
       setError('Could not save that employee. Check your connection and try again.');
     } finally {
@@ -123,33 +176,78 @@ export function UserManagementTable({ embedded = false }: { embedded?: boolean }
     }
   };
 
-  const remove = async (user: StaffUser, e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (
-      !window.confirm(
-        `Remove ${user.name} from staff? They will lose access immediately.`
-      )
-    ) {
-      return;
-    }
+  const deactivate = async () => {
+    if (!pendingDeactivate) return;
+    setSaving(true);
     setError(null);
     try {
-      const response = await fetch(`/api/users/${user.id}`, { method: 'DELETE' });
+      const response = await fetch(`/api/users/${pendingDeactivate.id}`, { method: 'DELETE' });
       const json = await response.json();
       if (!response.ok || !json.success) {
-        setError(readApiError(json, 'Could not remove that employee.'));
+        setError(readApiError(json, 'Could not deactivate that employee.'));
         return;
       }
-      if (editingId === user.id) closeModal();
-      await refresh();
+      setPendingDeactivate(null);
+      if (editingId === pendingDeactivate.id) closeModal();
+      setSaveSuccess(`${pendingDeactivate.name} is deactivated. Their inventory history stays.`);
+      await reload();
     } catch {
-      setError('Could not remove that employee.');
+      setError('Could not deactivate that employee.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const reactivate = async () => {
+    if (!editing) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const response = await fetch(`/api/users/${editing.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reactivate: true }),
+      });
+      const json = await response.json();
+      if (!response.ok || !json.success) {
+        setError(readApiError(json, 'Could not reactivate that employee.'));
+        return;
+      }
+      closeModal();
+      setSaveSuccess(`${editing.name} can sign in again.`);
+      await reload();
+    } catch {
+      setError('Could not reactivate that employee.');
+    } finally {
+      setSaving(false);
     }
   };
 
   if (!canManage) {
     return null;
   }
+
+  const isSelf = Boolean(editing && activeUser && editing.id === activeUser.id);
+  const isInactive = Boolean(editing?.deactivatedAt);
+  const lastOwner = Boolean(
+    editing && editing.role === 'ADMIN' && !editing.deactivatedAt && activeOwnerCount <= 1
+  );
+  const selfOwner = Boolean(isSelf && editing?.role === 'ADMIN');
+  const roleLocked = modalMode === 'edit' && (selfOwner || lastOwner || !canAssignRole);
+  const roleLockReason =
+    modalMode !== 'edit'
+      ? null
+      : !canAssignRole
+        ? 'Only an owner can change a role.'
+        : selfOwner
+          ? 'You cannot remove your own owner role.'
+          : lastOwner
+            ? 'Keep at least one owner.'
+            : null;
+
+  const showSkeleton =
+    (loading && users.length === 0 && !rosterError) ||
+    (showInactive && listLoading && !inactiveIncluded);
 
   return (
     <section className={embedded ? '' : 'mt-10'}>
@@ -162,15 +260,30 @@ export function UserManagementTable({ embedded = false }: { embedded?: boolean }
             Team roster and platform permissions by position.
           </p>
         </div>
-        <Button
-          type="button"
-          variant="success"
-          className="min-h-11 shrink-0 border-emerald-500/45 bg-emerald-500 px-4 font-black text-slate-950 shadow-lg shadow-emerald-500/20 hover:bg-emerald-400"
-          onClick={openAdd}
-        >
-          <Plus className="h-4 w-4" />
-          Add New Employee
-        </Button>
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <button
+            type="button"
+            aria-pressed={showInactive}
+            onClick={toggleInactive}
+            className={cn(
+              'inline-flex min-h-11 items-center justify-center rounded-xl border px-4 text-sm font-bold',
+              showInactive
+                ? 'border-emerald-500/50 text-emerald-200'
+                : 'border-slate-700 text-slate-200 hover:border-slate-500'
+            )}
+          >
+            Show inactive
+          </button>
+          <Button
+            type="button"
+            variant="success"
+            className="min-h-11 shrink-0 border-emerald-500/45 bg-emerald-500 px-4 font-black text-slate-950 shadow-lg shadow-emerald-500/20 hover:bg-emerald-400"
+            onClick={openAdd}
+          >
+            <Plus className="h-4 w-4" />
+            Add New Employee
+          </Button>
+        </div>
       </div>
 
       {saveSuccess && modalMode === 'closed' ? (
@@ -178,7 +291,7 @@ export function UserManagementTable({ embedded = false }: { embedded?: boolean }
           {saveSuccess}
         </p>
       ) : null}
-      {error && modalMode === 'closed' ? (
+      {error && modalMode === 'closed' && !pendingDeactivate ? (
         <p className="mt-3 rounded-xl border border-amber-500/30 bg-amber-950/30 px-3 py-2 text-xs font-semibold text-amber-100">
           {error}
         </p>
@@ -193,108 +306,101 @@ export function UserManagementTable({ embedded = false }: { embedded?: boolean }
         </p>
       ) : null}
 
-      {loading && users.length === 0 && !rosterError ? (
-        <p className="mt-4 text-sm text-slate-500">Loading staff…</p>
-      ) : null}
+      {showSkeleton ? <StaffRosterSkeleton /> : null}
 
-      {users.length === 0 && rosterError ? null : (
-      <div className="mt-4 min-w-0 overflow-hidden rounded-2xl border border-slate-800/90 bg-slate-950/40">
-        <ScrollTable>
-        <table className="w-full min-w-[640px] border-collapse text-left text-sm">
-          <thead>
-            <tr className="border-b border-slate-800/90 bg-slate-900/80 text-[10px] font-bold uppercase tracking-wider text-slate-500">
-              <th className="px-3 py-2.5 sm:px-4">Name</th>
-              <th className="hidden px-3 py-2.5 md:table-cell md:px-4">Position</th>
-              <th className="hidden px-3 py-2.5 sm:table-cell sm:px-4">Wage</th>
-              <th className="px-3 py-2.5 sm:px-4">Permissions</th>
-              <th className="w-24 px-3 py-2.5 text-right sm:px-4">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-800/80">
-            {users.map((user) => (
-              <tr
-                key={user.id}
-                className={cn(
-                  'group cursor-pointer transition-colors hover:bg-slate-800/40',
-                  user.id === activeUser?.id && 'bg-emerald-500/5'
-                )}
-                onClick={() => openEdit(user)}
-              >
-                <td className="px-3 py-2.5 sm:px-4">
-                  <p className="font-bold leading-snug text-white">{user.name}</p>
-                  <p className="text-[11px] text-slate-500">{user.email}</p>
-                  <p className="mt-0.5 text-[11px] text-slate-400 sm:hidden">
-                    {user.position}
-                  </p>
-                </td>
-                <td className="hidden px-3 py-2.5 text-slate-300 md:table-cell md:px-4">
-                  {user.position}
-                </td>
-                <td className="hidden px-3 py-2.5 sm:table-cell sm:px-4">
-                  <span className="font-mono text-xs font-semibold tabular-nums text-slate-200">
-                    {formatHourlyRate(user.hourlyRate)}
-                  </span>
-                </td>
-                <td className="px-3 py-2.5 sm:px-4">
-                  <p className="text-xs font-bold text-emerald-300">
-                    {ROLE_LABELS[user.role]}
-                  </p>
-                  <p className="font-mono text-[10px] text-slate-500 sm:hidden">
-                    {formatHourlyRate(user.hourlyRate)}
-                  </p>
-                </td>
-                <td className="px-3 py-2.5 sm:px-4">
-                  <div className="flex items-center justify-end gap-1">
-                    <button
-                      type="button"
-                      aria-label={`Edit ${user.name}`}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        openEdit(user);
-                      }}
-                      className="rounded-lg border border-slate-700/80 bg-slate-900/80 p-2 text-emerald-300 transition hover:border-emerald-500/40 hover:bg-emerald-950/40"
-                    >
-                      <Pencil className="h-4 w-4" />
-                    </button>
-                    {canRemove ? (
-                      <button
-                        type="button"
-                        aria-label={`Remove ${user.name}`}
-                        onClick={(e) => void remove(user, e)}
-                        className="rounded-lg border border-transparent p-2 text-slate-500 opacity-0 transition group-hover:opacity-100 hover:border-rose-500/30 hover:bg-rose-950/40 hover:text-rose-300 focus:opacity-100"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
-                    ) : null}
-                  </div>
-                </td>
-              </tr>
-            ))}
-            {users.length === 0 && !loading ? (
-              <tr>
-                <td colSpan={5} className="px-4 py-10 text-center text-sm text-slate-500">
-                  No staff listed yet. Add your first employee above.
-                </td>
-              </tr>
-            ) : null}
-          </tbody>
-        </table>
-        </ScrollTable>
-      </div>
-      )}
+      {!showSkeleton && !(visible.length === 0 && rosterError) ? (
+        <StaffRosterCards
+          users={visible}
+          activeUserId={activeUser?.id}
+          onOpen={openEdit}
+        />
+      ) : null}
 
       <StaffEmployeeModal
         open={modalMode !== 'closed'}
         mode={modalMode === 'add' ? 'add' : 'edit'}
         values={form}
+        house={houseForRole(form.role)}
+        department={departmentLabel(form.position, form.role)}
         saving={saving}
-        error={error}
-        onChange={(patch) => setForm((current) => ({ ...current, ...patch }))}
+        error={modalMode === 'closed' ? null : error}
+        onChange={changeForm}
         onClose={closeModal}
         onSubmit={() => void save()}
         showHourlyRate={canManageWage}
         askCurrentPassword={modalMode === 'edit' && editingId === activeUser?.id}
+        roleEditable={modalMode === 'add' || (canAssignRole && !roleLocked)}
+        roleLockReason={roleLockReason}
+        showDeactivate={modalMode === 'edit' && canRemove && !isSelf && !lastOwner && !isInactive}
+        showReactivate={modalMode === 'edit' && canRemove && isInactive}
+        deactivateNote={
+          modalMode === 'edit' && canRemove && isSelf
+            ? 'You cannot deactivate your own account.'
+            : modalMode === 'edit' && canRemove && lastOwner
+              ? 'Keep at least one owner.'
+              : null
+        }
+        onDeactivate={() => editing && setPendingDeactivate(editing)}
+        onReactivate={() => void reactivate()}
       />
+
+      <ModalShell
+        open={pendingDeactivate !== null}
+        onClose={() => {
+          if (!saving) setPendingDeactivate(null);
+        }}
+        width="sm"
+        zIndexClass="z-[70]"
+        labelledBy={confirmTitleId}
+      >
+        <ModalHeader>
+          <h2 id={confirmTitleId} className="text-lg font-black text-white">
+            Deactivate {pendingDeactivate?.name}?
+          </h2>
+        </ModalHeader>
+        <ModalBody>
+          <p className="text-sm text-slate-300">
+            They lose access immediately and disappear from the active roster. Inventory history
+            stays attributed to them. You can reactivate them later.
+          </p>
+          {error ? (
+            <p className="mt-3 rounded-xl border border-rose-900/50 bg-rose-950/40 px-3 py-2 text-xs font-semibold text-rose-200">
+              {error}
+            </p>
+          ) : null}
+        </ModalBody>
+        <ModalFooter>
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <Button
+              type="button"
+              variant="secondary"
+              className="w-full sm:w-auto"
+              disabled={saving}
+              onClick={() => setPendingDeactivate(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="danger"
+              className="w-full sm:w-auto"
+              disabled={saving}
+              onClick={() => void deactivate()}
+            >
+              {saving ? 'Deactivating…' : 'Deactivate employee'}
+            </Button>
+          </div>
+        </ModalFooter>
+      </ModalShell>
     </section>
+  );
+}
+
+export function UserManagementTable({ embedded = false }: { embedded?: boolean }) {
+  const { refresh } = useRole();
+  return (
+    <StaffRosterErrorBoundary onRetry={() => refresh()}>
+      <StaffRoster embedded={embedded} />
+    </StaffRosterErrorBoundary>
   );
 }

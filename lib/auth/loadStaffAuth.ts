@@ -21,6 +21,7 @@ export const loadStaffAuthRow = cache(async (userId: string): Promise<StaffAuthR
       hourlyRate: true,
       passwordHash: true,
       credentialVersion: true,
+      deactivatedAt: true,
     },
   });
 });

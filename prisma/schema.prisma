@@ -295,8 +295,10 @@ model User {
   role          Role      @default(FLOOR_STAFF)
   /// Employee hourly wage for BOM / batch labor costing (falls back to store default when null).
   hourlyRate    Float?    @map("hourly_rate_per_hour")
-  /// Bumped when the password changes. JWTs must carry the same value. Deletion does not bump a row.
+  /// Bumped when the password changes or the account is deactivated. JWTs must carry the same value.
   credentialVersion Int   @default(0) @map("credential_version")
+  /// Null while the employee can sign in. Set to deactivate without deleting ledger attribution.
+  deactivatedAt DateTime? @map("deactivated_at")
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
@@ -305,6 +307,7 @@ model User {
 
   @@index([role, name])
   @@index([role])
+  @@index([deactivatedAt])
   @@map("staff_users")
 }
 

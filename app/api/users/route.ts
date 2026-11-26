@@ -3,8 +3,9 @@ import { Role } from '@prisma/client';
 import { prisma } from '@/lib/domains/inventory/ledger';
 import { handleApiRouteError } from '@/lib/domains/ai/apiError';
 import { getStaffDirectory } from '@/lib/domains/auth/staffDirectory';
+import { requireManagerStaff } from '@/lib/auth/guardRoute';
 import { authErrorResponse } from '@/lib/auth/http';
-import { requireRoles, requireSessionUser } from '@/lib/auth/session';
+import { requireSessionUser } from '@/lib/auth/session';
 import { MANAGER_ROLES } from '@/lib/auth/permissions';
 import { z } from 'zod';
 import { randomBytes } from 'node:crypto';
@@ -14,7 +15,7 @@ import { setStaffHourlyRate } from '@/lib/auth/staffHourlyRate';
 import { invalidateReferenceDataCaches } from '@/lib/domains/inventory/inventoryCache';
 import { findLatestStoreSetting } from '@/lib/domains/stats/storeSettingSelect';
 import { positionByLabel } from '@/lib/utils/positions';
-import type { StaffUser } from '@/lib/utils/roles';
+import { roleAtOrAbove, type StaffUser } from '@/lib/utils/roles';
 
 export const dynamic = 'force-dynamic';
 
@@ -48,13 +49,14 @@ function toStaffUser(
   };
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
     const sessionUser = await requireSessionUser();
     if (!MANAGER_ROLES.includes(sessionUser.role)) {
       return NextResponse.json({ success: true, users: [sessionUser] });
     }
-    const users = await getStaffDirectory();
+    const includeInactive = new URL(req.url).searchParams.get('includeInactive') === '1';
+    const users = await getStaffDirectory(includeInactive);
     return NextResponse.json({
       success: true,
       users,
@@ -68,7 +70,7 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   try {
-    await requireRoles(MANAGER_ROLES);
+    const actor = await requireManagerStaff();
     const body = (await req.json()) as {
       name?: string;
       email?: string;
@@ -87,6 +89,13 @@ export async function POST(req: NextRequest) {
           error: 'Name, email, and a position are required. Permissions follow that position.',
         },
         { status: 400 }
+      );
+    }
+    // Owners may add any position. Everyone else stops here, before a row or setup link.
+    if (actor.role !== 'ADMIN' && roleAtOrAbove(actor.role, assigned.role)) {
+      return NextResponse.json(
+        { success: false, error: 'You cannot add someone at or above your role.' },
+        { status: 403 }
       );
     }
     let hourlyRate: number;

@@ -60,6 +60,16 @@ export async function requireManagerStaff() {
   return requireRoles(OWNER_OR_STORE_MANAGER);
 }
 
+/**
+ * Actor for a staff profile edit. Tests may inject any role through the manager
+ * hook. Production reads the session.
+ */
+export async function requireStaffEditor(): Promise<AuthSessionUser> {
+  const hooked = managerStaffTestAuth();
+  if (hooked) return hooked();
+  return requireSessionUser();
+}
+
 /** Void and other owner-only mutations. */
 export async function requireAdminStaff() {
   const hooked = await userFromTestHook(adminStaffTestAuth(), ADMIN_ONLY);

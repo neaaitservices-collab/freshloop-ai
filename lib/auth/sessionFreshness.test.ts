@@ -5,6 +5,7 @@ import { decidePageAccess } from '@/lib/auth/pageAccess';
 import { AuthError, getSessionUser, requireRoles, requireSessionUser } from '@/lib/auth/session';
 import {
   sessionClaimsFromLookup,
+  staffRowIfPasswordAccepted,
   staffUserFromRow,
   type StaffAuthRow,
 } from '@/lib/auth/staffSnapshot';
@@ -20,6 +21,7 @@ function row(overrides: Partial<StaffAuthRow> = {}): StaffAuthRow {
     hourlyRate: 32,
     passwordHash: 'hashed-password',
     credentialVersion: 0,
+    deactivatedAt: null,
     ...overrides,
   };
 }
@@ -110,6 +112,30 @@ test('deleted staff are unauthorized', async () => {
       return true;
     }
   );
+});
+
+test('deactivated staff are blocked at sign-in and on the next request', async () => {
+  const deactivated = row({ deactivatedAt: new Date('2026-11-26T12:00:00.000Z') });
+  assert.equal(staffUserFromRow(deactivated), null);
+  assert.equal(staffRowIfPasswordAccepted(deactivated, true), null);
+  assert.equal(staffRowIfPasswordAccepted(row(), false), null);
+  assert.equal(staffRowIfPasswordAccepted(row(), true)?.id, 'user-1');
+
+  const deps = {
+    readSession: async () => ({
+      user: { id: 'user-1', credentialVersion: 0, role: 'ADMIN' },
+    }),
+    loadStaff: async () => deactivated,
+  };
+  assert.equal(await getSessionUser(deps), null);
+  await assert.rejects(() => requireSessionUser(deps), (error: unknown) => {
+    assert.ok(error instanceof AuthError);
+    assert.equal(error.status, 401);
+    return true;
+  });
+  const claims = sessionClaimsFromLookup({ ok: true, row: deactivated });
+  assert.equal(claims.user, null);
+  assert.equal(claims.lookupFailed, false);
 });
 
 test('cleared password and unknown role revoke access', async () => {
