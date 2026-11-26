@@ -18,7 +18,7 @@ export async function GET(req: NextRequest) {
     });
     if (!parsed.success) {
       return NextResponse.json(
-        { success: false, error: parsed.error.errors[0]?.message ?? 'Invalid date range.' },
+        { success: false, error: parsed.error.issues[0]?.message ?? 'Invalid date range.' },
         { status: 400 }
       );
     }

@@ -20,6 +20,11 @@ export type ManualActivityInput =
       note: string | null;
     };
 
+/** Zod 4 replacement for `required_error`: custom text only when the key is missing. */
+function requiredMessage(message: string) {
+  return (iss: { input?: unknown }) => (iss.input === undefined ? message : undefined);
+}
+
 function issue(error: z.ZodError): string {
   return error.issues[0]?.message || 'Invalid activity.';
 }
@@ -52,7 +57,7 @@ const noteSchema = z
   .object({
     type: z.literal('NOTE'),
     note: z
-      .string({ required_error: 'Note is required.' })
+      .string({ error: requiredMessage('Note is required.') })
       .max(2000, 'Note must be 2000 characters or less.'),
   })
   .strict();
@@ -79,14 +84,13 @@ const creditSchema = z
   .object({
     type: z.literal('CREDIT'),
     amount: z
-      .number({ required_error: 'Amount is required.' })
+      .number({ error: requiredMessage('Amount is required.') })
       .finite()
       .positive('Amount must be greater than 0.')
       .max(1_000_000),
-    invoiceRef: z.string({ required_error: 'Invoice reference is required.' }).max(240),
+    invoiceRef: z.string({ error: requiredMessage('Invoice reference is required.') }).max(240),
     reason: z.enum(['SHORT', 'DAMAGED', 'QUALITY', 'PRICING', 'OTHER'], {
-      required_error: 'Credit reason is required.',
-      invalid_type_error: 'Credit reason is invalid.',
+      error: (iss) => (iss.input === undefined ? 'Credit reason is required.' : 'Credit reason is invalid.'),
     }),
     note: z.string().max(2000, 'Note must be 2000 characters or less.').nullable().optional(),
   })
@@ -96,13 +100,13 @@ export const manualActivityBodySchema = z.union([noteSchema, lateSchema, alertSc
 
 export const receiveCreditSchema = z
   .object({
-    creditStatus: z.literal('RECEIVED', { required_error: 'Credit status must be RECEIVED.' }),
+    creditStatus: z.literal('RECEIVED', { error: requiredMessage('Credit status must be RECEIVED.') }),
   })
   .strict();
 
 export const voidActivitySchema = z
   .object({
-    voidReason: z.string({ required_error: 'A void reason is required.' }).max(4000),
+    voidReason: z.string({ error: requiredMessage('A void reason is required.') }).max(4000),
   })
   .strict();
 
