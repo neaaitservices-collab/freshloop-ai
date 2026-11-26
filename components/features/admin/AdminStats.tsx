@@ -23,7 +23,27 @@ import { ADMIN_DATE_PRESETS } from '@/lib/domains/stats/storeTime';
 import { FRESHLOOP_SETTINGS_UPDATED } from '@/lib/domains/stats/settingsEvents';
 import type { StoreStats } from '@/lib/domains/stats/storeStatsTypes';
 import type { WasteKpiReport } from '@/lib/domains/inventory/ledger';
+import { officialWastePctLabel } from '@/lib/domains/stats/wasteKpi';
 import { cn } from '@/lib/utils/cn';
+
+/**
+ * A null waste percent on a loaded KPI is intentional (sales under the floor).
+ * Do not replace it with the stats copy.
+ */
+/** Pending while the loaded waste KPI belongs to a different range than the chip. */
+export function wastePctPendingForRange(
+  selectedRangeId: string,
+  wasteRangeId: string | null | undefined
+): boolean {
+  return wasteRangeId == null || wasteRangeId !== selectedRangeId;
+}
+
+export function scorecardWastePct(
+  wasteKpi: { wastePct: number | null } | null | undefined,
+  statsWastePct: number | null | undefined
+): number | null {
+  return wasteKpi ? wasteKpi.wastePct : (statsWastePct ?? null);
+}
 
 export function formatScoreMoney(value: number, digits: 0 | 2): string {
   if (!Number.isFinite(value)) return digits === 0 ? '$0' : '$0.00';
@@ -74,6 +94,8 @@ export function StatsScorecardRows({
   scrapBuckets,
   sales,
   periodPending,
+  wastePct = null,
+  wastePctPending = false,
 }: {
   rescued: number | null;
   lost: number | null;
@@ -83,6 +105,9 @@ export function StatsScorecardRows({
   scrapBuckets: number | null;
   sales: number | null;
   periodPending: boolean;
+  /** Ledger waste $ ÷ recognized sale revenue. Null when sales are below the floor. */
+  wastePct?: number | null;
+  wastePctPending?: boolean;
 }) {
   const lostPct =
     !periodPending && rescued != null && lost != null ? lostSharePct(rescued, lost) : null;
@@ -116,6 +141,11 @@ export function StatsScorecardRows({
         detail="Subtracted from main inventory"
         value={periodPending || sales == null ? <Pulse /> : formatScoreMoney(sales, 2)}
       />
+      <Row
+        label="Waste"
+        detail="Ledger waste ÷ sales"
+        value={wastePctPending ? <Pulse /> : officialWastePctLabel(wastePct)}
+      />
       <div className="grid grid-cols-2 gap-2 border-t border-slate-800 pb-2 pt-3">
         <div>
           <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Rescued</p>
@@ -138,11 +168,15 @@ export function StatsScorecardRows({
 
 function AdminStatsLive({
   stats,
+  wasteKpi = null,
+  wasteRangeId = null,
   inventoryValue = null,
 }: {
   stats: StoreStats | null;
-  /** Kept for callers. Period scraps and sales come from the range fetch, not this report. */
+  /** Ledger waste % for `wasteRangeId`. Sales under the floor stay null. */
   wasteKpi?: WasteKpiReport | null;
+  /** Range id that `wasteKpi` was loaded for. Null until that payload arrives. */
+  wasteRangeId?: string | null;
   /** Live on-hand total. Wins over `stats.inventoryValue` so the range cannot replace it. */
   inventoryValue?: number | null;
 }) {
@@ -267,6 +301,8 @@ function AdminStatsLive({
           scrapDollars={visibleFigures?.scrapDollars ?? null}
           scrapBuckets={visibleFigures?.scrapBuckets ?? null}
           sales={visibleFigures?.sales ?? null}
+          wastePct={scorecardWastePct(wasteKpi, stats?.wastePct)}
+          wastePctPending={wastePctPendingForRange(preset, wasteRangeId)}
         />
       </div>
     </DashboardCard>
@@ -276,6 +312,7 @@ function AdminStatsLive({
 export function AdminStatsCard(props: {
   stats: StoreStats | null;
   wasteKpi?: WasteKpiReport | null;
+  wasteRangeId?: string | null;
   inventoryValue?: number | null;
 }) {
   return (

@@ -103,7 +103,22 @@ export async function requireReceivingStaff() {
   return requireRoles(RECEIVING_ROLES);
 }
 
+function kitchenStaffTestAuth(): ReceivingStaffTestAuth | null {
+  if (process.env.NODE_ENV === 'production') return null;
+  const hook = (globalThis as { __freshloopKitchenStaffTestAuth?: ReceivingStaffTestAuth | null })
+    .__freshloopKitchenStaffTestAuth;
+  return typeof hook === 'function' ? hook : null;
+}
+
 export async function requireKitchenStaff() {
+  const hooked = kitchenStaffTestAuth();
+  if (hooked) {
+    const user = await hooked();
+    if (!['ADMIN', 'STORE_MANAGER', 'DELI_CHEF'].includes(user.role)) {
+      throw new AuthError('Kitchen staff only.', 403);
+    }
+    return user;
+  }
   return requireRoles(['ADMIN', 'STORE_MANAGER', 'DELI_CHEF']);
 }
 

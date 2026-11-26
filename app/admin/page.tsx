@@ -6,7 +6,8 @@ import { AdminSectionHeader } from '@/components/features/admin/AdminSectionHead
 import { CatalogBookmarkRedirect } from '@/components/features/admin/CatalogBookmarkRedirect';
 import { DashboardFigures, DashboardFiguresSkeleton } from '@/components/features/admin/DashboardFigures';
 import { PageMain } from '@/components/ui/layout';
-import { resolveAdminDateSearch } from '@/lib/domains/stats/adminDateRange';
+import { adminPeriodRequest, resolveAdminDateSearch } from '@/lib/domains/stats/adminDateRange';
+import { periodRequestId } from '@/lib/domains/stats/adminPeriodClient';
 import { getAdminStoreStatsBundle } from '@/lib/domains/stats/storeStats';
 
 export const dynamic = 'force-dynamic';
@@ -17,9 +18,16 @@ async function LiveFigures({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   await guardFreshPage('/admin');
-  const dashboardWindow = resolveAdminDateSearch(await searchParams);
+  const search = await searchParams;
+  const dashboardWindow = resolveAdminDateSearch(search);
   const { stats, wasteKpi } = await getAdminStoreStatsBundle(dashboardWindow.range);
-  return <DashboardFigures stats={stats} initialWasteKpi={wasteKpi} />;
+  return (
+    <DashboardFigures
+      stats={stats}
+      initialWasteKpi={wasteKpi}
+      wasteRangeId={periodRequestId(adminPeriodRequest(search))}
+    />
+  );
 }
 
 export default async function AdminPage({

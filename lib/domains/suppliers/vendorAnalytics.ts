@@ -1,4 +1,6 @@
-import { prisma } from '@/lib/domains/inventory/ledger';
+import { TransactionType } from '@prisma/client';
+import { excludeVolumetricScrapFromStock, prisma } from '@/lib/domains/inventory/ledger';
+import { excludeVolumetricScrapNotes } from '@/lib/domains/inventory/volumetricScrapLedger';
 import { buildSupplierScorecard } from '@/lib/domains/suppliers/scorecard';
 import {
   SUPPLIER_QUALITY_EVENT,
@@ -7,13 +9,10 @@ import {
   type VendorAnalyticsBundle,
 } from '@/lib/domains/suppliers/vendorAnalyticsTypes';
 
-const SPOILAGE_CONDITIONS = new Set([
-  'POOR',
-  'DAMAGED',
-  'SPOILED',
-  'BRUISED',
-  'OVERRIPE',
-]);
+/** Printed supplier label. TODO: join spoilage by supplierId once products store it. */
+export function supplierNameKey(name: string | null | undefined): string {
+  return (name ?? '').trim().toLowerCase();
+}
 
 function lookbackStart(days: number): Date {
   const end = new Date();
@@ -141,11 +140,13 @@ export async function getVendorAnalyticsBundle(input: {
       },
       _count: { _all: true },
     }),
-    prisma.inventoryItem.groupBy({
-      by: ['supplier'],
+    // Row count of non-scrap Waste lines. Not quantity and not dollars.
+    prisma.inventoryTransaction.groupBy({
+      by: ['productId'],
       where: {
-        receivedDate: { gte: periodStart, lte: periodEnd },
-        condition: { in: [...SPOILAGE_CONDITIONS] },
+        transactionType: TransactionType.Waste,
+        timestamp: { gte: periodStart, lte: periodEnd },
+        AND: [excludeVolumetricScrapFromStock(), excludeVolumetricScrapNotes()],
       },
       _count: { _all: true },
     }),
@@ -220,9 +221,22 @@ export async function getVendorAnalyticsBundle(input: {
       .filter((row) => row.supplierId)
       .map((row) => [row.supplierId as string, row._count._all])
   );
-  const spoilageBySupplierName = new Map(
-    spoilageGroups.map((row) => [row.supplier?.toLowerCase() ?? '', row._count._all])
+  const wasteProducts =
+    spoilageGroups.length === 0
+      ? []
+      : await prisma.product.findMany({
+          where: { id: { in: spoilageGroups.map((row) => row.productId) } },
+          select: { id: true, supplier: true },
+        });
+  const supplierNameByProduct = new Map(
+    wasteProducts.map((product) => [product.id, supplierNameKey(product.supplier)])
   );
+  const spoilageBySupplierName = new Map<string, number>();
+  for (const row of spoilageGroups) {
+    const name = supplierNameByProduct.get(row.productId) ?? '';
+    if (!name) continue;
+    spoilageBySupplierName.set(name, (spoilageBySupplierName.get(name) ?? 0) + row._count._all);
+  }
 
   const scorecards = suppliers.map((supplier) => {
     const quality = qualityBySupplier.get(supplier.id) ?? { low: 0, unmatched: 0 };
@@ -242,7 +256,7 @@ export async function getVendorAnalyticsBundle(input: {
       notReceivedCount: notReceivedBySupplier.get(supplier.id) ?? 0,
       priceVarianceCount: varianceCountBySupplier.get(supplier.id) ?? 0,
       avgPriceVariancePct: varianceAvgBySupplier.get(supplier.id) ?? null,
-      spoilageCount: spoilageBySupplierName.get(supplier.name.toLowerCase()) ?? 0,
+      spoilageCount: spoilageBySupplierName.get(supplierNameKey(supplier.name)) ?? 0,
       receivingVolume: invoiceLineCount + receivingVolume,
     });
   });

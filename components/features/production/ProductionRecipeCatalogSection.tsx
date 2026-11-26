@@ -117,9 +117,16 @@ export const ProductionRecipeCatalogSection = forwardRef<
               {loadError}
             </p>
           ) : filtered.length === 0 ? (
-            <p className="text-sm text-slate-500">
-              {recipes.length === 0 ? 'No saved recipes.' : 'No recipes match your search.'}
-            </p>
+            <div className="px-1 py-6 text-center sm:py-8">
+              <p className="text-sm font-bold text-slate-200">
+                {recipes.length === 0 ? 'No saved recipes.' : 'No recipes match your search.'}
+              </p>
+              {recipes.length === 0 ? (
+                <p className="mx-auto mt-2 max-w-sm text-sm text-slate-500">
+                  Fusion cards show up after a recipe is saved. Sample cards are not listed.
+                </p>
+              ) : null}
+            </div>
           ) : null}
           {filtered.map((recipe) => (
             <RecipeFusionCard

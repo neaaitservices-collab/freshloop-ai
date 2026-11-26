@@ -82,39 +82,22 @@ function inferDepartmentFromName(name: string): DepartmentType {
   return 'PRODUCE';
 }
 
-const FALLBACK_CATALOG_OPTIONS: Array<{
-  id: string;
-  name: string;
-  department: DepartmentType;
-}> = [
-  { id: 'prod-avocado-hass', name: 'Avocados Hass (Mexico)', department: 'PRODUCE' },
-  { id: 'prod-tomato-hothouse', name: 'Hot House Tomatoes (Ontario)', department: 'PRODUCE' },
-  { id: 'prod-tomato-cocktail', name: 'Cocktail Tomatoes', department: 'PRODUCE' },
-  { id: 'prod-apple-honeycrisp', name: 'Honey Crisp Apples', department: 'PRODUCE' },
-  { id: 'prod-cilantro', name: 'Fresh Cilantro Bunch', department: 'PRODUCE' },
-  { id: 'prod-jalapeno', name: 'Jalapeno Peppers', department: 'PRODUCE' },
-  { id: 'prod-heavy-cream', name: 'Whole Heavy Cream 40%', department: 'DAIRY' },
-  { id: 'prod-greek-yogurt', name: 'Greek Whole Milk Yogurt (750g)', department: 'DAIRY' },
-  { id: 'prod-sourdough-boule', name: 'Artisanal Sourdough Boule', department: 'BAKERY' },
-  { id: 'prod-evoo-5l', name: 'Extra Virgin Olive Oil (Bulk Production)', department: 'PANTRY' },
-];
-
 export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
   isOpen,
   onClose,
   onVoiceConfirmed,
 }) => {
   const { activeUser } = useRole();
-  const [catalogOptions, setCatalogOptions] = useState(FALLBACK_CATALOG_OPTIONS);
+  const [catalogOptions, setCatalogOptions] = useState<
+    Array<{ id: string; name: string; department: DepartmentType }>
+  >([]);
   const [isRecording, setIsRecording] = useState(false);
   const [toggleRecordMode, setToggleRecordMode] = useState(false);
   const [processingAudio, setProcessingAudio] = useState(false);
   const [pipelinePhase, setPipelinePhase] = useState<VoicePipelinePhase>('idle');
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [lastAudioBlob, setLastAudioBlob] = useState<Blob | null>(null);
-  const [spokenText, setSpokenText] = useState(
-    'Pull 12 very ripe Hass avocados for production rescue and discard 3 lbs of crushed tomatoes'
-  );
+  const [spokenText, setSpokenText] = useState('');
   const [parsing, setParsing] = useState(false);
   const [committing, setCommitting] = useState(false);
 
@@ -144,20 +127,24 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
           levels?: Array<{ productId: string; name: string; supplier?: string }>;
           error?: string;
         };
-        if (!r.ok || !json.success) {
-          setCatalogLoadWarning(json.error ?? 'Could not load catalog for voice match.');
+        if (!r.ok || !json.success || !Array.isArray(json.levels)) {
+          setCatalogOptions([]);
+          setCatalogLoadWarning(
+            json.error ?? 'Could not load the catalog. Sample SKUs are not shown.'
+          );
           return;
         }
-        if (!Array.isArray(json.levels)) return;
-        const opts = json.levels.map((row) => ({
-          id: row.productId,
-          name: row.name,
-          department: inferDepartmentFromName(row.name),
-        }));
-        if (opts.length > 0) setCatalogOptions(opts);
+        setCatalogOptions(
+          json.levels.map((row) => ({
+            id: row.productId,
+            name: row.name,
+            department: inferDepartmentFromName(row.name),
+          }))
+        );
       })
       .catch((err: unknown) => {
-        setCatalogLoadWarning('Network error — using fallback catalog.');
+        setCatalogOptions([]);
+        setCatalogLoadWarning('Network error. Sample SKUs are not shown.');
         console.error('[freshloop] VoiceLoggerModal catalog fetch', err);
       });
   }, [isOpen]);
@@ -740,6 +727,9 @@ export const VoiceLoggerModal: React.FC<VoiceLoggerModalProps> = ({
                             }}
                             className="min-h-11 w-full rounded-xl border border-zinc-700 bg-zinc-900 px-2.5 py-2 text-xs text-white"
                           >
+                            {productOptionsForItem(item).length === 0 ? (
+                              <option value="">No catalog SKUs on the ledger</option>
+                            ) : null}
                             {productOptionsForItem(item).map((opt) => (
                               <option key={opt.id} value={opt.id}>
                                 {opt.name}

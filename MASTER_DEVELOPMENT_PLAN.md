@@ -207,7 +207,7 @@ After a move, `invalidateLedgerReads()` runs on the server; the row updates from
 
 ### Legacy floor UI (not the live path)
 
-`InventoryList`, `GET /api/inventory?pullDays=`, and `PATCH /api/inventory` status updates still exist for older demos. They touch in-memory `inventory_items` in `lib/db.ts` and do **not** write `Rescue` or `Waste` transactions. Do not use them for production floor work — use `/inventory` and confirmed voice logs instead.
+`GET /api/inventory` reads ledger stock only. `PATCH /api/inventory` is retired (`410`) and does not write demo stock. Floor moves post through `POST /api/inventory/move` as `InventoryTransaction` rows. Use `/inventory` and confirmed voice logs for production floor work.
 
 `DepartmentBadge`, `StatsOverview`, and `InventoryTable` are earlier views and are not mounted on the live inventory page.
 
@@ -215,7 +215,7 @@ After a move, `invalidateLedgerReads()` runs on the server; the row updates from
 
 Step 3. “Cook what the floor pulled.”
 
-The hub is “Prepared Foods Recipe Fusion Hub”. It loads `GET /api/recipe-fusion` and falls back to `INITIAL_FUSION_RECIPES` in `lib/mockData.ts`. **Synthesize Recipes** posts the selected category to `/api/recipe-fusion`, which asks Gemini (`processRecipeFusion` in `lib/gemini.ts`) for a recipe from short-dated ingredients: name, category, ingredients used, estimated yield, estimated cost, target retail price, gross margin, instructions, prep time, chef tips, allergens. New cards are prepended. Categories on the filter: All, Soup, Panzanella, Parfait, Bakery. Search matches name or category.
+`/kitchen` redirects to `/production`. Saved recipes come from the database. `GET /api/recipe-fusion` returns `RecipeFusion` rows and does not fill sample cards. **Synthesize Recipes** posts to `/api/recipe-fusion`, which asks Gemini for a recipe from short-dated ledger ingredients. If the model is unavailable, the route returns an error and saves nothing. Categories on the filter: All, Soup, Panzanella, Parfait, Bakery. Search matches name or category.
 
 `RecipeFusionCard` shows category, margin, cost, retail price, prep time, ingredients, instructions, chef tips, and allergens. It can expand, and it opens the deli label. A “send to kitchen” flag on the card is local until a production batch is confirmed elsewhere.
 
@@ -243,7 +243,7 @@ Per line:
 
 ## Full ledger — `/operations`
 
-`OperationsCenter` is the manager command center linked from Admin and from Inventory (Ledger). It is not a nav item.
+`/operations` redirects to `/production`. That workspace is the manager command center for ledger KPIs, transfers, and saved recipes. It is not filled from a demo catalog.
 
 It shows:
 
@@ -414,5 +414,4 @@ Seed file: `prisma/seed.ts`. Store setting id `store-config-main`. Seed transact
 | `lib/receivingSheet.ts` | Receiving log load and sample rows |
 | `lib/gemini.ts` | `generateContentWithFallback`, `parseModelJson`, invoice OCR helpers, voice parse helpers, recipe fusion, model fallback |
 | `lib/types.ts` | Shared UI types for inventory items, invoices, voice, and fusion recipes |
-| `lib/db.ts` | Legacy inventory-item and fusion helpers, including the in-memory status update |
-| `lib/mockData.ts` | First-paint samples for the floor queue and the kitchen cards |
+| `lib/domains/inventory/ledger.ts` | Ledger writes and `wasteKpiFromLedgerTotals` (waste $ ÷ sale revenue) |
