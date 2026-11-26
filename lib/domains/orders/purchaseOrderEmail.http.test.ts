@@ -53,6 +53,13 @@ describe('purchase order open log', { concurrency: 1 }, () => {
       assert.equal(floor.status, 403);
 
       setManagerStaffTestAuth(async () => manager());
+      const missingSupplier = await GET(new NextRequest('http://localhost/api/orders/purchase-order-email'));
+      assert.equal(missingSupplier.status, 400);
+      const blankSupplier = await GET(
+        new NextRequest('http://localhost/api/orders/purchase-order-email?supplierId=%20')
+      );
+      assert.equal(blankSupplier.status, 400);
+
       const empty = await POST(
         request({ supplierName: 'Farm', to: '   ', subject: 'PO', body: '1', productIds: ['p1'] })
       );

@@ -1,6 +1,16 @@
--- Durable supplier purchase orders: Approved status, the product lines on the order, and a timestamp for status changes.
+-- Durable supplier purchase orders.
+-- Run this migration before deploying the application code that writes these columns.
+-- The new client selects product_ids and updated_at even for the existing mailto log.
+-- Rolling that code back after rows with status APPROVED exist breaks the previous client,
+-- which does not know the APPROVED enum value.
+--
+-- updated_at DEFAULT CURRENT_TIMESTAMP also backfills existing mailto rows with the
+-- migration time. That backfill is cosmetic; those rows were not status-tracked before.
 ALTER TYPE "PurchaseOrderEmailStatus" ADD VALUE 'APPROVED';
 
 ALTER TABLE "purchase_order_emails"
   ADD COLUMN "product_ids" TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
   ADD COLUMN "updated_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP;
+
+CREATE INDEX "purchase_order_emails_supplier_id_updated_at_idx"
+  ON "purchase_order_emails"("supplier_id", "updated_at");

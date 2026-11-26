@@ -195,6 +195,8 @@ The job checks out the ref you select and runs `scripts/prisma-migrate-deploy.mj
 | `DATABASE_URL` | Required. Production pooler (port 6543). The job fails if it is empty. |
 | `DIRECT_URL` | Production direct session (port 5432). If empty, the job warns and the script derives a direct URL from `DATABASE_URL`. Set it explicitly. |
 
+**Purchase orders (`20261125120000_purchase_order_durable_status`).** This is a schema-dependent change. A production migrate needs Nelson’s explicit yes and a Supabase backup, and it runs through **Database migrate (production)** before the app deploy (migrate-before-promote above). Do not run it locally against production. The new client reads `product_ids`, `updated_at`, and `cycle_key` even for the existing mailto log, so the migration has to land first. `updated_at` backfills existing mailto rows with the migration timestamp; that value is cosmetic. Do not roll the application back once any row has status `APPROVED`: the previous client does not know that enum value.
+
 Seed is **not** part of this workflow.
 
 ---

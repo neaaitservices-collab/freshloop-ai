@@ -517,10 +517,11 @@ model PurchaseOrderEmail {
   actorId      String?                  @map("actor_id")
   error        String?
   createdAt    DateTime                 @default(now()) @map("created_at")
-  updatedAt    DateTime                 @updatedAt @map("updated_at")
+  updatedAt    DateTime                 @default(now()) @updatedAt @map("updated_at")
 
   @@unique([supplierId, lineKey])
   @@index([supplierId, createdAt])
+  @@index([supplierId, updatedAt])
   @@map("purchase_order_emails")
 }
 

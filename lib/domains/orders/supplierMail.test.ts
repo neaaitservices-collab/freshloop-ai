@@ -544,30 +544,38 @@ test('a successful or repeat open marks the order so the next click confirms', (
 });
 
 test('saved orders restore approved and sent marks for each supplier', () => {
-  const marks = marksFromPurchaseOrders([
-    {
-      productIds: ['banana', 'banana'],
-      status: 'APPROVED',
-      updatedAt: '2026-11-20T12:00:00.000Z',
-    },
-    {
-      productIds: ['banana'],
-      status: 'SENT',
-      updatedAt: '2026-11-21T12:00:00.000Z',
-    },
-    {
-      productIds: ['kale'],
-      status: 'APPROVED',
-      updatedAt: '2026-11-19T12:00:00.000Z',
-    },
-  ]);
+  const now = new Date('2026-11-26T00:00:00.000Z');
+  const open = { now, lastReceiptAt: { banana: '2026-11-01T00:00:00.000Z', kale: null, milk: null } };
+  const marks = marksFromPurchaseOrders(
+    [
+      {
+        productIds: ['banana', 'banana'],
+        status: 'APPROVED',
+        updatedAt: '2026-11-20T12:00:00.000Z',
+      },
+      {
+        productIds: ['banana'],
+        status: 'SENT',
+        updatedAt: '2026-11-21T12:00:00.000Z',
+      },
+      {
+        productIds: ['kale'],
+        status: 'APPROVED',
+        updatedAt: '2026-11-19T12:00:00.000Z',
+      },
+    ],
+    open
+  );
   assert.equal(marks.banana, 'sent');
   assert.equal(marks.kale, 'approved');
 
-  const olderSent = marksFromPurchaseOrders([
-    { productIds: ['milk'], status: 'SENT', updatedAt: '2026-11-18T12:00:00.000Z' },
-    { productIds: ['milk'], status: 'APPROVED', updatedAt: '2026-11-22T12:00:00.000Z' },
-  ]);
+  const olderSent = marksFromPurchaseOrders(
+    [
+      { productIds: ['milk'], status: 'SENT', updatedAt: '2026-11-18T12:00:00.000Z' },
+      { productIds: ['milk'], status: 'APPROVED', updatedAt: '2026-11-22T12:00:00.000Z' },
+    ],
+    { now, lastReceiptAt: { milk: '2026-11-01T00:00:00.000Z' } }
+  );
   assert.equal(olderSent.milk, 'sent');
 
   const farm = ordersForSupplier('Farm & Sons', 'sup-farm', [

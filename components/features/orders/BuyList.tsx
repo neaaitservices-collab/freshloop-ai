@@ -4,26 +4,20 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, Check, ChevronDown, Mail, Plus, Printer, Search } from 'lucide-react';
 import { PoEmailPanel } from '@/components/features/orders/PoEmailPanel';
 import { PurchaseOrderHistory } from '@/components/features/orders/PurchaseOrderHistory';
+import { usePurchaseOrders } from '@/components/features/orders/usePurchaseOrders';
 import {
   approvedOrderRows,
   caseWord,
   draftForSupplier,
   draftsForSuppliers,
   groupBySupplier,
-  marksFromPurchaseOrders,
-  MISSING_SUPPLIER_EMAIL_HINT,
   openOrderRows,
-  orderLine,
   ordersForSupplier,
-  purchaseOrderRecipientForSupplier,
-  singleSupplierEmail,
-  supplierRecipientHint,
   withSavedRecipient,
   type LineMark,
   type PoDraft,
   type SupplierDirectoryEntry,
 } from '@/components/features/orders/supplierMail';
-import type { PurchaseOrderHistoryEntry } from '@/lib/domains/orders/purchaseOrderSubmit';
 import { PageIntro } from '@/components/layout/PageIntro';
 import { PageMain, ScrollTable } from '@/components/ui/layout';
 import { Badge, type BadgeVariant } from '@/components/ui/Badge';
@@ -103,10 +97,6 @@ export function BuyList({
   const [error, setError] = useState<string | null>(null);
   const [levelSyncWarning, setLevelSyncWarning] = useState<string | null>(null);
   const [savingId, setSavingId] = useState<string | null>(null);
-  const [marks, setMarks] = useState<Record<string, LineMark>>({});
-  const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrderHistoryEntry[] | null>(null);
-  const [supplierIssues, setSupplierIssues] = useState<Record<string, string>>({});
-  const [savingPoSupplier, setSavingPoSupplier] = useState<string | null>(null);
   const [supplierDirectory, setSupplierDirectory] = useState<SupplierDirectoryEntry[]>([]);
   const [directoryReady, setDirectoryReady] = useState(false);
   const [drafts, setDrafts] = useState<PoDraft[]>([]);
@@ -119,6 +109,22 @@ export function BuyList({
   const [quietOpen, setQuietOpen] = useState(false);
   const saveTimers = useRef<Record<string, number>>({});
   const [printedAt, setPrintedAt] = useState('');
+
+  const {
+    orders: purchaseOrders,
+    ordersLoading,
+    marks,
+    supplierIssues,
+    savingSupplier: savingPoSupplier,
+    saveRows,
+    savePurchaseOrder,
+  } = usePurchaseOrders({
+    levels,
+    supplierDirectory,
+    directoryReady,
+    drafts,
+    onError: setError,
+  });
 
   useEffect(() => {
     setPrintedAt(new Date().toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }));
@@ -137,34 +143,6 @@ export function BuyList({
       return changed ? next : current;
     });
   }, [purchaseOrders]);
-
-  useEffect(() => {
-    let cancelled = false;
-    void fetch('/api/orders/purchase-order-email', { cache: 'no-store' })
-      .then(async (response) => {
-        const json = (await response.json()) as {
-          success?: boolean;
-          orders?: PurchaseOrderHistoryEntry[];
-          error?: string;
-        };
-        if (cancelled) return;
-        if (!response.ok || !json.success || !Array.isArray(json.orders)) {
-          setError(json.error ?? 'Purchase order history could not be loaded.');
-          setPurchaseOrders([]);
-          return;
-        }
-        setPurchaseOrders(json.orders);
-        setMarks((current) => ({ ...marksFromPurchaseOrders(json.orders ?? []), ...current }));
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setError('Purchase order history could not be loaded.');
-        setPurchaseOrders([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -416,117 +394,6 @@ export function BuyList({
   const rowsForPo = (group: (typeof activeOrders)[number]) =>
     group.approved.length > 0 ? group.approved : group.open;
 
-  const rememberOrder = (order: PurchaseOrderHistoryEntry) => {
-    setPurchaseOrders((current) => {
-      const list = current ?? [];
-      return [order, ...list.filter((item) => item.id !== order.id)];
-    });
-    setMarks((current) => ({ ...current, ...marksFromPurchaseOrders([order]) }));
-  };
-
-  const savePurchaseOrder = async (input: {
-    supplier: string;
-    supplierId: string | null;
-    to: string;
-    subject: string;
-    body: string;
-    productIds: string[];
-    status: 'APPROVED' | 'SENT';
-  }): Promise<boolean> => {
-    if (!singleSupplierEmail(input.to)) {
-      setSupplierIssues((current) => ({
-        ...current,
-        [input.supplier]:
-          supplierRecipientHint({ to: input.to, recipientIssue: 'missing' }) ?? MISSING_SUPPLIER_EMAIL_HINT,
-      }));
-      return false;
-    }
-    setSupplierIssues((current) => {
-      if (!current[input.supplier]) return current;
-      const next = { ...current };
-      delete next[input.supplier];
-      return next;
-    });
-    setSavingPoSupplier(input.supplier);
-    setError(null);
-    try {
-      const response = await fetch('/api/orders/purchase-order-email', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          supplierId: input.supplierId,
-          supplierName: input.supplier,
-          to: input.to,
-          subject: input.subject,
-          body: input.body,
-          productIds: input.productIds,
-          status: input.status,
-        }),
-      });
-      const json = (await response.json()) as {
-        success?: boolean;
-        error?: string;
-        id?: string;
-        status?: PurchaseOrderHistoryEntry['status'];
-        openedAt?: string;
-        updatedAt?: string;
-        productIds?: string[];
-        lineKey?: string;
-      };
-      if (!response.ok || !json.success || !json.id || !json.status) {
-        setError(json.error || 'The purchase order could not be saved.');
-        return false;
-      }
-      const savedAt = json.updatedAt ?? json.openedAt ?? new Date().toISOString();
-      rememberOrder({
-        id: json.id,
-        supplierId: input.supplierId,
-        supplierName: input.supplier,
-        toEmail: singleSupplierEmail(input.to) ?? input.to,
-        subject: input.subject,
-        status: json.status,
-        lineKey: json.lineKey ?? '',
-        productIds: Array.isArray(json.productIds) ? json.productIds : input.productIds,
-        createdAt: json.openedAt ?? savedAt,
-        updatedAt: savedAt,
-      });
-      return true;
-    } catch {
-      setError('The purchase order could not be saved.');
-      return false;
-    } finally {
-      setSavingPoSupplier(null);
-    }
-  };
-
-  const saveRows = async (rows: StockLevel[], status: 'APPROVED' | 'SENT') => {
-    const eligible = rows.filter((row) => row.low && (status === 'SENT' || marks[row.productId] !== 'sent'));
-    const groupedRows = groupBySupplier(eligible);
-    for (const [supplier, groupRows] of Object.entries(groupedRows)) {
-      const directoryRecipient = purchaseOrderRecipientForSupplier(supplier, supplierDirectory, drafts);
-      const recipient = withSavedRecipient(
-        {
-          supplier,
-          supplierId: directoryRecipient.supplierId,
-          to: directoryRecipient.to,
-          subject: '',
-          body: '',
-          productIds: groupRows.map((row) => row.productId),
-        },
-        purchaseOrders ?? []
-      );
-      await savePurchaseOrder({
-        supplier,
-        supplierId: recipient.supplierId,
-        to: recipient.to,
-        subject: `Supermarket Purchase Order - ${supplier}`,
-        body: groupRows.map(orderLine).join('\n'),
-        productIds: groupRows.map((row) => row.productId),
-        status,
-      });
-    }
-  };
-
   const approve = (productId: string) => {
     if (marks[productId] === 'sent') return;
     const row = levels.find((item) => item.productId === productId);
@@ -741,7 +608,7 @@ export function BuyList({
             {supplierIssues[supplier]}
           </p>
         ) : null}
-        <PurchaseOrderHistory orders={history} loading={purchaseOrders === null} />
+        <PurchaseOrderHistory orders={history} loading={ordersLoading} />
         {renderRows(supplier, rows)}
       </Card>
     );

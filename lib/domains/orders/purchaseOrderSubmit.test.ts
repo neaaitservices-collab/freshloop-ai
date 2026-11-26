@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   PURCHASE_ORDER_RECIPIENT_REQUIRED,
+  coveredApprovedOrderIds,
   dedupePurchaseOrderLines,
   planPurchaseOrderSubmit,
   type PurchaseOrderLineRecord,
@@ -13,6 +14,20 @@ const saved: PurchaseOrderLineRecord = {
   productIds: ['banana', 'banana', 'kale'],
   toEmail: 'buyer@farm.test',
 };
+
+test('a group send covers the approved rows for those products', () => {
+  const ids = coveredApprovedOrderIds(
+    [
+      { id: 'a', status: 'APPROVED', productIds: ['A'] },
+      { id: 'b', status: 'APPROVED', productIds: ['B', 'B'] },
+      { id: 'c', status: 'APPROVED', productIds: ['C'] },
+      { id: 'sent', status: 'SENT', productIds: ['A'] },
+      { id: 'empty', status: 'APPROVED', productIds: [] },
+    ],
+    ['A', 'B', 'A']
+  );
+  assert.deepEqual(ids, ['a', 'b']);
+});
 
 test('duplicate product ids collapse to one line', () => {
   assert.deepEqual(dedupePurchaseOrderLines([' banana ', 'banana', '', 'kale', 'kale']), ['banana', 'kale']);

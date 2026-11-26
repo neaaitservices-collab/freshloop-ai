@@ -5,7 +5,10 @@ import { requireManagerStaff } from '@/lib/auth/guardRoute';
 import { apiError, apiErrorFromUnknown } from '@/lib/domains/ai/apiError';
 import { prisma } from '@/lib/db/prisma';
 import { purchaseOrderLineKey, singleSupplierEmail } from '@/components/features/orders/supplierMail';
-import { dedupePurchaseOrderLines } from '@/lib/domains/orders/purchaseOrderSubmit';
+import {
+  dedupePurchaseOrderLines,
+  purchaseOrderSupplierIdSchema,
+} from '@/lib/domains/orders/purchaseOrderSubmit';
 import {
   listPurchaseOrders,
   recordPurchaseOrderOpen,
@@ -53,8 +56,11 @@ async function resolveSupplierId(
 export async function GET(req: NextRequest) {
   try {
     await requireManagerStaff();
-    const supplierId = req.nextUrl.searchParams.get('supplierId')?.trim() || null;
-    const orders = await listPurchaseOrders(supplierId);
+    const parsed = purchaseOrderSupplierIdSchema.safeParse(req.nextUrl.searchParams.get('supplierId') ?? '');
+    if (!parsed.success) {
+      return apiError('A supplier id is required.', 400);
+    }
+    const orders = await listPurchaseOrders(parsed.data);
     return NextResponse.json({ success: true, orders });
   } catch (error) {
     const authRes = authErrorResponse(error);
@@ -131,6 +137,7 @@ export async function POST(req: NextRequest) {
         duplicate: submitted.duplicate,
         productIds: submitted.productIds,
         lineKey: submitted.lineKey,
+        closedIds: submitted.closedIds,
       });
     }
 

@@ -1,13 +1,16 @@
 import { prisma } from '@/lib/db/prisma';
 import {
+  coveredApprovedOrderIds,
   dedupePurchaseOrderLines,
   planPurchaseOrderSubmit,
+  PURCHASE_ORDER_HISTORY_LIMIT,
   purchaseOrderRecipientBlock,
   type DurablePurchaseOrderStatus,
   type PurchaseOrderHistoryEntry,
   type PurchaseOrderLineRecord,
   type StoredPurchaseOrderStatus,
 } from '@/lib/domains/orders/purchaseOrderSubmit';
+import type { Prisma } from '@prisma/client';
 
 export interface PurchaseOrderOpenDraft {
   /** Required. A null id would not collide in the unique index, so a repeat open would not be detected. */
@@ -47,22 +50,34 @@ export type PurchaseOrderSubmitResult =
       duplicate: boolean;
       productIds: string[];
       lineKey: string;
+      closedIds: string[];
     }
   | { ok: false; error: string };
+
+const lineSelect = {
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+  status: true,
+  productIds: true,
+  toEmail: true,
+} as const;
+
+type LineRow = {
+  id: string;
+  createdAt: Date;
+  updatedAt: Date;
+  status: StoredPurchaseOrderStatus;
+  productIds: string[];
+  toEmail: string;
+};
+
+type OrderTx = Pick<Prisma.TransactionClient, 'purchaseOrderEmail'>;
 
 function requiredSupplierId(supplierId: string): string {
   const id = typeof supplierId === 'string' ? supplierId.trim() : '';
   if (!id) throw new Error('supplierId is required.');
   return id;
-}
-
-function isUniqueConflict(error: unknown): boolean {
-  return (
-    typeof error === 'object' &&
-    error !== null &&
-    'code' in error &&
-    (error as { code?: unknown }).code === 'P2002'
-  );
 }
 
 function openData(draft: PurchaseOrderOpenDraft, supplierId: string) {
@@ -83,18 +98,20 @@ function openData(draft: PurchaseOrderOpenDraft, supplierId: string) {
   };
 }
 
-async function findLine(supplierId: string, lineKey: string) {
-  return prisma.purchaseOrderEmail.findFirst({
+function findLine(db: OrderTx, supplierId: string, lineKey: string) {
+  return db.purchaseOrderEmail.findFirst({
     where: { supplierId, lineKey },
-    select: {
-      id: true,
-      createdAt: true,
-      updatedAt: true,
-      status: true,
-      productIds: true,
-      toEmail: true,
-    },
+    select: lineSelect,
   });
+}
+
+/** Insert unless this supplier and lineKey already exist. A conflict does not throw. */
+async function insertLine(db: OrderTx, data: Prisma.PurchaseOrderEmailCreateManyInput): Promise<boolean> {
+  const created = await db.purchaseOrderEmail.createMany({
+    data: [data],
+    skipDuplicates: true,
+  });
+  return created.count === 1;
 }
 
 function asLineRecord(row: NonNullable<Awaited<ReturnType<typeof findLine>>>): PurchaseOrderLineRecord {
@@ -115,23 +132,19 @@ export async function recordPurchaseOrderOpen(
   const data = openData(draft, supplierId);
 
   if (!reopen) {
-    try {
-      const row = await prisma.purchaseOrderEmail.create({
-        data,
-        select: { id: true, createdAt: true },
-      });
+    const inserted = await insertLine(prisma, data);
+    if (inserted) {
+      const row = await findLine(prisma, supplierId, draft.lineKey);
+      if (!row) throw new Error('Purchase order could not be saved.');
       return { ok: true, id: row.id, openedAt: row.createdAt.toISOString() };
-    } catch (error) {
-      if (!isUniqueConflict(error)) throw error;
     }
   }
 
-  const existing = await findLine(supplierId, draft.lineKey);
+  const existing = await findLine(prisma, supplierId, draft.lineKey);
   if (!existing) {
-    const row = await prisma.purchaseOrderEmail.create({
-      data,
-      select: { id: true, createdAt: true },
-    });
+    await insertLine(prisma, data);
+    const row = await findLine(prisma, supplierId, draft.lineKey);
+    if (!row) throw new Error('Purchase order could not be saved.');
     return { ok: true, id: row.id, openedAt: row.createdAt.toISOString() };
   }
   // Approved is saved, not mailed. The first mailto is still the first open.
@@ -150,7 +163,8 @@ function savedResult(
     productIds: string[];
   },
   lineKey: string,
-  duplicate: boolean
+  duplicate: boolean,
+  closedIds: string[]
 ): PurchaseOrderSubmitResult {
   return {
     ok: true,
@@ -161,13 +175,34 @@ function savedResult(
     duplicate,
     productIds: row.productIds,
     lineKey,
+    closedIds,
   };
 }
 
+async function closeCoveredApproved(
+  db: OrderTx,
+  supplierId: string,
+  sentProductIds: readonly string[],
+  keepId: string
+): Promise<string[]> {
+  const approved = await db.purchaseOrderEmail.findMany({
+    where: { supplierId, status: 'APPROVED' },
+    select: { id: true, status: true, productIds: true },
+  });
+  const ids = coveredApprovedOrderIds(approved, sentProductIds).filter((id) => id !== keepId);
+  if (ids.length === 0) return [];
+  await db.purchaseOrderEmail.updateMany({
+    where: { id: { in: ids }, status: 'APPROVED' },
+    data: { status: 'SENT' },
+  });
+  return ids;
+}
+
 async function writePurchaseOrder(
+  db: OrderTx,
   draft: PurchaseOrderSubmitDraft,
   supplierId: string,
-  existing: NonNullable<Awaited<ReturnType<typeof findLine>>> | null
+  existing: LineRow | null
 ): Promise<PurchaseOrderSubmitResult> {
   const plan = planPurchaseOrderSubmit({
     requested: draft.status,
@@ -178,63 +213,48 @@ async function writePurchaseOrder(
   if (!plan.ok) return plan;
 
   if (!existing) {
-    try {
-      const row = await prisma.purchaseOrderEmail.create({
-        data: {
-          supplierId,
-          supplierName: draft.supplierName,
-          toEmail: plan.decision.toEmail,
-          fromEmail: '',
-          replyTo: null,
-          subject: draft.subject,
-          body: draft.body,
-          lineKey: draft.lineKey,
-          productIds: plan.decision.productIds,
-          actorId: draft.actorId,
-          status: plan.decision.status ?? draft.status,
-          providerId: null,
-          error: null,
-        },
-        select: {
-          id: true,
-          status: true,
-          createdAt: true,
-          updatedAt: true,
-          productIds: true,
-        },
-      });
-      return savedResult(row, draft.lineKey, false);
-    } catch (error) {
-      if (!isUniqueConflict(error)) throw error;
-      const raced = await findLine(supplierId, draft.lineKey);
-      if (!raced) throw error;
-      return writePurchaseOrder(draft, supplierId, raced);
-    }
+    const inserted = await insertLine(db, {
+      supplierId,
+      supplierName: draft.supplierName,
+      toEmail: plan.decision.toEmail,
+      fromEmail: '',
+      replyTo: null,
+      subject: draft.subject,
+      body: draft.body,
+      lineKey: draft.lineKey,
+      productIds: plan.decision.productIds,
+      actorId: draft.actorId,
+      status: plan.decision.status ?? draft.status,
+      providerId: null,
+      error: null,
+    });
+    const row = await findLine(db, supplierId, draft.lineKey);
+    if (!row) throw new Error('Purchase order could not be saved.');
+    if (!inserted) return writePurchaseOrder(db, draft, supplierId, row);
+    return savedResult(row, draft.lineKey, false, []);
   }
 
   const statusChanged = plan.decision.status !== null && plan.decision.status !== existing.status;
   const linesChanged = existing.productIds.join('\n') !== plan.decision.productIds.join('\n');
   const emailChanged = plan.decision.status === 'SENT' && existing.toEmail !== plan.decision.toEmail;
   if (!statusChanged && !linesChanged && !emailChanged) {
-    return savedResult(existing, draft.lineKey, true);
+    return savedResult(existing, draft.lineKey, true, []);
   }
 
-  const row = await prisma.purchaseOrderEmail.update({
-    where: { id: existing.id },
+  await db.purchaseOrderEmail.updateMany({
+    where: { id: existing.id, status: { not: 'SENT' } },
     data: {
       ...(statusChanged && plan.decision.status ? { status: plan.decision.status } : {}),
       ...(linesChanged ? { productIds: plan.decision.productIds } : {}),
       ...(emailChanged ? { toEmail: plan.decision.toEmail } : {}),
     },
-    select: {
-      id: true,
-      status: true,
-      createdAt: true,
-      updatedAt: true,
-      productIds: true,
-    },
   });
-  return savedResult(row, draft.lineKey, true);
+  const row = await db.purchaseOrderEmail.findUnique({
+    where: { id: existing.id },
+    select: lineSelect,
+  });
+  if (!row) throw new Error('Purchase order could not be saved.');
+  return savedResult(row, draft.lineKey, true, []);
 }
 
 /** Save Approved or Sent for this supplier and lineKey. A repeat call updates that row. */
@@ -244,16 +264,22 @@ export async function submitPurchaseOrder(
   const supplierId = requiredSupplierId(draft.supplierId);
   const blocked = purchaseOrderRecipientBlock(draft.toEmail);
   if (blocked) return { ok: false, error: blocked };
-  const existing = await findLine(supplierId, draft.lineKey);
-  return writePurchaseOrder(draft, supplierId, existing);
+
+  return prisma.$transaction(async (tx) => {
+    const existing = await findLine(tx, supplierId, draft.lineKey);
+    const written = await writePurchaseOrder(tx, draft, supplierId, existing);
+    if (!written.ok || written.status !== 'SENT') return written;
+    const closedIds = await closeCoveredApproved(tx, supplierId, written.productIds, written.id);
+    return { ...written, closedIds };
+  });
 }
 
-/** Newest purchase orders first. Pass a supplier id to limit the list to that supplier. */
-export async function listPurchaseOrders(supplierId: string | null): Promise<PurchaseOrderHistoryEntry[]> {
+/** Newest purchase orders for one supplier, by the same timestamp used for open marks. */
+export async function listPurchaseOrders(supplierId: string): Promise<PurchaseOrderHistoryEntry[]> {
   const rows = await prisma.purchaseOrderEmail.findMany({
-    where: supplierId ? { supplierId } : undefined,
-    orderBy: [{ createdAt: 'desc' }],
-    take: 200,
+    where: { supplierId },
+    orderBy: [{ updatedAt: 'desc' }],
+    take: PURCHASE_ORDER_HISTORY_LIMIT,
     select: {
       id: true,
       supplierId: true,

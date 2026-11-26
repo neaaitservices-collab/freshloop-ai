@@ -186,13 +186,58 @@ export interface PurchaseOrderMarkSource {
   productIds: readonly string[];
   status: string;
   updatedAt: string;
+  createdAt?: string;
 }
 
-/** Restore line marks from saved orders. Sent stays sent when an older approved row is still on file. */
+/**
+ * How long an approved or sent order keeps its lines off the buy list.
+ * After this, or after a newer ledger receipt, low stock is orderable again.
+ */
+export const PURCHASE_ORDER_OPEN_DAYS = 14;
+export const PURCHASE_ORDER_OPEN_WINDOW_MS = PURCHASE_ORDER_OPEN_DAYS * 86_400_000;
+
+function markTime(value: string | Date | null | undefined): number | null {
+  if (value == null || value === '') return null;
+  const time = value instanceof Date ? value.getTime() : new Date(value).getTime();
+  return Number.isFinite(time) ? time : null;
+}
+
+/**
+ * A mark stays only while that purchase order is still open for the product:
+ * the order time is inside the open window, and it is newer than the product's
+ * latest InventoryTransaction receipt. A receipt after the order, or an order
+ * older than the window, drops the mark so current low stock can be ordered again.
+ */
+export function purchaseOrderMarkIsOpen(
+  order: PurchaseOrderMarkSource,
+  productId: string,
+  input: {
+    now: Date;
+    lastReceiptAt?: Readonly<Record<string, string | Date | null | undefined>>;
+    openWindowMs?: number;
+  }
+): boolean {
+  const at = markTime(order.updatedAt) ?? markTime(order.createdAt);
+  if (at === null) return false;
+  const windowMs = input.openWindowMs ?? PURCHASE_ORDER_OPEN_WINDOW_MS;
+  if (input.now.getTime() - at > windowMs) return false;
+  const receipt = markTime(input.lastReceiptAt?.[productId]);
+  if (receipt !== null && receipt >= at) return false;
+  return true;
+}
+
+/** Restore line marks from orders that are still open. An open Sent mark is not replaced by Approved. */
 export function marksFromPurchaseOrders(
-  orders: readonly PurchaseOrderMarkSource[]
+  orders: readonly PurchaseOrderMarkSource[],
+  input: {
+    now: Date;
+    lastReceiptAt?: Readonly<Record<string, string | Date | null | undefined>>;
+    openWindowMs?: number;
+  }
 ): Record<string, LineMark> {
-  const ranked = [...orders].sort((a, b) => a.updatedAt.localeCompare(b.updatedAt) || a.status.localeCompare(b.status));
+  const ranked = [...orders].sort(
+    (a, b) => a.updatedAt.localeCompare(b.updatedAt) || a.status.localeCompare(b.status)
+  );
   const marks: Record<string, LineMark> = {};
   for (const order of ranked) {
     const mark: LineMark | null =
@@ -205,6 +250,7 @@ export function marksFromPurchaseOrders(
     for (const productId of order.productIds) {
       const id = productId.trim();
       if (!id || marks[id] === 'sent') continue;
+      if (!purchaseOrderMarkIsOpen(order, id, input)) continue;
       marks[id] = mark;
     }
   }

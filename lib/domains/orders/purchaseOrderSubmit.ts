@@ -1,4 +1,41 @@
+import { z } from 'zod';
 import { singleSupplierEmail } from '@/components/features/orders/supplierMail';
+
+export const purchaseOrderStatusSchema = z.enum(['PENDING', 'SENT', 'FAILED', 'OPENED', 'APPROVED']);
+
+export const purchaseOrderHistoryEntrySchema = z.object({
+  id: z.string(),
+  supplierId: z.string().nullable(),
+  supplierName: z.string(),
+  toEmail: z.string(),
+  subject: z.string(),
+  status: purchaseOrderStatusSchema,
+  lineKey: z.string(),
+  productIds: z.array(z.string()),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+export const purchaseOrderHistoryResponseSchema = z.object({
+  success: z.boolean(),
+  orders: z.array(purchaseOrderHistoryEntrySchema).optional(),
+  error: z.string().optional(),
+});
+
+export const purchaseOrderSaveResponseSchema = z.object({
+  success: z.boolean(),
+  error: z.string().optional(),
+  id: z.string().optional(),
+  status: purchaseOrderStatusSchema.optional(),
+  openedAt: z.string().optional(),
+  updatedAt: z.string().optional(),
+  duplicate: z.boolean().optional(),
+  productIds: z.array(z.string()).optional(),
+  lineKey: z.string().optional(),
+  closedIds: z.array(z.string()).optional(),
+});
+
+export const purchaseOrderSupplierIdSchema = z.string().trim().min(1).max(128);
 
 export const PURCHASE_ORDER_RECIPIENT_REQUIRED = 'Enter one supplier email address.';
 
@@ -49,6 +86,24 @@ export function dedupePurchaseOrderLines(productIds: readonly string[]): string[
     lines.push(line);
   }
   return lines;
+}
+
+export const PURCHASE_ORDER_HISTORY_LIMIT = 50;
+
+/** Approved rows whose every product is in the sent set. Empty line lists are not covered. */
+export function coveredApprovedOrderIds(
+  rows: readonly { id: string; status: string; productIds: readonly string[] }[],
+  sentProductIds: readonly string[]
+): string[] {
+  const sent = new Set(dedupePurchaseOrderLines(sentProductIds));
+  const ids: string[] = [];
+  for (const row of rows) {
+    if (row.status !== 'APPROVED') continue;
+    const lines = dedupePurchaseOrderLines(row.productIds);
+    if (lines.length === 0 || !lines.every((id) => sent.has(id))) continue;
+    ids.push(row.id);
+  }
+  return ids;
 }
 
 export function purchaseOrderRecipientBlock(toEmail: string): string | null {

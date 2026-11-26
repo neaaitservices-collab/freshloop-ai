@@ -116,6 +116,11 @@ export interface StockLevel {
    * Computed in the stock aggregate (`COUNT(t.id) > 0`), not a per-SKU query.
    */
   hasStockHistory?: boolean;
+  /**
+   * Latest Receive on the inventory ledger for this SKU.
+   * Purchase-order marks stay on the line only while they are newer than this.
+   */
+  lastReceiptAt?: string | null;
 }
 
 export interface PostedReceipt {
@@ -525,6 +530,7 @@ interface StockLevelRow {
   kitchenPrepQty: number;
   hasStockHistory: boolean;
   posSoldInWindow?: number | null;
+  lastReceiptAt: Date | null;
 }
 
 function stockLevelFromRow(
@@ -559,6 +565,7 @@ function stockLevelFromRow(
     pullSensitivityDays: pullOverride,
     pullDays,
     hasStockHistory: row.hasStockHistory === true,
+    lastReceiptAt: row.lastReceiptAt ? new Date(row.lastReceiptAt).toISOString() : null,
   };
 }
 
@@ -641,6 +648,12 @@ async function queryStockLevelRows(
           ORDER BY t2."timestamp" DESC
           LIMIT 1
         ) AS "expirationDate",
+        (
+          SELECT MAX(r."timestamp")
+          FROM "Inventory_Transactions" r
+          WHERE r."Product_ID" = p.id
+            AND r."Transaction_Type" = 'Receive'::"TransactionType"
+        ) AS "lastReceiptAt",
         COALESCE(SUM(
           CASE
             WHEN t."To_Location" IN ('Retail_Floor'::"InventoryLocation", 'Deli_Grab_N_Go'::"InventoryLocation") AND t."Qty_Change" > 0 THEN t."Qty_Change"
@@ -690,6 +703,12 @@ async function queryStockLevelRows(
         ORDER BY t2."timestamp" DESC
         LIMIT 1
       ) AS "expirationDate",
+      (
+        SELECT MAX(r."timestamp")
+        FROM "Inventory_Transactions" r
+        WHERE r."Product_ID" = p.id
+          AND r."Transaction_Type" = 'Receive'::"TransactionType"
+      ) AS "lastReceiptAt",
       COALESCE(SUM(
         CASE
           WHEN t."To_Location" IN ('Retail_Floor'::"InventoryLocation", 'Deli_Grab_N_Go'::"InventoryLocation") AND t."Qty_Change" > 0 THEN t."Qty_Change"

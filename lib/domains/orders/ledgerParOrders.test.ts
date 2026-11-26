@@ -1,55 +1,133 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import test from 'node:test';
-import { ledgerParOrderLines } from '@/components/features/orders/supplierMail';
+import { marksFromPurchaseOrders, openOrderRows } from '@/components/features/orders/supplierMail';
 import { stockFromPar } from '@/lib/domains/inventory/parLevel';
+import { getStockLevel, postProductReceipt, type StockLevel } from '@/lib/domains/inventory/stock';
+import { prisma } from '@/lib/db/prisma';
 
-test('order lines use ledger on-hand against par', () => {
+const now = new Date('2026-11-26T12:00:00.000Z');
+
+function lowRow(productId: string): StockLevel {
+  const par = stockFromPar({ onHand: 2, casePackSize: 6, unitCost: 1.5, parCases: 2 });
+  return { productId, low: par.low, name: productId } as StockLevel;
+}
+
+test('a ledger receipt below par is a line to order', () => {
   const short = stockFromPar({ onHand: 2, casePackSize: 6, unitCost: 1.5, parCases: 2 });
   const stocked = stockFromPar({ onHand: 12, casePackSize: 6, unitCost: 1.5, parCases: 2 });
   assert.equal(short.low, true);
   assert.equal(short.orderCases, 2);
   assert.equal(stocked.low, false);
-  assert.equal(stocked.orderCases, 0);
-  const lines = ledgerParOrderLines([
-    { name: 'Bananas', low: short.low },
-    { name: 'Milk', low: stocked.low },
-  ]);
+  const lines = openOrderRows(
+    [
+      { ...lowRow('Bananas'), low: short.low },
+      { ...lowRow('Milk'), low: stocked.low },
+    ],
+    {}
+  );
   assert.deepEqual(
-    lines.map((line) => line.name),
+    lines.map((line) => line.productId),
     ['Bananas']
   );
 });
 
-test('purchase order stock comes from the inventory ledger, not legacy items or mock data', () => {
-  const page = readFileSync('app/orders/page.tsx', 'utf8');
-  const route = readFileSync('app/api/orders/buy-list/route.ts', 'utf8');
-  const buyList = readFileSync('components/features/orders/BuyList.tsx', 'utf8');
-  const forecasting = readFileSync('lib/domains/inventory/forecasting.ts', 'utf8');
-  const stock = readFileSync('lib/domains/inventory/stock.ts', 'utf8');
-  const mail = readFileSync('components/features/orders/supplierMail.ts', 'utf8');
+test('an old sent order does not keep the product off the buy list', () => {
+  const marks = marksFromPurchaseOrders(
+    [{ productIds: ['A'], status: 'SENT', updatedAt: '2026-09-01T00:00:00.000Z' }],
+    { now }
+  );
+  assert.deepEqual(marks, {});
+  assert.equal(openOrderRows([lowRow('A')], marks).length, 1);
+});
 
-  for (const source of [page, route, buyList, forecasting, mail]) {
-    assert.equal(source.includes('mockData'), false);
-    assert.equal(source.includes('inventory_items'), false);
-    assert.equal(source.includes('getInventoryItems'), false);
-    assert.equal(source.includes('INITIAL_INVENTORY_ITEMS'), false);
+test('an old approved order does not keep the product off the buy list', () => {
+  const marks = marksFromPurchaseOrders(
+    [{ productIds: ['A'], status: 'APPROVED', updatedAt: '2026-09-01T00:00:00.000Z' }],
+    { now }
+  );
+  assert.deepEqual(marks, {});
+  assert.equal(openOrderRows([lowRow('A')], marks).map((row) => row.productId).join(','), 'A');
+});
+
+test('a receipt after the order makes the product orderable again', () => {
+  const sentAt = '2026-11-20T12:00:00.000Z';
+  const marks = marksFromPurchaseOrders(
+    [
+      { productIds: ['A'], status: 'SENT', updatedAt: sentAt },
+      { productIds: ['B'], status: 'APPROVED', updatedAt: sentAt },
+    ],
+    {
+      now,
+      lastReceiptAt: {
+        A: '2026-11-25T12:00:00.000Z',
+        B: '2026-11-25T12:00:00.000Z',
+      },
+    }
+  );
+  assert.deepEqual(marks, {});
+  assert.deepEqual(
+    openOrderRows([lowRow('A'), lowRow('B')], marks).map((row) => row.productId),
+    ['A', 'B']
+  );
+});
+
+test('a recent order newer than the last receipt still marks the line', () => {
+  const marks = marksFromPurchaseOrders(
+    [{ productIds: ['A'], status: 'SENT', updatedAt: '2026-11-24T12:00:00.000Z' }],
+    { now, lastReceiptAt: { A: '2026-11-01T00:00:00.000Z' } }
+  );
+  assert.equal(marks.A, 'sent');
+  assert.equal(openOrderRows([lowRow('A')], marks).length, 0);
+});
+
+const databaseUrl = process.env.DATABASE_URL?.trim() ?? '';
+const hasDb = Boolean(databaseUrl) && process.env.FRESHLOOP_DB_TESTS !== '0';
+
+test('low stock comes from a ledger receipt against par', { skip: !hasDb }, async (t) => {
+  try {
+    await prisma.$connect();
+  } catch {
+    t.skip('Database unreachable.');
+    return;
   }
 
-  assert.match(page, /getBuyListLevelsRsc/);
-  assert.match(route, /getBuyListLevelsWithForecast/);
-  assert.match(forecasting, /getStockLevelsWithPosSales/);
-  assert.match(mail, /ledgerParOrderLines\(rows\)/);
-  assert.match(buyList, /marksFromPurchaseOrders/);
-  assert.match(page, /PurchaseOrderErrorBoundary/);
+  const stamp = `par-${Date.now()}`;
+  const product = await prisma.product.create({
+    data: {
+      name: `Bananas ${stamp}`,
+      department: 'PRODUCE',
+      supplier: `North Farm ${stamp}`,
+      casePackSize: 6,
+      parCases: 2,
+      standardCost: 1.5,
+    },
+  });
 
-  const query = stock.slice(
-    stock.indexOf('async function queryStockLevelRows'),
-    stock.indexOf('const posSalesCache')
+  t.after(async () => {
+    await prisma.inventoryLot.deleteMany({ where: { productId: product.id } });
+    await prisma.inventoryTransaction.deleteMany({ where: { productId: product.id } });
+    await prisma.inventoryItem.deleteMany({ where: { productId: product.id } });
+    await prisma.product.delete({ where: { id: product.id } });
+  });
+
+  await postProductReceipt({
+    productId: product.id,
+    quantityUnits: 2,
+    unitCostAtTime: 1.5,
+    staffId: 'test-staff',
+    referenceId: `PO-PAR-${stamp}`,
+  });
+
+  const level = await getStockLevel(product.id);
+  assert.equal(level.low, true);
+  assert.equal(level.orderCases, 2);
+  assert.equal(level.parCases, 2);
+  assert.ok(level.lastReceiptAt);
+  assert.equal(await prisma.inventoryItem.count({ where: { productId: product.id } }), 0);
+  const legacyMarks = marksFromPurchaseOrders(
+    [{ productIds: [product.id], status: 'SENT', updatedAt: '2026-09-01T00:00:00.000Z' }],
+    { now, lastReceiptAt: { [product.id]: level.lastReceiptAt } }
   );
-  assert.match(query, /Inventory_Transactions/);
-  assert.match(query, /parCases/);
-  assert.equal(query.includes('inventory_items'), false);
-  assert.equal(query.includes('mockData'), false);
-  assert.match(stock, /resolveParCases\(row\.parCases, storeDefaultParCases\)/);
+  assert.equal(legacyMarks[product.id], undefined);
+  assert.equal(openOrderRows([{ ...level, low: true }], legacyMarks).length, 1);
 });

@@ -158,3 +158,123 @@ test('submit is idempotent on lineKey and keeps Approved then Sent', { skip: !ha
   assert.equal(kept?.status, 'SENT');
   assert.equal(kept?.toEmail, 'buyer@farm.test');
 });
+
+test('approve A, approve B, then send A+B leaves no approved rows', { skip: !hasDb }, async (t) => {
+  try {
+    await prisma.$connect();
+  } catch {
+    t.skip('Database unreachable.');
+    return;
+  }
+
+  const stamp = `po-cover-${Date.now()}`;
+  const supplier = await prisma.supplier.create({ data: { name: `PO Cover ${stamp}` } });
+  const base = {
+    supplierId: supplier.id,
+    supplierName: supplier.name,
+    toEmail: 'buyer@farm.test',
+    subject: 'Purchase order',
+    actorId: 'staff-1',
+  };
+
+  t.after(async () => {
+    await prisma.purchaseOrderEmail.deleteMany({ where: { supplierId: supplier.id } });
+    await prisma.supplier.delete({ where: { id: supplier.id } });
+  });
+
+  const approvedA = await submitPurchaseOrder({
+    ...base,
+    body: '1 case - A',
+    lineKey: 'line-a',
+    productIds: ['A'],
+    status: 'APPROVED',
+  });
+  const approvedB = await submitPurchaseOrder({
+    ...base,
+    body: '1 case - B',
+    lineKey: 'line-b',
+    productIds: ['B'],
+    status: 'APPROVED',
+  });
+  assert.equal(approvedA.ok && approvedB.ok, true);
+
+  const sent = await submitPurchaseOrder({
+    ...base,
+    body: '2 cases - A\n3 cases - B',
+    lineKey: 'line-ab',
+    productIds: ['A', 'B'],
+    status: 'SENT',
+  });
+  assert.equal(sent.ok, true);
+  if (!sent.ok) return;
+  assert.equal(sent.status, 'SENT');
+  assert.equal(sent.closedIds.length, 2);
+
+  const rows = await prisma.purchaseOrderEmail.findMany({ where: { supplierId: supplier.id } });
+  assert.equal(rows.filter((row) => row.status === 'APPROVED').length, 0);
+  assert.equal(rows.filter((row) => row.productIds.includes('A') && row.status === 'SENT').length >= 1, true);
+  assert.equal(rows.filter((row) => row.productIds.includes('B') && row.status === 'SENT').length >= 1, true);
+
+  const edited = await submitPurchaseOrder({
+    ...base,
+    body: '4 cases - A',
+    lineKey: 'line-a-edited',
+    productIds: ['A'],
+    status: 'APPROVED',
+  });
+  assert.equal(edited.ok, true);
+  const resent = await submitPurchaseOrder({
+    ...base,
+    body: '5 cases - A',
+    lineKey: 'line-a-resent',
+    productIds: ['A'],
+    status: 'SENT',
+  });
+  assert.equal(resent.ok, true);
+  const afterEdit = await prisma.purchaseOrderEmail.findMany({
+    where: { supplierId: supplier.id, productIds: { has: 'A' }, status: 'APPROVED' },
+  });
+  assert.equal(afterEdit.length, 0);
+});
+
+test('concurrent submits keep one sent row and do not raise a unique conflict', { skip: !hasDb }, async (t) => {
+  try {
+    await prisma.$connect();
+  } catch {
+    t.skip('Database unreachable.');
+    return;
+  }
+
+  const stamp = `po-race-${Date.now()}`;
+  const supplier = await prisma.supplier.create({ data: { name: `PO Race ${stamp}` } });
+  const draft = {
+    supplierId: supplier.id,
+    supplierName: supplier.name,
+    toEmail: 'buyer@farm.test',
+    subject: 'Purchase order',
+    body: '1 case - A',
+    lineKey: 'line-a',
+    productIds: ['A'],
+    actorId: 'staff-1',
+    status: 'APPROVED' as const,
+  };
+
+  t.after(async () => {
+    await prisma.purchaseOrderEmail.deleteMany({ where: { supplierId: supplier.id } });
+    await prisma.supplier.delete({ where: { id: supplier.id } });
+  });
+
+  const first = await submitPurchaseOrder(draft);
+  assert.equal(first.ok, true);
+  const results = await Promise.all([
+    submitPurchaseOrder({ ...draft, status: 'SENT' }),
+    submitPurchaseOrder({ ...draft, status: 'APPROVED', productIds: ['A', 'A'] }),
+    submitPurchaseOrder({ ...draft, status: 'SENT', toEmail: 'later@farm.test' }),
+  ]);
+  assert.equal(results.every((result) => result.ok), true);
+  const rows = await prisma.purchaseOrderEmail.findMany({
+    where: { supplierId: supplier.id, lineKey: 'line-a' },
+  });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]?.status, 'SENT');
+});
