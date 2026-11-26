@@ -7,6 +7,7 @@ import {
   matchProduct,
   matchProductWithScore,
   scoreProductMatch,
+  selectInvoiceCatalogProduct,
   selectPurchaseProductByName,
 } from '@/lib/domains/inventory/productMatching';
 
@@ -97,6 +98,25 @@ test('fuzzy match reports the runner-up score', () => {
   assert.equal(hit?.product.id, 'a');
   assert.equal(hit?.score, 100);
   assert.equal(hit?.runnerUpScore, 100);
+});
+
+test('LEMONS ties use the lowest id and warn', () => {
+  const warnings: string[] = [];
+  const chosen = selectInvoiceCatalogProduct(
+    'LEMONS',
+    [
+      { id: 'b-lemons', name: 'Lemons' },
+      { id: 'a-lemons', name: 'LEMONS' },
+    ],
+    (message) => warnings.push(message)
+  );
+  assert.equal(chosen?.id, 'a-lemons');
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0] ?? '', /tie/);
+});
+
+test('a blank invoice name does not match a catalog row', () => {
+  assert.equal(selectInvoiceCatalogProduct('   ', [{ id: 'a', name: 'Lemons' }]), null);
 });
 
 test('catalog duplicate score rejects substring false friends', () => {

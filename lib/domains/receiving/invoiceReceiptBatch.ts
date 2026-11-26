@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { Department, InventoryLocation, Prisma, TransactionType, UnitType } from '@prisma/client';
 import { departmentIdColumns } from '@/lib/domains/catalog/departmentRef';
 import { loadDepartmentCodeMap } from '@/lib/domains/catalog/departmentRefStore';
@@ -6,7 +7,7 @@ import type { LotTx } from '@/lib/domains/inventory/lots';
 import { DEFAULT_PAR_CASES, normalizeParCases } from '@/lib/domains/inventory/parLevel';
 import {
   normalizeProductNameForMatch,
-  selectPurchaseProductByName,
+  selectInvoiceCatalogProduct,
 } from '@/lib/domains/inventory/productMatching';
 import {
   productPackWriteData,
@@ -141,7 +142,6 @@ export async function postInvoiceReceiptBatch(
   slots: InvoiceReceiptSlot[];
   receipts: { transactionId: string; productId: string; unitsAdded: number; onHand: number }[];
   postedRows: ReceivingLogPostResult[];
-  catalogUpdates: { id: string; data: Prisma.ProductUpdateInput }[];
 }> {
   const slots = posts.map(() => emptySlot());
   const postedRows: ReceivingLogPostResult[] = [];
@@ -153,6 +153,10 @@ export async function postInvoiceReceiptBatch(
     const sampleReason = sampleReceivingRejection(post);
     if (sampleReason) {
       throw new InventoryLedgerError(sampleReason, 'DELIVERY_CONFLICT', 409, { committed: false });
+    }
+    if (!post.itemName.trim()) {
+      console.warn('[invoice-receipt] skipping a line with no product name.');
+      continue;
     }
     const pack = packOf(post);
     const unitsAdded = Number((post.casesReceived * pack.casePackSize).toFixed(4));
@@ -271,31 +275,20 @@ export async function postInvoiceReceiptBatch(
   }
 
   if (work.length === 0) {
-    return { slots, receipts: slots.map(receiptOf), postedRows, catalogUpdates: [] };
+    return { slots, receipts: slots.map(receiptOf), postedRows };
   }
 
-  const explicitIds = [
-    ...new Set(work.map((line) => line.post.productId?.trim()).filter((id): id is string => Boolean(id))),
-  ];
   const skus = [...new Set(work.map((line) => skuOf(line.post)).filter((sku): sku is string => Boolean(sku)))];
   const supplierId = actor.supplierId?.trim() ?? '';
-  const [explicitRows, catalogRows, departmentIds, setting, codeLinks] = await Promise.all([
-    explicitIds.length
-      ? tx.product.findMany({ where: { id: { in: explicitIds }, isManufactured: false }, select: productSelect })
-      : Promise.resolve([]),
-    tx.product.findMany({ where: { isManufactured: false }, select: productSelect }),
+  const [catalogRows, departmentIds, setting, codeLinks] = await Promise.all([
+    tx.product.findMany({ where: { isManufactured: false }, select: { id: true, name: true } }),
     loadDepartmentCodeMap(tx),
     tx.storeSetting.findFirst({ orderBy: { updatedAt: 'desc' }, select: { defaultParCases: true } }),
     supplierId && skus.length
       ? tx.supplierProductMatch
           .findMany({
-            where: {
-              supplierId,
-              matchType: 'code',
-              matchKey: { in: skus },
-              product: { isManufactured: false },
-            },
-            select: { matchKey: true, product: { select: productSelect } },
+            where: { supplierId, matchType: 'code', matchKey: { in: skus } },
+            select: { matchKey: true, productId: true },
           })
           .catch((error: unknown) => {
             if (isMissingSupplierProductMatches(error)) return [];
@@ -303,95 +296,82 @@ export async function postInvoiceReceiptBatch(
           })
       : Promise.resolve([]),
   ]);
-  const byId = new Map<string, CatalogProduct>();
-  const nameCatalog: { id: string; name: string }[] = [];
-  for (const row of catalogRows) {
-    const product = normalizeProduct(row);
-    byId.set(product.id, product);
-    nameCatalog.push({ id: product.id, name: product.name });
-  }
-  for (const row of explicitRows) {
-    const product = normalizeProduct(row);
-    if (!byId.has(product.id)) {
-      byId.set(product.id, product);
-      nameCatalog.push({ id: product.id, name: product.name });
-    }
-  }
-  const byCode = new Map<string, CatalogProduct>();
+  const purchasable = new Set(catalogRows.map((row) => row.id));
+  const byCode = new Map<string, string>();
   for (const link of codeLinks) {
-    const product = normalizeProduct(link.product);
-    byId.set(product.id, product);
-    byCode.set(link.matchKey, product);
+    if (purchasable.has(link.productId)) byCode.set(link.matchKey, link.productId);
   }
   const parCases = normalizeParCases(setting?.defaultParCases ?? DEFAULT_PAR_CASES);
   const label = supplierLabel(actor.supplierName);
-
   const creates = new Map<string, Prisma.ProductCreateManyInput>();
-  const assignment = new Map<number, { key: string; existing: CatalogProduct | null }>();
-  const keyByBarcode = new Map<string, string>();
-  const keyByName = new Map<string, string>();
+  const pending = new Map<string, CatalogProduct>();
+  const assignment = new Map<number, { key: string; existingId: string | null }>();
   for (const line of work) {
     const explicit = line.post.productId?.trim() || '';
-    const known = explicit ? byId.get(explicit) : undefined;
-    if (known) {
-      assignment.set(line.index, { key: `id:${known.id}`, existing: known });
+    if (explicit && purchasable.has(explicit)) {
+      assignment.set(line.index, { key: `id:${explicit}`, existingId: explicit });
       continue;
     }
     const sku = skuOf(line.post);
-    const linked = sku ? byCode.get(sku) : undefined;
-    if (linked) {
-      assignment.set(line.index, { key: `id:${linked.id}`, existing: linked });
+    const linkedId = sku ? byCode.get(sku) : undefined;
+    if (linkedId) {
+      assignment.set(line.index, { key: `id:${linkedId}`, existingId: linkedId });
       continue;
     }
     const pendingSku = sku ? `pending:sku:${sku}` : '';
-    if (pendingSku && creates.has(pendingSku)) {
-      assignment.set(line.index, { key: pendingSku, existing: null });
+    if (pendingSku && pending.has(pendingSku)) {
+      assignment.set(line.index, { key: pendingSku, existingId: null });
       continue;
     }
-    const named = selectPurchaseProductByName(line.post.itemName, nameCatalog);
-    const namedProduct = named ? byId.get(named.id) : undefined;
-    if (namedProduct) {
-      assignment.set(line.index, { key: `id:${namedProduct.id}`, existing: namedProduct });
+    const named = selectInvoiceCatalogProduct(line.post.itemName, catalogRows);
+    if (named && purchasable.has(named.id)) {
+      assignment.set(line.index, { key: `id:${named.id}`, existingId: named.id });
       continue;
     }
-    const pendingName = `pending:name:${normalizeProductNameForMatch(line.post.itemName) || line.index}`;
-    if (creates.has(pendingName)) {
-      assignment.set(line.index, { key: pendingName, existing: null });
+    const pendingName = `pending:name:${normalizeProductNameForMatch(line.post.itemName) || String(line.index)}`;
+    if (pending.has(pendingName)) {
+      assignment.set(line.index, { key: pendingName, existingId: null });
       continue;
     }
     const department = departmentFor(line, actor.supplierName);
     const key = pendingSku || pendingName;
-    assignment.set(line.index, { key, existing: null });
-    creates.set(key, economicsOf(line, label, parCases, department, departmentIds, sku));
-    if (sku) keyByBarcode.set(sku, key);
-    keyByName.set(line.post.itemName.trim().toLowerCase(), key);
+    const id = randomUUID();
+    const pack = line.pack;
+    pending.set(key, {
+      id,
+      name: line.post.itemName.trim(),
+      barcode: null,
+      department,
+      shelfLifeDays: 7,
+      casePackSize: pack.casePackSize,
+      receivePackSize: pack.receivePackSize,
+      splitFactor: pack.splitFactor,
+    });
+    assignment.set(line.index, { key, existingId: null });
+    creates.set(key, economicsOf(line, label, parCases, department, departmentIds, id));
   }
 
-  const createdRows = creates.size
-    ? await orConfirmAgain(
-        () =>
-          tx.product.createManyAndReturn({
-            data: [...creates.values()],
-            select: productSelect,
-          }),
-        work
-      )
-    : [];
-  const createdByKey = new Map<string, CatalogProduct>();
-  for (const row of createdRows) {
-    const product = normalizeProduct(row);
-    const sku = normalizeSupplierCode(product.barcode);
-    const key = (sku && keyByBarcode.get(sku)) || keyByName.get(product.name.trim().toLowerCase());
-    if (key) createdByKey.set(key, product);
+  if (creates.size > 0) {
+    await orConfirmAgain(() => tx.product.createMany({ data: [...creates.values()] }), work);
   }
+  const existingIds = [
+    ...new Set([...assignment.values()].flatMap((row) => (row.existingId ? [row.existingId] : []))),
+  ];
+  const fullRows = existingIds.length
+    ? await tx.product.findMany({ where: { id: { in: existingIds } }, select: productSelect })
+    : [];
+  const existingById = new Map(fullRows.map((row) => [row.id, normalizeProduct(row)]));
 
   const productFor = (index: number): CatalogProduct => {
     const assigned = assignment.get(index);
     if (!assigned) {
       throw new InventoryLedgerError('A saved invoice line was missing.', 'LINE_MISMATCH', 409, { committed: false });
     }
-    if (assigned.existing) return assigned.existing;
-    const created = createdByKey.get(assigned.key);
+    if (assigned.existingId) {
+      const existing = existingById.get(assigned.existingId);
+      if (existing) return existing;
+    }
+    const created = pending.get(assigned.key);
     if (!created) {
       throw new InventoryLedgerError('A new catalog item could not be saved.', 'DELIVERY_CONFLICT', 409, {
         committed: false,
@@ -463,24 +443,24 @@ export async function postInvoiceReceiptBatch(
   await orConfirmAgain(
     () =>
       tx.receivingDelivery.createMany({
-    data: work.map((line) => {
-      const product = productFor(line.index);
-      const referenceId = `recv:${line.deliveryId}`;
-      return {
-        id: line.deliveryId,
-        payloadHash: line.hash,
-        itemName: line.post.itemName,
-        productId: line.post.productId?.trim() || null,
-        casesReceived: line.post.casesReceived,
-        caseCost: line.post.caseCost,
-        packSize: line.post.packSize,
-        splitFactor: line.post.splitFactor,
-        unitsAdded: line.unitsAdded,
-        transactionId: transactionByRef.get(referenceId) ?? null,
-        catalogProductId: product.id,
-        productName: product.name,
-      };
-    }),
+        data: work.map((line) => {
+          const product = productFor(line.index);
+          const referenceId = `recv:${line.deliveryId}`;
+          return {
+            id: line.deliveryId,
+            payloadHash: line.hash,
+            itemName: line.post.itemName,
+            productId: line.post.productId?.trim() || null,
+            casesReceived: line.post.casesReceived,
+            caseCost: line.post.caseCost,
+            packSize: line.post.packSize,
+            splitFactor: line.post.splitFactor,
+            unitsAdded: line.unitsAdded,
+            transactionId: transactionByRef.get(referenceId) ?? null,
+            catalogProductId: product.id,
+            productName: product.name,
+          };
+        }),
       }),
     work
   );
@@ -492,29 +472,8 @@ export async function postInvoiceReceiptBatch(
     work
   );
 
-  const catalogUpdates: { id: string; data: Prisma.ProductUpdateInput }[] = [];
-  const seenUpdates = new Set<string>();
-  for (const line of work) {
-    const product = productFor(line.index);
-    if (createdByKeyHas(createdByKey, product.id) || seenUpdates.has(product.id)) continue;
-    seenUpdates.add(product.id);
-    const caseRetail =
-      line.post.caseRetailPrice != null && line.post.caseRetailPrice > 0 ? line.post.caseRetailPrice : undefined;
-    catalogUpdates.push({
-      id: product.id,
-      data: {
-        ...line.pack,
-        unitType: unitTypeFor(line.post.retailUnit),
-        standardCost: Number(line.unitCost.toFixed(4)),
-        receiveCaseCost: Number(line.post.caseCost.toFixed(4)),
-        supplier: label,
-        ...(line.post.currentRetailPrice > 0 ? { retailPrice: line.post.currentRetailPrice } : {}),
-        ...(caseRetail !== undefined ? { caseRetailPrice: caseRetail } : {}),
-        targetMargin: resolveTargetMargin(line.post.marginMode, line.post.customMarginPercent ?? 0),
-        catalogActive: true,
-      },
-    });
-  }
+  await updateExistingProducts(tx, catalogRowsFor(work, productFor, pending, label));
+  await saveSupplierCodeLinks(tx, work, productFor, supplierId, staffId);
 
   const sums = await tx.inventoryTransaction.groupBy({
     by: ['productId'],
@@ -554,7 +513,7 @@ export async function postInvoiceReceiptBatch(
     });
   }
 
-  return { slots, receipts: slots.map(receiptOf), postedRows, catalogUpdates };
+  return { slots, receipts: slots.map(receiptOf), postedRows };
 }
 
 function receiptOf(slot: InvoiceReceiptSlot): {
@@ -640,11 +599,11 @@ function economicsOf(
   parCases: number,
   department: Department,
   departmentIds: Map<string, string> | null,
-  sku: string | null
+  id: string
 ): Prisma.ProductCreateManyInput {
   return {
+    id,
     name: line.post.itemName.trim(),
-    ...(sku ? { barcode: sku } : {}),
     department,
     ...departmentIdColumns(department, departmentIds),
     unitType: unitTypeFor(line.post.retailUnit),
@@ -665,9 +624,126 @@ function economicsOf(
   };
 }
 
-function createdByKeyHas(createdByKey: Map<string, CatalogProduct>, productId: string): boolean {
-  for (const product of createdByKey.values()) {
-    if (product.id === productId) return true;
+function catalogRowsFor(
+  work: PreparedLine[],
+  productFor: (index: number) => CatalogProduct,
+  pending: Map<string, CatalogProduct>,
+  label: string
+): ExistingCatalogUpdate[] {
+  const byId = new Map<string, ExistingCatalogUpdate>();
+  const createdIds = new Set([...pending.values()].map((product) => product.id));
+  for (const line of work) {
+    const product = productFor(line.index);
+    if (createdIds.has(product.id)) continue;
+    byId.set(product.id, {
+      id: product.id,
+      standardCost: Number(line.unitCost.toFixed(4)),
+      receiveCaseCost: Number(line.post.caseCost.toFixed(4)),
+      casePackSize: line.pack.casePackSize,
+      receivePackSize: line.pack.receivePackSize,
+      splitFactor: line.pack.splitFactor,
+      unitType: unitTypeFor(line.post.retailUnit),
+      supplier: label,
+      targetMargin: resolveTargetMargin(line.post.marginMode, line.post.customMarginPercent ?? 0),
+      retailPrice: line.post.currentRetailPrice > 0 ? line.post.currentRetailPrice : null,
+      caseRetailPrice:
+        line.post.caseRetailPrice != null && line.post.caseRetailPrice > 0 ? line.post.caseRetailPrice : null,
+    });
   }
-  return false;
+  return [...byId.values()];
+}
+
+interface ExistingCatalogUpdate {
+  id: string;
+  standardCost: number;
+  receiveCaseCost: number;
+  casePackSize: number;
+  receivePackSize: number;
+  splitFactor: number;
+  unitType: UnitType;
+  supplier: string;
+  targetMargin: number;
+  retailPrice: number | null;
+  caseRetailPrice: number | null;
+}
+
+async function updateExistingProducts(tx: LotTx, rows: ExistingCatalogUpdate[]): Promise<void> {
+  if (rows.length === 0) return;
+  const values = rows
+    .map((_, index) => {
+      const base = index * 11;
+      const slot = (offset: number) => `$${base + offset}`;
+      return `(${slot(1)}, ${slot(2)}::float8, ${slot(3)}::float8, ${slot(4)}::float8, ${slot(5)}::float8, ${slot(6)}::float8, ${slot(7)}::"UnitType", ${slot(8)}, ${slot(9)}::float8, ${slot(10)}::float8, ${slot(11)}::float8)`;
+    })
+    .join(', ');
+  const params: unknown[] = [];
+  for (const row of rows) {
+    params.push(
+      row.id,
+      row.standardCost,
+      row.receiveCaseCost,
+      row.casePackSize,
+      row.receivePackSize,
+      row.splitFactor,
+      row.unitType,
+      row.supplier,
+      row.targetMargin,
+      row.retailPrice,
+      row.caseRetailPrice
+    );
+  }
+  await tx.$executeRawUnsafe(
+    `UPDATE products AS p SET
+      "standardCost" = v.standard_cost,
+      "receive_case_cost" = v.receive_case_cost,
+      "casePackSize" = v.case_pack,
+      "receivePackSize" = v.receive_pack,
+      "splitFactor" = v.split_factor,
+      "unitType" = v.unit_type,
+      supplier = v.supplier,
+      "catalogActive" = true,
+      "targetMargin" = v.margin,
+      "retailPrice" = COALESCE(v.retail_price, p."retailPrice"),
+      "case_retail_price" = COALESCE(v.case_retail, p.case_retail_price),
+      "updatedAt" = NOW()
+    FROM (VALUES ${values}) AS v(
+      id, standard_cost, receive_case_cost, case_pack, receive_pack, split_factor,
+      unit_type, supplier, margin, retail_price, case_retail
+    )
+    WHERE p.id = v.id`,
+    ...params
+  );
+}
+
+async function saveSupplierCodeLinks(
+  tx: LotTx,
+  work: PreparedLine[],
+  productFor: (index: number) => CatalogProduct,
+  supplierId: string,
+  staffId: string
+): Promise<void> {
+  if (!supplierId) return;
+  const rows = new Map<string, Prisma.SupplierProductMatchCreateManyInput>();
+  for (const line of work) {
+    const matchKey = skuOf(line.post);
+    if (!matchKey || rows.has(matchKey)) continue;
+    const printed = (line.post.supplierCode ?? matchKey).trim().slice(0, 160);
+    rows.set(matchKey, {
+      supplierId,
+      matchType: 'code',
+      matchKey,
+      printedValue: printed || matchKey,
+      productId: productFor(line.index).id,
+      createdById: staffId,
+      updatedById: staffId,
+    });
+  }
+  if (rows.size === 0) return;
+  try {
+    await tx.supplierProductMatch.createMany({ data: [...rows.values()], skipDuplicates: true });
+  } catch (error) {
+    if (isMissingSupplierProductMatches(error)) return;
+    if (isUniqueConflict(error)) return;
+    throw error;
+  }
 }

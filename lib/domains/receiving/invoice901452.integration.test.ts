@@ -90,10 +90,9 @@ test('confirming invoice 901452 creates SKUs and posts every shipped line once',
     })),
   });
 
-  const codes = lines.map((line) => line.supplier_code).filter((code): code is string => Boolean(code));
   t.after(async () => {
     const products = await prisma.product.findMany({
-      where: { OR: [{ barcode: { in: codes } }, { id: fingerling.id }] },
+      where: { OR: [{ supplier: supplier.name }, { id: fingerling.id }] },
       select: { id: true },
     });
     const productIds = products.map((row) => row.id);
@@ -136,18 +135,23 @@ test('confirming invoice 901452 creates SKUs and posts every shipped line once',
   const posted = committed.receipts.filter((row) => row.transactionId);
   assert.equal(posted.length, INVOICE_901452_POSTED_LINES);
 
+  const productIds = [...new Set(committed.receipts.map((row) => row.productId).filter((id) => id))];
+  assert.equal(productIds.length, INVOICE_901452_POSTED_LINES);
+  const fingerlingIndex = lines.findIndex((line) => line.supplier_code === 'POFY25');
+  assert.equal(committed.receipts[fingerlingIndex]?.productId, fingerling.id);
   const products = await prisma.product.findMany({
-    where: { barcode: { in: codes } },
+    where: { id: { in: productIds } },
     select: { id: true, barcode: true },
   });
-  assert.equal(products.length, codes.length);
-  assert.equal(products.find((row) => row.barcode === 'POFY25')?.id, fingerling.id);
-  assert.equal(products.some((row) => row.barcode === 'BAS1F'), true);
-  assert.equal(products.some((row) => row.barcode === 'FUEL'), false);
-  assert.equal(products.some((row) => row.barcode === 'XCALL'), false);
-  assert.equal(products.some((row) => row.barcode === 'AV36'), false);
-
-  const productIds = products.map((row) => row.id);
+  assert.equal(products.find((row) => row.id === fingerling.id)?.barcode, 'POFY25');
+  assert.equal(
+    products.filter((row) => row.id !== fingerling.id).every((row) => row.barcode == null),
+    true
+  );
+  const codeLinks = await prisma.supplierProductMatch.count({
+    where: { supplierId: supplier.id, matchType: 'code', productId: { in: productIds } },
+  });
+  assert.equal(codeLinks, INVOICE_901452_POSTED_LINES);
   const transactions = await prisma.inventoryTransaction.findMany({
     where: { productId: { in: productIds }, transactionType: 'Receive' },
     select: { qtyChange: true, unitCostAtTime: true, productId: true },
@@ -157,8 +161,9 @@ test('confirming invoice 901452 creates SKUs and posts every shipped line once',
     transactions.reduce((sum, row) => sum + row.qtyChange * row.unitCostAtTime, 0).toFixed(2)
   );
   assert.equal(amount, INVOICE_901452_TOTAL);
-  const basil = products.find((row) => row.barcode === 'BAS1F');
-  assert.equal(transactions.some((row) => row.productId === basil?.id), true);
+  const basilIndex = lines.findIndex((line) => line.supplier_code === 'BAS1F');
+  const basilId = committed.receipts[basilIndex]?.productId;
+  assert.equal(transactions.some((row) => row.productId === basilId), true);
 
   const again = await commitInvoiceOcrReceipts(input);
   assert.equal(again.transactionsCreated, 0);

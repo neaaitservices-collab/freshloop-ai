@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  completeInvoiceCommit,
   resolveInvoiceReceipt,
   settleCommitPosts,
   vendorInvoiceDuplicateKey,
 } from '@/lib/domains/receiving/invoiceOcrCommit';
+import { rememberLedgerRead } from '@/lib/domains/inventory/ledgerCache';
 import type { ReceivingLogPostInput, ReceivingLogPostResult } from '@/lib/domains/receiving/receivingLogPost';
 import { draftIsFullyPosted } from '@/lib/domains/receiving/invoiceOcrReceive';
 
@@ -118,6 +120,33 @@ test('duplicate guard loads the raw page key and the merged base without rewriti
   });
   assert.deepEqual(hyphen.invoiceNumbers, ['1001-01']);
   assert.equal(hyphen.storedInvoiceNumber, '1001-01');
+});
+
+test('a post-commit failure is warned and the cache still refreshes', async () => {
+  const bucket = new Map();
+  let loads = 0;
+  await rememberLedgerRead(bucket, 'commit-cache', 60_000, async () => {
+    loads += 1;
+    return 1;
+  });
+  const warnings: string[] = [];
+  const original = console.warn;
+  console.warn = (...args: unknown[]) => {
+    warnings.push(args.map((part) => String(part)).join(' '));
+  };
+  try {
+    await completeInvoiceCommit(() => {
+      throw new Error('cache bus down');
+    });
+  } finally {
+    console.warn = original;
+  }
+  await rememberLedgerRead(bucket, 'commit-cache', 60_000, async () => {
+    loads += 1;
+    return 2;
+  });
+  assert.match(warnings.join('\n'), /cache bus down/);
+  assert.equal(loads, 2);
 });
 
 test('a zero quantity does not invent units', () => {

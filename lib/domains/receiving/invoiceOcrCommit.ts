@@ -399,6 +399,8 @@ export async function commitInvoiceOcrReceipts(input: {
   actorIsManager?: boolean;
   idempotencyKey?: string;
   draftId?: string;
+  /** Runs after stock is committed. A failure is logged and does not undo the receipt. */
+  afterCommit?: () => Promise<void> | void;
 }) {
   if (input.confirmedItems.length === 0) {
     throw new Error('No confirmed invoice lines to receive.');
@@ -490,7 +492,6 @@ export async function commitInvoiceOcrReceipts(input: {
     receipts: { transactionId: string; productId: string; unitsAdded: number; onHand: number }[];
     transactionsCreated: number;
   };
-  let catalogUpdates: { id: string; data: Prisma.ProductUpdateInput }[] = [];
   try {
     result = await prisma.$transaction(
       async (tx) => {
@@ -525,7 +526,6 @@ export async function commitInvoiceOcrReceipts(input: {
           supplierName,
           supplierId,
         });
-        catalogUpdates = settled.catalogUpdates;
         const postedRows = settled.postedRows;
         const receipts = settled.receipts;
 
@@ -650,12 +650,17 @@ export async function commitInvoiceOcrReceipts(input: {
     throw error;
   }
 
-  if (catalogUpdates.length > 0) {
-    for (const update of catalogUpdates) {
-      await prisma.product.update({ where: { id: update.id }, data: update.data });
-    }
-  }
-
-  invalidateInventoryCaches();
+  await completeInvoiceCommit(input.afterCommit);
   return result;
+}
+
+/** Stock is already saved. A later step may fail without turning the confirm into an error. */
+export async function completeInvoiceCommit(afterCommit?: () => Promise<void> | void): Promise<void> {
+  try {
+    if (afterCommit) await afterCommit();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'post-commit step failed';
+    console.warn(`[commitInvoiceOcrReceipts] post-commit step failed: ${message}`);
+  }
+  invalidateInventoryCaches();
 }

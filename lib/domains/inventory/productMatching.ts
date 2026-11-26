@@ -222,6 +222,34 @@ export function selectPurchaseProductByName<T extends { name: string }>(
 }
 
 /**
+ * Catalog pick for an invoice line. Equal names use the lowest id.
+ * A tie is reported so two "LEMONS" rows are not a silent coin flip.
+ */
+export function selectInvoiceCatalogProduct<T extends { id: string; name: string }>(
+  itemName: string,
+  products: readonly T[],
+  warn: (message: string) => void = (message) => {
+    console.warn(message);
+  }
+): T | null {
+  const name = itemName.trim();
+  if (!name) return null;
+  const ordered = [...products].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  const key = normalizeProductNameForMatch(name);
+  const exact = key ? ordered.filter((product) => normalizeProductNameForMatch(product.name) === key) : [];
+  if (exact.length > 1) {
+    warn(`[invoice-receipt] ${exact.length} catalog names tie for "${name}". Using ${exact[0]!.id}.`);
+  }
+  if (exact[0]) return exact[0];
+  const fuzzy = matchProductWithScore(name, ordered);
+  if (!fuzzy) return null;
+  if (fuzzy.runnerUpScore != null && fuzzy.runnerUpScore === fuzzy.score) {
+    warn(`[invoice-receipt] "${name}" matches more than one catalog name. Using ${fuzzy.product.id}.`);
+  }
+  return fuzzy.product;
+}
+
+/**
  * One catalog row per normalized name inside a single invoice.
  * `catalog` is this store's purchasable products plus rows created earlier on the same invoice.
  */
