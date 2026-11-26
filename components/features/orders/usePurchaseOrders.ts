@@ -46,6 +46,8 @@ export function usePurchaseOrders(input: {
   const { levels, supplierDirectory, directoryReady, drafts, onError } = input;
   const [orders, setOrders] = useState<PurchaseOrderHistoryEntry[] | null>(null);
   const [historyReady, setHistoryReady] = useState(false);
+  const [historyAttempt, setHistoryAttempt] = useState(0);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const [supplierIssues, setSupplierIssues] = useState<Record<string, string>>({});
   const [savingSupplier, setSavingSupplier] = useState<string | null>(null);
   const supplierKey = supplierIdsOnList(levels, supplierDirectory).join('\n');
@@ -56,9 +58,11 @@ export function usePurchaseOrders(input: {
     if (ids.length === 0) {
       setOrders([]);
       setHistoryReady(true);
+      setHistoryLoading(false);
       return;
     }
     let cancelled = false;
+    setHistoryLoading(true);
     const params = new URLSearchParams();
     for (const id of ids) params.append('supplierId', id);
     void fetch(`/api/orders/purchase-order-email?${params.toString()}`, { cache: 'no-store' })
@@ -73,17 +77,21 @@ export function usePurchaseOrders(input: {
         if (cancelled) return;
         setHistoryReady(true);
         setOrders((current) => applyPurchaseOrderHistoryLoad(current, { ok: true, orders: loaded }));
+        if (historyAttempt > 0) onError(null);
       })
       .catch((error: unknown) => {
         if (cancelled) return;
         const message = error instanceof Error && error.message ? error.message : '';
         onError(message || 'Purchase order history could not be loaded.');
         setOrders((current) => applyPurchaseOrderHistoryLoad(current, { ok: false }));
+      })
+      .finally(() => {
+        if (!cancelled) setHistoryLoading(false);
       });
     return () => {
       cancelled = true;
     };
-  }, [directoryReady, supplierKey, onError]);
+  }, [directoryReady, supplierKey, onError, historyAttempt]);
 
   const marks = useMemo(() => marksFromPurchaseOrders(orders ?? []), [orders]);
 
@@ -200,6 +208,8 @@ export function usePurchaseOrders(input: {
     orders,
     ordersLoading: orders === null,
     historyReady,
+    historyLoading,
+    retryHistory: () => setHistoryAttempt((attempt) => attempt + 1),
     marks,
     supplierIssues,
     savingSupplier,

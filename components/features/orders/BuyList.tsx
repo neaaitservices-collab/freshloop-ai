@@ -114,6 +114,8 @@ export function BuyList({
     orders: purchaseOrders,
     ordersLoading,
     historyReady,
+    historyLoading,
+    retryHistory,
     marks,
     supplierIssues,
     savingSupplier: savingPoSupplier,
@@ -536,7 +538,7 @@ export function BuyList({
                         openDrafts([draftForSupplier(supplier, [row], supplierDirectory)])
                       }
                       locked={!historyReady}
-                onApprove={() => approve(row.productId)}
+                      onApprove={() => approve(row.productId)}
                     />
                   </td>
                 </tr>
@@ -655,9 +657,20 @@ export function BuyList({
           />
 
           {error ? (
-            <p className="mt-4 rounded-xl border border-rose-900/50 bg-rose-950/30 px-4 py-3 text-sm font-semibold text-rose-400">
-              {error}
-            </p>
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-rose-900/50 bg-rose-950/30 px-4 py-3">
+              <p className="text-sm font-semibold text-rose-400">{error}</p>
+              {!historyReady && !ordersLoading ? (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="text-xs"
+                  disabled={historyLoading}
+                  onClick={retryHistory}
+                >
+                  Retry
+                </Button>
+              ) : null}
+            </div>
           ) : null}
 
           {levelSyncWarning ? (

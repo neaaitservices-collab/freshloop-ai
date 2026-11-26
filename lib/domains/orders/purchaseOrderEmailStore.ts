@@ -309,16 +309,21 @@ async function closeCoveredApproved(
         !fullIds.includes(other.id) &&
         (other.lineKey === trimmed.lineKey || sameLines(other.productIds, trimmed.productIds))
     );
+    if (alreadyOpen) {
+      // The leftover products already have an open order. An empty Approved row would sit for the whole window.
+      await db.purchaseOrderEmail.deleteMany({
+        where: { id: row.id, status: 'APPROVED', updatedAt: { gte: windowStart } },
+      });
+      continue;
+    }
     await db.purchaseOrderEmail.updateMany({
       where: { id: row.id, status: 'APPROVED', updatedAt: { gte: windowStart } },
-      data: alreadyOpen
-        ? { productIds: [], updatedAt: row.updatedAt }
-        : {
-            productIds: trimmed.productIds,
-            body: trimmed.body,
-            lineKey: trimmed.lineKey,
-            updatedAt: row.updatedAt,
-          },
+      data: {
+        productIds: trimmed.productIds,
+        body: trimmed.body,
+        lineKey: trimmed.lineKey,
+        updatedAt: row.updatedAt,
+      },
     });
   }
   return closedIds;
@@ -413,23 +418,24 @@ type HistoryRow = {
   updatedAt: Date;
 };
 
-/** At most 50 newest rows per supplier, in one query. Repeated ids are ignored. */
+/** At most 50 newest rows per supplier. One indexed lookup on (supplier_id, updated_at) per id. Repeated ids are ignored. */
 export async function listPurchaseOrders(supplierIds: readonly string[]): Promise<PurchaseOrderHistoryEntry[]> {
   const ids = dedupeSupplierIds(supplierIds);
   if (ids.length === 0) return [];
   const rows = await prisma.$queryRaw<HistoryRow[]>`
     SELECT
-      id,
-      supplier_id AS "supplierId",
-      supplier_name AS "supplierName",
-      to_email AS "toEmail",
-      subject,
-      status::text AS status,
-      line_key AS "lineKey",
-      product_ids AS "productIds",
-      created_at AS "createdAt",
-      updated_at AS "updatedAt"
-    FROM (
+      po.id,
+      po.supplier_id AS "supplierId",
+      po.supplier_name AS "supplierName",
+      po.to_email AS "toEmail",
+      po.subject,
+      po.status::text AS status,
+      po.line_key AS "lineKey",
+      po.product_ids AS "productIds",
+      po.created_at AS "createdAt",
+      po.updated_at AS "updatedAt"
+    FROM jsonb_array_elements_text(${JSON.stringify(ids)}::jsonb) AS requested(supplier_id)
+    CROSS JOIN LATERAL (
       SELECT
         id,
         supplier_id,
@@ -440,15 +446,12 @@ export async function listPurchaseOrders(supplierIds: readonly string[]): Promis
         line_key,
         product_ids,
         created_at,
-        updated_at,
-        ROW_NUMBER() OVER (
-          PARTITION BY supplier_id
-          ORDER BY updated_at DESC, created_at DESC, id DESC
-        ) AS rn
+        updated_at
       FROM purchase_order_emails
-      WHERE supplier_id IN (SELECT value FROM jsonb_array_elements_text(${JSON.stringify(ids)}::jsonb))
-    ) ranked
-    WHERE rn <= ${PURCHASE_ORDER_HISTORY_LIMIT}
+      WHERE supplier_id = requested.supplier_id
+      ORDER BY updated_at DESC
+      LIMIT ${PURCHASE_ORDER_HISTORY_LIMIT}
+    ) AS po
   `;
   const now = new Date();
   const receipts = await latestReceipts(

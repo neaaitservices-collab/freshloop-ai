@@ -171,6 +171,27 @@ function hashLineKey(value: string): string {
     .join('');
 }
 
+/**
+ * Line text used for the idempotency key.
+ * Approve stores a trailing tab and product id so a partial send can pair lines.
+ * Send hashes the plain email body. Both keys ignore that suffix.
+ * The product ids themselves stay in the key, and on the product_ids column.
+ */
+function purchaseOrderLineContent(body: string, productIds: readonly string[]): string {
+  const ids = new Set(productIds);
+  return body
+    .replace(/\r\n/g, '\n')
+    .split('\n')
+    .map((line) => {
+      const tab = line.lastIndexOf('\t');
+      if (tab === -1) return line;
+      const suffix = line.slice(tab + 1).trim();
+      return ids.has(suffix) ? line.slice(0, tab).trimEnd() : line;
+    })
+    .join('\n')
+    .trim();
+}
+
 /** Stable idempotency key for one supplier's current order lines. Repeated product ids collapse. */
 export function purchaseOrderLineKey(draft: {
   supplier: string;
@@ -178,7 +199,7 @@ export function purchaseOrderLineKey(draft: {
   body: string;
 }): string {
   const ids = [...new Set(draft.productIds.map((id) => id.trim()).filter(Boolean))].sort();
-  const body = draft.body.replace(/\r\n/g, '\n').trim();
+  const body = purchaseOrderLineContent(draft.body, ids);
   return hashLineKey(`${draft.supplier.trim().toLowerCase()}\n${ids.join('\n')}\n${body}`);
 }
 
