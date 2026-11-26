@@ -412,6 +412,14 @@ test('sending one product leaves the other approved and orderable', { skip: !has
     t.skip('Database unreachable.');
     return;
   }
+  await prisma.$executeRawUnsafe(`ALTER DATABASE freshloop_test SET timezone TO 'America/Toronto'`);
+  await prisma.$disconnect();
+  await prisma.$connect();
+  t.after(async () => {
+    await prisma.$executeRawUnsafe(`ALTER DATABASE freshloop_test SET timezone TO 'UTC'`);
+    await prisma.$disconnect();
+    await prisma.$connect();
+  });
 
   const stamp = `po-partial-${Date.now()}`;
   const supplier = await prisma.supplier.create({ data: { name: `PO Partial ${stamp}` } });
@@ -430,7 +438,7 @@ test('sending one product leaves the other approved and orderable', { skip: !has
 
   const approved = await submitPurchaseOrder({
     ...base,
-    body: '1 case - A\n1 case - C',
+    body: '1 case - A\tA\n1 case - C\tC',
     lineKey: 'ac',
     productIds: ['A', 'C'],
     status: 'APPROVED',
@@ -452,10 +460,10 @@ test('sending one product leaves the other approved and orderable', { skip: !has
   const partial = await prisma.purchaseOrderEmail.findFirst({ where: { id: approved.id } });
   assert.equal(partial?.status, 'APPROVED');
   assert.deepEqual(partial?.productIds, ['C']);
-  assert.equal(partial?.body, '1 case - C');
+  assert.equal(partial?.body, '1 case - C\tC');
   assert.equal(
     partial?.lineKey,
-    purchaseOrderLineKey({ supplier: supplier.name, productIds: ['C'], body: '1 case - C' })
+    purchaseOrderLineKey({ supplier: supplier.name, productIds: ['C'], body: '1 case - C\tC' })
   );
   assert.equal(partial?.updatedAt.getTime(), before?.updatedAt.getTime());
   const sentRow = await prisma.purchaseOrderEmail.findFirst({ where: { id: sent.id } });
@@ -463,7 +471,7 @@ test('sending one product leaves the other approved and orderable', { skip: !has
   assert.deepEqual(sentRow?.productIds, ['A']);
 });
 
-test('an open cycle still shows when newer rows fill the history page', { skip: !hasDb }, async (t) => {
+test('history dedupes supplier ids and caps each supplier at 50 rows', { skip: !hasDb }, async (t) => {
   try {
     await prisma.$connect();
   } catch {
@@ -473,48 +481,41 @@ test('an open cycle still shows when newer rows fill the history page', { skip: 
 
   const stamp = `po-page-${Date.now()}`;
   const supplier = await prisma.supplier.create({ data: { name: `PO Page ${stamp}` } });
-  const openAt = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
-  const newer = new Date();
+  const rowCount = PURCHASE_ORDER_HISTORY_LIMIT + 10;
 
   t.after(async () => {
     await prisma.purchaseOrderEmail.deleteMany({ where: { supplierId: supplier.id } });
     await prisma.supplier.delete({ where: { id: supplier.id } });
   });
 
-  await prisma.purchaseOrderEmail.create({
-    data: {
-      supplierId: supplier.id,
-      supplierName: supplier.name,
-      toEmail: 'buyer@farm.test',
-      fromEmail: '',
-      subject: 'Open cycle',
-      body: '1 case - A',
-      lineKey: 'open-cycle',
-      cycleKey: randomUUID(),
-      productIds: ['A'],
-      status: 'SENT',
-    },
-  });
   await prisma.purchaseOrderEmail.createMany({
-    data: Array.from({ length: PURCHASE_ORDER_HISTORY_LIMIT }, (_, index) => ({
+    data: Array.from({ length: rowCount }, (_, index) => ({
       supplierId: supplier.id,
       supplierName: supplier.name,
       toEmail: 'buyer@farm.test',
       fromEmail: '',
-      subject: 'Legacy',
-      body: 'legacy',
-      lineKey: `legacy-${index}`,
+      subject: 'Row',
+      body: `line ${index}`,
+      lineKey: `row-${index}`,
       cycleKey: randomUUID(),
       productIds: [] as string[],
       status: 'OPENED' as const,
     })),
   });
-  await prisma.$executeRaw`UPDATE "purchase_order_emails" SET "updated_at" = ${newer}, "created_at" = ${newer} WHERE "supplier_id" = ${supplier.id} AND "line_key" LIKE 'legacy-%'`;
-  await prisma.$executeRaw`UPDATE "purchase_order_emails" SET "updated_at" = ${openAt}, "created_at" = ${openAt} WHERE "supplier_id" = ${supplier.id} AND "line_key" = 'open-cycle'`;
+  const base = Date.now() - rowCount * 1000;
+  for (let index = 0; index < rowCount; index += 1) {
+    const at = new Date(base + index * 1000);
+    await prisma.$executeRaw`UPDATE "purchase_order_emails" SET "updated_at" = ${at}, "created_at" = ${at} WHERE "supplier_id" = ${supplier.id} AND "line_key" = ${`row-${index}`}`;
+  }
 
-  const listed = await listPurchaseOrders([supplier.id]);
-  assert.equal(listed.some((row) => row.lineKey === 'open-cycle'), true);
-  const legacy = listed.filter((row) => row.lineKey.startsWith('legacy-'));
-  assert.ok(legacy.length >= 2);
-  assert.ok(legacy[0]!.createdAt >= legacy[1]!.createdAt);
+  const once = await listPurchaseOrders([supplier.id]);
+  const repeated = await listPurchaseOrders(Array.from({ length: 200 }, () => supplier.id));
+  assert.equal(once.length, PURCHASE_ORDER_HISTORY_LIMIT);
+  assert.equal(repeated.length, once.length);
+  assert.deepEqual(
+    repeated.map((row) => row.id),
+    once.map((row) => row.id)
+  );
+  assert.equal(once.some((row) => row.lineKey === 'row-0'), false);
+  assert.equal(once.some((row) => row.lineKey === `row-${rowCount - 1}`), true);
 });

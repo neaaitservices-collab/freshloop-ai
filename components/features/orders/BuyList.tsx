@@ -113,6 +113,7 @@ export function BuyList({
   const {
     orders: purchaseOrders,
     ordersLoading,
+    historyReady,
     marks,
     supplierIssues,
     savingSupplier: savingPoSupplier,
@@ -475,6 +476,7 @@ export function BuyList({
                 onEmail={() =>
                   openDrafts([draftForSupplier(supplier, [row], supplierDirectory)])
                 }
+                locked={!historyReady}
                 onApprove={() => approve(row.productId)}
               />
             </li>
@@ -533,7 +535,8 @@ export function BuyList({
                       onEmail={() =>
                         openDrafts([draftForSupplier(supplier, [row], supplierDirectory)])
                       }
-                      onApprove={() => approve(row.productId)}
+                      locked={!historyReady}
+                onApprove={() => approve(row.productId)}
                     />
                   </td>
                 </tr>
@@ -585,7 +588,10 @@ export function BuyList({
               variant="secondary"
               className="text-xs"
               disabled={
-                savingPoSupplier === supplier || toOrder.length === 0 || approved.length === toOrder.length
+                !historyReady ||
+                savingPoSupplier === supplier ||
+                toOrder.length === 0 ||
+                approved.length === toOrder.length
               }
               onClick={() => approveRows(toOrder)}
             >
@@ -700,7 +706,7 @@ export function BuyList({
             <Button
               variant="primary"
               className="text-xs"
-              disabled={forecastLines.length === 0}
+              disabled={!historyReady || forecastLines.length === 0}
               onClick={approveAllForecasted}
             >
               <Check className="h-3.5 w-3.5" />
@@ -889,6 +895,7 @@ export function BuyList({
                       current.map((item, index) => (index === activeDraftIndex ? next : item))
                     )
                   }
+                  sendEnabled={historyReady}
                   onClose={() => {
                     setDrafts([]);
                     setDraftIndex(0);
@@ -1115,6 +1122,7 @@ function LineActions({
   onAdd,
   onEmail,
   onApprove,
+  locked = false,
 }: {
   row: StockLevel;
   mark: LineMark | undefined;
@@ -1122,6 +1130,7 @@ function LineActions({
   onAdd: () => void;
   onEmail: () => void;
   onApprove: () => void;
+  locked?: boolean;
 }) {
   return (
     <div className="flex flex-wrap justify-end gap-1.5">
@@ -1147,7 +1156,7 @@ function LineActions({
         variant={mark === 'approved' || mark === 'sent' ? 'success' : 'secondary'}
         className="px-2 py-1 text-[11px]"
         aria-pressed={mark === 'approved' || mark === 'sent'}
-        disabled={mark === 'sent' || mark === 'approved' || !row.low}
+        disabled={locked || mark === 'sent' || mark === 'approved' || !row.low}
         onClick={onApprove}
       >
         <Check className="h-3 w-3" />

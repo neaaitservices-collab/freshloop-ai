@@ -18,7 +18,7 @@ CREATE INDEX "purchase_order_emails_supplier_id_updated_at_idx"
 -- One open cycle per supplier and line key. Closed cycles keep their rows, so the
 -- same lines can be ordered again. Existing rows each get their own cycle id.
 ALTER TABLE "purchase_order_emails"
-  ADD COLUMN "cycle_key" TEXT NOT NULL DEFAULT gen_random_uuid()::text;
+  ADD COLUMN "cycle_key" TEXT NOT NULL DEFAULT (gen_random_uuid())::text;
 
 DROP INDEX "purchase_order_emails_supplier_id_line_key_key";
 

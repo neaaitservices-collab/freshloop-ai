@@ -42,6 +42,19 @@ export const purchaseOrderSupplierIdSchema = z.string().trim().min(1).max(128);
 /** One history request can name every supplier on the buy list. */
 export const purchaseOrderSupplierIdsSchema = z.array(purchaseOrderSupplierIdSchema).min(1).max(200);
 
+/** Repeated supplier ids count once, in first-seen order. */
+export function dedupeSupplierIds(ids: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const id of ids) {
+    const trimmed = id.trim();
+    if (!trimmed || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    out.push(trimmed);
+  }
+  return out;
+}
+
 /**
  * A failed history load must not replace orders already on screen.
  * Replacing them with an empty list drops Sent and Approved marks.
@@ -63,15 +76,24 @@ export function trimCoveredPurchaseOrder(input: {
 }): { productIds: string[]; body: string; lineKey: string } | null {
   const sent = new Set(dedupePurchaseOrderLines(input.sentProductIds));
   const ids = dedupePurchaseOrderLines(input.productIds);
-  const bodyLines = input.body.replace(/\r\n/g, '\n').split('\n');
+  const known = new Set(ids);
+  const paired = input.body
+    .replace(/\r\n/g, '\n')
+    .split('\n')
+    .map((line) => {
+      const tab = line.lastIndexOf('\t');
+      const productId = tab === -1 ? '' : line.slice(tab + 1).trim();
+      return known.has(productId) ? { productId, line } : null;
+    })
+    .filter((line): line is { productId: string; line: string } => line !== null);
   const keptIds: string[] = [];
   const keptLines: string[] = [];
-  ids.forEach((id, index) => {
-    if (sent.has(id)) return;
+  for (const id of ids) {
+    if (sent.has(id)) continue;
     keptIds.push(id);
-    const line = bodyLines[index];
-    if (typeof line === 'string') keptLines.push(line);
-  });
+    const match = paired.find((line) => line.productId === id);
+    if (match) keptLines.push(match.line);
+  }
   if (keptIds.length === 0 || keptIds.length === ids.length) return null;
   const body = keptLines.join('\n');
   return {

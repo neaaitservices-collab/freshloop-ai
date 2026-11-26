@@ -7,13 +7,14 @@ import {
   planPurchaseOrderSubmit,
   PURCHASE_ORDER_HISTORY_LIMIT,
   purchaseOrderRecipientBlock,
+  dedupeSupplierIds,
   trimCoveredPurchaseOrder,
   type DurablePurchaseOrderStatus,
   type PurchaseOrderHistoryEntry,
   type PurchaseOrderLineRecord,
   type StoredPurchaseOrderStatus,
 } from '@/lib/domains/orders/purchaseOrderSubmit';
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 
 export interface PurchaseOrderOpenDraft {
   /** Required. A null id would not collide in the unique index, so a repeat open would not be detected. */
@@ -257,7 +258,15 @@ async function closeCoveredApproved(
       updatedAt: { gte: windowStart },
       id: { not: keepId },
     },
-    select: { id: true, status: true, productIds: true, updatedAt: true, supplierName: true, body: true },
+    select: {
+      id: true,
+      status: true,
+      productIds: true,
+      updatedAt: true,
+      supplierName: true,
+      body: true,
+      lineKey: true,
+    },
   });
   const receipts = await latestReceipts(
     db,
@@ -292,11 +301,25 @@ async function closeCoveredApproved(
       sentProductIds,
     });
     if (!trimmed) continue;
+    const sameLines = (left: readonly string[], right: readonly string[]) =>
+      dedupePurchaseOrderLines(left).join('\n') === dedupePurchaseOrderLines(right).join('\n');
+    const alreadyOpen = stillOpen.some(
+      (other) =>
+        other.id !== row.id &&
+        !fullIds.includes(other.id) &&
+        (other.lineKey === trimmed.lineKey || sameLines(other.productIds, trimmed.productIds))
+    );
     await db.purchaseOrderEmail.updateMany({
       where: { id: row.id, status: 'APPROVED', updatedAt: { gte: windowStart } },
-      data: { productIds: trimmed.productIds, body: trimmed.body, lineKey: trimmed.lineKey },
+      data: alreadyOpen
+        ? { productIds: [], updatedAt: row.updatedAt }
+        : {
+            productIds: trimmed.productIds,
+            body: trimmed.body,
+            lineKey: trimmed.lineKey,
+            updatedAt: row.updatedAt,
+          },
     });
-    await db.$executeRaw`UPDATE "purchase_order_emails" SET "updated_at" = ${row.updatedAt} WHERE "id" = ${row.id}`;
   }
   return closedIds;
 }
@@ -377,55 +400,56 @@ export async function submitPurchaseOrder(
   });
 }
 
-const historyOrder = [{ updatedAt: 'desc' }, { createdAt: 'desc' }, { id: 'desc' }] as const;
+type HistoryRow = {
+  id: string;
+  supplierId: string | null;
+  supplierName: string;
+  toEmail: string;
+  subject: string;
+  status: StoredPurchaseOrderStatus;
+  lineKey: string;
+  productIds: string[];
+  createdAt: Date;
+  updatedAt: Date;
+};
 
-async function listSupplierOrders(supplierId: string) {
-  const rows = await prisma.purchaseOrderEmail.findMany({
-    where: { supplierId },
-    orderBy: [...historyOrder],
-    take: PURCHASE_ORDER_HISTORY_LIMIT,
-    select: {
-      id: true,
-      supplierId: true,
-      supplierName: true,
-      toEmail: true,
-      subject: true,
-      status: true,
-      lineKey: true,
-      productIds: true,
-      createdAt: true,
-      updatedAt: true,
-    },
-  });
-  if (rows.length < PURCHASE_ORDER_HISTORY_LIMIT) return rows;
-  const windowStart = new Date(Date.now() - PURCHASE_ORDER_OPEN_WINDOW_MS);
-  const extra = await prisma.purchaseOrderEmail.findMany({
-    where: {
-      supplierId,
-      id: { notIn: rows.map((row) => row.id) },
-      updatedAt: { gte: windowStart },
-    },
-    orderBy: [...historyOrder],
-    select: {
-      id: true,
-      supplierId: true,
-      supplierName: true,
-      toEmail: true,
-      subject: true,
-      status: true,
-      lineKey: true,
-      productIds: true,
-      createdAt: true,
-      updatedAt: true,
-    },
-  });
-  return [...rows, ...extra];
-}
-
-/** Newest purchase orders for these suppliers. Open cycles are included even past the page cap. */
+/** At most 50 newest rows per supplier, in one query. Repeated ids are ignored. */
 export async function listPurchaseOrders(supplierIds: readonly string[]): Promise<PurchaseOrderHistoryEntry[]> {
-  const groups = await Promise.all(supplierIds.map((supplierId) => listSupplierOrders(supplierId)));
-  const rows = groups.flat();
+  const ids = dedupeSupplierIds(supplierIds);
+  if (ids.length === 0) return [];
+  const rows = await prisma.$queryRaw<HistoryRow[]>`
+    SELECT
+      id,
+      supplier_id AS "supplierId",
+      supplier_name AS "supplierName",
+      to_email AS "toEmail",
+      subject,
+      status::text AS status,
+      line_key AS "lineKey",
+      product_ids AS "productIds",
+      created_at AS "createdAt",
+      updated_at AS "updatedAt"
+    FROM (
+      SELECT
+        id,
+        supplier_id,
+        supplier_name,
+        to_email,
+        subject,
+        status,
+        line_key,
+        product_ids,
+        created_at,
+        updated_at,
+        ROW_NUMBER() OVER (
+          PARTITION BY supplier_id
+          ORDER BY updated_at DESC, created_at DESC, id DESC
+        ) AS rn
+      FROM purchase_order_emails
+      WHERE supplier_id IN (SELECT value FROM jsonb_array_elements_text(${JSON.stringify(ids)}::jsonb))
+    ) ranked
+    WHERE rn <= ${PURCHASE_ORDER_HISTORY_LIMIT}
+  `;
   const now = new Date();
   const receipts = await latestReceipts(
     prisma,

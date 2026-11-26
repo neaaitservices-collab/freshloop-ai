@@ -511,7 +511,7 @@ model PurchaseOrderEmail {
   /// Idempotency key for this supplier's order lines within one open cycle.
   lineKey      String                   @map("line_key")
   /// A later order for the same lines gets a new cycle after the previous one closes.
-  cycleKey     String                   @default(dbgenerated("gen_random_uuid()::text")) @map("cycle_key")
+  cycleKey     String                   @default(dbgenerated("(gen_random_uuid())::text")) @map("cycle_key")
   /// Catalog product ids on this order. Blank and repeated ids are removed before save.
   productIds   String[]                 @default([]) @map("product_ids")
   status       PurchaseOrderEmailStatus

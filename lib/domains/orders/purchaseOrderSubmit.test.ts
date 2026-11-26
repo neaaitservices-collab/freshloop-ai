@@ -6,6 +6,7 @@ import {
   PURCHASE_ORDER_RECIPIENT_REQUIRED,
   applyPurchaseOrderHistoryLoad,
   coveredApprovedOrderIds,
+  dedupeSupplierIds,
   dedupePurchaseOrderLines,
   planPurchaseOrderSubmit,
   trimCoveredPurchaseOrder,
@@ -19,6 +20,10 @@ const saved: PurchaseOrderLineRecord = {
   productIds: ['banana', 'banana', 'kale'],
   toEmail: 'buyer@farm.test',
 };
+
+test('duplicate supplier ids collapse', () => {
+  assert.deepEqual(dedupeSupplierIds(['  sup-1 ', 'sup-1', '', 'sup-2', 'sup-2']), ['sup-1', 'sup-2']);
+});
 
 test('a group send covers the approved rows for those products', () => {
   const ids = coveredApprovedOrderIds(
@@ -149,21 +154,30 @@ test('trimming a partial send rebuilds the line key and body', () => {
   const trimmed = trimCoveredPurchaseOrder({
     supplier: 'Farm',
     productIds: ['A', 'C'],
-    body: '1 case - A\n1 case - C',
+    body: '1 case - A\tA\n1 case - C\tC',
     sentProductIds: ['A'],
   });
   assert.ok(trimmed);
   assert.deepEqual(trimmed?.productIds, ['C']);
-  assert.equal(trimmed?.body, '1 case - C');
+  assert.equal(trimmed?.body, '1 case - C\tC');
   assert.equal(
     trimmed?.lineKey,
-    purchaseOrderLineKey({ supplier: 'Farm', productIds: ['C'], body: '1 case - C' })
+    purchaseOrderLineKey({ supplier: 'Farm', productIds: ['C'], body: '1 case - C\tC' })
+  );
+  assert.equal(
+    trimCoveredPurchaseOrder({
+      supplier: 'Farm',
+      productIds: ['C', 'A'],
+      body: '1 case - A\tA\n1 case - C\tC',
+      sentProductIds: ['A'],
+    })?.body,
+    '1 case - C\tC'
   );
   assert.equal(
     trimCoveredPurchaseOrder({
       supplier: 'Farm',
       productIds: ['A', 'C'],
-      body: '1 case - A\n1 case - C',
+      body: '1 case - A\tA\n1 case - C\tC',
       sentProductIds: ['A', 'C'],
     }),
     null

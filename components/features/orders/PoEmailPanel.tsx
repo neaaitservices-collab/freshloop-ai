@@ -45,6 +45,7 @@ export function PoEmailPanel({
   onChange,
   onClose,
   onDelivered,
+  sendEnabled = true,
 }: {
   drafts: PoDraft[];
   activeIndex: number;
@@ -53,6 +54,8 @@ export function PoEmailPanel({
   onClose: () => void;
   /** Called after a mailto open is recorded, so the order can be saved for this supplier. */
   onDelivered?: (item: PoDraft) => void;
+  /** False until purchase-order history has loaded once. */
+  sendEnabled?: boolean;
 }) {
   const [notes, setNotes] = useState<string[]>([]);
   const [issues, setIssues] = useState<string[]>([]);
@@ -147,7 +150,8 @@ export function PoEmailPanel({
   const many = drafts.length > 1;
   const activeCompose = purchaseOrderCompose(draft);
   const groupCompose = purchaseOrderGroupCompose(withLines);
-  const sendHref = draft.productIds.length > 0 ? (activeCompose?.mailtoUrl ?? null) : null;
+  const sendHref =
+    sendEnabled && draft.productIds.length > 0 ? (activeCompose?.mailtoUrl ?? null) : null;
   const skippedNoEmail = withLines.filter((item) => !item.to.trim()).map((item) => item.supplier);
   const sendId = purchaseOrderOpenIdentity(draft);
   const sendState = !sendHref ? 'unavailable' : (known[sendId]?.state ?? 'checking');
@@ -337,7 +341,7 @@ export function PoEmailPanel({
                 Send
               </OrderLink>
               <OrderLink
-                href={groupCompose?.mailtoUrl ?? null}
+                href={sendEnabled ? (groupCompose?.mailtoUrl ?? null) : null}
                 state={groupState}
                 variant="secondary"
                 onBlocked={() => setSendAttempt((count) => count + 1)}

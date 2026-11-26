@@ -45,6 +45,7 @@ export function usePurchaseOrders(input: {
 }) {
   const { levels, supplierDirectory, directoryReady, drafts, onError } = input;
   const [orders, setOrders] = useState<PurchaseOrderHistoryEntry[] | null>(null);
+  const [historyReady, setHistoryReady] = useState(false);
   const [supplierIssues, setSupplierIssues] = useState<Record<string, string>>({});
   const [savingSupplier, setSavingSupplier] = useState<string | null>(null);
   const supplierKey = supplierIdsOnList(levels, supplierDirectory).join('\n');
@@ -54,6 +55,7 @@ export function usePurchaseOrders(input: {
     const ids = supplierKey ? supplierKey.split('\n') : [];
     if (ids.length === 0) {
       setOrders([]);
+      setHistoryReady(true);
       return;
     }
     let cancelled = false;
@@ -68,7 +70,9 @@ export function usePurchaseOrders(input: {
         return parsed.data.orders;
       })
       .then((loaded) => {
-        if (!cancelled) setOrders((current) => applyPurchaseOrderHistoryLoad(current, { ok: true, orders: loaded }));
+        if (cancelled) return;
+        setHistoryReady(true);
+        setOrders((current) => applyPurchaseOrderHistoryLoad(current, { ok: true, orders: loaded }));
       })
       .catch((error: unknown) => {
         if (cancelled) return;
@@ -185,7 +189,7 @@ export function usePurchaseOrders(input: {
         supplierId: recipient.supplierId,
         to: recipient.to,
         subject: `Supermarket Purchase Order - ${supplier}`,
-        body: groupRows.map(orderLine).join('\n'),
+        body: groupRows.map((row) => `${orderLine(row)}\t${row.productId}`).join('\n'),
         productIds: groupRows.map((row) => row.productId),
         status,
       });
@@ -195,6 +199,7 @@ export function usePurchaseOrders(input: {
   return {
     orders,
     ordersLoading: orders === null,
+    historyReady,
     marks,
     supplierIssues,
     savingSupplier,
