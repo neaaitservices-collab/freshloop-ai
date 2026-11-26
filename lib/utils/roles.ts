@@ -31,6 +31,8 @@ export interface StaffUser {
   position: string;
   role: RoleName;
   hourlyRate?: number | null;
+  /** ISO time set while the employee is deactivated. Null or absent means active. */
+  deactivatedAt?: string | null;
 }
 
 export function isRoleName(value: string): value is RoleName {

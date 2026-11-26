@@ -14,8 +14,15 @@ function normalizeHourlyRate(hourlyRate: number | null | undefined): number | nu
     : null;
 }
 
-async function loadStaffDirectory(): Promise<StaffUser[]> {
+/** Active roster omits deactivated staff. `includeInactive` is the Show inactive list. */
+export function activeStaffDirectoryWhere(includeInactive: boolean): { deactivatedAt: null } | undefined {
+  if (includeInactive) return undefined;
+  return { deactivatedAt: null };
+}
+
+async function loadStaffDirectory(includeInactive: boolean): Promise<StaffUser[]> {
   const users = await prisma.user.findMany({
+    where: activeStaffDirectoryWhere(includeInactive),
     orderBy: [{ role: 'asc' }, { name: 'asc' }],
     select: {
       id: true,
@@ -24,6 +31,7 @@ async function loadStaffDirectory(): Promise<StaffUser[]> {
       position: true,
       role: true,
       hourlyRate: true,
+      deactivatedAt: true,
     },
   });
   return users.map((u) => ({
@@ -33,15 +41,16 @@ async function loadStaffDirectory(): Promise<StaffUser[]> {
     position: u.position,
     role: u.role as StaffUser['role'],
     hourlyRate: normalizeHourlyRate(u.hourlyRate),
+    deactivatedAt: u.deactivatedAt ? u.deactivatedAt.toISOString() : null,
   }));
 }
 
 /** Manager staff roster (single Prisma round-trip, short TTL). */
-export function getStaffDirectory(): Promise<StaffUser[]> {
+export function getStaffDirectory(includeInactive = false): Promise<StaffUser[]> {
   return rememberLedgerRead(
     staffDirectoryCache,
-    'staff-directory',
+    includeInactive ? 'staff-directory-all' : 'staff-directory',
     STAFF_DIRECTORY_MS,
-    loadStaffDirectory
+    () => loadStaffDirectory(includeInactive)
   );
 }

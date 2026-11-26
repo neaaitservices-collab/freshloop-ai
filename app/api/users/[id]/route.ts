@@ -1,37 +1,33 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { Role } from '@prisma/client';
-import { prisma } from '@/lib/domains/inventory/ledger';
 import { handleApiRouteError } from '@/lib/domains/ai/apiError';
 import { authErrorResponse } from '@/lib/auth/http';
 import { verifyPassword } from '@/lib/auth/password';
-import { AuthError, requireRoles, requireSessionUser } from '@/lib/auth/session';
-import { z } from 'zod';
-import { MANAGER_ROLES } from '@/lib/auth/permissions';
-import { getStaffHourlyRate, setStaffHourlyRate } from '@/lib/auth/staffHourlyRate';
+import { requireAdminStaff } from '@/lib/auth/guardRoute';
+import { AuthError, requireSessionUser } from '@/lib/auth/session';
+import {
+  deactivateStaff,
+  reactivateStaff,
+  saveStaffProfile,
+  StaffAccountError,
+  type StaffRecord,
+} from '@/lib/auth/staffAccount';
+import { staffAccountDb } from '@/lib/auth/staffAccountStore';
 import { invalidateReferenceDataCaches } from '@/lib/domains/inventory/inventoryCache';
-import { positionByLabel } from '@/lib/utils/positions';
+import { getStaffHourlyRate, setStaffHourlyRate } from '@/lib/auth/staffHourlyRate';
+import { InvalidJsonBodyError } from '@/lib/security/parseJsonBody';
+import { staffReactivateBodySchema, staffUpdateBodySchema } from '@/lib/security/schemas/staff';
 import { isManager, isRoleName, type StaffUser } from '@/lib/utils/roles';
 
 export const dynamic = 'force-dynamic';
 
-const staffCoreSelect = {
-  id: true,
-  name: true,
-  email: true,
-  position: true,
-  role: true,
-} as const;
+function staffErrorResponse(error: unknown) {
+  if (error instanceof StaffAccountError) {
+    return NextResponse.json({ success: false, error: error.message }, { status: error.status });
+  }
+  return authErrorResponse(error);
+}
 
-function toStaffUser(
-  user: {
-    id: string;
-    name: string;
-    email: string;
-    position: string;
-    role: Role;
-  },
-  hourlyRate: number | null
-): StaffUser {
+function toStaffUser(user: StaffRecord, hourlyRate: number | null): StaffUser {
   return {
     id: user.id,
     name: user.name,
@@ -39,38 +35,45 @@ function toStaffUser(
     position: user.position,
     role: user.role,
     hourlyRate,
+    deactivatedAt: user.deactivatedAt ? user.deactivatedAt.toISOString() : null,
   };
+}
+
+async function readJson(req: NextRequest): Promise<unknown> {
+  try {
+    return await req.json();
+  } catch {
+    throw new InvalidJsonBodyError();
+  }
+}
+
+function bodyHasRole(raw: unknown): boolean {
+  return Boolean(raw) && typeof raw === 'object' && raw !== null && 'role' in raw;
 }
 
 export async function PATCH(req: NextRequest, context: { params: Promise<{ id: string }> }) {
   try {
-    const actor = await requireSessionUser();
     const { id } = await context.params;
+    const raw = await readJson(req);
+    if (staffReactivateBodySchema.safeParse(raw).success) {
+      const actor = await requireAdminStaff();
+      const user = await reactivateStaff(staffAccountDb, actor, id);
+      const hourlyRate = await getStaffHourlyRate(id);
+      invalidateReferenceDataCaches();
+      return NextResponse.json({ success: true, user: toStaffUser(user, hourlyRate) });
+    }
+
+    if (bodyHasRole(raw)) {
+      await requireAdminStaff();
+    }
+    const body = staffUpdateBodySchema.parse(raw);
+    const actor = bodyHasRole(raw) ? await requireAdminStaff() : await requireSessionUser();
     const isSelf = actor.id === id;
     if (!isSelf && !isManager(actor.role)) {
       throw new AuthError('Forbidden — managers only.', 403);
     }
-    const body = (await req.json()) as {
-      name?: string;
-      email?: string;
-      position?: string;
-      hourlyRate?: number | null;
-      currentPassword?: string;
-    };
-    const name = body.name?.trim() ?? '';
-    const emailParsed = z.string().trim().email().max(254).safeParse(body.email ?? '');
-    const email = emailParsed.success ? emailParsed.data.toLowerCase() : '';
-    if (!name || !emailParsed.success) {
-      return NextResponse.json(
-        { success: false, error: 'Name and a valid email are required.' },
-        { status: 400 }
-      );
-    }
 
-    const current = await prisma.user.findUnique({
-      where: { id },
-      select: staffCoreSelect,
-    });
+    const current = await staffAccountDb.findById(id);
     if (!current || !isRoleName(current.role)) {
       return NextResponse.json(
         { success: false, error: 'That person is already gone.' },
@@ -78,32 +81,22 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
       );
     }
 
-    let position = current.position;
-    let role = current.role;
-    if (typeof body.position === 'string' && body.position.trim()) {
-      if (!isManager(actor.role)) {
-        return NextResponse.json(
-          { success: false, error: 'Only a manager can change a position.' },
-          { status: 403 }
-        );
-      }
-      const assigned = positionByLabel(body.position);
-      if (!assigned) {
-        return NextResponse.json(
-          { success: false, error: 'Choose a position. Permissions follow that position.' },
-          { status: 400 }
-        );
-      }
-      position = assigned.label;
-      role = assigned.role;
+    if (typeof body.position === 'string' && body.position.trim() && !isManager(actor.role)) {
+      return NextResponse.json(
+        { success: false, error: 'Only a manager can change a position.' },
+        { status: 403 }
+      );
     }
 
-    if (role !== 'ADMIN' && current.role === 'ADMIN') {
-      const admins = await prisma.user.count({ where: { role: 'ADMIN', NOT: { id } } });
-      if (admins === 0) {
+    const emailChanged = body.email !== current.email;
+    if (emailChanged && isSelf) {
+      const supplied = body.currentPassword ?? '';
+      const secret = await staffAccountDb.passwordHashFor(id);
+      const matches = Boolean(secret) && (await verifyPassword(supplied, secret ?? ''));
+      if (!matches) {
         return NextResponse.json(
-          { success: false, error: 'Keep at least one owner.' },
-          { status: 400 }
+          { success: false, error: 'Current password is required to change your email.' },
+          { status: 403 }
         );
       }
     }
@@ -116,48 +109,14 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
           { status: 403 }
         );
       }
-      if (body.hourlyRate === null) {
-        hourlyRateUpdate = null;
-      } else {
-        const parsed = Number(body.hourlyRate);
-        if (!Number.isFinite(parsed) || parsed <= 0 || parsed > 10_000) {
-          return NextResponse.json(
-            { success: false, error: 'Hourly wage must be a positive number.' },
-            { status: 400 }
-          );
-        }
-        hourlyRateUpdate = Number(parsed.toFixed(2));
-      }
+      hourlyRateUpdate = body.hourlyRate;
     }
 
-    const emailChanged = email !== current.email;
-    if (emailChanged && isSelf) {
-      const supplied = typeof body.currentPassword === 'string' ? body.currentPassword : '';
-      const secret = await prisma.user.findUnique({
-        where: { id },
-        select: { passwordHash: true },
-      });
-      const matches =
-        Boolean(secret?.passwordHash) &&
-        (await verifyPassword(supplied, secret?.passwordHash ?? ''));
-      if (!matches) {
-        return NextResponse.json(
-          { success: false, error: 'Current password is required to change your email.' },
-          { status: 403 }
-        );
-      }
-    }
-
-    const user = await prisma.user.update({
-      where: { id },
-      data: {
-        name,
-        email,
-        position,
-        role,
-        ...(emailChanged ? { credentialVersion: { increment: 1 } } : {}),
-      },
-      select: staffCoreSelect,
+    const saved = await saveStaffProfile(staffAccountDb, actor, id, {
+      name: body.name,
+      email: body.email,
+      position: body.position,
+      role: body.role,
     });
 
     const finalHourlyRate =
@@ -168,44 +127,25 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
     invalidateReferenceDataCaches();
     return NextResponse.json({
       success: true,
-      user: toStaffUser(user, finalHourlyRate),
+      user: toStaffUser(saved, finalHourlyRate),
     });
   } catch (error) {
-    const authRes = authErrorResponse(error);
-    if (authRes) return authRes;
+    const staffRes = staffErrorResponse(error);
+    if (staffRes) return staffRes;
     return handleApiRouteError('PATCH /api/users/[id]', error, 'Staff could not be updated.');
   }
 }
 
 export async function DELETE(_req: NextRequest, context: { params: Promise<{ id: string }> }) {
   try {
-    await requireRoles(MANAGER_ROLES);
+    const actor = await requireAdminStaff();
     const { id } = await context.params;
-    const current = await prisma.user.findUnique({
-      where: { id },
-      select: staffCoreSelect,
-    });
-    if (!current) {
-      return NextResponse.json(
-        { success: false, error: 'That person is already gone.' },
-        { status: 404 }
-      );
-    }
-    if (current.role === 'ADMIN') {
-      const admins = await prisma.user.count({ where: { role: 'ADMIN' } });
-      if (admins <= 1) {
-        return NextResponse.json(
-          { success: false, error: 'Keep at least one admin.' },
-          { status: 400 }
-        );
-      }
-    }
-    await prisma.user.delete({ where: { id } });
+    await deactivateStaff(staffAccountDb, actor, id);
     invalidateReferenceDataCaches();
     return NextResponse.json({ success: true });
   } catch (error) {
-    const authRes = authErrorResponse(error);
-    if (authRes) return authRes;
-    return handleApiRouteError('DELETE /api/users/[id]', error, 'Staff could not be removed.');
+    const staffRes = staffErrorResponse(error);
+    if (staffRes) return staffRes;
+    return handleApiRouteError('DELETE /api/users/[id]', error, 'Staff could not be deactivated.');
   }
 }

@@ -21,6 +21,8 @@ export type StaffAuthRow = {
   passwordHash: string | null;
   /** Password generation. Missing legacy JWTs compare as 0. */
   credentialVersion: number;
+  /** Set when an owner deactivates the account. Non-null is revoked. */
+  deactivatedAt: Date | null;
 };
 
 export type StaffLookup =
@@ -38,11 +40,12 @@ function hourlyRateOrNull(rate: number | null): number | null {
 
 /**
  * Map a staff row onto the session user authorization uses.
- * A missing row, a cleared password, or an unknown role is revoked.
+ * A missing row, a cleared password, a deactivated account, or an unknown role is revoked.
  * Unknown roles are not downgraded to FLOOR_STAFF.
  */
 export function staffUserFromRow(row: StaffAuthRow | null): AuthSessionUser | null {
   if (!row) return null;
+  if (row.deactivatedAt) return null;
   if (!row.passwordHash) return null;
   if (!row.id || !row.email) return null;
   if (!isRoleName(row.role)) return null;
@@ -64,10 +67,22 @@ export function resolveStaffLookup(lookup: StaffLookup): StaffResolution {
   return { status: 'active', user };
 }
 
-/** Claims copied onto the JWT/session. `lookupFailed` must not authorize. */
+/**
+ * Sign-in calls this after the password matches.
+ * A deactivated row, a cleared password, or an unknown role does not grant a session.
+ */
+export function staffRowIfPasswordAccepted(
+  row: StaffAuthRow | null,
+  passwordAccepted: boolean
+): StaffAuthRow | null {
+  if (!passwordAccepted || !row) return null;
+  if (!staffUserFromRow(row)) return null;
+  return row;
+}
+
 /**
  * Legacy JWTs omit the claim and stay valid while the row is still version 0.
- * A password change increments the row. Deletion is a missing row, not an increment.
+ * A password change or deactivation increments the row. The staff row stays.
  */
 export function credentialVersionMatches(
   tokenVersion: number | null | undefined,
@@ -80,6 +95,7 @@ export function credentialVersionMatches(
   return token === rowVersion;
 }
 
+/** Claims copied onto the JWT/session. `lookupFailed` must not authorize. */
 export function sessionClaimsFromLookup(lookup: StaffLookup): {
   user: AuthSessionUser | null;
   lookupFailed: boolean;

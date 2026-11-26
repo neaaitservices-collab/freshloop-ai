@@ -48,13 +48,14 @@ function toStaffUser(
   };
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
     const sessionUser = await requireSessionUser();
     if (!MANAGER_ROLES.includes(sessionUser.role)) {
       return NextResponse.json({ success: true, users: [sessionUser] });
     }
-    const users = await getStaffDirectory();
+    const includeInactive = new URL(req.url).searchParams.get('includeInactive') === '1';
+    const users = await getStaffDirectory(includeInactive);
     return NextResponse.json({
       success: true,
       users,
