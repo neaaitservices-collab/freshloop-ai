@@ -353,6 +353,7 @@ export function SalesImportForm({ initialMapping }: { initialMapping: CsvColumnM
             <RowList title="Unknown SKUs" rows={preview.unknown} empty="Every SKU is mapped." />
             <RowList title="Bad rows" rows={preview.bad} empty="No bad rows." />
             <RowList title="Already posted" rows={preview.duplicate} empty="None of these lines were posted before." />
+            <RowList title="Refunds skipped" rows={preview.refund} empty="No refunds in this file." />
           </div>
         </div>
       ) : null}

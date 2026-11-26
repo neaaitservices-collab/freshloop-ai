@@ -4,6 +4,7 @@ import { recordProductSale } from '@/lib/domains/inventory/recordSale';
 import { SalePayloadConflictError } from '@/lib/domains/inventory/saleIdempotency';
 import {
   classifyCsvSales,
+  CSV_COLUMN_MAP_PREFIX,
   type CsvSalesPreview,
   type SkuHit,
 } from '@/lib/domains/inventory/csvSalesParse';
@@ -12,9 +13,6 @@ import {
   csvColumnMappingSchema,
   type CsvColumnMapping,
 } from '@/lib/security/schemas/csvSalesImport';
-
-/** Inactive POSMapping rows. SKU lookup ignores this prefix, so no new table is required. */
-export const CSV_COLUMN_MAP_PREFIX = 'CSV_COLUMNS:';
 
 export function csvColumnMapPosSystem(storeId: string): string {
   return `${CSV_COLUMN_MAP_PREFIX}${storeId}`;

@@ -13,6 +13,10 @@ import {
  * Channel and Token are in that post. An older export without those two columns still matches.
  * Extra columns are ignored. Card Brand and PAN Suffix are not in the post.
  */
+
+/** Inactive column-map rows use this posSystem prefix and are not PLU matches. */
+export const CSV_COLUMN_MAP_PREFIX = 'CSV_COLUMNS:';
+
 export const SQUARE_ITEMS_DETAIL_SOURCE =
   'https://community.squareup.com/t5/Square-Register/Tracking-Fees-with-Category-Reports/td-p/792045';
 
@@ -138,9 +142,9 @@ function hasHeader(headers: readonly string[], name: string): boolean {
 }
 
 /**
- * Identity of one line inside a Square transaction.
- * The line index is the 0-based order of that transaction's rows in the file,
- * so a later weekly file posts the same receipt lines once.
+ * Identity of one non-refund line inside a Square transaction.
+ * `lineIndex` is how many earlier non-refund rows share this transaction, item, and variation.
+ * Refunds are not counted, and the order of other items does not change this line's key.
  */
 export function csvTransactionIdentity(input: {
   transactionId: string;
@@ -372,8 +376,7 @@ function cell(row: string[], index: number): string {
 function dayRollup(rows: CsvPreviewRow[]): Pick<CsvSalesPreview, 'dateRange' | 'days'> {
   const byDate = new Map<string, CsvDayTotal>();
   for (const row of rows) {
-    if (!row.saleDate || row.qty == null || row.revenue == null) continue;
-    if (row.status === 'bad' || row.status === 'refund') continue;
+    if (row.status !== 'matched' || !row.saleDate || row.qty == null || row.revenue == null) continue;
     const current = byDate.get(row.saleDate) ?? {
       date: row.saleDate,
       lines: 0,
@@ -451,14 +454,19 @@ export function classifyCsvSales(input: {
   const eventAt = headerIndex(headers, 'Event Type');
   const existing = input.existingKeys ?? new Set<string>();
   const seenKeys = new Set<string>();
-  const transactionCounts = new Map<string, number>();
+  const saleLineCounts = new Map<string, number>();
   const lineIndexByRow = new Map<number, number>();
   data.forEach((record, rowIndex) => {
     if (refAt < 0) return;
     const transactionId = cell(record, refAt).trim();
     if (!transactionId) return;
-    const lineIndex = transactionCounts.get(transactionId) ?? 0;
-    transactionCounts.set(transactionId, lineIndex + 1);
+    const eventType = eventAt >= 0 ? cell(record, eventAt).trim() : '';
+    if (eventType.toLowerCase() === 'refund') return;
+    const itemName = cell(record, itemAt).trim();
+    const variation = cell(record, variationAt).trim();
+    const identity = `${transactionId}\u001f${itemName}\u001f${variation}`;
+    const lineIndex = saleLineCounts.get(identity) ?? 0;
+    saleLineCounts.set(identity, lineIndex + 1);
     lineIndexByRow.set(rowIndex, lineIndex);
   });
 

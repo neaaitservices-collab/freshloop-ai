@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { InventoryLocation, Prisma } from '@prisma/client';
 import { InventoryLedgerError, executeBundleSale, prisma } from '@/lib/domains/inventory/ledger';
 import { invalidateInventoryCaches } from '@/lib/domains/inventory/inventoryCache';
+import { CSV_COLUMN_MAP_PREFIX } from '@/lib/domains/inventory/csvSalesParse';
 import { recordProductSale, resolveSaleLocation } from '@/lib/domains/inventory/recordSale';
 import { isLedgerIdempotencyConflict } from '@/lib/domains/inventory/idempotencyConflict';
 import {
@@ -170,7 +171,11 @@ async function expectedWebhookLines(
     let productId = line.productId?.trim() ?? '';
     if (!productId && line.externalSku) {
       const mapping = await db.pOSMapping.findFirst({
-        where: { externalSku: line.externalSku, isActive: true },
+        where: {
+          externalSku: line.externalSku,
+          isActive: true,
+          NOT: { posSystem: { startsWith: CSV_COLUMN_MAP_PREFIX } },
+        },
         select: { productId: true },
       });
       productId = mapping?.productId ?? '';

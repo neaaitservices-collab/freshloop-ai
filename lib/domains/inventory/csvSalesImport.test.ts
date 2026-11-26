@@ -137,6 +137,9 @@ test('synthetic Square week lists seven dates, unknown SKUs, and bad rows', () =
   assert.equal(preview.days[0]?.lines, 2);
   assert.equal(preview.days[0]?.revenue, 16.5);
   assert.equal(preview.days[1]?.revenue, 1234.5);
+  const lastDay = preview.days.find((day) => day.date === '2098-08-07');
+  assert.equal(lastDay?.lines, 1);
+  assert.equal(lastDay?.revenue, 16);
   assert.equal(preview.matched.length, 8);
   assert.equal(preview.unknown.length, 1);
   assert.equal(preview.unknown[0]?.sku, 'UNKNOWN-PLU');
@@ -211,8 +214,109 @@ test('the same file and an overlapping week post nothing new for lines already s
   assert.equal(week.matched.length, 1);
   assert.equal(week.matched[0]?.saleDate, '2098-08-08');
   assert.equal(week.duplicate.length, 2);
-  assert.equal(week.dateRange?.from, '2098-08-01');
-  assert.equal(week.dateRange?.to, '2098-08-08');
+  assert.deepEqual(week.dateRange, { from: '2098-08-08', to: '2098-08-08' });
+  assert.equal(week.days.length, 1);
+  assert.equal(week.days[0]?.revenue, 5);
+});
+
+function receiptLine(input: {
+  item: string;
+  sku: string;
+  variation: string;
+  qty: string;
+  net: string;
+  event?: string;
+  unit?: string;
+}): Record<string, string> {
+  return {
+    Date: '08/01/2098',
+    Item: input.item,
+    Qty: input.qty,
+    'Price Point Name': input.variation,
+    SKU: input.sku,
+    'Gross Sales': input.net,
+    'Net Sales': input.net,
+    Unit: input.unit ?? 'lb',
+    'Transaction ID': 'R-SAME',
+    'Event Type': input.event ?? 'Payment',
+  };
+}
+
+test('reordered lines on the same receipt post nothing the second time', () => {
+  const banana = receiptLine({
+    item: 'Synthetic Banana',
+    sku: 'BANANA',
+    variation: 'Bunch',
+    qty: '2',
+    net: '$12.50',
+  });
+  const bread = receiptLine({
+    item: 'Synthetic Bread',
+    sku: 'BREAD',
+    variation: 'Loaf',
+    qty: '1',
+    net: '$4.00',
+    unit: 'ea',
+  });
+  const cheese = receiptLine({
+    item: 'Synthetic Cheese',
+    sku: 'CHEESE',
+    variation: 'Block',
+    qty: '1',
+    net: '$6.00',
+  });
+  const first = classify(squareItemsDetailCsv([banana, bread, cheese]));
+  const keys = new Set(first.matched.map((row) => row.idempotencyKey).filter((key): key is string => Boolean(key)));
+  assert.equal(first.matched.length, 3);
+  const again = classify(squareItemsDetailCsv([cheese, banana, bread]), keys);
+  assert.equal(again.matched.length, 0);
+  assert.equal(again.duplicate.length, 3);
+});
+
+test('dropping a mid-receipt refund does not mint new sale keys', () => {
+  const firstBanana = receiptLine({
+    item: 'Synthetic Banana',
+    sku: 'BANANA',
+    variation: 'Bunch',
+    qty: '2',
+    net: '$12.50',
+  });
+  const refund = receiptLine({
+    item: 'Synthetic Banana',
+    sku: 'BANANA',
+    variation: 'Bunch',
+    qty: '1',
+    net: '$4.00',
+    event: 'Refund',
+  });
+  const secondBanana = receiptLine({
+    item: 'Synthetic Banana',
+    sku: 'BANANA',
+    variation: 'Bunch',
+    qty: '1',
+    net: '$5.00',
+  });
+  const bread = receiptLine({
+    item: 'Synthetic Bread',
+    sku: 'BREAD',
+    variation: 'Loaf',
+    qty: '1',
+    net: '$4.00',
+    unit: 'ea',
+  });
+  const withRefund = classify(squareItemsDetailCsv([firstBanana, refund, secondBanana, bread]));
+  assert.equal(withRefund.refund.length, 1);
+  assert.equal(withRefund.matched.length, 3);
+  const keys = new Set(
+    withRefund.matched.map((row) => row.idempotencyKey).filter((key): key is string => Boolean(key))
+  );
+  const dropped = classify(squareItemsDetailCsv([firstBanana, secondBanana, bread]), keys);
+  assert.equal(dropped.matched.length, 0);
+  assert.equal(dropped.duplicate.length, 3);
+  assert.equal(dropped.refund.length, 0);
+  const originalSecond = withRefund.matched.find((row) => row.sku === 'BANANA' && row.qty === 1);
+  const replaySecond = dropped.duplicate.find((row) => row.sku === 'BANANA' && row.qty === 1);
+  assert.equal(replaySecond?.idempotencyKey, originalSecond?.idempotencyKey);
 });
 
 test('a sale date is noon Toronto and an unreadable date is rejected', () => {
@@ -262,4 +366,9 @@ test('sales import routes require a manager and only confirm posts through recor
   assert.match(confirmFn, /location: 'floor'/);
   assert.match(confirmFn, /lineRevenue: row\.revenue/);
   assert.match(confirmFn, /soldAt: new Date\(row\.soldAt\)/);
+  const webhook = readFileSync('app/api/pos/webhook/route.ts', 'utf8');
+  assert.match(webhook, /NOT: \{ posSystem: \{ startsWith: CSV_COLUMN_MAP_PREFIX \} \}/);
+  const form = readFileSync('components/features/admin/SalesImportForm.tsx', 'utf8');
+  assert.match(form, /Refunds skipped/);
+  assert.match(form, /preview\.refund/);
 });

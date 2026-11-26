@@ -22,24 +22,22 @@ import { csvColumnMappingSchema } from '@/lib/security/schemas/csvSalesImport';
 
 const databaseUrl = process.env.DATABASE_URL?.trim() ?? '';
 
-function isolatedLoopbackDatabase(url: string): boolean {
-  if (!url || process.env.FRESHLOOP_DB_TESTS === '0' || url.includes('freshloop_ci')) return false;
-  const lower = url.toLowerCase();
-  if (lower.includes('supabase') || lower.includes('pooler.supabase') || lower.includes('amazonaws')) {
-    return false;
-  }
+/** True only for the CI database named freshloop_ci. Any other DATABASE_URL skips. */
+function isFreshloopCiTestDatabase(url: string, dbTestsFlag: string | undefined): boolean {
+  if (!url.trim() || dbTestsFlag === '0') return false;
   try {
-    return new URL(url).hostname === '127.0.0.1' || new URL(url).hostname === 'localhost';
+    const database = decodeURIComponent(new URL(url).pathname).replace(/^\/+/, '');
+    return database === 'freshloop_ci';
   } catch {
     return false;
   }
 }
 
-const hasIsolatedDb = isolatedLoopbackDatabase(databaseUrl);
+const hasCiDb = isFreshloopCiTestDatabase(databaseUrl, process.env.FRESHLOOP_DB_TESTS);
 
 test(
-  'weekly CSV posts each Toronto date once and an overlap posts nothing new (isolated DB)',
-  { skip: !hasIsolatedDb },
+  'weekly CSV posts each Toronto date once and an overlap posts nothing new (freshloop_ci)',
+  { skip: !hasCiDb },
   async (t) => {
     try {
       await prisma.$connect();
