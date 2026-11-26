@@ -40,7 +40,7 @@ test('overview is stats and alerts, and the catalogue bookmark leaves admin', ()
   assert.match(figures, /alert: 'flagged'/);
   assert.equal(inventory.includes("redirect('/admin#inventory-catalog')"), false);
   assert.match(inventory, /isManager\(user\.role\)/);
-  assert.match(inventory, /<CaseBoard levels=\{levels\} showReceipt \/>/);
+  assert.match(inventory, /<CaseBoard levels=\{levels\} showReceipt storePullDays=\{storePullDays\} \/>/);
   assert.equal(read('app/admin/users/page.tsx').includes("redirect('/admin/settings#staff')"), true);
 });
 

@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { useRole } from '@/components/auth/RoleProvider';
 import { useStableNavRole } from '@/hooks/use-stable-nav-role';
 import { InventoryFilterBar } from '@/components/features/inventory/InventoryFilterBar';
@@ -23,6 +24,13 @@ import {
   type InventoryUpdatedDetail,
 } from '@/lib/domains/inventory/inventoryMoveClient';
 import { canOverrideInventoryStock } from '@/lib/auth/staffCapabilities';
+import { useStorePullSensitivityDays } from '@/hooks/use-store-pull-sensitivity-days';
+import {
+  storePullSensitivityDaysSchema,
+  type PullSensitivityDays,
+} from '@/lib/domains/inventory/pullSensitivity';
+import { dispatchSettingsUpdated } from '@/lib/domains/stats/settingsEvents';
+import { isManager } from '@/lib/utils/roles';
 import { CatalogDuplicateMergePanel } from '@/components/features/inventory/CatalogDuplicateMergePanel';
 import { OFFLINE_MUTATION_KIND } from '@/lib/offline/types';
 import { patchJsonOrQueue } from '@/lib/offline/mutationClient';
@@ -36,8 +44,10 @@ import {
 
 export function AdminInventoryWorkspace({
   levels: initialLevels,
+  storePullDays = null,
 }: {
   levels: StockLevel[] | null;
+  storePullDays?: PullSensitivityDays | null;
 }) {
   const loading = initialLevels === null;
   const pageSize = INVENTORY_CATALOG_PAGE_SIZE;
@@ -60,6 +70,11 @@ export function AdminInventoryWorkspace({
   const [fullCatalog, setFullCatalog] = useState<StockLevel[] | null>(() => initialLevels ?? null);
   const fullCatalogLoadingRef = useRef(false);
 
+  const router = useRouter();
+  const { pullDays, ready: pullReady } = useStorePullSensitivityDays(storePullDays);
+  const [savingPull, setSavingPull] = useState(false);
+  const [pendingPullDays, setPendingPullDays] = useState<PullSensitivityDays | null>(null);
+  const [pullError, setPullError] = useState<string | null>(null);
   const { activeUser } = useRole();
   const { role: stableRole } = useStableNavRole();
   const effectiveRole = activeUser?.role ?? stableRole;
@@ -68,6 +83,51 @@ export function AdminInventoryWorkspace({
   );
   const canRemoveFromCatalog = effectiveRole === 'ADMIN';
   const isAdmin = effectiveRole === 'ADMIN';
+  const canSetStorePull = effectiveRole != null && isManager(effectiveRole);
+  const shownPullDays = pendingPullDays ?? pullDays;
+
+  const saveStorePull = async (days: PullSensitivityDays) => {
+    if (savingPull || days === pullDays) return;
+    setSavingPull(true);
+    setPullError(null);
+    setPendingPullDays(days);
+    try {
+      const read = await fetch('/api/admin/settings', { cache: 'no-store' });
+      const current = (await read.json()) as {
+        success?: boolean;
+        error?: string;
+        settings?: Record<string, unknown>;
+      };
+      if (!read.ok || !current.success || !current.settings) {
+        setPullError(current.error || 'Pull window could not be loaded.');
+        setPendingPullDays(null);
+        return;
+      }
+      const response = await fetch('/api/admin/settings', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...current.settings, pullSensitivityDays: days }),
+      });
+      const json = (await response.json()) as {
+        success?: boolean;
+        error?: string;
+        settings?: Parameters<typeof dispatchSettingsUpdated>[0];
+      };
+      if (!response.ok || !json.success || !json.settings) {
+        setPullError(json.error || 'Pull window could not be saved.');
+        setPendingPullDays(null);
+        return;
+      }
+      dispatchSettingsUpdated(json.settings);
+      setPendingPullDays(null);
+      router.refresh();
+    } catch {
+      setPullError('Pull window could not be saved.');
+      setPendingPullDays(null);
+    } finally {
+      setSavingPull(false);
+    }
+  };
 
   useEffect(() => {
     if (!initialLevels) return;
@@ -260,6 +320,41 @@ export function AdminInventoryWorkspace({
           Full product catalog from the database. Items stay listed at zero stock. Admins can merge duplicate
           SKUs (same item, different invoice names) or remove a SKU from the catalog.
         </p>
+        {canSetStorePull ? (
+          <label className="mt-4 block max-w-xs text-xs font-bold text-slate-400">
+            Store pull window
+            {pullReady && shownPullDays != null ? (
+              <select
+                id="store-pull-window"
+                value={shownPullDays}
+                disabled={savingPull}
+                aria-busy={savingPull}
+                onChange={(event) => {
+                  const parsed = storePullSensitivityDaysSchema.safeParse(Number(event.target.value));
+                  if (!parsed.success) return;
+                  void saveStorePull(parsed.data);
+                }}
+                className="mt-1 w-full min-h-11 rounded-xl border border-slate-700 bg-slate-950 px-3 text-sm text-slate-100 disabled:opacity-60"
+              >
+                <option value={2}>2 days (strict)</option>
+                <option value={3}>3 days (standard)</option>
+                <option value={4}>4 days (extended)</option>
+              </select>
+            ) : (
+              <span className="mt-1 block text-sm font-semibold text-slate-500">
+                {pullReady ? 'Pull window unavailable.' : 'Loading pull window…'}
+              </span>
+            )}
+            <span className="mt-1 block text-[11px] font-normal text-slate-500">
+              Saved for this store. Clerks see the same window after reload. A per-SKU override still wins.
+            </span>
+          </label>
+        ) : null}
+        {pullError ? (
+          <p role="alert" className="mt-2 text-sm font-semibold text-rose-300">
+            {pullError}
+          </p>
+        ) : null}
       </div>
 
       {levelsRefreshError ? (
@@ -331,6 +426,7 @@ export function AdminInventoryWorkspace({
       <ItemSettingsModal
         row={modalRow}
         open={modalRow !== null}
+        storePullDays={pullDays}
         onClose={() => setModalRow(null)}
         canOverride={canOverride}
         canRemoveFromCatalog={canRemoveFromCatalog}

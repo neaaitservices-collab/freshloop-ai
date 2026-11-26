@@ -7,8 +7,18 @@ import { PATCH } from '@/app/api/admin/settings/route';
 import { setManagerStaffTestAuth } from '@/lib/auth/managerStaffTestAuth';
 import type { AuthSessionUser } from '@/lib/auth/staffSnapshot';
 import { DEFAULT_PRICE_CHANGE_THRESHOLD_PCT } from '@/lib/domains/suppliers/priceChangeThreshold';
-import { parsePlatformSettings, PLATFORM_DEFAULTS } from '@/lib/domains/stats/platformSettings';
-import { storeSettingSafeSelect } from '@/lib/domains/stats/storeSettingSelect';
+import { prisma } from '@/lib/db/prisma';
+import { invalidateLedgerReads } from '@/lib/domains/inventory/ledgerCache';
+import { storePullSensitivityDaysSchema } from '@/lib/domains/inventory/pullSensitivity';
+import {
+  getPlatformSettings,
+  parsePlatformSettings,
+  PLATFORM_DEFAULTS,
+} from '@/lib/domains/stats/platformSettings';
+import {
+  invalidateStoreSettingCache,
+  storeSettingSafeSelect,
+} from '@/lib/domains/stats/storeSettingSelect';
 import {
   getPriceChangeThresholdPct,
   isMissingPriceChangeColumn,
@@ -95,6 +105,83 @@ test('settings save rejects a blank numeric string instead of storing 0', async 
       assert.equal(response.status, 400, field);
       assert.equal(body.success, false);
       assert.match(body.error ?? '', label);
+    }
+  } finally {
+    setManagerStaffTestAuth(null);
+  }
+});
+
+test('the saved pull window is what the next settings read returns', async () => {
+  const original = prisma.storeSetting.findFirst;
+  const install = (pullSensitivityDays: number) => {
+    prisma.storeSetting.findFirst = (async (args?: { select?: { priceChangeThresholdPct?: boolean } }) => {
+      if (args?.select?.priceChangeThresholdPct) return { priceChangeThresholdPct: 8 };
+      return {
+        id: 'store-setting-1',
+        storeName: 'FreshLoop Independent Market',
+        targetWastePct: 2.5,
+        scrapBucketVolumeL: 20,
+        estimatedWeightPerLiterKg: 0.65,
+        defaultScrapCostPerKg: 3.5,
+        defaultLaborRatePerHour: 17.6,
+        pullSensitivityDays,
+        costGuardrailVariancePct: 20,
+        defaultParCases: 2,
+        updatedAt: new Date(),
+      };
+    }) as unknown as typeof original;
+  };
+  const read = async (days: number) => {
+    install(days);
+    invalidateStoreSettingCache();
+    invalidateLedgerReads();
+    return getPlatformSettings();
+  };
+  try {
+    assert.equal((await read(4)).pullSensitivityDays, 4);
+    assert.equal((await read(2)).pullSensitivityDays, 2);
+    assert.equal((await read(9)).pullSensitivityDays, 3);
+    assert.equal(storePullSensitivityDaysSchema.parse(4), 4);
+  } finally {
+    prisma.storeSetting.findFirst = original;
+    invalidateStoreSettingCache();
+    invalidateLedgerReads();
+  }
+});
+
+test('settings save accepts only a 2, 3, or 4 day pull window and keeps the manager guard', async () => {
+  for (const days of [2, 3, 4]) {
+    const parsed = parsePlatformSettings({ ...settingsBody(8), pullSensitivityDays: days });
+    assert.equal('settings' in parsed, true, String(days));
+    if ('settings' in parsed) assert.equal(parsed.settings.pullSensitivityDays, days);
+  }
+  for (const days of [1, 5, 0, 2.5, '4', null]) {
+    const parsed = parsePlatformSettings({ ...settingsBody(8), pullSensitivityDays: days });
+    assert.equal('error' in parsed, true, String(days));
+    if ('error' in parsed) assert.match(parsed.error, /Pull window must be 2, 3, or 4 days/);
+  }
+
+  try {
+    for (const role of ROLES) {
+      setManagerStaffTestAuth(async () => user(role));
+      const samples = role === 'ADMIN' || role === 'STORE_MANAGER' ? [1, 5, '4', null] : [4];
+      for (const days of samples) {
+        const response = await PATCH(
+          new NextRequest('http://localhost/api/admin/settings', {
+            method: 'PATCH',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ ...settingsBody(8), pullSensitivityDays: days }),
+          })
+        );
+        const body = (await response.json()) as { success?: boolean; error?: string };
+        if (role === 'ADMIN' || role === 'STORE_MANAGER') {
+          assert.equal(response.status, 400, `${role} ${String(days)}`);
+          assert.equal(body.success, false);
+          assert.match(body.error ?? '', /Pull window/);
+        } else {
+          assert.equal(response.status, 403, role);
+        }
+      }
     }
   } finally {
     setManagerStaffTestAuth(null);

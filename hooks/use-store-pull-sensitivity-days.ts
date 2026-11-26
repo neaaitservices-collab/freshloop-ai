@@ -2,31 +2,48 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import {
+  normalizePullSensitivityDays,
+  type PullSensitivityDays,
+} from '@/lib/domains/inventory/pullSensitivity';
+import {
   FRESHLOOP_SETTINGS_UPDATED,
   readSettingsUpdatedEvent,
 } from '@/lib/domains/stats/settingsEvents';
 
-export type StorePullSensitivityDays = 2 | 3 | 4;
+export type StorePullSensitivityDays = PullSensitivityDays;
 
-function normalizePullDays(value: unknown): StorePullSensitivityDays {
+function seededPullDays(value: unknown): StorePullSensitivityDays | null {
   if (value === 2 || value === 3 || value === 4) return value;
-  return 3;
+  return null;
 }
 
-/** Store-wide pull window from platform settings (read-only for floor/operations UI). */
-export function useStorePullSensitivityDays() {
-  const [pullDays, setPullDays] = useState<StorePullSensitivityDays>(3);
+/**
+ * Store-wide pull window from platform settings.
+ * Starts at the server value when one was passed. Otherwise stays null until
+ * the saved row loads — never a hardcoded 3.
+ */
+export function useStorePullSensitivityDays(initial?: number | null): {
+  pullDays: StorePullSensitivityDays | null;
+  ready: boolean;
+} {
+  const [pullDays, setPullDays] = useState<StorePullSensitivityDays | null>(() =>
+    seededPullDays(initial)
+  );
+  const [ready, setReady] = useState(() => seededPullDays(initial) != null);
 
   const syncFromApi = useCallback(async () => {
     try {
       const response = await fetch('/api/admin/settings', { cache: 'no-store' });
       const json = await response.json();
-      if (json?.success && json.settings) {
-        setPullDays(normalizePullDays(json.settings.pullSensitivityDays));
+      if (response.ok && json?.success && json.settings) {
+        setPullDays(normalizePullSensitivityDays(json.settings.pullSensitivityDays));
+        setReady(true);
+        return;
       }
     } catch {
-      /* keep current */
+      /* keep the value already on screen */
     }
+    setReady(true);
   }, []);
 
   useEffect(() => {
@@ -34,7 +51,8 @@ export function useStorePullSensitivityDays() {
     const onSettings = (event: Event) => {
       const settings = readSettingsUpdatedEvent(event);
       if (settings?.pullSensitivityDays != null) {
-        setPullDays(normalizePullDays(settings.pullSensitivityDays));
+        setPullDays(normalizePullSensitivityDays(settings.pullSensitivityDays));
+        setReady(true);
         return;
       }
       void syncFromApi();
@@ -43,5 +61,5 @@ export function useStorePullSensitivityDays() {
     return () => window.removeEventListener(FRESHLOOP_SETTINGS_UPDATED, onSettings);
   }, [syncFromApi]);
 
-  return pullDays;
+  return { pullDays, ready };
 }

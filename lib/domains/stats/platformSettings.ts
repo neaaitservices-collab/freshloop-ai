@@ -8,14 +8,16 @@ import {
   storeSettingSafeSelect,
 } from '@/lib/domains/stats/storeSettingSelect';
 import {
+  normalizePullSensitivityDays,
+  storePullSensitivityDaysSchema,
+} from '@/lib/domains/inventory/pullSensitivity';
+import {
   getPriceChangeThresholdPct,
   isMissingPriceChangeColumn,
 } from '@/lib/domains/suppliers/priceChangeThreshold';
 
 export type { PlatformSettings } from '@/lib/domains/stats/platformSettingsDefaults';
 export { PLATFORM_DEFAULTS } from '@/lib/domains/stats/platformSettingsDefaults';
-
-const PULL_DAYS = new Set([2, 3, 4]);
 
 function finite(value: unknown): number | null {
   const parsed = typeof value === 'number' ? value : Number(value);
@@ -30,7 +32,7 @@ export function parsePlatformSettings(body: unknown): { settings: PlatformSettin
   const estimatedWeightPerLiterKg = finite(source.estimatedWeightPerLiterKg);
   const defaultScrapCostPerKg = finite(source.defaultScrapCostPerKg);
   const defaultLaborRatePerHour = finite(source.defaultLaborRatePerHour);
-  const pullSensitivityDays = finite(source.pullSensitivityDays);
+  const pullSensitivityDays = storePullSensitivityDaysSchema.safeParse(source.pullSensitivityDays);
   const costGuardrailVariancePct = finite(source.costGuardrailVariancePct);
   const priceChangeThresholdPct =
     source.priceChangeThresholdPct == null ? null : finite(source.priceChangeThresholdPct);
@@ -52,7 +54,7 @@ export function parsePlatformSettings(body: unknown): { settings: PlatformSettin
   if (defaultLaborRatePerHour === null || defaultLaborRatePerHour <= 0) {
     return { error: 'Labor rate must be greater than 0.' };
   }
-  if (pullSensitivityDays === null || !PULL_DAYS.has(pullSensitivityDays)) {
+  if (!pullSensitivityDays.success) {
     return { error: 'Pull window must be 2, 3, or 4 days.' };
   }
   if (costGuardrailVariancePct === null || costGuardrailVariancePct < 0 || costGuardrailVariancePct > 100) {
@@ -73,7 +75,7 @@ export function parsePlatformSettings(body: unknown): { settings: PlatformSettin
       estimatedWeightPerLiterKg,
       defaultScrapCostPerKg,
       defaultLaborRatePerHour,
-      pullSensitivityDays,
+      pullSensitivityDays: pullSensitivityDays.data,
       costGuardrailVariancePct,
       priceChangeThresholdPct,
       defaultParCases: Math.round(defaultParCases),
@@ -100,7 +102,7 @@ async function loadPlatformSettings(): Promise<PlatformSettings> {
     estimatedWeightPerLiterKg: row.estimatedWeightPerLiterKg,
     defaultScrapCostPerKg: row.defaultScrapCostPerKg,
     defaultLaborRatePerHour: row.defaultLaborRatePerHour ?? 17.6,
-    pullSensitivityDays: row.pullSensitivityDays,
+    pullSensitivityDays: normalizePullSensitivityDays(row.pullSensitivityDays),
     costGuardrailVariancePct: row.costGuardrailVariancePct,
     priceChangeThresholdPct,
     defaultParCases: row.defaultParCases ?? PLATFORM_DEFAULTS.defaultParCases,

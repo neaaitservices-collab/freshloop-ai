@@ -12,6 +12,10 @@ import {
   type TransferBarVariant,
 } from '@/components/features/inventory/SubInventoryTransferBar';
 import { stockLevelToTransferRow } from '@/lib/domains/inventory/inventoryMoveClient';
+import {
+  effectivePullDays,
+  normalizePullSensitivityDays,
+} from '@/lib/domains/inventory/pullSensitivity';
 import type { StockLevel } from '@/lib/domains/inventory/stock';
 import { formatUnits, stockUnitLabel } from '@/lib/domains/receiving/yieldPricing';
 import {
@@ -25,7 +29,7 @@ import { ModalBody, ModalHeader, ModalShell } from '@/components/ui/layout';
 export function OperationsTransferItemModal({
   row,
   location,
-  pullDays: _pullDays,
+  pullDays,
   staffId,
   performMove,
   busy,
@@ -213,6 +217,10 @@ export function OperationsTransferItemModal({
           {location === 'retail_floor' ? (
             <RetailFloorItemCardMeta
               row={row}
+              pullWindowDays={effectivePullDays(
+                row.pullSensitivityDays,
+                normalizePullSensitivityDays(pullDays)
+              )}
               bundlePromo={localBundle}
               showBundleActions={canManageBundles && Boolean(localBundle?.id)}
               onEditBundle={() => setBundleModalOpen(true)}

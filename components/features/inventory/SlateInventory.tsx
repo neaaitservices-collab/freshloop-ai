@@ -8,6 +8,7 @@ import { useRole } from '@/components/auth/RoleProvider';
 import { InventoryMasterDetail } from '@/components/features/inventory/InventoryMasterDetail';
 import { SubInventoryWorkspace } from '@/components/features/inventory/SubInventoryWorkspace';
 import { useStorePullSensitivityDays } from '@/hooks/use-store-pull-sensitivity-days';
+import type { PullSensitivityDays } from '@/lib/domains/inventory/pullSensitivity';
 import { Card, CardBody } from '@/components/ui/Card';
 import { Input, Select } from '@/components/ui/Input';
 import { Toast } from '@/components/ui/Toast';
@@ -21,9 +22,11 @@ import { formatCurrency } from '@/lib/domains/receiving/yieldPricing';
 export function SlateInventory({
   levels: initialLevels,
   highlightProductId,
+  storePullDays,
 }: {
   levels: StockLevel[] | null;
   highlightProductId?: string | null;
+  storePullDays: PullSensitivityDays;
 }) {
   const loading = initialLevels === null;
   const router = useRouter();
@@ -32,7 +35,8 @@ export function SlateInventory({
   const [query, setQuery] = useState('');
   const [department, setDepartment] = useState<string>('ALL');
   const departmentOptions = useDepartmentOptions();
-  const pullDays = useStorePullSensitivityDays();
+  const { pullDays } = useStorePullSensitivityDays(storePullDays);
+  const windowDays = pullDays ?? storePullDays;
   const [toast, setToast] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [levelsSyncWarning, setLevelsSyncWarning] = useState<string | null>(null);
@@ -42,7 +46,7 @@ export function SlateInventory({
   useEffect(() => {
     const syncFromServer = () => {
       void fetch(
-        `/api/inventory/levels?includePosSales=1&salesDays=${encodeURIComponent(String(pullDays))}`,
+        `/api/inventory/levels?includePosSales=1&salesDays=${encodeURIComponent(String(windowDays))}`,
         { cache: 'no-store' }
       )
         .then(async (response) => {
@@ -67,7 +71,7 @@ export function SlateInventory({
     };
     window.addEventListener('freshloop-inventory-updated', syncFromServer);
     return () => window.removeEventListener('freshloop-inventory-updated', syncFromServer);
-  }, [setLevels, pullDays]);
+  }, [setLevels, windowDays]);
 
   const departmentFilter = useCallback(
     (row: StockLevel) => matchesStoredDepartment(row.department, department),
@@ -240,7 +244,7 @@ export function SlateInventory({
             <SubInventoryWorkspace
               levels={levels}
               loading={loading}
-              pullDays={pullDays}
+              pullDays={windowDays}
               staffId={activeUser?.id}
               query={query}
               departmentFilter={departmentFilter}
